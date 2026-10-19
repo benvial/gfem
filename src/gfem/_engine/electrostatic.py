@@ -27,12 +27,14 @@ from gfem._engine import quadrature
 from gfem._engine.cache import Entry, discretization
 from gfem._engine.coefficients import permittivity
 from gfem._engine.domain import boundary_region, domain_key, em_region, h1_space
+from gfem._engine.fields import fe_space
 from gfem._engine.mesh import EngineMesh
 from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair
 from gfem._field import FieldMap
 from gfem._linalg import KINDS, Operator, prepare
 from gfem.errors import RegionNotFoundError
+from gfem.mesh import Mesh
 from gfem.model import Model
 from gfem.options import SolverOptions
 from gfem.problems import Electrostatic
@@ -58,7 +60,7 @@ class ElectrostaticRule:
     #: Material properties the electrostatic forms read.
     reads = frozenset({"eps_r"})
     #: Outputs whose cotangents the backward pass handles.
-    differentiable_outputs = frozenset({"capacitance"})
+    differentiable_outputs = frozenset({"capacitance", "potential"})
 
     def __init__(
         self, model: Model, problem: Electrostatic, options: SolverOptions
@@ -171,10 +173,19 @@ class ElectrostaticRule:
         )
         return space, built
 
-    def output_specs(self, model: Model) -> dict[str, jax.ShapeDtypeStruct]:  # noqa: ARG002
-        """Shape and dtype of each forward output."""
+    def output_specs(self, model: Model) -> dict[str, jax.ShapeDtypeStruct]:
+        """Shape and dtype of each forward output (from the mesh topology)."""
         n = len(self.problem.terminals)
-        return {"capacitance": jax.ShapeDtypeStruct((n, n), jnp.float64)}
+        mesh = model.mesh
+        still = Mesh(mesh.imported_nodes, mesh._topology)  # noqa: SLF001
+        with task_manager(self.options.threads):
+            _, space, _ = fe_space(
+                still, self._support, self._excluded, "h1", self.options.order
+            )
+        return {
+            "capacitance": jax.ShapeDtypeStruct((n, n), jnp.float64),
+            "potential": jax.ShapeDtypeStruct((space.ndof, n), jnp.float64),
+        }
 
     def role(self, kind: tuple) -> str:
         """``"read"`` if the electrostatic solve depends on input ``kind``.
@@ -199,24 +210,38 @@ class ElectrostaticRule:
     def backward(
         self, model: Model, entry: Entry, cotangents: dict[str, np.ndarray]
     ) -> list[FieldPair]:
-        """Fold the capacitance cotangent into field pairs.
+        """Fold the capacitance and potential cotangents into field pairs.
 
-        The terminal potentials are their own adjoints:
+        The terminal potentials are their own adjoints for the capacitance:
         ``sum_ij ct_ij dC_ij = sum_i phi_i^T dK (sum_j G_ij phi_j)`` with
         ``G`` the symmetric part of ``ct`` (C is symmetrized), so no solve.
+        A potential cotangent ``ct_i`` takes one adjoint solve per terminal,
+        all columns at once: ``K phi_i = 0`` on the free DOFs gives
+        ``ct_i . dphi_i = -lambda_i^T dK phi_i`` with ``K lambda_i = ct_i``
+        (zero on the fixed DOFs), K the SI operator.
         """
         phi = entry.fields["potential"]
-        ct = np.asarray(cotangents["capacitance"], dtype=float)
-        g = 0.5 * (ct + ct.T)
+        eps0 = scipy.constants.epsilon_0
         with task_manager(self.options.threads):
             space, built = self._space(model)
             domain = em_region(model, built)
+            left, right = [], []
+            if "capacitance" in cotangents:
+                ct = np.asarray(cotangents["capacitance"], dtype=float)
+                left.append(phi)
+                right.append(phi @ (0.5 * (ct + ct.T)).T)
+            if "potential" in cotangents:
+                ct = np.asarray(cotangents["potential"], dtype=float)
+                # the handle solves the form without eps0 * scale
+                adjoint = entry.handle.solve(ct) / (eps0 * built.scale)
+                left.append(-adjoint)
+                right.append(phi)
         return [
             FieldPair(
                 space=space,
-                left=phi,
-                right=phi @ g.T,
-                weights={"grad_grad": scipy.constants.epsilon_0},
+                left=np.concatenate(left, axis=1),
+                right=np.concatenate(right, axis=1),
+                weights={"grad_grad": eps0},
                 order=self.options.order,
                 domain=domain,
             )

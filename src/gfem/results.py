@@ -37,7 +37,9 @@ class ElectrostaticResult:
         potential: The potential of each terminal's solve, a `Field` by
             terminal name (in `terminals` order): 1 V on that terminal, 0 V on
             every other terminal and the ground. Quantity ``"V"``, in volts,
-            on H1 of the solve order.
+            on H1 of the solve order. Functionals of the coefficients are
+            differentiable like the capacitance (one adjoint solve, shared
+            by the terminals).
     """
 
     capacitance: jax.Array
