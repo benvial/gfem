@@ -17,6 +17,7 @@ from gfem._cuda import cuda_available  # noqa: E402
 from gfem.errors import (  # noqa: E402
     DeviceMemoryWarning,
     DeviceUnavailableError,
+    EigenmodeConvergenceError,
     MeshQualityError,
     MeshQualityWarning,
     NonDifferentiableError,
@@ -41,9 +42,10 @@ from gfem.model import (  # noqa: E402
     enclosed_by,
 )
 from gfem.options import SolverOptions  # noqa: E402
-from gfem.problems import Driven, Electrostatic, PortMode  # noqa: E402
+from gfem.problems import Driven, Eigenmode, Electrostatic, PortMode  # noqa: E402
 from gfem.results import (  # noqa: E402
     DrivenResult,
+    EigenmodeResult,
     ElectrostaticResult,
     Field,
     NetworkParameters,
@@ -63,6 +65,9 @@ __all__ = [
     "DeviceUnavailableError",
     "Driven",
     "DrivenResult",
+    "Eigenmode",
+    "EigenmodeConvergenceError",
+    "EigenmodeResult",
     "Electrostatic",
     "ElectrostaticResult",
     "Field",

@@ -35,7 +35,7 @@ port terminated in its reference impedance ``z_ref`` (a lumped port's L
 and C, if any, belong to the network and load it in parallel). It is the
 field behind one column of S: the excited port's incident wave is
 ``a = 1`` (√W), every other port's is 0.
-Eigenmode fields have an arbitrary normalization. A port mode field is
+Eigenmode fields store 1 J (see Eigenmodes). A port mode field is
 normalized to 1 W time-averaged power through the port.
 
 Network parameters
@@ -107,6 +107,23 @@ excluded metal volume is: for a film much thinner than its skin depth,
 
 This is Palace's convention face for face, so gsim layouts give the same
 discrete problem in both codes.
+
+Eigenmodes
+----------
+An eigenmode is a complex angular frequency ``omega`` and a field ``E``
+with ``Re(E exp(+iωt))`` source-free; ``Im omega > 0`` decays, and
+``Q = |omega| / (2 |Im omega|)`` (Palace's definition). The mode's
+electric energy is
+
+    E_elec = 1/2 Re ∫ D* · E dV + Σ C_j |V_j|^2 / 2
+
+over the solve domain and the capacitive lumped ports (peak phasors: the
+total time-averaged energy of a lossless mode, electric plus magnetic, as
+Palace's ``E_elec``). Each mode field is scaled to ``E_elec`` =
+`MODE_ENERGY` and phased so that ``∫ D · E dV`` (no conjugate) is real
+and positive, which makes a lossless mode's field real; the remaining sign
+puts the largest coefficient's real part positive. Participation ratios
+and coupling Q are ratios to ``E_elec`` and do not depend on this scale.
 """
 
 from __future__ import annotations
@@ -115,6 +132,7 @@ __all__ = [
     "EXTERIOR_THICKNESS_FACTOR",
     "INCIDENT_POWER",
     "INTERIOR_SHEET_ADMITTANCE",
+    "MODE_ENERGY",
     "PHASOR",
     "TIME_DEPENDENCE",
     "WAVES",
@@ -135,3 +153,5 @@ INTERIOR_SHEET_ADMITTANCE = 0.5
 #: Factor on a `Conductor`'s thickness on mesh-exterior faces, where the metal
 #: is one-sided.
 EXTERIOR_THICKNESS_FACTOR = 2.0
+#: Electric energy of every eigenmode field (see Eigenmodes), J.
+MODE_ENERGY = 1.0
