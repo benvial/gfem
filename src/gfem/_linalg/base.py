@@ -45,7 +45,7 @@ class NgsHandle:
         )
         self._complex = is_complex
         self._solver = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def _columns(self, B: np.ndarray) -> tuple[np.ndarray, bool]:
         B = np.asarray(B)
@@ -75,16 +75,28 @@ class NgsHandle:
                 out[:, j] = y.FV().NumPy()
         return out[:, 0] if flat else out
 
-    def _inverse_map(self, B: np.ndarray) -> np.ndarray:
-        """Hook for subclasses: the inverse on the free rows of ``B``."""
+    def _inverse_map(self, B: np.ndarray, tolerance: float | None) -> np.ndarray:  # noqa: ARG002
+        """Hook for subclasses: the inverse on the free rows of ``B``.
+
+        Direct backends ignore ``tolerance``.
+        """
         return self._map(self._solver, B)
 
-    def solve(self, B: np.ndarray, *, transpose: bool = False) -> np.ndarray:
+    def solve(
+        self,
+        B: np.ndarray,
+        *,
+        transpose: bool = False,
+        tolerance: float | None = None,
+    ) -> np.ndarray:
         """``A_ff X_f = B_f`` on the free DOFs; ``X`` is zero on fixed DOFs.
 
         ``transpose`` solves ``A^T X = B``: the same solve for a real or
         complex symmetric operator, the conjugate one for a complex
-        Hermitian operator.
+        Hermitian operator. ``tolerance`` is the relative residual of this
+        solve for iterative backends (an adjoint solve on the forward's
+        preconditioner); ``None`` is the prepared tolerance. Direct
+        backends ignore it.
 
         Raises:
             RuntimeError: The handle was freed.
@@ -100,11 +112,13 @@ class NgsHandle:
                 "operator."
             )
         if conjugate:
-            return np.conj(self.solve(np.conj(B)))
+            return np.conj(self.solve(np.conj(B), tolerance=tolerance))
         B = np.where(self._free if B.ndim == 1 else self._free[:, None], B, 0)
         if not self._complex and np.iscomplexobj(B):
-            return self._inverse_map(B.real) + 1j * self._inverse_map(B.imag)
-        return self._inverse_map(B)
+            return self._inverse_map(B.real, tolerance) + 1j * self._inverse_map(
+                B.imag, tolerance
+            )
+        return self._inverse_map(B, tolerance)
 
     def apply(self, X: np.ndarray) -> np.ndarray:
         """``A X`` with the full assembled matrix.

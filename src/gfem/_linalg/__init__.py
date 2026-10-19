@@ -71,8 +71,18 @@ class Handle(Protocol):
         """Host memory held by the matrix and the backend, in bytes."""
         ...
 
-    def solve(self, B: np.ndarray, *, transpose: bool = False) -> np.ndarray:
-        """Solve ``A X = B`` on the free DOFs; ``B`` is ``(ndof,)`` or ``(ndof, k)``."""
+    def solve(
+        self,
+        B: np.ndarray,
+        *,
+        transpose: bool = False,
+        tolerance: float | None = None,
+    ) -> np.ndarray:
+        """Solve ``A X = B`` on the free DOFs; ``B`` is ``(ndof,)`` or ``(ndof, k)``.
+
+        ``tolerance`` overrides the prepared relative residual of iterative
+        backends for this solve (adjoint solves); direct backends ignore it.
+        """
         ...
 
     def apply(self, X: np.ndarray) -> np.ndarray:

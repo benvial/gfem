@@ -19,9 +19,12 @@ host; this module owns everything JAX sees:
   or the cotangent a symbolic zero.
 - **Residuals** are an integer cache key and the design state (the input
   leaves). The forward stores its heavy objects (solver handle, fields) in
-  ``gfem._engine.cache.ENTRIES``; the backward rebuilds the model from the
-  residual leaves, never from engine state, and re-runs the forward when
-  the entry was evicted, so eviction costs time, never correctness.
+  ``gfem._engine.cache.ENTRIES`` (bounded by
+  ``SolverOptions.retain_memory``, least recently used out first, never
+  freed by a read, so ``jax.jacrev`` and a pullback called twice reuse it).
+  The backward rebuilds the model and the problem from the residual leaves,
+  never from engine state, and re-runs the forward when the entry was
+  evicted or never kept, so eviction costs time, never correctness.
 - **Backward**: the rule folds the cotangents into field pairs
   (``rule.backward``), and `gfem._engine.sensitivity.sensitivity` contracts
   them per element. The cotangent convention is JAX's: for a real input,
@@ -35,12 +38,15 @@ the message kept.
 A rule provides: ``form`` (its operator family in the property-to-form-term
 table), ``differentiable_outputs``, ``output_specs(model)`` (name ->
 ``jax.ShapeDtypeStruct``), ``role(kind)`` (``"read"`` or ``"unread"``),
-``forward(model, *, keep)``, ``backward(model, entry, cotangents)`` and
-``options``.
+``forward(model, *, keep)``, ``backward(model, entry, cotangents)``,
+``options`` and ``problem``. Host calls get the model and a shallow copy of
+the rule whose ``problem`` holds the call's concrete values, so a rule reads
+problem values from ``self.problem`` and never sees a tracer there.
 """
 
 from __future__ import annotations
 
+import copy
 import functools
 from collections.abc import Sequence
 from typing import Any
@@ -52,9 +58,22 @@ from jax.custom_derivatives import SymbolicZero
 
 from gfem.errors import NonDifferentiableError
 
-__all__ = ["input_kind", "solve_vjp"]
+__all__ = ["adjoint_tolerance", "input_kind", "solve_vjp"]
 
 _KEY = jax.ShapeDtypeStruct((), jnp.int64)
+
+
+def adjoint_tolerance(options: Any) -> float:
+    """Relative residual of adjoint solves of a `gfem.SolverOptions`.
+
+    ``options.adjoint_tolerance``, or the forward ``options.tolerance`` when
+    that is ``None``. Resolved here, not stored in the options, so that
+    replacing the forward tolerance of options built with the default moves
+    the adjoint one too.
+    """
+    if options.adjoint_tolerance is None:
+        return options.tolerance
+    return options.adjoint_tolerance
 
 
 def _name(key: Any) -> Any:
@@ -111,19 +130,15 @@ def solve_vjp(rule: Any, model: Any, problem: Any) -> dict[str, jax.Array]:
     names = tuple(specs)
     out_specs = tuple(specs[n] for n in names)
     state: dict[str, Any] = {}
-
-    def rebuild(values: Sequence[Any]) -> tuple[Any, Any]:
-        arrays = [np.asarray(v) for v in values]
-        return (
-            jax.tree.unflatten(m_def, arrays[:n_model]),
-            jax.tree.unflatten(p_def, arrays[n_model:]),
-        )
+    rebuild = functools.partial(
+        _rebuild, rule=rule, m_def=m_def, p_def=p_def, n_model=n_model
+    )
 
     def host_forward(keep: bool, *values: Any) -> tuple:
         from gfem._engine.cache import ENTRIES, default_retain_memory
 
-        host_model, _ = rebuild(values)
-        outputs, entry = _forward(rule, host_model, keep=keep)
+        host_rule, host_model = rebuild(values)
+        outputs, entry = _forward(host_rule, host_model, keep=keep)
         key = -1
         if entry is not None:
             budget = rule.options.retain_memory
@@ -174,7 +189,6 @@ def solve_vjp(rule: Any, model: Any, problem: Any) -> dict[str, jax.Array]:
             computed = jax.pure_callback(
                 functools.partial(
                     _host_backward,
-                    rule=rule,
                     rebuild=rebuild,
                     kinds=kinds,
                     wanted=wanted,
@@ -198,6 +212,23 @@ def solve_vjp(rule: Any, model: Any, problem: Any) -> dict[str, jax.Array]:
     p_leaves = [leaf for _, leaf in p_paths]
     outputs = primal(m_leaves, p_leaves)
     return dict(zip(names, outputs, strict=True))
+
+
+def _rebuild(
+    values: Sequence[Any], *, rule: Any, m_def: Any, p_def: Any, n_model: int
+) -> tuple[Any, Any]:
+    """The host rule and model of one design state (residual values).
+
+    The model comes from the values alone; the rule is a shallow copy whose
+    ``problem`` holds the problem's values, unless the problem has none.
+    """
+    arrays = [np.asarray(v) for v in values]
+    host_model = jax.tree.unflatten(m_def, arrays[:n_model])
+    if len(arrays) == n_model:  # the problem holds no array values
+        return rule, host_model
+    host_rule = copy.copy(rule)
+    host_rule.problem = jax.tree.unflatten(p_def, arrays[n_model:])
+    return host_rule, host_model
 
 
 def _forward(rule: Any, model: Any, *, keep: bool) -> tuple:
@@ -231,7 +262,6 @@ def _wanted(rule: Any, kinds: list[tuple], perturbed: list[bool]) -> tuple[int, 
 def _host_backward(
     key: Any,
     *args: Any,
-    rule: Any,
     rebuild: Any,
     kinds: list[tuple],
     wanted: tuple[int, ...],
@@ -242,7 +272,7 @@ def _host_backward(
 
     n_inputs = len(kinds)
     values, cts = args[:n_inputs], args[n_inputs:]
-    model, _ = rebuild(values)
+    rule, model = rebuild(values)
     entry = ENTRIES.get(int(key)) if int(key) >= 0 else None
     fresh = None
     if entry is None:  # evicted: recompute from the design state
