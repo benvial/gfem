@@ -26,7 +26,7 @@ import jax.numpy as jnp
 import ngsolve as ngs
 import numpy as np
 
-from gfem._boundaries import PEC, Absorbing, Impedance, LumpedPort, WavePort
+from gfem._boundaries import PEC, LumpedPort, WavePort
 from gfem._engine import terms
 from gfem._engine.cache import Entry, discretization
 from gfem._engine.domain import domain_key, hcurl_space
@@ -320,7 +320,7 @@ def _resistance(port: LumpedPort | WavePort) -> float:
 
 
 def _check_supported(model: Model) -> None:
-    """Raise for boundaries and ports this version cannot solve."""
+    """Raise for ports this version cannot solve."""
     for port in model.ports:
         if isinstance(port, WavePort):
             raise NotImplementedError(
@@ -329,14 +329,3 @@ def _check_supported(model: Model) -> None:
             )
         if not isinstance(port, LumpedPort):  # pragma: no cover - Model checks
             raise TypeError(f"Unknown port {port!r}.")
-    for b in model.boundaries:
-        if isinstance(b, Impedance):
-            raise NotImplementedError(
-                f"Impedance on {b.surface!r}: impedance boundaries in driven "
-                "problems are not available in this version of gfem."
-            )
-        if isinstance(b, Absorbing) and b.order != 1:
-            raise NotImplementedError(
-                f"Absorbing(order=2) on {b.surface!r} is not available in driven "
-                "problems in this version of gfem; use Absorbing(order=1)."
-            )
