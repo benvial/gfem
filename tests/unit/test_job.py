@@ -291,6 +291,9 @@ def test_run_equals_solve_and_result_round_trips(model, tmp_path):
     assert loaded.terminals == expected.terminals
     assert loaded.capacitance.dtype == expected.capacitance.dtype
     np.testing.assert_array_equal(loaded.capacitance, result.capacitance)
+    assert list(loaded.energy) == list(result.energy)
+    for region, energy in result.energy.items():
+        np.testing.assert_array_equal(loaded.energy[region], energy)
 
     doc = json.loads((tmp_path / "results" / "result.json").read_text())
     assert doc["schema_version"] == 1

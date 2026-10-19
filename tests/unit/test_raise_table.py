@@ -62,6 +62,12 @@ EXPECTED |= {
     for leaf in ("coefficients", "mesh.nodes")
     for kind in [("nodes",)] + [("material", "oxide", p) for p in ALL_PROPERTIES]
 }
+# Region energies are not differentiable in this version: every cell raises.
+EXPECTED |= {
+    ("electrostatic", f"energy.{region}", kind): RAISES
+    for region in ("oxide", "nitride")
+    for kind in [("nodes",)] + [("material", "oxide", p) for p in ALL_PROPERTIES]
+}
 # The port mode problem is not differentiable: every result leaf raises.
 PORT_MODE_OUTPUTS = ("frequency", "gamma", "Z_PV", "residual")
 EXPECTED |= {
