@@ -172,6 +172,19 @@ class Mesh:
                 return r
         raise RegionNotFoundError(name, (r.name for r in self.regions))
 
+    def elements(self, region: str) -> np.ndarray:
+        """Indices of a region's elements, in mesh order.
+
+        For a volume, rows of `tetrahedra` (the order of a `MaterialField`'s
+        per-element values); for a surface, rows of `triangles`.
+
+        Raises:
+            RegionNotFoundError: No region has this name.
+        """
+        r = self.region(region)
+        tags = self.tetrahedron_tags if r.dim == 3 else self.triangle_tags
+        return _readonly(np.flatnonzero(tags == r.tag))
+
     def adjacency(self, surface: str) -> tuple[tuple[str | None, str | None], ...]:
         """The ``(domin, domout)`` volume pairs on the two sides of a surface.
 

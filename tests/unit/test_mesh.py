@@ -73,6 +73,21 @@ def test_unknown_length_unit_names_the_supported_ones():
         gfem.Mesh.from_gmsh(TWO_BOX["msh22"], length_unit="inch")
 
 
+def test_elements_lists_a_regions_tetrahedra_or_triangles_in_mesh_order(two_box):
+    sub = two_box.elements("sub")
+    np.testing.assert_array_equal(
+        sub, np.flatnonzero(two_box.tetrahedron_tags == VOLUMES["sub"])
+    )
+    assert not sub.flags.writeable
+    np.testing.assert_allclose(_tet_volumes(two_box)[sub].sum(), 4e-18, rtol=1e-12)
+    metal = two_box.elements("metal_xy")
+    np.testing.assert_array_equal(
+        metal, np.flatnonzero(two_box.triangle_tags == SURFACES["metal_xy"])
+    )
+    with pytest.raises(gfem.RegionNotFoundError, match="Did you mean 'air'"):
+        two_box.elements("ari")
+
+
 def test_unknown_region_name_suggests_a_close_match(two_box):
     with pytest.raises(gfem.RegionNotFoundError, match="air__sub"):
         two_box.region("air_sub")
