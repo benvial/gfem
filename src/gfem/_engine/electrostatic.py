@@ -6,7 +6,11 @@ terminals and the ground, and solves the charge-free Laplace problem
 every v vanishing on the fixed surfaces. Then ``C_ij = a(phi_i, phi_j)``,
 which equals Palace's energy formula ``E(phi_i + phi_j) - (C_ii + C_jj) / 2``
 and is symmetric. All terminals share one prepared operator: the right-hand
-sides are the liftings, solved together.
+sides are the liftings, solved together: by CG + BDDC by default, or by
+one sparse Cholesky factorization (``direct``). ``phi_i^T K phi_j`` is
+quadratic in the solver error (the error vanishes on the fixed DOFs, the
+residual on the free ones), so the capacitance is far more accurate than
+the solver tolerance.
 
 The terminal potentials are their own adjoints (``dC_ij = phi_i^T dK phi_j``),
 so a capacitance gradient needs no solve; the handle is kept only for
@@ -38,8 +42,8 @@ from gfem.results import ElectrostaticResult
 
 __all__ = ["ElectrostaticRule"]
 
-#: The linear solver for ``linear_solver="auto"``.
-DEFAULT_SOLVER = "direct"
+#: The linear solver for ``linear_solver="auto"``: CG + BDDC.
+DEFAULT_SOLVER = "bddc_gmres"
 
 
 class ElectrostaticRule:
@@ -71,7 +75,8 @@ class ElectrostaticRule:
         if self.kind not in KINDS:
             raise NotImplementedError(
                 f"linear_solver={kind!r} is not available for electrostatic "
-                "problems in this version of gfem; use linear_solver='direct'."
+                "problems in this version of gfem; use one of "
+                f"{', '.join(repr(k) for k in KINDS)}."
             )
         in_terminal = {s for _, surfaces in problem.terminals for s in surfaces}
         conductors = tuple(
@@ -86,6 +91,11 @@ class ElectrostaticRule:
         for s in problem.ground:
             _check_surface(model, s, "ground")
         _check_apart(model, problem.terminals, self.ground)
+        #: Surfaces at a fixed potential: the terminals and the ground.
+        self.fixed = tuple(sorted(in_terminal.union(self.ground)))
+        mesh, active = model.mesh, model._domain.active  # noqa: SLF001
+        #: Volume regions with tetrahedra in the solve domain, mesh order.
+        self.regions = tuple(r for r in mesh.volumes if active[mesh.elements(r)].any())
 
     def forward(
         self, model: Model, *, keep: bool
@@ -98,9 +108,9 @@ class ElectrostaticRule:
                 pass.
 
         Returns:
-            ``{"capacitance": (n, n) array in F}``, and the cache entry (the
-            handle and ``fields["potential"]``, one DOF column per terminal)
-            or ``None``.
+            ``{"capacitance": (n, n) array in F, "energy": (len(regions), n)
+            array in J}``, and the cache entry (the handle and
+            ``fields["potential"]``, one DOF column per terminal) or ``None``.
 
         Raises:
             ValueError: Part of the solve domain touches no terminal or
@@ -113,12 +123,7 @@ class ElectrostaticRule:
                 boundary_region(built, surfaces)
                 for _, surfaces in self.problem.terminals
             ]
-            fixed = [space.GetDofs(r) for r in regions]
-            if self.ground:
-                fixed.append(space.GetDofs(boundary_region(built, self.ground)))
-            free = space.FreeDofs() & ~fixed[0]
-            for dofs in fixed[1:]:
-                free &= ~dofs
+            free = space.FreeDofs()
 
             u, v = space.TnT()
             form = ngs.BilinearForm(space, symmetric=True)
@@ -129,6 +134,7 @@ class ElectrostaticRule:
                 symmetry="hermitian",
                 kind=self.kind,
                 device=self.options.device,
+                tolerance=self.options.tolerance,
             )
             lift = np.zeros((space.ndof, len(regions)))
             for i, region in enumerate(regions):
@@ -138,6 +144,7 @@ class ElectrostaticRule:
             phi = lift + handle.solve(-handle.apply(lift))
             scale = scipy.constants.epsilon_0 * built.scale
             c = phi.T @ handle.apply(phi) * scale
+            energy = 0.5 * scale * self._region_energies(model, built, space, eps, phi)
         c = 0.5 * (c + c.T)
         if not np.isfinite(c).all():
             handle.free()
@@ -153,15 +160,16 @@ class ElectrostaticRule:
             )
         else:
             handle.free()
-        return {"capacitance": c}, entry
+        return {"capacitance": c, "energy": energy}, entry
 
     def _space(self, model: Model) -> tuple[ngs.FESpace, EngineMesh]:
         order = self.options.order
         disc = discretization(model.mesh)
         built = disc.built
+        fixed = self.fixed
         space = disc.space(
-            (domain_key(model), "h1", order),
-            lambda: h1_space(model, built, order),
+            (domain_key(model), "h1", order, fixed),
+            lambda: h1_space(model, built, order, fixed),
         )
         return space, built
 
@@ -221,7 +229,44 @@ class ElectrostaticRule:
         return ElectrostaticResult(
             capacitance=jnp.asarray(outputs["capacitance"]),
             terminals=self.problem.terminal_names,
+            energy={
+                r: jnp.asarray(e)
+                for r, e in zip(self.regions, outputs["energy"], strict=True)
+            },
         )
+
+    def _region_energies(
+        self,
+        model: Model,
+        built: EngineMesh,
+        space: ngs.FESpace,
+        eps: ngs.CoefficientFunction,
+        phi: np.ndarray,
+    ) -> np.ndarray:
+        """``phi_i^T K_r phi_i``, shape ``(len(self.regions), n_terminals)``.
+
+        One element pass per terminal (a P0 linear form on the pinned rule),
+        summed per region over its active tetrahedra.
+        """
+        order = self.options.order
+        mesh = model.mesh
+        p0 = ngs.L2(built.mesh, order=0)
+        q = p0.TestFunction()
+        gf = ngs.GridFunction(space)
+        grad = ngs.grad(gf)
+        form = ngs.LinearForm(p0)
+        form += (eps * grad) * grad * q * quadrature.dx(order)
+        per_tet = np.zeros((len(mesh.tetrahedra), phi.shape[1]))
+        for i in range(phi.shape[1]):
+            gf.vec.FV().NumPy()[:] = phi[:, i]
+            form.Assemble()
+            per_tet[built.tetrahedron_order, i] = form.vec.FV().NumPy()
+        active = model._domain.active  # noqa: SLF001
+        out = np.zeros((len(self.regions), phi.shape[1]))
+        for k, region in enumerate(self.regions):
+            tets = mesh.elements(region)
+            out[k] = per_tet[tets[active[tets]]].sum(axis=0)
+        return out
 
 
 def _check_surface(model: Model, name: str, role: str) -> None:

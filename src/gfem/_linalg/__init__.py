@@ -11,9 +11,18 @@ reads only the free rows of ``B`` and returns zeros in the fixed (Dirichlet)
 rows, so a Dirichlet lifting ``u_D`` is completed by
 ``u = u_D + handle.solve(-handle.apply(u_D))``.
 
-Backends: ``"direct"`` (NGSolve sparse Cholesky, always passed explicitly:
-never NGSolve's UMFPACK default). ``"bddc_gmres"`` and ``"cudss"`` are not
-available in this version.
+Backends:
+
+- ``"direct"``: NGSolve sparse Cholesky, always passed explicitly, never
+  NGSolve's UMFPACK default. One factorization serves every right-hand side.
+- ``"bddc_gmres"``: NGSolve BDDC with a sparse Cholesky coarse problem, and
+  conjugate gradients (Hermitian operators) or GMRES (the others) to the
+  relative ``tolerance``. BDDC reads the fixed DOFs from the space, so the
+  operator's free DOFs must be the space's ``FreeDofs()``.
+- ``"cudss"`` is not available in this version.
+
+`factorize` gives a ``direct`` handle on a real symmetric SciPy matrix, for
+auxiliary systems assembled outside NGSolve.
 """
 
 from __future__ import annotations
@@ -24,11 +33,13 @@ from typing import Literal, Protocol
 import ngsolve as ngs
 import numpy as np
 
-__all__ = ["KINDS", "Handle", "Kind", "Operator", "Symmetry", "prepare"]
+__all__ = ["KINDS", "Handle", "Kind", "Operator", "Symmetry", "factorize", "prepare"]
 
 Symmetry = Literal["complex_symmetric", "hermitian", "general"]
 Kind = Literal["direct", "bddc_gmres", "cudss"]
-KINDS: tuple[str, ...] = ("direct",)
+KINDS: tuple[str, ...] = ("direct", "bddc_gmres")
+#: Most Krylov iterations of an iterative solve (as Palace).
+MAXITER = 400
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -79,6 +90,8 @@ def prepare(
     symmetry: Symmetry,
     kind: str,
     device: str = "cpu",
+    tolerance: float = 1e-6,
+    maxiter: int = MAXITER,
 ) -> Handle:
     """Assemble ``operator`` and set up the ``kind`` backend.
 
@@ -88,6 +101,9 @@ def prepare(
             ``"complex_symmetric"`` (A^T = A) or ``"general"``.
         kind: The backend.
         device: ``"cpu"``; GPU backends are not available in this version.
+        tolerance: Relative residual of iterative backends.
+        maxiter: Most iterations of iterative backends; a solve that does
+            not converge in them raises RuntimeError.
 
     Raises:
         NotImplementedError: The backend or device is not available.
@@ -101,8 +117,25 @@ def prepare(
     if kind == "direct":
         from gfem._linalg.direct import DirectHandle
 
-        return DirectHandle(operator, symmetry)
+        return DirectHandle.from_operator(operator, symmetry)
+    if kind == "bddc_gmres":
+        from gfem._linalg.bddc import BddcHandle
+
+        return BddcHandle(operator, symmetry, tolerance=tolerance, maxiter=maxiter)
     raise NotImplementedError(
         f"linear_solver={kind!r} is not available in this version of gfem; use "
         f"one of {', '.join(repr(k) for k in KINDS)}."
     )
+
+
+def factorize(matrix) -> Handle:
+    """A ``direct`` handle on a real symmetric positive definite SciPy matrix.
+
+    Every DOF is free. NGSolve sparse Cholesky, as for `prepare`.
+
+    Raises:
+        ValueError: ``matrix`` is not square.
+    """
+    from gfem._linalg.direct import DirectHandle
+
+    return DirectHandle.from_scipy(matrix)

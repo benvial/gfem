@@ -244,12 +244,12 @@ class BoundaryMorph:
     ) -> None:
         """Internal: use `boundary_morph`."""
         # Imported here so that `import gfem` does not load NGSolve.
-        from gfem._linalg.spd import SpdFactor
+        from gfem._linalg import factorize
 
         prescribed = _morph.prescribed(len(mesh.imported_nodes), nodes, normals)
         reduced = (free.T @ stiffness @ free).tocoo()
         coupling = (-(free.T @ stiffness @ prescribed)).tocoo()
-        factor = SpdFactor(reduced)
+        factor = factorize(reduced)
         values = {
             "_treedef": jax.tree_util.tree_structure(mesh),
             "_x0": np.asarray(mesh.imported_nodes),

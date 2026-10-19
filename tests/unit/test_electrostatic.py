@@ -89,15 +89,48 @@ def test_result_is_labelled_symmetric_with_palace_signs(stack):
     assert "mid" in repr(cap)
 
 
-def test_result_is_a_pytree_with_the_matrix_as_its_leaf(stack):
+def test_result_is_a_pytree_of_the_matrix_and_the_region_energies(stack):
     cap = _c(stack, gfem.Electrostatic(terminals=STACK, ground="bottom"))
     leaves, tree = jax.tree.flatten(cap)
-    assert len(leaves) == 1
+    assert len(leaves) == 3
     assert leaves[0] is cap.capacitance
     assert isinstance(cap.capacitance, jax.Array)
     assert cap.capacitance.dtype == np.float64
-    back = jax.tree.unflatten(tree, [leaves[0] * 2])
+    assert all(isinstance(e, jax.Array) for e in cap.energy.values())
+    back = jax.tree.unflatten(tree, [leaf * 2 for leaf in leaves])
     assert back.terminals == cap.terminals
+    np.testing.assert_allclose(back.mutual, 2 * cap.mutual)
+
+
+def test_mutual_and_inverse_follow_the_maxwell_matrix(stack):
+    cap = _c(stack, gfem.Electrostatic(terminals=STACK, ground="bottom"))
+    c = np.asarray(cap.capacitance)
+    m = np.asarray(cap.mutual)
+    # Palace terminal-Cm.csv: -C off the diagonal, the row sums on it
+    np.testing.assert_allclose(m - np.diag(np.diag(m)), -(c - np.diag(np.diag(c))))
+    np.testing.assert_allclose(np.diag(m), c.sum(axis=1))
+    np.testing.assert_allclose(np.asarray(cap.inverse) @ c, np.eye(2), atol=1e-12)
+
+
+def test_mutual_and_inverse_are_differentiable_functions_of_the_matrix(stack):
+    cap = _c(stack, gfem.Electrostatic(terminals=STACK, ground="bottom"))
+
+    def to_ground(c):
+        leaves = jax.tree.leaves(cap)
+        res = jax.tree.unflatten(jax.tree.structure(cap), [c, *leaves[1:]])
+        return res.mutual[1, 1] + res.inverse[0, 0]
+
+    g = jax.grad(to_ground)(cap.capacitance)
+    assert g.shape == (2, 2)
+    assert np.isfinite(np.asarray(g)).all()
+
+
+def test_region_energies_add_up_to_half_the_self_capacitance(stack):
+    cap = _c(stack, gfem.Electrostatic(terminals=STACK, ground="bottom"))
+    assert list(cap.energy) == ["oxide", "nitride"]
+    total = sum(np.asarray(e) for e in cap.energy.values())
+    np.testing.assert_allclose(total, np.diag(cap.capacitance) / 2, rtol=1e-12)
+    assert all(np.asarray(e).shape == (2,) for e in cap.energy.values())
 
 
 def test_unknown_terminal_index_names_the_terminals(stack):
@@ -231,12 +264,23 @@ def test_terminal_on_an_excluded_conductor_shell():
     cap = _c(excluded, problem)
     np.testing.assert_allclose(cap.capacitance, meshed.capacitance, rtol=1e-10)
     assert float(cap.capacitance[0, 0]) > 0
+    # the field-free inside of the conductor stores no energy
+    assert set(cap.energy) == set(meshed.energy)
+    np.testing.assert_allclose(
+        sum(cap.energy.values()), sum(meshed.energy.values()), rtol=1e-10
+    )
 
 
-@pytest.mark.parametrize("solver", ["bddc_gmres"])
-def test_unavailable_linear_solver_raises(stack, solver):
-    with pytest.raises(NotImplementedError, match="direct"):
-        _c(stack, gfem.Electrostatic(terminals=STACK), linear_solver=solver)
+@pytest.mark.parametrize("solver", ["auto", "bddc_gmres"])
+def test_bddc_default_agrees_with_the_direct_solver(tmp_path, solver):
+    # order 3: face DOFs are off the wirebasket, so BDDC + CG really iterates
+    path = tmp_path / "fine.msh"
+    sm.write_msh22(path, sm.plate(4.0, 3.0, LAYERS, (3, 3, 2)))
+    model = gfem.Model(gfem.Mesh.from_gmsh(path), materials=MATERIALS)
+    problem = gfem.Electrostatic(terminals=STACK, ground="bottom")
+    direct = _c(model, problem, order=3, linear_solver="direct")
+    bddc = _c(model, problem, order=3, linear_solver=solver)
+    np.testing.assert_allclose(bddc.capacitance, direct.capacitance, rtol=1e-9)
 
 
 def test_gpu_device_raises_not_available(stack):
