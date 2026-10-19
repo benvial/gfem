@@ -1,0 +1,134 @@
+[project]
+name = "gfem"
+version = "0.1.0.dev0"
+description = "Differentiable finite-element electromagnetics for RF, microwave and superconducting devices."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "GDSFactory", email = "contact@gdsfactory.com" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering :: Physics",
+  "Typing :: Typed",
+]
+# Upper bound only where gfem touches internals (NGSolve). JAX gets a floor
+# only: a cap would collide with optax / equinox in users' environments.
+dependencies = [
+  "jax>=0.12",
+  "meshio>=5.3",
+  "ngsolve>=6.2.2608,<6.3",
+  "numpy>=2.0",
+  "scipy>=1.15",
+]
+
+[project.optional-dependencies]
+# cuDSS through nvmath-python. A no-op on macOS, so a shared requirements file
+# still installs there. The two CUDA extras exclude each other.
+cuda12 = [
+  "nvmath-python[cu12]>=1.0,<1.1; (sys_platform == 'linux' and platform_machine == 'x86_64') or sys_platform == 'win32'",
+]
+cuda13 = [
+  "nvmath-python[cu13]>=1.0,<1.1; (sys_platform == 'linux' and platform_machine == 'x86_64') or sys_platform == 'win32'",
+]
+viz = ["pyvista"]
+xarray = ["xarray"]
+
+[dependency-groups]
+dev = [{ include-group = "lint" }, { include-group = "test" }]
+lint = ["ruff>=0.14", "ty==0.0.85"]
+test = ["pytest>=8.3", "pytest-cov>=6.0"]
+
+[build-system]
+requires = ["uv_build>=0.13,<0.14"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+# Test tiers are markers. tests/conftest.py marks every test by its directory
+# (tests/unit -> unit, tests/verification -> verification, ...). The heavy and
+# GPU tiers are opt-in, e.g. `pytest -m reference`.
+addopts = "--tb=short --strict-markers -m 'not reference and not benchmark and not cuda'"
+markers = [
+  "unit: fast tests run on every PR on all platforms (tests/unit)",
+  "verification: convergence, manufactured-solution and Taylor tests (tests/verification)",
+  "reference: reference problems against frozen baselines, needs GFEM_REFERENCE_DIR (tests/reference, deselected by default)",
+  "benchmark: wall-time and memory regression runs (tests/benchmark, deselected by default)",
+  "cuda: needs an NVIDIA GPU and the cuda12 or cuda13 extra (tests/cuda, deselected by default)",
+]
+pythonpath = ["tools"]
+testpaths = ["tests"]
+
+[tool.ruff]
+fix = true
+target-version = "py312"
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff.lint]  # see https://docs.astral.sh/ruff/rules; the ignore list starts from gsim's
+ignore = [
+  "ANN",  # flake8-annotations (too noisy for evolving API)
+  "C408",  # unnecessary-collection-call
+  "C901",  # complex-structure
+  "COM812",  # missing-trailing-comma (conflicts with the formatter)
+  "CPY001",  # missing-copyright-notice (LICENSE covers the repository)
+  "D105",  # undocumented-magic-method
+  "D417",  # undocumented-param (google convention is strict here)
+  "E741",  # ambiguous-variable-name
+  "EM101",  # exception-must-not-use-string-literal
+  "EM102",  # exception-must-not-use-f-string-literal
+  "FBT",  # boolean-trap
+  "FIX002",  # line-contains-todo
+  "N803",  # invalid-argument-name (physics names: E, H, Z0, ...)
+  "N806",  # non-lowercase-variable-in-function (physics names)
+  "PLC0415",  # import-outside-top-level (lazy imports of heavy dependencies)
+  "PLR0913",  # too-many-arguments
+  "PLR2004",  # magic-value-comparison
+  "RET504",  # unnecessary-assign
+  "TC001",  # typing-only-first-party-import
+  "TC002",  # typing-only-third-party-import
+  "TC003",  # typing-only-standard-library-import
+  "TD002",  # missing-todo-author
+  "TD003",  # missing-todo-link
+  "TRY003",  # raise-vanilla-args
+]
+select = ["ALL"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+  "D",  # pydocstyle
+  "INP001",  # implicit-namespace-package
+  "PT011",  # pytest-raises-too-broad
+  "S101",  # assert
+  "S603",  # subprocess-without-shell-equals-true
+  "SLF001",  # private-member-access
+]
+"tools/*.py" = [
+  "INP001",  # implicit-namespace-package (scripts, not a package)
+  "S603",  # subprocess-without-shell-equals-true
+  "T201",  # print
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ty.src]
+include = ["src"]
+
+[tool.uv]
+# The supported platforms: jaxlib has no Intel macOS wheel and
+# ngsolve has no Linux aarch64 wheel.
+environments = [
+  "sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "sys_platform == 'win32' and platform_machine == 'AMD64'",
+]
+conflicts = [[{ extra = "cuda12" }, { extra = "cuda13" }]]
