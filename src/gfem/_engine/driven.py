@@ -29,6 +29,7 @@ adjoint tolerance and kept in the cache entry for later pullbacks.
 from __future__ import annotations
 
 import dataclasses
+import functools
 import math
 from collections.abc import Callable
 
@@ -36,6 +37,7 @@ import jax
 import jax.numpy as jnp
 import ngsolve as ngs
 import numpy as np
+import scipy.constants
 
 from gfem._adjoint import adjoint_tolerance
 from gfem._boundaries import PEC, LumpedPort, WavePort
@@ -47,11 +49,18 @@ from gfem._engine.mesh import EngineMesh
 from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair
 from gfem._linalg import KINDS, Handle, Operator, prepare
+from gfem._sweep.adaptive import AffineSystem, AffineTerm, adaptive_sweep
 from gfem.mesh import Mesh
 from gfem.model import Model
 from gfem.options import SolverOptions
 from gfem.problems import Driven
-from gfem.results import DrivenResult, Field, NetworkParameters
+from gfem.results import (
+    DrivenResult,
+    Field,
+    NetworkParameters,
+    ReducedFields,
+    SweepInfo,
+)
 
 __all__ = ["DEFAULT_SOLVER", "DrivenOperator", "DrivenRule", "driven_operator"]
 
@@ -88,6 +97,32 @@ class DrivenOperator:
     def wavenumber(self, omega: float) -> float:
         """k0 per mesh file unit."""
         return terms.wavenumber(omega, self.built.scale)
+
+    @functools.cached_property
+    def _piece_forms(self) -> list[ngs.BilinearForm]:
+        u, v = self.space.TnT()
+        forms = []
+        for piece in self.pieces:
+            form = ngs.BilinearForm(self.space, symmetric=True, nonassemble=True)
+            form += piece.integrand(u, v)
+            forms.append(form)
+        return forms
+
+    def apply(self, k: int, x: np.ndarray) -> np.ndarray:
+        """``A_k X`` of piece ``k`` (its form without θ), matrix-free.
+
+        ``X`` is ``(ndof,)`` or ``(ndof, m)``; fixed DOFs are not special.
+        """
+        form = self._piece_forms[k]
+        columns = x.reshape(x.shape[0], -1)
+        source = ngs.GridFunction(self.space).vec
+        target = source.CreateVector()
+        out = np.empty(columns.shape, complex)
+        for j, column in enumerate(columns.T):
+            source.FV().NumPy()[:] = column
+            form.Apply(source, target)
+            out[:, j] = target.FV().NumPy()
+        return out.reshape(x.shape)
 
 
 def driven_operator(model: Model, order: int) -> DrivenOperator:
@@ -143,11 +178,6 @@ class DrivenRule:
                 "this version of gfem; use one of "
                 f"{', '.join(repr(k) for k in KINDS)}."
             )
-        if problem.sweep != "uniform":
-            raise NotImplementedError(
-                "Driven(sweep='adaptive') is not available in this version of "
-                "gfem; use sweep='uniform'."
-            )
         _check_supported(model)
         if not model.ports:
             raise ValueError(
@@ -174,6 +204,8 @@ class DrivenRule:
                 )
         #: Indices of the frequencies whose fields are kept.
         self.kept = tuple(problem.frequency.index(f) for f in problem.kept_frequencies)
+        #: Whether the sweep is adaptive (a reduced model).
+        self.adaptive = problem.sweep == "adaptive"
         mesh, active = model.mesh, model._domain.active  # noqa: SLF001
         #: Volume regions with tetrahedra in the solve domain: the field support.
         self.regions = tuple(r for r in mesh.volumes if active[mesh.elements(r)].any())
@@ -204,6 +236,9 @@ class DrivenRule:
             (``fields["solution"]``, ``(ndof, n_freq * n_excited)``,
             frequency-major) or ``None``.
         """
+        if self.adaptive:
+            # never under differentiation: output_specs refuses adaptive sweeps
+            return self._forward_adaptive(model), None
         names = model.port_names
         resistance = np.array([_resistance(p) for p in model.ports])
         columns = [names.index(n) for n in self.excite]
@@ -260,8 +295,108 @@ class DrivenRule:
             )
         return outputs, entry
 
+    def _forward_adaptive(self, model: Model) -> dict[str, object]:
+        """The adaptive sweep of `forward` (see `gfem._sweep.adaptive`).
+
+        Outputs as `forward`'s, except that ``"iterations"`` is per sample,
+        kept fields come as ``"e_basis"`` ``(ndof, n)`` real and
+        ``"e_coordinates"`` ``(n_kept * n_excited, n)`` (frequency-major),
+        and ``"sweep"`` holds ``{"samples": grid indices in solve order,
+        "errors", "converged", "basis_size"}``.
+        """
+        names = model.port_names
+        resistance = np.array([_resistance(p) for p in model.ports])
+        columns = [names.index(n) for n in self.excite]
+        frequencies = self.problem.frequency
+        options = self.options
+        iterations: list[tuple[int, ...]] = []
+        # Palace's dimensionless frequency: omega times the largest extent / c
+        extent = np.ptp(np.asarray(model.mesh.nodes), axis=0).max()
+        z_scale = float(extent) / scipy.constants.c
+        with task_manager(options.threads):
+            op = self.operator(model)
+            vectors = [
+                terms.port_vectors(op.space, op.built, op.order, data)
+                for data in op.ports
+            ]
+            excite = np.stack([vectors[j][0] for j in columns], axis=1)
+            voltage = np.stack([b_l[1] for b_l in vectors], axis=1)
+            free = op.space.FreeDofs()
+
+            def solve(
+                omega: float, rhs: np.ndarray, x0: np.ndarray | None
+            ) -> np.ndarray:
+                handle = prepare(
+                    Operator(op.form(omega), free),
+                    symmetry="complex_symmetric",
+                    kind=self.kind,
+                    device=options.device,
+                    tolerance=options.tolerance,
+                    width=len(columns),
+                )
+                try:
+                    x = handle.solve(rhs, x0=x0)
+                    its = getattr(handle, "iterations", [])
+                    iterations.append(tuple(int(i) for i in its))
+                finally:
+                    handle.free()
+                return x
+
+            identity = np.eye(len(columns))
+            power_waves = np.diag(1.0 / np.sqrt(2 * resistance))
+            system = AffineSystem(
+                thetas=[piece.theta for piece in op.pieces],
+                apply=op.apply,
+                excitation=(
+                    AffineTerm(excite, lambda w: 1j * op.wavenumber(w) * identity),
+                ),
+                outputs=(AffineTerm(voltage, lambda _: power_waves),),
+                solve=solve,
+            )
+            samples = self.problem.samples
+            sweep = adaptive_sweep(
+                system,
+                2 * np.pi * np.asarray(frequencies),
+                tolerance=options.adaptive_tolerance,
+                max_samples=options.adaptive_max_samples,
+                memory=options.adaptive_memory,
+                samples=None
+                if samples is None
+                else [frequencies.index(f) for f in samples],
+                z_scale=z_scale,
+            )
+        s = sweep.outputs
+        s[:, columns, range(len(columns))] -= 1.0
+        z_ref = np.broadcast_to(resistance, (len(frequencies), len(names))).copy()
+        outputs: dict[str, object] = {
+            "s": s,
+            "z_ref": z_ref,
+            "iterations": iterations,
+            "sweep": {
+                "samples": sweep.samples,
+                "errors": sweep.errors,
+                "converged": sweep.converged,
+                "basis_size": sweep.model.size,
+            },
+        }
+        if self.kept:
+            coordinates = sweep.coordinates[list(self.kept)]  # (n_kept, n, n_exc)
+            outputs["e_basis"] = sweep.basis
+            outputs["e_coordinates"] = np.swapaxes(coordinates, 1, 2).reshape(
+                -1, sweep.model.size
+            )
+        return outputs
+
     def output_specs(self, model: Model) -> dict[str, jax.ShapeDtypeStruct]:
         """Shape and dtype of each forward output."""
+        if self.adaptive:
+            raise NotImplementedError(
+                "Driven(sweep='adaptive') cannot run under jax.jit, jax.grad or "
+                "jax.vmap in this version of gfem (no gradients through adaptive "
+                "sweeps yet): its sample set and basis size "
+                "are only known after the solve. Use sweep='uniform', or call "
+                "gfem.solve outside the transformation."
+            )
         n_f, n_p = len(self.problem.frequency), len(model.ports)
         specs = {
             "s": jax.ShapeDtypeStruct((n_f, n_p, len(self.excite)), jnp.complex128),
@@ -396,6 +531,8 @@ class DrivenRule:
         """The public result from the forward outputs."""
         frequencies = self.problem.frequency
         kept = [(frequencies[n], port) for n in self.kept for port in self.excite]
+        if self.adaptive:
+            return self._adaptive_result(outputs, kept)
         e_fields = [
             Field(
                 coefficients=outputs["e_field"][:, k],
@@ -420,6 +557,49 @@ class DrivenRule:
             ),
             e_fields=tuple(e_fields),
             kept=tuple(kept),
+        )
+
+    def _adaptive_result(
+        self, outputs: dict, kept: list[tuple[float, str]]
+    ) -> DrivenResult:
+        """`result` of an adaptive sweep: basis-backed fields, `SweepInfo`."""
+        frequencies = self.problem.frequency
+        info = outputs["sweep"]
+        sampled = set(info["samples"])
+        sweep = SweepInfo(
+            kind="adaptive",
+            solved=tuple(i in sampled for i in range(len(frequencies))),
+            sampled_frequencies=tuple(frequencies[i] for i in info["samples"]),
+            sample_errors=info["errors"],
+            converged=info["converged"],
+            tolerance=self.options.adaptive_tolerance,
+            basis_size=info["basis_size"],
+        )
+        e_fields: ReducedFields | tuple = ()
+        if kept:
+            e_fields = ReducedFields(
+                basis=outputs["e_basis"],
+                coordinates=outputs["e_coordinates"],
+                omega=jnp.asarray([2 * math.pi * f for f, _ in kept]),
+                mesh=self._mesh,
+                quantity="E",
+                unit="V/m",
+                space="hcurl",
+                order=self.options.order,
+                support=self.regions,
+                _excluded=self._excluded,
+            )
+        return DrivenResult(
+            s=NetworkParameters(
+                values=jnp.asarray(outputs["s"]),
+                z_ref=jnp.asarray(outputs["z_ref"]),
+                frequency=frequencies,
+                ports=self.port_names,
+                excited=tuple(self.excite),
+            ),
+            e_fields=e_fields,
+            kept=tuple(kept),
+            sweep=sweep,
         )
 
 
