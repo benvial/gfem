@@ -17,8 +17,10 @@ Backends:
   NGSolve's UMFPACK default. One factorization serves every right-hand side.
 - ``"bddc_gmres"``: NGSolve BDDC with a sparse Cholesky coarse problem, and
   conjugate gradients (Hermitian operators) or GMRES (the others) to the
-  relative ``tolerance``. BDDC reads the fixed DOFs from the space, so the
-  operator's free DOFs must be the space's ``FreeDofs()``.
+  relative ``tolerance``. GMRES takes an initial guess (``solve(B, x0=...)``,
+  e.g. the previous frequency's solution) and then stops at ``tolerance``
+  times the preconditioned right-hand side. BDDC reads the fixed DOFs from
+  the space, so the operator's free DOFs must be the space's ``FreeDofs()``.
 - ``"cudss"`` is not available in this version.
 
 `factorize` gives a ``direct`` handle on a real symmetric SciPy matrix, for
@@ -71,8 +73,18 @@ class Handle(Protocol):
         """Host memory held by the matrix and the backend, in bytes."""
         ...
 
-    def solve(self, B: np.ndarray, *, transpose: bool = False) -> np.ndarray:
-        """Solve ``A X = B`` on the free DOFs; ``B`` is ``(ndof,)`` or ``(ndof, k)``."""
+    def solve(
+        self,
+        B: np.ndarray,
+        *,
+        transpose: bool = False,
+        x0: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Solve ``A X = B`` on the free DOFs; ``B`` is ``(ndof,)`` or ``(ndof, k)``.
+
+        ``x0`` (the shape of ``B``) is an initial guess for iterative
+        backends; direct backends ignore it.
+        """
         ...
 
     def apply(self, X: np.ndarray) -> np.ndarray:

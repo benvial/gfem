@@ -75,16 +75,29 @@ class NgsHandle:
                 out[:, j] = y.FV().NumPy()
         return out[:, 0] if flat else out
 
-    def _inverse_map(self, B: np.ndarray) -> np.ndarray:
-        """Hook for subclasses: the inverse on the free rows of ``B``."""
+    def _inverse_map(self, B: np.ndarray, x0: np.ndarray | None = None) -> np.ndarray:
+        """Hook for subclasses: the inverse on the free rows of ``B``.
+
+        ``x0`` (same shape as ``B``, zero on fixed rows) is an initial guess,
+        which only iterative backends read.
+        """
+        del x0
         return self._map(self._solver, B)
 
-    def solve(self, B: np.ndarray, *, transpose: bool = False) -> np.ndarray:
+    def solve(
+        self,
+        B: np.ndarray,
+        *,
+        transpose: bool = False,
+        x0: np.ndarray | None = None,
+    ) -> np.ndarray:
         """``A_ff X_f = B_f`` on the free DOFs; ``X`` is zero on fixed DOFs.
 
         ``transpose`` solves ``A^T X = B``: the same solve for a real or
         complex symmetric operator, the conjugate one for a complex
-        Hermitian operator.
+        Hermitian operator. ``x0``, the shape of ``B``, is an initial guess
+        for iterative backends (direct ones ignore it); its fixed rows are
+        not read.
 
         Raises:
             RuntimeError: The handle was freed.
@@ -100,11 +113,25 @@ class NgsHandle:
                 "operator."
             )
         if conjugate:
-            return np.conj(self.solve(np.conj(B)))
-        B = np.where(self._free if B.ndim == 1 else self._free[:, None], B, 0)
+            guess = None if x0 is None else np.conj(x0)
+            return np.conj(self.solve(np.conj(B), x0=guess))
+        free = self._free if B.ndim == 1 else self._free[:, None]
+        B = np.where(free, B, 0)
+        if x0 is not None:
+            x0 = np.asarray(x0)
+            if x0.shape != B.shape:
+                raise ValueError(
+                    f"The initial guess has shape {x0.shape}, the right-hand "
+                    f"sides {B.shape}."
+                )
+            x0 = np.where(free, x0, 0)
         if not self._complex and np.iscomplexobj(B):
-            return self._inverse_map(B.real) + 1j * self._inverse_map(B.imag)
-        return self._inverse_map(B)
+            re = None if x0 is None else x0.real
+            im = None if x0 is None else x0.imag
+            return self._inverse_map(B.real, re) + 1j * self._inverse_map(B.imag, im)
+        if x0 is not None and not self._complex:
+            x0 = x0.real
+        return self._inverse_map(B, x0)
 
     def apply(self, X: np.ndarray) -> np.ndarray:
         """``A X`` with the full assembled matrix.

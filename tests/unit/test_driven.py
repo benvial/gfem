@@ -1,0 +1,399 @@
+"""gfem.solve on a Driven problem: lumped ports on a parallel-plate line.
+
+The line runs along x between PEC plates at z = 0 and z = h, with PMC side
+walls (the default), so its TEM mode is exact: a uniform E_z. Lumped ports
+on the end faces see a transmission line of impedance Z0 = eta0 h / (W
+sqrt(eps_r)) and the S-parameters have a closed form (ABCD matrices), up to
+the discretization's dispersion error.
+"""
+
+import cmath
+import math
+
+import jax
+import numpy as np
+import pytest
+import scipy.constants as const
+import structured_meshes as sm
+
+import gfem
+from gfem._engine import terms
+from gfem._engine.driven import DrivenRule
+
+L, W, H = 10.0, 2.0, 1.0  # mm
+EPS = 4.0
+F = 5e9
+R = 50.0
+ETA0 = const.mu_0 * const.c
+
+
+def _mesh(tmp, **kwargs):
+    path = tmp / "line.msh"
+    sm.write_msh22(path, sm.strip_line(L, W, H, (10, 1, 1), **kwargs))
+    return gfem.Mesh.from_gmsh(path, length_unit="mm")
+
+
+@pytest.fixture(scope="module")
+def mesh(tmp_path_factory):
+    return _mesh(tmp_path_factory.mktemp("line"))
+
+
+@pytest.fixture(scope="module")
+def line(mesh):
+    return gfem.Model(
+        mesh,
+        materials={"dielectric": gfem.Material(eps_r=EPS)},
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+        ports=[
+            gfem.LumpedPort("p1", "port1", "+z"),
+            gfem.LumpedPort("p2", "port2", "+z"),
+        ],
+    )
+
+
+def _abcd_line(f, length_m, eps=EPS):
+    beta = 2 * math.pi * f / const.c * math.sqrt(eps)
+    z0 = ETA0 * H / (W * math.sqrt(eps))
+    c, s = math.cos(beta * length_m), math.sin(beta * length_m)
+    return np.array([[c, 1j * z0 * s], [1j * s / z0, c]])
+
+
+def _shunt(y):
+    return np.array([[1, 0], [y, 1]], complex)
+
+
+def _s_from_abcd(m, r=R):
+    (a, b), (c, d) = m
+    den = a + b / r + c * r + d
+    return np.array(
+        [
+            [(a + b / r - c * r - d) / den, 2 * (a * d - b * c) / den],
+            [2 / den, (-a + b / r - c * r + d) / den],
+        ]
+    )
+
+
+def _s(model, problem=None, **options):
+    problem = problem or gfem.Driven(frequency=F)
+    options.setdefault("linear_solver", "direct")
+    return gfem.solve(model, problem, options=gfem.SolverOptions(**options))
+
+
+# --- the problem value -----------------------------------------------------------
+
+
+def test_driven_normalizes_its_frequencies_and_excitations():
+    p = gfem.Driven(frequency=[1e9, 2e9], excite="p1")
+    assert p.frequency == (1e9, 2e9)
+    assert p.excite == ("p1",)
+    assert p.sweep == "uniform"
+    assert gfem.Driven(frequency=3e9).frequency == (3e9,)
+    assert gfem.Driven(frequency=3e9).excite is None
+    assert gfem.Driven(frequency=1e9, excite=["a", "b"]).excite == ("a", "b")
+
+
+def test_driven_is_frozen_hashable_and_static_under_jax():
+    p = gfem.Driven(frequency=np.array([1e9, 2e9]))
+    assert p == gfem.Driven(frequency=(1e9, 2e9))
+    assert hash(p) == hash(gfem.Driven(frequency=[1e9, 2e9]))
+    assert jax.tree.leaves(p) == []
+    with pytest.raises(AttributeError):
+        p.sweep = "adaptive"  # ty: ignore[invalid-assignment]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "error", "message"),
+    [
+        ({"frequency": -1.0}, ValueError, "> 0 Hz"),
+        ({"frequency": []}, ValueError, "one frequency"),
+        ({"frequency": 1e9, "sweep": "fast"}, ValueError, "'uniform'"),
+        ({"frequency": 1e9, "excite": []}, ValueError, "at least one port"),
+        ({"frequency": 1e9, "excite": ["a", "a"]}, ValueError, "twice"),
+        ({"frequency": 1e9, "excite": [1]}, TypeError, "port names"),
+    ],
+)
+def test_driven_rejects_bad_values(kwargs, error, message):
+    with pytest.raises(error, match=message):
+        gfem.Driven(**kwargs)
+
+
+# --- network parameters ----------------------------------------------------------
+
+
+def test_network_parameters_index_by_port_name():
+    values = np.arange(12).reshape(3, 2, 2) * (1 + 1j)
+    net = gfem.NetworkParameters(
+        values=values,
+        z_ref=np.full((3, 2), 50.0),
+        frequency=(1e9, 2e9, 3e9),
+        ports=("a", "b"),
+        excited=("a", "b"),
+    )
+    np.testing.assert_array_equal(net["b", "a"], values[:, 1, 0])
+    np.testing.assert_allclose(net.db("a", "b"), 20 * np.log10(np.abs(values[:, 0, 1])))
+    np.testing.assert_array_equal(net.frequency, [1e9, 2e9, 3e9])
+    leaves = jax.tree_util.tree_flatten_with_path(net)[0]
+    assert [jax.tree_util.keystr(p) for p, _ in leaves] == [".values", ".z_ref"]
+    with pytest.raises(KeyError, match="'c'"):
+        net["c", "a"]
+    with pytest.raises(KeyError, match="not excited"):
+        gfem.NetworkParameters(
+            values=values[:, :, :1],
+            z_ref=np.full((3, 2), 50.0),
+            frequency=(1e9, 2e9, 3e9),
+            ports=("a", "b"),
+            excited=("a",),
+        )["a", "b"]
+
+
+# --- physics on the parallel-plate line ------------------------------------------
+
+
+def test_two_port_line_matches_the_transmission_line(line):
+    result = _s(line)
+    assert isinstance(result, gfem.DrivenResult)
+    s = np.asarray(result.s.values)
+    assert s.shape == (1, 2, 2)
+    expected = _s_from_abcd(_abcd_line(F, L * 1e-3))
+    np.testing.assert_allclose(s[0], expected, atol=2e-3)
+    np.testing.assert_array_equal(result.s.z_ref, [[R, R]])
+    assert result.s.ports == result.s.excited == ("p1", "p2")
+    np.testing.assert_array_equal(result.frequency, [F])
+
+
+def test_lossless_line_is_reciprocal_and_conserves_power(line):
+    # The port loads also absorb the (tiny) non-TEM part of the discrete field,
+    # which the port voltage does not see: S is passive, unitary to ~1e-8.
+    s = np.asarray(_s(line, gfem.Driven(frequency=[2e9, 7e9])).s.values)
+    for m in s:
+        np.testing.assert_allclose(m, m.T, atol=1e-12)
+        np.testing.assert_allclose(m.conj().T @ m, np.eye(2), atol=1e-6)
+        assert np.linalg.svd(m, compute_uv=False).max() <= 1 + 1e-12
+
+
+def test_lossy_line_is_passive(mesh):
+    lossy = gfem.Model(
+        mesh,
+        materials={
+            "dielectric": gfem.Material(eps_r=EPS, tan_delta=0.02, conductivity=0.01)
+        },
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+        ports=[
+            gfem.LumpedPort("p1", "port1", "+z"),
+            gfem.LumpedPort("p2", "port2", "+z"),
+        ],
+    )
+    s = np.asarray(_s(lossy).s.values)[0]
+    np.testing.assert_allclose(s, s.T, atol=1e-12)
+    assert np.linalg.svd(s, compute_uv=False).max() < 1 - 1e-3
+
+
+def test_bddc_gmres_is_the_default_and_matches_direct(line):
+    problem = gfem.Driven(frequency=[3e9, 4e9])
+    direct = np.asarray(_s(line, problem).s.values)
+    rule = DrivenRule(line, problem, gfem.SolverOptions())
+    assert rule.kind == "bddc_gmres"
+    outputs, entry = rule.forward(line, keep=False)
+    assert entry is None
+    np.testing.assert_allclose(outputs["s"], direct, atol=1e-6)
+    # GMRES at the second frequency starts from the first one's solution
+    assert len(outputs["iterations"]) == 2
+    assert all(len(its) == 2 for its in outputs["iterations"])
+
+
+def test_excite_selects_the_columns_of_s(line):
+    full = np.asarray(_s(line).s.values)
+    one = _s(line, gfem.Driven(frequency=F, excite="p2")).s
+    assert one.excited == ("p2",)
+    assert np.asarray(one.values).shape == (1, 2, 1)
+    np.testing.assert_allclose(one.values, full[:, :, 1:], atol=1e-12)
+
+
+def test_a_multi_element_port_drives_its_elements_in_parallel(tmp_path, line):
+    split = gfem.Model(
+        _mesh(tmp_path, split_ports=True),
+        materials={"dielectric": gfem.Material(eps_r=EPS)},
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+        ports=[
+            gfem.LumpedPort("p1", ("port1a", "port1b"), ("+z", "+z")),
+            gfem.LumpedPort("p2", ("port2a", "port2b"), ("-z", "-z")),
+        ],
+    )
+    s = np.asarray(_s(split).s.values)
+    ref = np.asarray(_s(line).s.values)
+    # port 2 is driven the other way round: its waves change sign
+    flip = np.diag([1, -1])
+    np.testing.assert_allclose(s[0], flip @ ref[0] @ flip, atol=1e-10)
+
+
+def test_reactive_terminations_load_the_line_in_parallel(mesh):
+    lh, cf = 2e-9, 0.3e-12
+    model = gfem.Model(
+        mesh,
+        materials={"dielectric": gfem.Material(eps_r=EPS)},
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+        ports=[
+            gfem.LumpedPort("p1", "port1", "+z", resistance=R, inductance=lh),
+            gfem.LumpedPort("p2", "port2", "+z", resistance=R, capacitance=cf),
+        ],
+    )
+    s = np.asarray(_s(model).s.values)[0]
+    w = 2 * math.pi * F
+    abcd = _shunt(1 / (1j * w * lh)) @ _abcd_line(F, L * 1e-3) @ _shunt(1j * w * cf)
+    np.testing.assert_allclose(s, _s_from_abcd(abcd), atol=2e-3)
+
+
+def test_first_order_absorbing_boundary_matches_the_tem_wave(mesh):
+    model = gfem.Model(
+        mesh,
+        materials={"dielectric": gfem.Material(eps_r=EPS)},
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top"), gfem.Absorbing("port2")],
+        ports=[gfem.LumpedPort("p1", "port1", "+z", impedance=R)],
+    )
+    s = np.asarray(_s(model, gfem.Driven(frequency=[2e9, 6e9])).s.values)
+    z0 = ETA0 * H / (W * math.sqrt(EPS))
+    np.testing.assert_allclose(s[:, 0, 0], (z0 - R) / (z0 + R), atol=1e-5)
+
+
+def test_good_conductor_plates_approach_pec_and_lose_power(mesh, line):
+    def plates(sigma):
+        return gfem.Model(
+            mesh,
+            materials={"dielectric": gfem.Material(eps_r=EPS)},
+            boundaries=[
+                gfem.Conductor("bottom", sigma, 1e-6),
+                gfem.Conductor("top", sigma, 1e-6),
+            ],
+            ports=line.ports,
+        )
+
+    pec = np.asarray(_s(line).s.values)[0]
+    copper = np.asarray(_s(plates(5.8e7)).s.values)[0]
+    poor = np.asarray(_s(plates(1e5)).s.values)[0]
+    np.testing.assert_allclose(copper, copper.T, atol=1e-12)
+    assert abs(copper[1, 0] - pec[1, 0]) < 0.05
+    assert np.linalg.svd(copper, compute_uv=False).max() < 1
+    assert abs(poor[1, 0]) < abs(copper[1, 0])
+
+
+def test_conductor_surface_impedance_and_exterior_thickness():
+    sigma, t, f = 5.8e7, 1e-6, 10e9
+    w = 2 * math.pi * f
+    delta = math.sqrt(2 / (const.mu_0 * sigma * w))
+    thick = terms.surface_impedance(sigma, None, w)
+    assert thick == pytest.approx((1 + 1j) / (sigma * delta), rel=1e-14)
+    # a film much thinner than the skin depth: each face carries half the
+    # current, 2 / (sigma t) per face
+    film = terms.surface_impedance(sigma, delta / 1000, w)
+    assert film.real == pytest.approx(2 / (sigma * delta / 1000), rel=1e-5)
+    # a film much thicker than the skin depth is the thick conductor
+    assert terms.surface_impedance(sigma, 50 * delta, w) == pytest.approx(thick)
+    assert terms.surface_impedance(sigma, t, w) != pytest.approx(thick)
+
+
+def test_frequency_terms_are_affine_pieces():
+    piece = terms.Piece("mass", lambda w: -(w**2), lambda u, v: u * v)
+    assert piece.theta(2.0) == -4.0
+    with pytest.raises(ValueError, match="not affine"):
+        terms.Piece("bad", lambda w: np.ones(3) * w, lambda u, v: u * v)
+
+
+def test_operator_pieces_sum_to_the_driven_operator(line):
+    rule = DrivenRule(line, gfem.Driven(frequency=F), gfem.SolverOptions())
+    op = rule.operator(line)
+    names = [p.name for p in op.pieces]
+    assert names[:2] == ["curl_curl", "mass"]
+    assert "port p1 R" in names
+    assert all(callable(p.theta) for p in op.pieces)
+
+
+# --- what the driven problem refuses ---------------------------------------------
+
+
+def _with(line, **changes):
+    return line.replace(**changes)
+
+
+@pytest.mark.parametrize(
+    ("change", "problem", "error", "message"),
+    [
+        (
+            {"boundaries": [gfem.PEC("bottom"), gfem.Impedance("top", resistance=1.0)]},
+            None,
+            NotImplementedError,
+            "Impedance",
+        ),
+        (
+            {"boundaries": [gfem.PEC("bottom"), gfem.Absorbing("top", order=2)]},
+            None,
+            NotImplementedError,
+            "order=2",
+        ),
+        (
+            {},
+            gfem.Driven(frequency=F, sweep="adaptive"),
+            NotImplementedError,
+            "adaptive",
+        ),
+        ({}, gfem.Driven(frequency=F, excite="p3"), ValueError, "'p3'"),
+        ({"ports": []}, None, ValueError, "no ports"),
+        (
+            {"ports": [gfem.LumpedPort("p1", "port1", "+z", capacitance=1e-12)]},
+            None,
+            ValueError,
+            "resistance",
+        ),
+        (
+            {"ports": [gfem.LumpedPort("p1", "port1", "+x")]},
+            None,
+            gfem.PortGeometryError,
+            "tangent",
+        ),
+    ],
+)
+def test_unsupported_or_inconsistent_driven_inputs_raise(
+    line, change, problem, error, message
+):
+    model = _with(line, **change)
+    with pytest.raises(error, match=message):
+        _s(model, problem)
+
+
+def test_wave_ports_are_not_available_yet(tmp_path):
+    mesh = gfem.Mesh.from_gmsh(
+        sm.write_msh22(tmp_path / "l.msh", sm.strip_line(L, W, H, (2, 1, 1))),
+        length_unit="mm",
+    )
+    model = gfem.Model(
+        mesh,
+        materials={"dielectric": gfem.Material(eps_r=EPS)},
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+        ports=[gfem.WavePort("p1", "port1"), gfem.LumpedPort("p2", "port2", "+z")],
+    )
+    with pytest.raises(NotImplementedError, match="WavePort"):
+        _s(model)
+
+
+def test_result_repr_and_db(line):
+    result = _s(line)
+    assert "p1" in repr(result)
+    assert "GHz" in repr(result)
+    s21 = complex(np.asarray(result.s["p2", "p1"])[0])
+    assert float(result.s.db("p2", "p1")[0]) == pytest.approx(20 * math.log10(abs(s21)))
+    assert cmath.isfinite(s21)
+
+
+def test_driven_job_and_result_round_trip(line, tmp_path):
+    problem = gfem.Driven(frequency=[2e9, 3e9], excite="p1")
+    options = gfem.SolverOptions(linear_solver="direct")
+    job = gfem.Job.from_json(
+        gfem.Job(line, problem, options).to_json(tmp_path / "j.json")
+    )
+    assert job.problem == problem
+    result = job.run(out=tmp_path / "results")
+    loaded = gfem.load_result(tmp_path / "results")
+    assert type(loaded) is gfem.DrivenResult
+    assert (loaded.s.ports, loaded.s.excited) == (("p1", "p2"), ("p1",))
+    assert loaded.s.frequency == (2e9, 3e9)
+    np.testing.assert_array_equal(loaded.s.values, result.s.values)
+    np.testing.assert_array_equal(loaded.s.z_ref, result.s.z_ref)

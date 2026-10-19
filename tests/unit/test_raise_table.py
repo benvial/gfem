@@ -81,6 +81,17 @@ EXPECTED |= {
     for kind in [("nodes",)] + [("material", "fill", p) for p in ALL_PROPERTIES]
 }
 
+# Driven results are not differentiable yet: every leaf raises for the inputs
+# the driven forms read, and is an exact zero for the thermal properties.
+EM_PROPERTIES = ("eps_r", "mu_r", "tan_delta", "conductivity")
+EXPECTED |= {
+    ("driven", out, kind): (
+        ZERO if kind[0] == "material" and kind[2] not in EM_PROPERTIES else RAISES
+    )
+    for out in ("s.values", "s.z_ref")
+    for kind in [("nodes",)] + [("material", "dielectric", p) for p in ALL_PROPERTIES]
+}
+
 
 def _field(mesh, region):
     # values vary per element, so the terminal potentials depend on them
@@ -103,7 +114,23 @@ def model(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def cases(model):
+def driven_model(tmp_path_factory):
+    path = tmp_path_factory.mktemp("line") / "line.msh"
+    sm.write_msh22(path, sm.strip_line(4.0, 2.0, 1.0, (2, 1, 1)))
+    mesh = gfem.Mesh.from_gmsh(path, length_unit="mm")
+    return gfem.Model(
+        mesh,
+        materials={"dielectric": _field(mesh, "dielectric")},
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+        ports=[
+            gfem.LumpedPort("p1", "port1", "+z"),
+            gfem.LumpedPort("p2", "port2", "+z"),
+        ],
+    )
+
+
+@pytest.fixture(scope="module")
+def cases(model, driven_model):
     mesh = gfem.Mesh.from_gmsh(DATA / "parallel_plate.msh", length_unit="um")
     port_model = gfem.Model(
         mesh,
@@ -114,6 +141,7 @@ def cases(model):
     return {
         "electrostatic": (model, PROBLEMS["electrostatic"]),
         "port_mode": (port_model, gfem.PortMode("p1", 10e9)),
+        "driven": (driven_model, gfem.Driven(frequency=5e9)),
     }
 
 

@@ -9,7 +9,7 @@ problem's type.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar
 
 import jax
@@ -17,7 +17,7 @@ import numpy as np
 
 from gfem._checks import is_traced
 
-__all__ = ["Electrostatic", "PortMode"]
+__all__ = ["Driven", "Electrostatic", "PortMode"]
 
 
 def _surfaces(value: Any, what: str) -> tuple[str, ...]:
@@ -124,23 +124,21 @@ class Electrostatic:
 jax.tree_util.register_static(Electrostatic)
 
 
-def _frequencies(value: Any) -> tuple[float, ...]:
+def _frequencies(value: Any, owner: str = "PortMode") -> tuple[float, ...]:
     if is_traced(value):
-        raise ValueError("PortMode.frequency must be fixed numbers, not traced.")
+        raise ValueError(f"{owner}.frequency must be fixed numbers, not traced.")
     try:
         f = np.asarray(value, dtype=float)
     except (TypeError, ValueError):
         f = np.empty((0, 0))
     if f.ndim > 1 or f.size == 0:
         raise ValueError(
-            "PortMode.frequency must be one frequency or a 1D sequence of them, in "
+            f"{owner}.frequency must be one frequency or a 1D sequence of them, in "
             f"Hz; got {value!r}."
         )
     f = f.reshape(-1)
     if not np.isfinite(f).all() or (f <= 0).any():
-        raise ValueError(
-            f"PortMode.frequency must be finite and > 0 Hz, got {value!r}."
-        )
+        raise ValueError(f"{owner}.frequency must be finite and > 0 Hz, got {value!r}.")
     return tuple(float(x) for x in f)
 
 
@@ -197,3 +195,74 @@ class PortMode:
 
 
 jax.tree_util.register_static(PortMode)
+
+
+_SWEEPS = ("uniform", "adaptive")
+
+
+def _port_names(value: Any) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    names = (value,) if isinstance(value, str) else tuple(value)
+    if not all(isinstance(n, str) for n in names):
+        raise TypeError(f"Driven.excite takes port names (strings), got {value!r}.")
+    if not names:
+        raise ValueError(
+            "Driven.excite needs at least one port name; None excites every port."
+        )
+    if len(set(names)) != len(names):
+        raise ValueError(f"Driven.excite lists a port twice: {value!r}.")
+    return names
+
+
+@dataclasses.dataclass(frozen=True, init=False)
+class Driven:
+    """The frequency-domain response of a model to its ports.
+
+    At each frequency, each excited port in turn is fed 1 W time-averaged
+    incident power while every other port is terminated in its own
+    impedance, and the electric field solves the time-harmonic Maxwell
+    equations (e^{+iωt}) in the electromagnetic solve domain. The result is
+    the scattering matrix (power waves, each port's reference impedance its
+    resistance; see `gfem.NetworkParameters`).
+
+    Args:
+        frequency: One frequency or a 1D sequence of them, Hz.
+        excite: The port name or names fed in turn, one column of S each, in
+            this order. ``None``: every port of the model, in model order.
+        sweep: ``"uniform"`` solves every frequency in full.
+            ``"adaptive"`` (a reduced model sampled at a few frequencies) is
+            not available in this version.
+
+    Raises:
+        TypeError: ``excite`` is not port names.
+        ValueError: A frequency is not finite and positive, ``excite`` is
+            empty or repeats a port, or ``sweep`` is unknown.
+
+    Example:
+        ``gfem.Driven(frequency=np.linspace(1e9, 100e9, 100))``
+    """
+
+    frequency: tuple[float, ...]
+    excite: tuple[str, ...] | None
+    sweep: str
+    _rule: ClassVar[str] = "gfem._engine.driven:DrivenRule"
+
+    def __init__(
+        self,
+        frequency: Any,
+        *,
+        excite: str | Sequence[str] | None = None,
+        sweep: str = "uniform",
+    ) -> None:
+        """Validate and normalize (see the class docstring)."""
+        if sweep not in _SWEEPS:
+            raise ValueError(
+                f"Driven.sweep must be 'uniform' or 'adaptive', got {sweep!r}."
+            )
+        object.__setattr__(self, "frequency", _frequencies(frequency, "Driven"))
+        object.__setattr__(self, "excite", _port_names(excite))
+        object.__setattr__(self, "sweep", sweep)
+
+
+jax.tree_util.register_static(Driven)
