@@ -12,7 +12,13 @@ import jax as _jax
 _jax.config.update("jax_enable_x64", True)
 
 # Submodules are imported after the switch, so no gfem array is ever float32.
-from gfem.errors import NonDifferentiableError, RegionNotFoundError  # noqa: E402
+from gfem import shape  # noqa: E402
+from gfem.errors import (  # noqa: E402
+    MeshQualityError,
+    MeshQualityWarning,
+    NonDifferentiableError,
+    RegionNotFoundError,
+)
 from gfem.mesh import Mesh, Region  # noqa: E402
 from gfem.model import (  # noqa: E402
     PEC,
@@ -41,6 +47,8 @@ __all__ = [
     "Material",
     "MaterialField",
     "Mesh",
+    "MeshQualityError",
+    "MeshQualityWarning",
     "Model",
     "NonDifferentiableError",
     "Region",
@@ -49,4 +57,5 @@ __all__ = [
     "WavePort",
     "__version__",
     "enclosed_by",
+    "shape",
 ]

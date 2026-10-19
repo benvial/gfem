@@ -41,3 +41,22 @@ class NonDifferentiableError(TypeError):
     value in an objective without its derivative, wrap it in
     `jax.lax.stop_gradient`.
     """
+
+
+class MeshQualityError(ValueError):
+    """A moved mesh has an inverted element, so a solve on it is meaningless.
+
+    The message names the element's region and position, and the remedies:
+    take a smaller step, accept steps on `gfem.shape.quality`, parametrize
+    the shape more smoothly, or remesh at the current geometry and restart.
+    """
+
+
+class MeshQualityWarning(UserWarning):
+    """A moved mesh has elements that lost most of their imported quality.
+
+    It fires when an element's scaled Jacobian falls below a quarter of its
+    value on the imported mesh. The solve still runs, but its accuracy
+    degrades and the next steps may invert elements. Filter it with Python's
+    `warnings` module.
+    """
