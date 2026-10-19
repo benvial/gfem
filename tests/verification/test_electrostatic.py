@@ -105,6 +105,18 @@ def test_two_terminal_stack_gives_the_maxwell_matrix_of_two_capacitors(tmp_path)
     expected = np.array([[c2, -c2], [-c2, c1 + c2]])
     assert cap.terminals == ("top", "mid")
     np.testing.assert_allclose(cap.capacitance, expected, rtol=1e-11)
+    # top couples only to mid (c2), mid to ground through the oxide (c1)
+    np.testing.assert_allclose(
+        cap.mutual, [[0, c2], [c2, c1]], rtol=1e-11, atol=1e-11 * c1
+    )
+    # elastance: unit charge on top raises it by 1/c1 + 1/c2, mid by 1/c1
+    np.testing.assert_allclose(
+        cap.inverse, [[1 / c1 + 1 / c2, 1 / c1], [1 / c1, 1 / c1]], rtol=1e-10
+    )
+    # top at 1 V fills only the nitride; mid at 1 V both layers
+    assert list(cap.energy) == ["oxide", "nitride"]
+    np.testing.assert_allclose(cap.energy["oxide"], [0, c1 / 2], atol=1e-11 * c1)
+    np.testing.assert_allclose(cap.energy["nitride"], [c2 / 2, c2 / 2], rtol=1e-11)
 
 
 # --- coaxial line ----------------------------------------------------------------
@@ -154,3 +166,25 @@ def test_coax_higher_orders_converge_at_the_straight_sided_geometry_rate(
 def test_coax_error_falls_with_order_on_one_mesh(tmp_path):
     errors = [_coax_error(tmp_path, 4, order) for order in (1, 2, 3)]
     assert errors[0] > 10 * errors[1] > errors[2]
+
+
+def test_coax_capacitance_and_energy_agree_on_both_solvers(tmp_path):
+    # order 3: BDDC + CG iterates (face DOFs are off the wirebasket)
+    mesh = sm.coax_quarter(A, B, LENGTH, n_r=4, n_theta=8)
+    model = gfem.Model(
+        gfem.Mesh.from_gmsh(sm.write_msh22(tmp_path / "coax.msh", mesh)),
+        materials={"dielectric": gfem.Material()},
+    )
+    problem = gfem.Electrostatic(terminals={"inner": "inner"}, ground="outer")
+    caps = [
+        gfem.solve(model, problem, options=gfem.SolverOptions(order=3, linear_solver=s))
+        for s in ("direct", "bddc_gmres")
+    ]
+    np.testing.assert_allclose(caps[1].capacitance, caps[0].capacitance, rtol=1e-10)
+    np.testing.assert_allclose(
+        caps[1].energy["dielectric"], caps[0].energy["dielectric"], rtol=1e-10
+    )
+    # the stored energy at 1 V is C / 2
+    np.testing.assert_allclose(
+        caps[0].energy["dielectric"], caps[0].capacitance[0, 0] / 2, rtol=1e-12
+    )

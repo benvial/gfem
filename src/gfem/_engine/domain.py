@@ -57,12 +57,19 @@ def domain_key(model: Model) -> tuple:
     return ("em", model._domain.excluded)  # noqa: SLF001
 
 
-def h1_space(model: Model, built: EngineMesh, order: int) -> ngs.FESpace:
+def h1_space(
+    model: Model, built: EngineMesh, order: int, dirichlet: tuple[str, ...] = ()
+) -> ngs.FESpace:
     """Real H1 space of ``order`` on the electromagnetic domain, compressed.
 
-    No Dirichlet DOFs are marked: problems fix the DOFs they need.
+    The DOFs on the ``dirichlet`` surfaces (exact names) are fixed: they are
+    left out of ``FreeDofs()``, which BDDC reads.
     """
-    space = ngs.H1(built.mesh, order=order, definedon=em_region(model, built))
+    wanted = set(dirichlet)
+    bcs = [j + 1 for j, n in enumerate(built.mesh.GetBoundaries()) if n in wanted]
+    space = ngs.H1(
+        built.mesh, order=order, definedon=em_region(model, built), dirichlet=bcs
+    )
     return ngs.Compress(space)
 
 

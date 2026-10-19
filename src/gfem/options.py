@@ -39,8 +39,11 @@ class SolverOptions:
     Attributes:
         order: Polynomial order of the Nédélec (H(curl)) and H1 elements.
         linear_solver: ``"auto"`` (each problem type's default: BDDC + GMRES
-            for driven and electrostatic, direct for eigenmode),
-            ``"bddc_gmres"`` or ``"direct"`` (sparse Cholesky).
+            for driven, BDDC + conjugate gradients for electrostatic, direct
+            for eigenmode), ``"bddc_gmres"`` (BDDC with the Krylov method
+            that fits the operator: conjugate gradients for electrostatic)
+            or ``"direct"`` (sparse Cholesky, one factorization reused for
+            every right-hand side).
         tolerance: Relative residual of iterative solves.
         device: Where the direct solver runs: ``"cpu"``, ``"cuda"`` or
             ``"cuda:N"`` (the N-th GPU). A GPU needs
