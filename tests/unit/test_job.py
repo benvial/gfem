@@ -331,7 +331,7 @@ def test_port_mode_result_round_trips_with_its_field(tmp_path):
     result = job.run(out=tmp_path / "results")
     loaded = gfem.load_result(tmp_path / "results")
     assert (loaded.port, loaded.mode) == (result.port, result.mode)
-    for name in ("frequency", "gamma", "Z_PV", "residual"):
+    for name in ("frequency", "gamma", "Z_PV", "residual", "solved"):
         np.testing.assert_array_equal(getattr(loaded, name), getattr(result, name))
     points = np.asarray(mesh.nodes)[mesh.triangles[mesh.elements("port1")][:, 0]]
     np.testing.assert_array_equal(loaded.e_field.at(points), result.e_field.at(points))

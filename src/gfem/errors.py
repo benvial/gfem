@@ -77,3 +77,36 @@ class PortModeError(RuntimeError):
     frequency of the band. The message names the port, the frequency and the
     remedy.
     """
+
+
+class PortModeTrackingWarning(UserWarning):
+    """A wave port's mode crosses another mode inside the frequency band.
+
+    gfem follows the physical mode (by its overlap with the neighbouring
+    frequency's mode) through the crossing, so beyond it the mode is no
+    longer the n-th in Palace's per-frequency order and S-parameters differ
+    from Palace's there. Filter it with Python's `warnings` module.
+    """
+
+
+class DeviceUnavailableError(RuntimeError):
+    """``SolverOptions.device`` names a GPU that this machine cannot use.
+
+    Raised when the solve starts, never when the options are built, so a job
+    written on a laptop can run on a GPU machine. gfem never falls back to
+    the CPU silently. The message gives the reason and the fix: install
+    ``gfem[cuda12]`` (or ``gfem[cuda13]``), the CUDA driver's error, or the
+    number of devices for an out-of-range ``"cuda:N"``. Pass
+    ``device="cpu"`` (``--device cpu`` on the command line) to run on the
+    CPU instead.
+    """
+
+
+class DeviceMemoryWarning(UserWarning):
+    """JAX may hold most of the GPU memory that the GPU solver needs.
+
+    JAX on a GPU preallocates 75% of the device memory by default. Set the
+    environment variable ``XLA_PYTHON_CLIENT_PREALLOCATE=false`` (or
+    ``XLA_PYTHON_CLIENT_MEM_FRACTION``) before importing JAX to leave room
+    for the solver's factorization.
+    """

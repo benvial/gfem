@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import gfem
+from gfem._engine.cache import discretization
 from gfem._engine.domain import em_region, hcurl_space
 from gfem._engine.mesh import to_ngsolve
 
@@ -97,3 +98,17 @@ def test_order2_free_dofs_match_the_cracked_palace_domain(case, ndof):
     )
     space = hcurl_space(model, to_ngsolve(mesh), order=2)
     assert sum(space.FreeDofs()) == ndof
+
+
+def test_solves_on_one_mesh_share_spaces_per_physics_domain():
+    mesh = gfem.Mesh.from_gmsh(DATA / "two_box_msh41.msh")
+    problem = gfem.Electrostatic(
+        terminals={"metal": ["metal_xy", "metal_z"]}, ground="sub__None"
+    )
+    full, cut = _model(mesh), _model(mesh, (METAL,))
+    retuned = full.with_material("sub", gfem.Material(eps_r=3.9))
+    for model in (full, cut, retuned):
+        gfem.solve(model, problem)
+    domains = {key[0] for key in discretization(mesh).spaces}
+    # the excluded metal makes another physics domain; a material does not
+    assert domains == {("em", ()), ("em", cut._domain.excluded)}

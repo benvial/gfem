@@ -216,7 +216,7 @@ def test_the_tem_mode_has_a_voltage_of_positive_real_part(plate_mesh):
 def test_result_is_a_pytree_of_its_arrays(plate_mesh):
     result = gfem.solve(plate(plate_mesh), gfem.PortMode("p1", [1e9, 2e9]))
     leaves = jax.tree_util.tree_leaves(result)
-    assert len(leaves) == 4
+    assert len(leaves) == 5  # frequency, gamma, Z_PV, residual, solved
     assert "PortModeResult" in repr(result)
     assert "Z_PV" in repr(result)
 
@@ -243,9 +243,17 @@ def test_wave_port_mode_is_the_default(guide_mesh):
     assert result.mode == 2
 
 
-def test_below_cutoff_raises_port_mode_error(guide_mesh):
-    with pytest.raises(gfem.PortModeError, match=r"does not propagate at 5 GHz"):
-        gfem.solve(guide(guide_mesh), gfem.PortMode("p1", [10e9, 5e9]))
+def test_a_band_below_cutoff_raises_port_mode_error(guide_mesh):
+    with pytest.raises(gfem.PortModeError, match=r"does not propagate in the band"):
+        gfem.solve(guide(guide_mesh), gfem.PortMode("p1", [5e9, 4e9]))
+
+
+def test_a_cutoff_inside_the_band_raises_with_its_estimate(guide_mesh):
+    # TE10 of WR-90 is cut off at c / (2 a) = 6.557 GHz
+    with pytest.raises(
+        gfem.PortModeError, match=r"cutoff inside the band 5-10 GHz, at about 6.5[56]"
+    ):
+        gfem.solve(guide(guide_mesh), gfem.PortMode("p1", np.linspace(5e9, 10e9, 41)))
 
 
 def test_conductor_on_a_port_edge_asks_for_pec_edges(guide_mesh):

@@ -199,6 +199,7 @@ class DrivenRule:
                     kind=self.kind,
                     device=self.options.device,
                     tolerance=self.options.tolerance,
+                    width=len(columns),
                 )
                 try:
                     rhs = 1j * op.wavenumber(omega) * excite

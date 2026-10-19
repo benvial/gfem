@@ -153,18 +153,30 @@ class PortMode:
     of the surfaces that meet the port (`PEC` edges are perfect conductors,
     `Absorbing` edges first-order absorbing, all others natural, i.e. PMC).
 
+    A grid runs the port mode sweep that driven problems use for their wave
+    ports: a few exact port mode solves (typically 5-12 per band) and a
+    reduced port mode model checked at every frequency against
+    ``SolverOptions.port_mode_tolerance``. With up to three frequencies each
+    is solved exactly. The mode is picked at the lowest frequency and
+    followed through the band by its overlap with the neighbouring
+    frequency's mode, so it stays the same physical mode through crossings.
+
     Args:
         port: The name of a `WavePort` of the model.
         frequency: One frequency or a 1D sequence of them, Hz.
-        mode: Which propagating mode, in Palace's order: by decreasing
-            effective index for lossless modes (1 = the most confined), with
-            strongly attenuated modes ranked lower. ``None``: the wave port's
-            own ``mode``.
+        mode: Which propagating mode at the lowest frequency, in Palace's
+            order: by decreasing effective index for lossless modes (1 = the
+            most confined), with strongly attenuated modes ranked lower.
+            ``None``: the wave port's own ``mode``.
 
     Raises:
         TypeError: ``port`` is not a name.
         ValueError: A frequency is not finite and positive, or ``mode`` is
             not an integer >= 1.
+
+    `gfem.solve` raises `PortModeError` when the mode is below cutoff
+    somewhere in the band (naming the estimated cutoff) or degenerate, and
+    warns with `PortModeTrackingWarning` when it crosses another mode.
 
     Example:
         ``gfem.PortMode("p1", np.linspace(1e9, 100e9, 100))``

@@ -109,6 +109,8 @@ jobs:
         - {os: ubuntu-latest, python: "3.12", extra: cuda13}
         - {os: windows-latest, python: "3.12", extra: cuda12}
         - {os: windows-latest, python: "3.12", extra: cuda13}
+        # On macOS the extra installs nothing and a GPU request says so.
+        - {os: macos-latest, python: "3.12", extra: cuda12}
     defaults:
       run:
         shell: bash
@@ -131,6 +133,24 @@ jobs:
       run: |
         py=.venv-gate/bin/python; [ -x "$py" ] || py=.venv-gate/Scripts/python.exe
         "$py" -I -c "import gfem, jax.numpy as jnp; print(gfem.__version__, jnp.asarray(1.0).dtype)"
+    - name: No-GPU contract
+      # Hosted runners have no GPU: device="cuda" must raise, never fall back.
+      if: matrix.extra != ''
+      run: |
+        py=.venv-gate/bin/python; [ -x "$py" ] || py=.venv-gate/Scripts/python.exe
+        "$py" -I -c "
+        import sys, gfem
+        from gfem import _cuda
+        assert not gfem.cuda_available()
+        try:
+            _cuda.require('cuda')
+        except gfem.DeviceUnavailableError as err:
+            print(err)
+            expect = 'not supported on macOS' if sys.platform == 'darwin' else 'CUDA'
+            assert expect in str(err), err
+        else:
+            raise AssertionError('device=cuda did not raise')
+        "
     - name: Licence gate
       run: |
         py=.venv-gate/bin/python; [ -x "$py" ] || py=.venv-gate/Scripts/python.exe

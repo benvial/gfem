@@ -139,10 +139,14 @@ class EntryCache:
     def put(self, entry: Entry, budget: int) -> int:
         """Store ``entry`` and return its key; evict down to ``budget`` bytes.
 
-        The new entry is evicted too if it alone exceeds the budget (with
-        ``budget=0`` nothing is ever kept).
+        An entry larger than the budget alone is freed at once and evicts
+        nothing (with ``budget=0`` nothing is kept); its key reads as
+        evicted, so the backward pass recomputes it.
         """
         key = next(self._keys)
+        if entry.nbytes > budget:
+            entry.free()
+            return key
         self._entries[key] = entry
         while self._entries and self.nbytes > budget:
             _, old = self._entries.popitem(last=False)

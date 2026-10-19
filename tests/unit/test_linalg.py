@@ -105,12 +105,11 @@ def test_direct_refuses_operators_cholesky_cannot_factor(
         prepare(op, symmetry=symmetry, kind="direct")
 
 
-def test_unavailable_backends_and_devices_raise(built):
+def test_unknown_backends_raise(built):
+    # the GPU solver is kind="direct" with device="cuda" (tests/unit/test_cuda.py)
     op, _ = _laplace(built)
     with pytest.raises(NotImplementedError, match="cudss"):
         prepare(op, symmetry="hermitian", kind="cudss")
-    with pytest.raises(NotImplementedError, match="device"):
-        prepare(op, symmetry="hermitian", kind="direct", device="cuda:0")
 
 
 # --- BDDC -------------------------------------------------------------------------
@@ -154,6 +153,24 @@ def test_bddc_tolerance_sets_the_residual(built):
     loose.solve(B)
     tight.solve(B)
     assert loose.iterations[-1] < tight.iterations[-1]
+
+
+def test_one_bddc_handle_solves_an_adjoint_at_its_own_tolerance(built):
+    # the forward's preconditioner serves an adjoint solve to another tolerance
+    rng = np.random.default_rng(5)
+    op, space = _laplace(built, order=4)
+    handle = prepare(op, symmetry="hermitian", kind="bddc_gmres", tolerance=1e-2)
+    free = np.array(list(space.FreeDofs()))
+    B = rng.standard_normal(handle.ndof)
+    handle.solve(B)
+    forward = handle.iterations[-1]
+    X = handle.solve(B, tolerance=1e-12)
+    assert handle.iterations[-1] > forward
+    assert _residual(handle, B, X, free) < 1e-8
+    handle.solve(B)  # back to the prepared tolerance
+    assert handle.iterations[-1] == forward
+    direct = prepare(_laplace(built, order=4)[0], symmetry="hermitian", kind="direct")
+    np.testing.assert_array_equal(direct.solve(B, tolerance=1e-3), direct.solve(B))
 
 
 def test_bddc_coarse_inverse_is_sparse_cholesky_never_the_default(built):

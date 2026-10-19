@@ -74,7 +74,7 @@ EXPECTED |= {
     for kind in [("nodes",)] + [("material", "oxide", p) for p in ALL_PROPERTIES]
 }
 # The port mode problem is not differentiable: every result leaf raises.
-PORT_MODE_OUTPUTS = ("frequency", "gamma", "Z_PV", "residual")
+PORT_MODE_OUTPUTS = ("frequency", "gamma", "Z_PV", "residual", "solved")
 EXPECTED |= {
     ("port_mode", out, kind): RAISES
     for out in PORT_MODE_OUTPUTS

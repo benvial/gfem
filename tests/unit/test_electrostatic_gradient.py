@@ -125,8 +125,9 @@ def test_gradient_through_derived_matrices_matches_central_differences(
 
 @pytest.mark.parametrize("solver", ["direct", "bddc_gmres"])
 def test_kept_entry_and_recomputed_entry_give_the_same_gradient(plate, solver):
-    # The forward keeps its handle in ENTRIES; with retain_memory=0 it is
-    # evicted (freed) at once and the backward re-runs the forward.
+    # The forward keeps its potentials (not its solver: a capacitance
+    # gradient needs no solve) in ENTRIES; with retain_memory=0 nothing is
+    # kept and the backward re-runs the forward.
     from gfem._engine.cache import ENTRIES
 
     n = len(plate.mesh.elements("oxide"))
@@ -145,10 +146,10 @@ def test_kept_entry_and_recomputed_entry_give_the_same_gradient(plate, solver):
     kept = grad()
     assert len(ENTRIES) == 1
     (entry,) = ENTRIES._entries.values()
-    assert entry.handle.kind == solver
-    assert entry.nbytes > entry.fields["potential"].nbytes
-    ENTRIES.clear()
     assert entry.handle is None
+    assert entry.nbytes == entry.fields["potential"].nbytes
+    ENTRIES.clear()
+    assert entry.fields == {}
     recomputed = grad(retain_memory=0)
     assert len(ENTRIES) == 0
     np.testing.assert_allclose(recomputed, kept, rtol=1e-12)

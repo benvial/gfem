@@ -13,8 +13,10 @@ residual on the free ones), so the capacitance is far more accurate than
 the solver tolerance.
 
 The terminal potentials are their own adjoints (``dC_ij = phi_i^T dK phi_j``),
-so a capacitance gradient needs no solve; the handle is kept only for
-potential functionals.
+so a capacitance gradient needs no solve: a kept entry holds the potentials
+only, and the forward frees its factorization or preconditioner. A potential
+cotangent prepares the operator again in the backward pass (once per entry,
+at the adjoint tolerance) for its adjoint solve.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ import ngsolve as ngs
 import numpy as np
 import scipy.constants
 
+from gfem._adjoint import adjoint_tolerance
 from gfem._boundaries import PEC, Conductor
 from gfem._engine import quadrature
 from gfem._engine.cache import Entry, discretization
@@ -35,7 +38,7 @@ from gfem._engine.mesh import EngineMesh
 from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair
 from gfem._field import FieldMap
-from gfem._linalg import KINDS, Operator, prepare
+from gfem._linalg import KINDS, Handle, Operator, prepare
 from gfem.errors import RegionNotFoundError
 from gfem.mesh import Mesh
 from gfem.model import Model
@@ -110,39 +113,26 @@ class ElectrostaticRule:
 
         Args:
             model: The model, with concrete leaves.
-            keep: Keep the solver handle and the potentials for a backward
-                pass.
+            keep: Keep the potentials for a backward pass.
 
         Returns:
             ``{"capacitance": (n, n) array in F, "energy": (len(regions), n)
             array in J, "potential": (ndof, n) array in V, one column per
-            terminal}``, and the cache entry (the handle and
-            ``fields["potential"]``) or ``None``.
+            terminal}``, and the cache entry (``fields["potential"]``; no
+            handle) or ``None``.
 
         Raises:
             ValueError: Part of the solve domain touches no terminal or
                 ground, so its potential is undetermined.
         """
-        order = self.options.order
         with task_manager(self.options.threads):
             space, built = self._space(model)
             regions = [
                 boundary_region(built, surfaces)
                 for _, surfaces in self.problem.terminals
             ]
-            free = space.FreeDofs()
-
-            u, v = space.TnT()
-            form = ngs.BilinearForm(space, symmetric=True)
             eps = permittivity(model, built)
-            form += eps * ngs.grad(u) * ngs.grad(v) * quadrature.dx(order)
-            handle = prepare(
-                Operator(form, free),
-                symmetry="hermitian",
-                kind=self.kind,
-                device=self.options.device,
-                tolerance=self.options.tolerance,
-            )
+            handle = self._prepare(space, eps, self.options.tolerance)
             lift = np.zeros((space.ndof, len(regions)))
             for i, region in enumerate(regions):
                 gf = ngs.GridFunction(space)
@@ -152,9 +142,9 @@ class ElectrostaticRule:
             scale = scipy.constants.epsilon_0 * built.scale
             c = phi.T @ handle.apply(phi) * scale
             energy = 0.5 * scale * self._region_energies(model, built, space, eps, phi)
+        handle.free()
         c = 0.5 * (c + c.T)
         if not np.isfinite(c).all():
-            handle.free()
             raise ValueError(
                 "The electrostatic potential is undetermined: some part of the "
                 "solve domain touches no terminal and no ground. Add a ground "
@@ -162,12 +152,25 @@ class ElectrostaticRule:
             )
         entry = None
         if keep:
-            entry = Entry(
-                physics=self.physics, handle=handle, fields={"potential": phi}
-            )
-        else:
-            handle.free()
+            entry = Entry(physics=self.physics, fields={"potential": phi})
         return {"capacitance": c, "energy": energy, "potential": phi}, entry
+
+    def _prepare(
+        self, space: ngs.FESpace, eps: ngs.CoefficientFunction, tolerance: float
+    ) -> Handle:
+        """The prepared operator ``int eps_r grad u . grad v`` (file units)."""
+        order = self.options.order
+        u, v = space.TnT()
+        form = ngs.BilinearForm(space, symmetric=True)
+        form += eps * ngs.grad(u) * ngs.grad(v) * quadrature.dx(order)
+        return prepare(
+            Operator(form, space.FreeDofs()),
+            symmetry="hermitian",
+            kind=self.kind,
+            device=self.options.device,
+            tolerance=tolerance,
+            width=len(self.problem.terminals),
+        )
 
     def _space(self, model: Model) -> tuple[ngs.FESpace, EngineMesh]:
         order = self.options.order
@@ -238,7 +241,9 @@ class ElectrostaticRule:
         A potential cotangent ``ct_i`` takes one adjoint solve per terminal,
         all columns at once: ``K phi_i = 0`` on the free DOFs gives
         ``ct_i . dphi_i = -lambda_i^T dK phi_i`` with ``K lambda_i = ct_i``
-        (zero on the fixed DOFs), K the SI operator.
+        (zero on the fixed DOFs), K the SI operator. Its operator is
+        prepared on first use at the adjoint tolerance and kept in the entry
+        for later pullbacks.
         """
         phi = entry.fields["potential"]
         eps0 = scipy.constants.epsilon_0
@@ -252,8 +257,13 @@ class ElectrostaticRule:
                 right.append(phi @ (0.5 * (ct + ct.T)).T)
             if "potential" in cotangents:
                 ct = np.asarray(cotangents["potential"], dtype=float)
+                tolerance = adjoint_tolerance(self.options)
+                if entry.handle is None:
+                    eps = permittivity(model, built)
+                    entry.handle = self._prepare(space, eps, tolerance)
                 # the handle solves the form without eps0 * scale
-                adjoint = entry.handle.solve(ct) / (eps0 * built.scale)
+                adjoint = entry.handle.solve(ct, tolerance=tolerance)
+                adjoint /= eps0 * built.scale
                 left.append(-adjoint)
                 right.append(phi)
         return [

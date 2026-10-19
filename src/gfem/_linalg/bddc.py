@@ -96,10 +96,23 @@ class BddcHandle(NgsHandle):
             "looser tolerance."
         )
 
-    def _inverse_map(self, B: np.ndarray, x0: np.ndarray | None = None) -> np.ndarray:
-        if x0 is None or self.symmetry == "hermitian":
-            return self._map(self._solver, B, after=self._check)
-        return self._warm(B, x0)
+    def _inverse_map(
+        self, B: np.ndarray, tolerance: float | None, x0: np.ndarray | None = None
+    ) -> np.ndarray:
+        solver = self._solver
+        if solver is None:
+            raise RuntimeError("This solver handle was freed.")
+        with self._lock:  # reentrant: _map and _warm take it again
+            prepared = self.tolerance
+            if tolerance is not None:
+                # NGSolve's Krylov solvers read .tol on every Solve
+                solver.tol = self.tolerance = tolerance  # ty: ignore[invalid-assignment]
+            try:
+                if x0 is not None and self.symmetry != "hermitian":
+                    return self._warm(B, x0)
+                return self._map(solver, B, after=self._check)
+            finally:
+                solver.tol = self.tolerance = prepared  # ty: ignore[invalid-assignment]
 
     def _warm(self, B: np.ndarray, x0: np.ndarray) -> np.ndarray:
         """GMRES from the initial guess ``x0``, to ``tolerance * |P b|``.

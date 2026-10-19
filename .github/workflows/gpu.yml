@@ -1,0 +1,41 @@
+name: GPU
+# The cuda tier (tests/cuda) on a self-hosted Linux runner with an NVIDIA GPU,
+# once per CUDA extra. Manual, and on release tags; publishing does not wait
+# on it while the cuda extra is experimental.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+    - "[0-9]+.[0-9]+.[0-9]+*"
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  UV_VERSION: "0.13.1"
+jobs:
+  cuda:
+    name: cuda tier (${{ matrix.extra }})
+    runs-on: [self-hosted, linux, x64, gpu]
+    strategy:
+      fail-fast: false
+      max-parallel: 1  # one GPU
+      matrix:
+        extra: [cuda12, cuda13]
+    env:
+      # JAX stays on the CPU here, but never let it take the GPU's memory.
+      XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+    steps:
+    - uses: actions/checkout@v6
+    - uses: astral-sh/setup-uv@v6
+      with:
+        version: ${{ env.UV_VERSION }}
+        python-version: "3.12"
+    - name: Install
+      run: uv sync --locked --extra ${{ matrix.extra }}
+    - name: A GPU is usable
+      # Fail rather than skip the whole tier on a broken runner.
+      run: uv run python -c "import gfem; assert gfem.cuda_available(), 'no usable CUDA device'"
+    - name: cuda tier
+      run: uv run pytest -m cuda -rs

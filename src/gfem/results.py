@@ -142,10 +142,13 @@ class PortModeField:
     quantity = "E"
     unit = "V/m"
 
-    def __init__(self, space: PortModeSpace, coeffs: np.ndarray) -> None:
-        """Internal: built by `gfem.solve`."""
+    def __init__(
+        self, space: PortModeSpace, basis: np.ndarray, coords: np.ndarray
+    ) -> None:
+        """Internal: built by `gfem.solve` (field ``i`` is ``basis @ coords[i]``)."""
         self._space = space
-        self._coeffs = coeffs
+        self._basis = basis
+        self._coords = coords
         self.normal = tuple(float(x) for x in space.section.frame[2])
 
     @property
@@ -171,7 +174,8 @@ class PortModeField:
         if p.shape[-1] != 3:
             raise ValueError(f"points must be 3-vectors in m, got shape {p.shape}.")
         local = self._local(p)
-        e = self._space.evaluate(self._coeffs, local) @ self._section.frame
+        columns = self._space.evaluate(self._basis.T, local)
+        e = np.einsum("fk,kpc->fpc", self._coords, columns) @ self._section.frame
         return jnp.asarray(e[:, 0] if single else e)
 
     def _local(self, p: np.ndarray) -> np.ndarray:
@@ -187,7 +191,7 @@ class PortModeField:
         return local
 
     def __repr__(self) -> str:
-        n = len(self._coeffs)
+        n = len(self._coords)
         return (
             f"PortModeField(E, V/m, {n} frequencies, port {self._section.port.name!r})"
         )
@@ -208,8 +212,13 @@ class PortModeResult:
             (``alpha >= 0`` is the attenuation).
         Z_PV: Power-voltage characteristic impedance ``|V|^2 / (2 P)`` along
             the port's ``voltage_path``, ohm; NaN without a voltage path.
-        residual: Backward error of each port mode solve,
-            ``|A x - lam B x| / (|A x| + |lam| |B x|)``.
+        residual: Backward error of the mode at each frequency,
+            ``|A x - lam B x| / (|A x| + |lam| |B x|)`` on the 2D port mode
+            problem. It exceeds ``SolverOptions.port_mode_tolerance`` only at
+            the formulation's low-frequency accuracy floor, where it is at
+            most 10x that of an exact solve.
+        solved: ``(n_freq,)`` bool, True where the mode is an exact port mode
+            solve; elsewhere it comes from the reduced port mode model.
         e_field: The mode's electric field, normalized to 1 W.
     """
 
@@ -219,6 +228,7 @@ class PortModeResult:
     gamma: jax.Array
     Z_PV: jax.Array
     residual: jax.Array
+    solved: jax.Array
     e_field: PortModeField
 
     @property
@@ -241,13 +251,15 @@ class PortModeResult:
             if np.isnan(z).all()
             else (f"Z_PV {z.min():.4g}-{z.max():.4g} ohm")
         )
+        exact = int(np.asarray(self.solved).sum())
         return (
             f"PortModeResult(port {self.port!r}, mode {self.mode}, {len(f)} "
-            f"frequencies {span}, n_eff {n.real.min():.5g}-{n.real.max():.5g}, {zs})"
+            f"frequencies {span} ({exact} exact solves), n_eff "
+            f"{n.real.min():.5g}-{n.real.max():.5g}, {zs})"
         )
 
 
-register_fields(PortModeResult, ("frequency", "gamma", "Z_PV", "residual"))
+register_fields(PortModeResult, ("frequency", "gamma", "Z_PV", "residual", "solved"))
 
 
 @dataclasses.dataclass(frozen=True, eq=False)

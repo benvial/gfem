@@ -13,12 +13,16 @@ _jax.config.update("jax_enable_x64", True)
 
 # Submodules are imported after the switch, so no gfem array is ever float32.
 from gfem import shape  # noqa: E402
+from gfem._cuda import cuda_available  # noqa: E402
 from gfem.errors import (  # noqa: E402
+    DeviceMemoryWarning,
+    DeviceUnavailableError,
     MeshQualityError,
     MeshQualityWarning,
     NonDifferentiableError,
     PortGeometryError,
     PortModeError,
+    PortModeTrackingWarning,
     RegionNotFoundError,
 )
 from gfem.job import Job, load_result  # noqa: E402
@@ -55,6 +59,8 @@ __all__ = [
     "PMC",
     "Absorbing",
     "Conductor",
+    "DeviceMemoryWarning",
+    "DeviceUnavailableError",
     "Driven",
     "DrivenResult",
     "Electrostatic",
@@ -76,11 +82,13 @@ __all__ = [
     "PortModeError",
     "PortModeField",
     "PortModeResult",
+    "PortModeTrackingWarning",
     "Region",
     "RegionNotFoundError",
     "SolverOptions",
     "WavePort",
     "__version__",
+    "cuda_available",
     "enclosed_by",
     "load_result",
     "shape",
