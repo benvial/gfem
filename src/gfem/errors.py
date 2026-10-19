@@ -41,3 +41,20 @@ class NonDifferentiableError(TypeError):
     value in an objective without its derivative, wrap it in
     `jax.lax.stop_gradient`.
     """
+
+
+class PortGeometryError(ValueError):
+    """A port whose geometry the solver cannot use.
+
+    For example a wave port surface that is not planar. The message names the
+    port and the remedy.
+    """
+
+
+class PortModeError(RuntimeError):
+    """The port mode problem has no usable mode.
+
+    For example the requested mode is below cutoff (evanescent) at some
+    frequency of the band. The message names the port, the frequency and the
+    remedy.
+    """
