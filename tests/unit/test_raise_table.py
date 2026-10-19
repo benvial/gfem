@@ -62,9 +62,14 @@ EXPECTED |= {
     for leaf in ("coefficients", "mesh.nodes")
     for kind in [("nodes",)] + [("material", "oxide", p) for p in ALL_PROPERTIES]
 }
-# Region energies are not differentiable in this version: every cell raises.
+# Region energies are not functions of the capacitance (they would need one
+# adjoint solve per terminal): they raise for every input the solve reads,
+# and are exact zeros for the inputs it never reads. (`mutual` and `inverse`
+# are jnp functions of `capacitance`, not leaves: they differentiate.)
 EXPECTED |= {
-    ("electrostatic", f"energy.{region}", kind): RAISES
+    ("electrostatic", f"energy.{region}", kind): (
+        ZERO if kind[0] == "material" and kind[2] != "eps_r" else RAISES
+    )
     for region in ("oxide", "nitride")
     for kind in [("nodes",)] + [("material", "oxide", p) for p in ALL_PROPERTIES]
 }
@@ -182,6 +187,25 @@ def test_unsupported_input_error_names_the_input_and_the_opt_out(model):
         gfem.NonDifferentiableError, match=r"mesh\.nodes.*stop_gradient"
     ):
         jax.make_jaxpr(jax.grad(objective))(x)
+
+
+def test_energy_error_names_the_output_and_the_opt_out(model):
+    problem = PROBLEMS["electrostatic"]
+    n = len(model.mesh.elements("oxide"))
+
+    def objective(eps, *, stop):
+        m = model.with_material("oxide", gfem.MaterialField(eps_r=eps))
+        result = gfem.solve(m, problem)
+        energy = result.energy["oxide"]
+        energy = jax.lax.stop_gradient(energy) if stop else energy
+        return result.capacitance[0, 0] + energy.sum()
+
+    eps = jnp.full(n, 3.9)
+    with pytest.raises(
+        gfem.NonDifferentiableError, match=r"result\.energy.*stop_gradient"
+    ):
+        jax.make_jaxpr(jax.grad(lambda e: objective(e, stop=False)))(eps)
+    assert np.abs(np.asarray(jax.grad(lambda e: objective(e, stop=True))(eps))).max()
 
 
 def test_stop_gradient_opts_a_read_input_out(model):

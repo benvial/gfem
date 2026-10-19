@@ -19,7 +19,6 @@ import scipy.constants
 import structured_meshes as sm
 
 import gfem
-from gfem._linalg import KINDS
 
 EPS0 = scipy.constants.epsilon_0
 UM = 1e-6
@@ -195,15 +194,7 @@ def test_coax_capacitance_and_energy_agree_on_both_solvers(tmp_path):
 
 # --- gradients w.r.t. the permittivity -------------------------------------------
 
-SOLVERS = [
-    "direct",
-    pytest.param(
-        "bddc_gmres",
-        marks=pytest.mark.skipif(
-            "bddc_gmres" not in KINDS, reason="the bddc backend is not available yet"
-        ),
-    ),
-]
+SOLVERS = ["direct", "bddc_gmres"]
 
 
 def _gradient_case(tmp_path, solver):

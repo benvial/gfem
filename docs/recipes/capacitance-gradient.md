@@ -22,15 +22,21 @@ problem = gfem.Electrostatic(
 )
 
 
-def mutual(eps):
-    """C(top, mid) in fF, for a permittivity per oxide element."""
+def coupling(eps):
+    """Mutual capacitance top-mid in fF, for a permittivity per oxide element."""
     m = model.with_material("oxide", gfem.MaterialField(eps_r=eps))
-    return gfem.solve(m, problem).capacitance[0, 1] * 1e15
+    return gfem.solve(m, problem).mutual[0, 1] * 1e15
 
 
 n = len(mesh.elements("oxide"))
-value, grad = jax.value_and_grad(mutual)(jnp.full(n, 3.9))  # grad: (n,)
+value, grad = jax.value_and_grad(coupling)(jnp.full(n, 3.9))  # grad: (n,)
 ```
+
+`result.mutual` and `result.inverse` are JAX functions of
+`result.capacitance`, so they differentiate like it. The region energies
+`result.energy` do not: a gradient through them raises
+`gfem.NonDifferentiableError` (the total energy of excitation `i` is
+`capacitance[i, i] / 2`).
 
 The capacitance gradient costs no extra solve: each terminal's potential is its
 own adjoint, so the backward pass is one element-wise integral. To get the
@@ -75,7 +81,10 @@ grads = jax.grad(objective)(model)  # grads.materials[...] holds the field gradi
 ```
 
 The same works on an output that has no gradient: wrap it in
-`stop_gradient` where the objective uses it.
+`stop_gradient` where the objective uses it. Of the electrostatic outputs,
+`capacitance` and the matrices derived from it (`mutual`, `inverse`)
+differentiate; the per-region `energy` does not yet, and raises when a
+gradient through it reaches `eps_r`.
 
 Errors that only the data can reveal are raised on the host during the
 backward pass. JAX re-raises them as `jax.errors.JaxRuntimeError`; the message

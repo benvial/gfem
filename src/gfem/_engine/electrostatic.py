@@ -62,7 +62,7 @@ class ElectrostaticRule:
     form = "electrostatic"
     #: Material properties the electrostatic forms read.
     reads = frozenset({"eps_r"})
-    #: Outputs whose cotangents the backward pass handles.
+    #: Outputs whose cotangents the backward pass handles (not ``energy``).
     differentiable_outputs = frozenset({"capacitance", "potential"})
 
     def __init__(
@@ -210,6 +210,17 @@ class ElectrostaticRule:
 
     def nondifferentiable_output(self, name: str) -> str:
         """The error message for a cotangent on output ``name``."""
+        if name == "energy":
+            # dE_r = phi^T dK_r phi / 2 + phi^T K_r dphi: unlike C, the region
+            # energy is not stationary in phi, so it needs one adjoint solve
+            # per terminal; not implemented.
+            return (
+                "gfem cannot differentiate the electrostatic region energies "
+                "(result.energy). Differentiate the capacitance instead (the "
+                "total energy of excitation i is capacitance[i, i] / 2), or wrap "
+                "result.energy in jax.lax.stop_gradient to use its value without "
+                "its derivative."
+            )
         return (
             f"gfem cannot differentiate the electrostatic output {name!r}. Wrap "
             "it in jax.lax.stop_gradient to use its value without its derivative."

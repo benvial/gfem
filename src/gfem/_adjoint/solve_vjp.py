@@ -158,14 +158,15 @@ def solve_vjp(rule: Any, model: Any, problem: Any) -> dict[str, jax.Array]:
 
     def bwd(residuals: tuple, cotangents: tuple) -> tuple:
         key, values = residuals
+        wanted = state["wanted"]
         live = []
         for name, ct in zip(names, cotangents, strict=True):
             if isinstance(ct, SymbolicZero):
                 continue
-            if name not in rule.differentiable_outputs:
+            # with every perturbed input unread, every output's zero is exact
+            if wanted and name not in rule.differentiable_outputs:
                 raise NonDifferentiableError(rule.nondifferentiable_output(name))
             live.append((name, ct))
-        wanted = state["wanted"]
         grads: list[Any] = [jnp.zeros_like(v) for v in values]
         if live and wanted:
             computed = jax.pure_callback(
