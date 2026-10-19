@@ -135,6 +135,7 @@ class ElectrostaticRule:
                 kind=self.kind,
                 device=self.options.device,
                 tolerance=self.options.tolerance,
+                width=len(regions),
             )
             lift = np.zeros((space.ndof, len(regions)))
             for i, region in enumerate(regions):

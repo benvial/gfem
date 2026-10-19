@@ -105,12 +105,11 @@ def test_direct_refuses_operators_cholesky_cannot_factor(
         prepare(op, symmetry=symmetry, kind="direct")
 
 
-def test_unavailable_backends_and_devices_raise(built):
+def test_unknown_backends_raise(built):
+    # the GPU solver is kind="direct" with device="cuda" (tests/unit/test_cuda.py)
     op, _ = _laplace(built)
     with pytest.raises(NotImplementedError, match="cudss"):
         prepare(op, symmetry="hermitian", kind="cudss")
-    with pytest.raises(NotImplementedError, match="device"):
-        prepare(op, symmetry="hermitian", kind="direct", device="cuda:0")
 
 
 # --- BDDC -------------------------------------------------------------------------

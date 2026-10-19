@@ -47,8 +47,11 @@ class SolverOptions:
         tolerance: Relative residual of iterative solves.
         device: Where the direct solver runs: ``"cpu"``, ``"cuda"`` or
             ``"cuda:N"`` (the N-th GPU). A GPU needs
-            ``linear_solver="direct"``; its availability is checked when
-            solving, so options built on a laptop can run on a GPU machine.
+            ``linear_solver="direct"`` (NVIDIA cuDSS, from the ``cuda12`` or
+            ``cuda13`` extra). Its availability is checked when solving, so
+            options built on a laptop can run on a GPU machine; a GPU that
+            cannot be used raises `gfem.DeviceUnavailableError`, never a
+            silent CPU fallback. See `gfem.cuda_available`.
         threads: CPU threads, or ``None`` for the machine's default.
         adaptive_tolerance: Error target of the adaptive frequency sweep;
             at least 10x ``tolerance``.

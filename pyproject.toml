@@ -127,6 +127,10 @@ convention = "google"
 [tool.ty.src]
 include = ["src"]
 
+[tool.ty.analysis]
+# The cuda12 / cuda13 extras: absent from the default environment.
+allowed-unresolved-imports = ["nvmath.**", "cuda.**"]
+
 [tool.uv]
 # The supported platforms: jaxlib has no Intel macOS wheel and
 # ngsolve has no Linux aarch64 wheel.
