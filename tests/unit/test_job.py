@@ -2,6 +2,7 @@
 
 import json
 import shutil
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -11,6 +12,7 @@ import structured_meshes as sm
 
 import gfem
 
+DATA = Path(__file__).parent / "data"
 LAYERS = (("oxide", 0.5), ("nitride", 0.25))
 MATERIALS = {"oxide": gfem.Material(eps_r=3.9), "nitride": gfem.Material(eps_r=7.5)}
 PROBLEM = gfem.Electrostatic(terminals={"top": "top", "mid": "oxide__nitride"})
@@ -309,3 +311,24 @@ def test_load_result_refuses_a_job_file(model, tmp_path):
 def test_load_result_needs_a_result(tmp_path):
     with pytest.raises(FileNotFoundError, match=r"result\.json"):
         gfem.load_result(tmp_path)
+
+
+def test_port_mode_result_round_trips_with_its_field(tmp_path):
+    mesh = gfem.Mesh.from_gmsh(DATA / "waveguide.msh", length_unit="mm")
+    model = gfem.Model(
+        mesh,
+        materials={"air": gfem.Material()},
+        boundaries=[gfem.PEC("walls")],
+        ports=[gfem.WavePort("p1", "port1")],
+    )
+    problem = gfem.PortMode("p1", [8e9, 10e9])
+    job = gfem.Job(model, problem, gfem.SolverOptions(order=1))
+    job = gfem.Job.from_json(job.to_json(tmp_path / "job.json"))
+    assert job.problem == problem
+    result = job.run(out=tmp_path / "results")
+    loaded = gfem.load_result(tmp_path / "results")
+    assert (loaded.port, loaded.mode) == (result.port, result.mode)
+    for name in ("frequency", "gamma", "Z_PV", "residual"):
+        np.testing.assert_array_equal(getattr(loaded, name), getattr(result, name))
+    points = np.asarray(mesh.nodes)[mesh.triangles[mesh.elements("port1")][:, 0]]
+    np.testing.assert_array_equal(loaded.e_field.at(points), result.e_field.at(points))

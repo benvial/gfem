@@ -35,12 +35,13 @@ from gfem._boundaries import (
 )
 from gfem._checks import is_traced
 from gfem._materials import Material, MaterialField
+from gfem._port_section import PortSection
 from gfem._pytree import register_fields
 from gfem.mesh import Mesh
 from gfem.model import EnclosedBy, Model
 from gfem.options import SolverOptions
-from gfem.problems import Electrostatic
-from gfem.results import ElectrostaticResult
+from gfem.problems import Electrostatic, PortMode
+from gfem.results import ElectrostaticResult, PortModeField, PortModeResult
 from gfem.solve import solve
 
 __all__ = ["Job", "load_result"]
@@ -327,6 +328,18 @@ def _electrostatic_args(problem: Electrostatic, _: _codec.Context) -> dict[str, 
     return {"terminals": dict(problem.terminals), "ground": problem.ground}
 
 
+def _port_mode_field_args(field: PortModeField, _: _codec.Context) -> dict[str, Any]:
+    space = field._space  # noqa: SLF001
+    return {"section": space.section, "order": space.order, "coeffs": field._coeffs}  # noqa: SLF001
+
+
+def _port_mode_field_from_args(args: dict[str, Any], _: _codec.Context) -> Any:
+    from gfem._engine.port_mode import PortModeSpace
+
+    space = PortModeSpace(args["section"], args["order"])
+    return PortModeField(space, args["coeffs"])
+
+
 def _job_from_args(args: dict[str, Any], _: _codec.Context) -> Job:
     return Job(args["model"], args["problem"], args.get("options", SolverOptions()))
 
@@ -345,8 +358,14 @@ for _cls in (
     LumpedPort,
     WavePort,
     SolverOptions,
+    PortMode,
     ElectrostaticResult,
+    PortModeResult,
+    PortSection,
 ):
     _codec.register(_cls)
 _codec.register(Electrostatic, to_args=_electrostatic_args)
+_codec.register(
+    PortModeField, to_args=_port_mode_field_args, from_args=_port_mode_field_from_args
+)
 _codec.register(Job, from_args=_job_from_args)
