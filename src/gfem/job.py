@@ -49,6 +49,8 @@ from gfem.results import (
     NetworkParameters,
     PortModeField,
     PortModeResult,
+    ReducedFields,
+    SweepInfo,
 )
 from gfem.solve import solve
 
@@ -379,6 +381,8 @@ for _cls in (
     DrivenResult,
     NetworkParameters,
     PortSection,
+    SweepInfo,
+    ReducedFields,
     Eigenmode,
     EigenmodeResult,
 ):

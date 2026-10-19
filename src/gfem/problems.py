@@ -247,8 +247,22 @@ class Driven:
         excite: The port name or names fed in turn, one column of S each, in
             this order. ``None``: every port of the model, in model order.
         sweep: ``"uniform"`` solves every frequency in full.
-            ``"adaptive"`` (a reduced model sampled at a few frequencies) is
-            not available in this version.
+            ``"adaptive"`` solves a few of them in full (every excited port
+            at once) and reads S and the kept fields at every frequency
+            from a reduced model built on those solutions: the greedy picks
+            each next frequency from ``frequency`` where the reduced model
+            is least accurate, until ``SolverOptions.adaptive_memory``
+            samples in a row agree with it to
+            ``SolverOptions.adaptive_tolerance`` (relative error of the
+            field). S is then accurate to roughly the square of that error.
+            Worth it above about 20 frequencies; the result's ``sweep``
+            tells which frequencies were solved.
+        samples: With ``sweep="adaptive"``, the frequencies to solve in full,
+            in order, instead of the greedy's choice: each must be one of
+            ``frequency``. Freezing the samples of a first sweep
+            (``samples=result.sweep.sampled_frequencies``) keeps the reduced
+            model's sample set fixed while the model changes, e.g. across
+            optimizer iterations.
         keep_fields: Which electric fields the result keeps, one per kept
             frequency and excited port: ``False`` (the default) none,
             ``True`` all, or a frequency or list of frequencies of
@@ -259,8 +273,10 @@ class Driven:
         TypeError: ``excite`` is not port names, or ``keep_fields`` is not a
             bool or frequencies.
         ValueError: A frequency is not finite and positive, ``excite`` is
-            empty or repeats a port, ``sweep`` is unknown, or a
-            ``keep_fields`` frequency is not one of ``frequency``.
+            empty or repeats a port, ``sweep`` is unknown, ``samples`` is
+            given without ``sweep="adaptive"``, is empty or repeats a
+            frequency, or a ``samples`` or ``keep_fields`` frequency is not one
+            of ``frequency``.
 
     Example:
         ``gfem.Driven(frequency=np.linspace(1e9, 100e9, 100))``
@@ -270,6 +286,7 @@ class Driven:
     excite: tuple[str, ...] | None
     sweep: str
     keep_fields: bool | tuple[float, ...]
+    samples: tuple[float, ...] | None = None
     _rule: ClassVar[str] = "gfem._engine.driven:DrivenRule"
 
     def __init__(
@@ -278,6 +295,7 @@ class Driven:
         *,
         excite: str | Sequence[str] | None = None,
         sweep: str = "uniform",
+        samples: Sequence[float] | None = None,
         keep_fields: bool | float | Sequence[float] = False,
     ) -> None:
         """Validate and normalize (see the class docstring)."""
@@ -290,6 +308,7 @@ class Driven:
         object.__setattr__(self, "excite", _port_names(excite))
         object.__setattr__(self, "sweep", sweep)
         object.__setattr__(self, "keep_fields", _kept(keep_fields, frequencies))
+        object.__setattr__(self, "samples", _samples(samples, sweep, frequencies))
 
     @property
     def kept_frequencies(self) -> tuple[float, ...]:
@@ -312,8 +331,42 @@ def _kept(value: Any, frequencies: tuple[float, ...]) -> bool | tuple[float, ...
         raise TypeError(
             f"Driven.keep_fields takes True, False or frequencies in Hz, got {value!r}."
         ) from None
+    kept = set(_on_grid(wanted, frequencies, "keep_fields"))
+    return tuple(frequencies[i] for i in sorted(kept))
+
+
+def _samples(
+    value: Any, sweep: str, frequencies: tuple[float, ...]
+) -> tuple[float, ...] | None:
+    if value is None:
+        return None
+    if sweep != "adaptive":
+        raise ValueError(
+            "Driven.samples freezes the samples of an adaptive sweep; pass "
+            "sweep='adaptive' with it."
+        )
+    if is_traced(value):
+        raise ValueError("Driven.samples must be fixed frequencies, not traced.")
+    try:
+        wanted = np.asarray(value, dtype=float).reshape(-1)
+    except (TypeError, ValueError):
+        raise TypeError(
+            f"Driven.samples takes frequencies in Hz, got {value!r}."
+        ) from None
+    if not wanted.size:
+        raise ValueError("Driven.samples needs at least one frequency.")
+    indices = _on_grid(wanted, frequencies, "samples")
+    if len(set(indices)) != len(indices):
+        raise ValueError(f"Driven.samples names a frequency twice: {list(wanted)} Hz.")
+    return tuple(frequencies[i] for i in indices)
+
+
+def _on_grid(
+    wanted: np.ndarray, frequencies: tuple[float, ...], what: str
+) -> list[int]:
+    """Index in ``frequencies`` of each of ``wanted`` (1e-9 relative)."""
     grid = np.asarray(frequencies)
-    kept = set()
+    out = []
     for f in wanted:
         match = np.flatnonzero(np.isclose(grid, f, rtol=1e-9, atol=0))
         if not match.size:
@@ -323,11 +376,11 @@ def _kept(value: Any, frequencies: tuple[float, ...]) -> bool | tuple[float, ...
                 else f"{len(grid)} frequencies, {grid.min():g} to {grid.max():g}"
             )
             raise ValueError(
-                f"Driven.keep_fields frequency {f:g} Hz is not one of the "
+                f"Driven.{what} frequency {f:g} Hz is not one of the "
                 f"problem's frequencies ({listed} Hz)."
             )
-        kept.add(int(match[0]))
-    return tuple(frequencies[i] for i in sorted(kept))
+        out.append(int(match[0]))
+    return out
 
 
 jax.tree_util.register_static(Driven)

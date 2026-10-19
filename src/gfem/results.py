@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -15,7 +15,7 @@ import numpy as np
 import scipy.constants
 
 from gfem._checks import is_traced
-from gfem._field import Field, FieldMap
+from gfem._field import Field, FieldMap, ReducedFields
 from gfem._pytree import register_fields
 
 if TYPE_CHECKING:
@@ -30,6 +30,8 @@ __all__ = [
     "NetworkParameters",
     "PortModeField",
     "PortModeResult",
+    "ReducedFields",
+    "SweepInfo",
 ]
 
 
@@ -546,9 +548,92 @@ def _touchstone(net: NetworkParameters, s: np.ndarray, z0: float) -> str:
     return "\n".join(lines) + "\n"
 
 
+@dataclasses.dataclass(frozen=True)
+class SweepInfo:
+    """How a `Driven` sweep was solved: which frequencies, and how well.
+
+    A uniform sweep solves every frequency in full. An adaptive sweep
+    (``Driven(sweep="adaptive")``) solves a few and reads every frequency
+    from a reduced model built on them; at a solved frequency the reduced
+    model reproduces the full solve to the solver tolerance.
+
+    Attributes:
+        kind: ``"uniform"`` or ``"adaptive"``.
+        solved: For each frequency of the result (in order), whether it was
+            solved in full.
+        sampled_frequencies: The frequencies solved in full, Hz, in solve
+            order (for an adaptive sweep: the greedy's selection order, or
+            ``Driven.samples``). Pass them to ``Driven(samples=...)`` to
+            freeze the sample set.
+        sample_errors: For each sampled frequency, the relative l2 error of
+            the reduced model's field against the full solve there, measured
+            before the sample joined the model (the largest over the excited
+            ports); ``inf`` where there was no model to compare with yet
+            (the two band edges the greedy starts from, the first frozen
+            sample, and every frequency of a uniform sweep).
+        converged: Whether the last ``SolverOptions.adaptive_memory`` sample
+            errors are below the tolerance (or every frequency was solved).
+            Always True for a uniform sweep. An adaptive greedy that stops at
+            ``adaptive_max_samples`` instead warns with
+            `gfem.SweepNotConvergedWarning`.
+        tolerance: ``SolverOptions.adaptive_tolerance`` of an adaptive
+            sweep, ``None`` for a uniform one.
+        basis_size: The number of reduced basis vectors (0 for uniform).
+    """
+
+    kind: str
+    solved: tuple[bool, ...]
+    sampled_frequencies: tuple[float, ...]
+    sample_errors: tuple[float, ...]
+    converged: bool
+    tolerance: float | None = None
+    basis_size: int = 0
+
+    def __post_init__(self) -> None:
+        """Normalize to plain Python values (hashable, JSON-friendly)."""
+        set_ = object.__setattr__
+        set_(self, "solved", tuple(bool(v) for v in self.solved))
+        set_(
+            self,
+            "sampled_frequencies",
+            tuple(float(f) for f in self.sampled_frequencies),
+        )
+        set_(self, "sample_errors", tuple(float(e) for e in self.sample_errors))
+        set_(self, "converged", bool(self.converged))
+        set_(self, "basis_size", int(self.basis_size))
+        if self.tolerance is not None:
+            set_(self, "tolerance", float(self.tolerance))
+
+    @classmethod
+    def uniform(cls, frequency: tuple[float, ...]) -> SweepInfo:
+        """Every frequency of ``frequency`` solved in full."""
+        n = len(frequency)
+        return cls(
+            kind="uniform",
+            solved=(True,) * n,
+            sampled_frequencies=frequency,
+            sample_errors=(math.inf,) * n,
+            converged=True,
+        )
+
+    def __repr__(self) -> str:
+        if self.kind == "uniform":
+            return f"SweepInfo(uniform, {len(self.solved)} frequencies solved)"
+        state = "converged" if self.converged else "NOT converged"
+        return (
+            f"SweepInfo(adaptive, {len(self.sampled_frequencies)} of "
+            f"{len(self.solved)} frequencies solved, basis {self.basis_size}, "
+            f"{state} at tolerance {self.tolerance:g})"
+        )
+
+
 @dataclasses.dataclass(frozen=True, eq=False)
 class DrivenResult:
     """The result of a `Driven` problem.
+
+    ``s.values`` and the kept fields' coefficients are differentiable with
+    respect to every electromagnetic `MaterialField` value (``eps_r``,
+    ``mu_r``, ``tan_delta``, ``conductivity``); ``s.z_ref`` is constant.
 
     Attributes:
         s: The scattering parameters (`NetworkParameters`).
@@ -560,17 +645,27 @@ class DrivenResult:
             reference impedance ``z_ref``, so time-averaged densities carry
             a factor 1/2 (see `gfem.conventions`). Quantity ``"E"``, on
             H(curl) of the solve order, over the solve domain.
+            An adaptive sweep's fields are basis-backed (`ReducedFields`):
+            the result holds the reduced basis and one short coordinate
+            vector per field, and a field's coefficients are formed when it
+            is read. Their accuracy is the sweep's field error, about
+            ``SolverOptions.adaptive_tolerance`` or better.
         kept: ``(frequency in Hz, excited port)`` of each of `e_fields`
             (static labels), frequency-major.
+        sweep: How the frequencies were solved (`SweepInfo`).
     """
 
     s: NetworkParameters
-    e_fields: tuple[Field, ...] = ()
+    e_fields: Sequence[Field] = ()
     kept: tuple[tuple[float, str], ...] = ()
+    sweep: SweepInfo | None = None
 
     def __post_init__(self) -> None:
-        """Hold the fields as a tuple matching their labels."""
-        object.__setattr__(self, "e_fields", tuple(self.e_fields))
+        """Hold the fields as a sequence matching their labels."""
+        if not isinstance(self.e_fields, ReducedFields):
+            object.__setattr__(self, "e_fields", tuple(self.e_fields))
+        if self.sweep is None:
+            object.__setattr__(self, "sweep", SweepInfo.uniform(self.s.frequency))
         object.__setattr__(
             self, "kept", tuple((float(f), str(p)) for f, p in self.kept)
         )
@@ -615,9 +710,9 @@ class DrivenResult:
                 f"{', '.join(map(repr, self.s.excited))}."
             )
         frequencies = sorted({f for f, _ in self.kept})
-        for (f, port), field in zip(self.kept, self.e_fields, strict=True):
+        for k, (f, port) in enumerate(self.kept):
             if port == excite and math.isclose(f, frequency, rel_tol=1e-9):
-                return field
+                return self.e_fields[k]
         raise ValueError(
             f"No field kept at {frequency:g} Hz; the kept frequencies are "
             f"{', '.join(f'{f:g}' for f in frequencies)} Hz (Driven.keep_fields)."
@@ -631,9 +726,10 @@ class DrivenResult:
             else f"{f[0] / 1e9:.4g} GHz"
         )
         fields = f", {len(self.e_fields)} kept fields" if self.e_fields else ""
+        sweep = "" if self.sweep is None else f", {self.sweep!r}"
         return (
             f"DrivenResult({len(f)} frequencies {span}, ports={list(self.s.ports)}, "
-            f"excited={list(self.s.excited)}{fields})"
+            f"excited={list(self.s.excited)}{fields}{sweep})"
         )
 
 

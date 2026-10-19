@@ -122,3 +122,15 @@ class EigenmodeConvergenceError(RuntimeError):
     ``SolverOptions.max_refine_iterations``, or, for a mode with a Q below
     about 2, find the resonance from a `Driven` sweep instead.
     """
+
+
+class SweepNotConvergedWarning(UserWarning):
+    """An adaptive frequency sweep stopped at its sample cap before converging.
+
+    The result is still returned: its S-parameters and fields come from the
+    reduced model built on the samples solved so far, and
+    ``result.sweep.converged`` is False. Raise
+    ``SolverOptions.adaptive_max_samples``, loosen
+    ``SolverOptions.adaptive_tolerance``, or solve a uniform sweep. Filter it
+    with Python's `warnings` module.
+    """
