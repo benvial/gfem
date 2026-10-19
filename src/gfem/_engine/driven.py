@@ -14,27 +14,39 @@ the power wave of port i with reference impedance R_i. The solution
 itself (volts per mesh file unit) is that 1 W field's peak phasor in the
 `gfem.Field` coefficient convention, so kept fields are the solution
 columns as they are.
+
+Gradients (`DrivenRule.backward`): with ``A x_j = i k0 b_j`` and ``b_i``
+parallel to the voltage vector ``l_i``, port i's solution is (a multiple
+of) the adjoint of its own voltage, ``A^-1 l_i = x_i / (i k0 b_i / l_i)``
+(A^T = A, no transpose, no conjugate). An S cotangent therefore needs no
+solve when every port it reads is excited: per frequency it folds into
+one pair ``(-sum_i W_ij A^-1 l_i, x_j)``. A kept-field cotangent, or an S
+row of a port that was not excited, takes one multi-column adjoint solve
+per frequency; that frequency's operator is prepared on first use at the
+adjoint tolerance and kept in the cache entry for later pullbacks.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import math
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
 import ngsolve as ngs
 import numpy as np
 
+from gfem._adjoint import adjoint_tolerance
 from gfem._boundaries import PEC, LumpedPort, WavePort
 from gfem._engine import terms
 from gfem._engine.cache import Entry, discretization
-from gfem._engine.domain import domain_key, hcurl_space
+from gfem._engine.domain import domain_key, em_region, hcurl_space
 from gfem._engine.fields import fe_space
 from gfem._engine.mesh import EngineMesh
 from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair
-from gfem._linalg import KINDS, Operator, prepare
+from gfem._linalg import KINDS, Handle, Operator, prepare
 from gfem.mesh import Mesh
 from gfem.model import Model
 from gfem.options import SolverOptions
@@ -108,8 +120,9 @@ class DrivenRule:
     form = "driven"
     #: Material properties the driven forms read.
     reads = frozenset({"eps_r", "mu_r", "tan_delta", "conductivity"})
-    #: Outputs whose cotangents the backward pass handles: none yet.
-    differentiable_outputs = frozenset()
+    #: Outputs whose cotangents the backward pass handles (``z_ref``, the
+    #: port resistances, is constant in every differentiable input).
+    differentiable_outputs = frozenset({"s", "z_ref", "e_field"})
 
     def __init__(self, model: Model, problem: Driven, options: SolverOptions) -> None:
         """Check that the problem fits the model (see `gfem.Driven`).
@@ -179,17 +192,18 @@ class DrivenRule:
 
         Args:
             model: The model, with concrete leaves.
-            keep: Ignored: driven results are not differentiable yet, so
-                nothing is kept for a backward pass.
+            keep: Keep every port solution for a backward pass (fields
+                only: the backward needs no solver for S).
 
         Returns:
             ``{"s": (n_freq, n_ports, n_excited) complex, "z_ref":
             (n_freq, n_ports) ohm, "iterations": Krylov iterations per
             frequency and excited port (empty for direct)}``, plus
             ``"e_field"``, ``(ndof, n_kept * n_excited)`` complex, when
-            fields are kept (frequency-major), and ``None``.
+            fields are kept (frequency-major), and the cache entry
+            (``fields["solution"]``, ``(ndof, n_freq * n_excited)``,
+            frequency-major) or ``None``.
         """
-        del keep
         names = model.port_names
         resistance = np.array([_resistance(p) for p in model.ports])
         columns = [names.index(n) for n in self.excite]
@@ -197,6 +211,7 @@ class DrivenRule:
         s = np.zeros((len(frequencies), len(names), len(columns)), complex)
         iterations: list[tuple[int, ...]] = []
         fields: list[np.ndarray] = []
+        solutions: list[np.ndarray] = []
         with task_manager(self.options.threads):
             op = self.operator(model)
             vectors = [
@@ -225,6 +240,8 @@ class DrivenRule:
                 finally:
                     handle.free()
                 previous = x
+                if keep:
+                    solutions.append(np.array(x, dtype=complex))
                 if n in self.kept:
                     fields.append(np.array(x, dtype=complex))
                 waves = (voltage.T @ x) / np.sqrt(2 * resistance)[:, None]
@@ -234,7 +251,14 @@ class DrivenRule:
         outputs = {"s": s, "z_ref": z_ref, "iterations": iterations}
         if self.kept:
             outputs["e_field"] = np.concatenate(fields, axis=1)
-        return outputs, None
+        entry = None
+        if keep:
+            entry = Entry(
+                physics=self.physics,
+                handle=_Handles(),
+                fields={"solution": np.concatenate(solutions, axis=1)},
+            )
+        return outputs, entry
 
     def output_specs(self, model: Model) -> dict[str, jax.ShapeDtypeStruct]:
         """Shape and dtype of each forward output."""
@@ -276,9 +300,97 @@ class DrivenRule:
     def backward(
         self, model: Model, entry: Entry, cotangents: dict[str, np.ndarray]
     ) -> list[FieldPair]:
-        """Not available: driven gradients raise at trace time."""
-        del model, entry, cotangents
-        raise NotImplementedError("Driven gradients are not available yet.")
+        """Fold the S and kept-field cotangents into one field pair per frequency.
+
+        At frequency n, with ``X`` the excited ports' solutions and ``W =
+        ct_s[n] / sqrt(2 R)`` (rows: ports), the pair is ``(-Lambda, X)``
+        with ``Lambda_j = sum_i W_ij A^-1 l_i + A^-1 g_j``, ``g_j`` the
+        cotangent of a kept field of port j: ``sum ct dy/dp = -sum_j
+        Lambda_j^T (dA/dp) x_j``. ``A^-1 l_i`` of an excited port is its
+        own solution scaled (no solve); the remaining loads (kept-field
+        cotangents, rows of ports that were not excited) take one
+        multi-column adjoint solve. ``z_ref`` contributes nothing.
+        """
+        solution = entry.fields["solution"]
+        resistance = np.array([_resistance(p) for p in model.ports])
+        names = model.port_names
+        columns = [names.index(n) for n in self.excite]
+        width = len(columns)
+        ct_s = cotangents.get("s")
+        ct_e = cotangents.get("e_field")
+        if entry.handle is None:
+            entry.handle = _Handles()
+        pairs = []
+        with task_manager(self.options.threads):
+            op = self.operator(model)
+            domain = em_region(model, op.built)
+            voltage = None
+            for n, f in enumerate(self.problem.frequency):
+                omega = 2 * math.pi * f
+                k0 = op.wavenumber(omega)
+                x = solution[:, n * width : (n + 1) * width]
+                adjoint = np.zeros_like(x)
+                load = np.zeros_like(x)
+                if ct_s is not None:
+                    w = _row_weights(np.asarray(ct_s[n]), resistance)
+                    for m, i in enumerate(columns):  # reciprocity: no solve
+                        per_voltage = (
+                            1j * k0 * terms.excitation_per_voltage(resistance[i])
+                        )
+                        adjoint += np.outer(x[:, m] / per_voltage, w[i])
+                    undefined = ~np.isfinite(w)  # S rows of ports without R
+                    adjoint[:, undefined.any(axis=0)] = np.nan
+                    w[undefined] = 0
+                    rows = [
+                        i for i in range(len(names)) if i not in columns and w[i].any()
+                    ]
+                    if rows:
+                        if voltage is None:
+                            voltage = self._voltages(op)
+                        load += voltage[:, rows] @ w[rows]
+                if ct_e is not None and n in self.kept:
+                    k = self.kept.index(n)
+                    load += np.asarray(ct_e)[:, k * width : (k + 1) * width]
+                if load.any():
+                    handle = entry.handle.get(
+                        n, lambda omega=omega: self._prepare(op, omega)
+                    )
+                    adjoint += handle.solve(
+                        load, tolerance=adjoint_tolerance(self.options)
+                    )
+                pairs.append(
+                    FieldPair(
+                        space=op.space,
+                        left=-adjoint,
+                        right=x,
+                        weights=_weights(k0),
+                        order=op.order,
+                        domain=domain,
+                    )
+                )
+        return pairs
+
+    def _prepare(self, op: DrivenOperator, omega: float) -> Handle:
+        """The operator at ``omega``, prepared at the adjoint tolerance."""
+        return prepare(
+            Operator(op.form(omega), op.space.FreeDofs()),
+            symmetry="complex_symmetric",
+            kind=self.kind,
+            device=self.options.device,
+            tolerance=adjoint_tolerance(self.options),
+            width=len(self.excite),
+        )
+
+    @staticmethod
+    def _voltages(op: DrivenOperator) -> np.ndarray:
+        """Every port's voltage vector, ``(ndof, n_ports)``."""
+        return np.stack(
+            [
+                terms.port_vectors(op.space, op.built, op.order, data)[1]
+                for data in op.ports
+            ],
+            axis=1,
+        )
 
     def result(self, outputs: dict) -> DrivenResult:
         """The public result from the forward outputs."""
@@ -309,6 +421,52 @@ class DrivenRule:
             e_fields=tuple(e_fields),
             kept=tuple(kept),
         )
+
+
+def _weights(k0: float) -> dict[str, complex]:
+    """θ(ω) of each material-dependent piece (see `gfem._engine.terms`)."""
+    return {
+        "curl_curl": 1.0,
+        "mass": -(k0**2),
+        "conductivity": 1j * k0,
+        "absorbing": 1j * k0,
+        "absorbing order 2": 1 / (2j * k0),
+    }
+
+
+def _row_weights(ct: np.ndarray, resistance: np.ndarray) -> np.ndarray:
+    """``ct / sqrt(2 R)`` per S row; rows without a cotangent are exact zeros.
+
+    A row of a port without a resistance is NaN (so is its S row); its
+    weights stay NaN only where its cotangent is nonzero.
+    """
+    with np.errstate(invalid="ignore"):
+        w = ct / np.sqrt(2 * resistance)[:, None]
+    return np.where(ct == 0, 0, w)
+
+
+class _Handles:
+    """Prepared driven operators by frequency index, for adjoint solves."""
+
+    def __init__(self) -> None:
+        self._handles: dict[int, Handle] = {}
+
+    def get(self, n: int, build: Callable[[], Handle]) -> Handle:
+        """The handle of frequency ``n``, prepared by ``build()`` on first use."""
+        if n not in self._handles:
+            self._handles[n] = build()
+        return self._handles[n]
+
+    @property
+    def nbytes(self) -> int:
+        """Host memory held, in bytes."""
+        return sum(int(h.nbytes) for h in self._handles.values())
+
+    def free(self) -> None:
+        """Release every handle."""
+        for handle in self._handles.values():
+            handle.free()
+        self._handles = {}
 
 
 def _resistance(port: LumpedPort | WavePort) -> float:
