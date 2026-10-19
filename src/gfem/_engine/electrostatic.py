@@ -14,7 +14,9 @@ the solver tolerance.
 
 The terminal potentials are their own adjoints (``dC_ij = phi_i^T dK phi_j``),
 so a capacitance gradient needs no solve: a kept entry holds the potentials
-only, never the factorization or preconditioner.
+only, and the forward frees its factorization or preconditioner. A potential
+cotangent prepares the operator again in the backward pass (once per entry,
+at the adjoint tolerance) for its adjoint solve.
 """
 
 from __future__ import annotations
@@ -25,20 +27,24 @@ import ngsolve as ngs
 import numpy as np
 import scipy.constants
 
+from gfem._adjoint import adjoint_tolerance
 from gfem._boundaries import PEC, Conductor
 from gfem._engine import quadrature
 from gfem._engine.cache import Entry, discretization
 from gfem._engine.coefficients import permittivity
 from gfem._engine.domain import boundary_region, domain_key, em_region, h1_space
+from gfem._engine.fields import fe_space
 from gfem._engine.mesh import EngineMesh
 from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair
-from gfem._linalg import KINDS, Operator, prepare
+from gfem._field import FieldMap
+from gfem._linalg import KINDS, Handle, Operator, prepare
 from gfem.errors import RegionNotFoundError
+from gfem.mesh import Mesh
 from gfem.model import Model
 from gfem.options import SolverOptions
 from gfem.problems import Electrostatic
-from gfem.results import ElectrostaticResult
+from gfem.results import ElectrostaticResult, Field
 
 __all__ = ["ElectrostaticRule"]
 
@@ -59,8 +65,8 @@ class ElectrostaticRule:
     form = "electrostatic"
     #: Material properties the electrostatic forms read.
     reads = frozenset({"eps_r"})
-    #: Outputs whose cotangents the backward pass handles.
-    differentiable_outputs = frozenset({"capacitance"})
+    #: Outputs whose cotangents the backward pass handles (not ``energy``).
+    differentiable_outputs = frozenset({"capacitance", "potential"})
 
     def __init__(
         self, model: Model, problem: Electrostatic, options: SolverOptions
@@ -96,6 +102,9 @@ class ElectrostaticRule:
         mesh, active = model.mesh, model._domain.active  # noqa: SLF001
         #: Volume regions with tetrahedra in the solve domain, mesh order.
         self.regions = tuple(r for r in mesh.volumes if active[mesh.elements(r)].any())
+        # The potentials live on the mesh as given (traced or not).
+        self._mesh = model.mesh
+        self._excluded = model._domain.excluded  # noqa: SLF001
 
     def forward(
         self, model: Model, *, keep: bool
@@ -108,33 +117,22 @@ class ElectrostaticRule:
 
         Returns:
             ``{"capacitance": (n, n) array in F, "energy": (len(regions), n)
-            array in J}``, and the cache entry (``fields["potential"]``, one DOF
-            column per terminal; no handle) or ``None``.
+            array in J, "potential": (ndof, n) array in V, one column per
+            terminal}``, and the cache entry (``fields["potential"]``; no
+            handle) or ``None``.
 
         Raises:
             ValueError: Part of the solve domain touches no terminal or
                 ground, so its potential is undetermined.
         """
-        order = self.options.order
         with task_manager(self.options.threads):
             space, built = self._space(model)
             regions = [
                 boundary_region(built, surfaces)
                 for _, surfaces in self.problem.terminals
             ]
-            free = space.FreeDofs()
-
-            u, v = space.TnT()
-            form = ngs.BilinearForm(space, symmetric=True)
             eps = permittivity(model, built)
-            form += eps * ngs.grad(u) * ngs.grad(v) * quadrature.dx(order)
-            handle = prepare(
-                Operator(form, free),
-                symmetry="hermitian",
-                kind=self.kind,
-                device=self.options.device,
-                tolerance=self.options.tolerance,
-            )
+            handle = self._prepare(space, eps, self.options.tolerance)
             lift = np.zeros((space.ndof, len(regions)))
             for i, region in enumerate(regions):
                 gf = ngs.GridFunction(space)
@@ -155,7 +153,23 @@ class ElectrostaticRule:
         entry = None
         if keep:
             entry = Entry(physics=self.physics, fields={"potential": phi})
-        return {"capacitance": c, "energy": energy}, entry
+        return {"capacitance": c, "energy": energy, "potential": phi}, entry
+
+    def _prepare(
+        self, space: ngs.FESpace, eps: ngs.CoefficientFunction, tolerance: float
+    ) -> Handle:
+        """The prepared operator ``int eps_r grad u . grad v`` (file units)."""
+        order = self.options.order
+        u, v = space.TnT()
+        form = ngs.BilinearForm(space, symmetric=True)
+        form += eps * ngs.grad(u) * ngs.grad(v) * quadrature.dx(order)
+        return prepare(
+            Operator(form, space.FreeDofs()),
+            symmetry="hermitian",
+            kind=self.kind,
+            device=self.options.device,
+            tolerance=tolerance,
+        )
 
     def _space(self, model: Model) -> tuple[ngs.FESpace, EngineMesh]:
         order = self.options.order
@@ -168,12 +182,19 @@ class ElectrostaticRule:
         )
         return space, built
 
-    def output_specs(self, model: Model) -> dict[str, jax.ShapeDtypeStruct]:  # noqa: ARG002
-        """Shape and dtype of each forward output."""
+    def output_specs(self, model: Model) -> dict[str, jax.ShapeDtypeStruct]:
+        """Shape and dtype of each forward output (from the mesh topology)."""
         n = len(self.problem.terminals)
+        mesh = model.mesh
+        still = Mesh(mesh.imported_nodes, mesh._topology)  # noqa: SLF001
+        with task_manager(self.options.threads):
+            _, space, _ = fe_space(
+                still, self.regions, self._excluded, "h1", self.options.order
+            )
         return {
             "capacitance": jax.ShapeDtypeStruct((n, n), jnp.float64),
             "energy": jax.ShapeDtypeStruct((len(self.regions), n), jnp.float64),
+            "potential": jax.ShapeDtypeStruct((space.ndof, n), jnp.float64),
         }
 
     def role(self, kind: tuple) -> str:
@@ -191,6 +212,18 @@ class ElectrostaticRule:
 
     def nondifferentiable_output(self, name: str) -> str:
         """The error message for a cotangent on output ``name``."""
+        if name == "energy":
+            # dE_r = phi^T dK_r phi / 2 + phi^T K_r dphi: unlike C, the region
+            # energy is not stationary in phi, so it needs one adjoint solve
+            # per terminal; not implemented.
+            return (
+                "gfem cannot differentiate the electrostatic region energies "
+                "(result.energy) with respect to eps_r or the mesh nodes. "
+                "Differentiate the capacitance instead (the "
+                "total energy of excitation i is capacitance[i, i] / 2), or wrap "
+                "result.energy in jax.lax.stop_gradient to use its value without "
+                "its derivative."
+            )
         return (
             f"gfem cannot differentiate the electrostatic output {name!r}. Wrap "
             "it in jax.lax.stop_gradient to use its value without its derivative."
@@ -199,24 +232,45 @@ class ElectrostaticRule:
     def backward(
         self, model: Model, entry: Entry, cotangents: dict[str, np.ndarray]
     ) -> list[FieldPair]:
-        """Fold the capacitance cotangent into field pairs.
+        """Fold the capacitance and potential cotangents into field pairs.
 
-        The terminal potentials are their own adjoints:
+        The terminal potentials are their own adjoints for the capacitance:
         ``sum_ij ct_ij dC_ij = sum_i phi_i^T dK (sum_j G_ij phi_j)`` with
         ``G`` the symmetric part of ``ct`` (C is symmetrized), so no solve.
+        A potential cotangent ``ct_i`` takes one adjoint solve per terminal,
+        all columns at once: ``K phi_i = 0`` on the free DOFs gives
+        ``ct_i . dphi_i = -lambda_i^T dK phi_i`` with ``K lambda_i = ct_i``
+        (zero on the fixed DOFs), K the SI operator. Its operator is
+        prepared on first use at the adjoint tolerance and kept in the entry
+        for later pullbacks.
         """
         phi = entry.fields["potential"]
-        ct = np.asarray(cotangents["capacitance"], dtype=float)
-        g = 0.5 * (ct + ct.T)
+        eps0 = scipy.constants.epsilon_0
         with task_manager(self.options.threads):
             space, built = self._space(model)
             domain = em_region(model, built)
+            left, right = [], []
+            if "capacitance" in cotangents:
+                ct = np.asarray(cotangents["capacitance"], dtype=float)
+                left.append(phi)
+                right.append(phi @ (0.5 * (ct + ct.T)).T)
+            if "potential" in cotangents:
+                ct = np.asarray(cotangents["potential"], dtype=float)
+                tolerance = adjoint_tolerance(self.options)
+                if entry.handle is None:
+                    eps = permittivity(model, built)
+                    entry.handle = self._prepare(space, eps, tolerance)
+                # the handle solves the form without eps0 * scale
+                adjoint = entry.handle.solve(ct, tolerance=tolerance)
+                adjoint /= eps0 * built.scale
+                left.append(-adjoint)
+                right.append(phi)
         return [
             FieldPair(
                 space=space,
-                left=phi,
-                right=phi @ g.T,
-                weights={"grad_grad": scipy.constants.epsilon_0},
+                left=np.concatenate(left, axis=1),
+                right=np.concatenate(right, axis=1),
+                weights={"grad_grad": eps0},
                 order=self.options.order,
                 domain=domain,
             )
@@ -224,13 +278,31 @@ class ElectrostaticRule:
 
     def result(self, outputs: dict) -> ElectrostaticResult:
         """The public result from the forward outputs."""
+        names = self.problem.terminal_names
+        potential = FieldMap(
+            {
+                name: Field(
+                    coefficients=jnp.asarray(outputs["potential"][:, i]),
+                    mesh=self._mesh,
+                    quantity="V",
+                    unit="V",
+                    space="h1",
+                    order=self.options.order,
+                    support=self.regions,
+                    _excluded=self._excluded,
+                )
+                for i, name in enumerate(names)
+            },
+            label="terminal",
+        )
         return ElectrostaticResult(
             capacitance=jnp.asarray(outputs["capacitance"]),
-            terminals=self.problem.terminal_names,
+            terminals=names,
             energy={
                 r: jnp.asarray(e)
                 for r, e in zip(self.regions, outputs["energy"], strict=True)
             },
+            potential=potential,
         )
 
     def _region_energies(

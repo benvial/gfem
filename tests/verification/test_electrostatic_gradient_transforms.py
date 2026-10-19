@@ -31,7 +31,7 @@ RTOL = 1e-11
 def stack(tmp_path_factory):
     layers = (("oxide", 0.5), ("nitride", 0.25))
     path = tmp_path_factory.mktemp("mesh") / "stack.msh"
-    sm.write_msh22(path, sm.plate(40.0, 30.0, layers, (2, 2, 2)))
+    sm.write_msh22(path, sm.plate(4.0, 3.0, layers, (2, 2, 2)))
     mesh = gfem.Mesh.from_gmsh(path)
     return gfem.Model(
         mesh, materials={"oxide": gfem.Material(), "nitride": gfem.Material()}
@@ -145,3 +145,53 @@ def test_jit_of_vmap_of_grad_equals_the_loop(stack):
     compiled = jax.jit(jax.vmap(grad))
     np.testing.assert_allclose(compiled(designs), looped, rtol=RTOL)
     np.testing.assert_allclose(compiled(designs), looped, rtol=RTOL)
+
+
+# --- potential functionals: an adjoint solve in the backward pass ---------------
+
+
+def _potential_objective(stack, options=None):
+    def objective(eps):
+        n_ox = len(stack.mesh.elements("oxide"))
+        model = stack.replace(
+            materials={
+                "oxide": gfem.MaterialField(eps_r=eps[:n_ox]),
+                "nitride": gfem.MaterialField(eps_r=eps[n_ox:]),
+            }
+        )
+        potential = gfem.solve(model, PROBLEM, options=options).potential
+        top, mid = potential["top"].coefficients, potential["mid"].coefficients
+        return jnp.sum(top * jnp.cos(jnp.arange(top.size))) + jnp.sum(mid**2)
+
+    return objective
+
+
+def test_potential_gradients_agree_under_every_transformation(stack):
+    designs = _designs(stack, 2, seed=6)
+    objective = _potential_objective(stack)
+    grad = jax.grad(objective)
+    looped = jnp.stack([grad(d) for d in designs])
+    np.testing.assert_allclose(jax.vmap(grad)(designs), looped, rtol=RTOL)
+    _, pullback = jax.vjp(objective, designs[0])
+    np.testing.assert_allclose(pullback(1.0)[0], looped[0], rtol=RTOL)
+    np.testing.assert_allclose(pullback(2.0)[0], 2 * looped[0], rtol=RTOL)
+    options = gfem.SolverOptions(retain_memory=0)
+    recompute = jax.grad(_potential_objective(stack, options))
+    np.testing.assert_allclose(recompute(designs[1]), looped[1], rtol=RTOL)
+
+
+def test_adjoint_tolerance_sets_the_potential_gradient_accuracy(stack):
+    # order 3: BDDC iterates (at order 2 every H1 DOF is on the wirebasket)
+    eps = _designs(stack, 1, seed=7)[0]
+    direct = gfem.SolverOptions(order=3, linear_solver="direct")
+    exact = jax.grad(_potential_objective(stack, direct))(eps)
+
+    def error(**kw):
+        options = gfem.SolverOptions(order=3, linear_solver="bddc_gmres", **kw)
+        grad = jax.grad(_potential_objective(stack, options))(eps)
+        return float(jnp.abs(grad - exact).max() / jnp.abs(exact).max())
+
+    tight = error(tolerance=1e-8)  # the adjoint follows the forward tolerance
+    loose = error(tolerance=1e-8, adjoint_tolerance=1e-2)
+    assert tight < 1e-6
+    assert loose > 100 * tight

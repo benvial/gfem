@@ -87,3 +87,69 @@ def test_elements_of_an_excluded_conductor_have_an_exact_zero_gradient():
     assert not grad[inside].any()
     assert (grad[~inside] >= 0).all()
     assert grad[~inside].max() > 0
+
+
+@pytest.mark.parametrize("matrix", ["mutual", "inverse"])
+def test_gradient_through_derived_matrices_matches_central_differences(
+    tmp_path, matrix
+):
+    # mutual and inverse are jnp functions of the capacitance leaf, so they
+    # differentiate through the capacitance pullback.
+    layers = (("oxide", 0.5), ("nitride", 0.25))
+    path = sm.write_msh22(tmp_path / "stack.msh", sm.plate(4.0, 3.0, layers, (2, 1, 1)))
+    mesh = gfem.Mesh.from_gmsh(path)
+    model = gfem.Model(
+        mesh, materials={"oxide": gfem.Material(), "nitride": gfem.Material(eps_r=7.5)}
+    )
+    problem = gfem.Electrostatic(
+        terminals={"top": "top", "mid": "oxide__nitride"}, ground="bottom"
+    )
+    weights = np.array([[1.0, 0.3], [-0.7, 2.0]])
+    scale = EPS0 * UM if matrix == "mutual" else 1 / (EPS0 * UM)
+
+    def objective(eps):
+        m = model.with_material("oxide", gfem.MaterialField(eps_r=eps))
+        value = getattr(gfem.solve(m, problem), matrix)
+        return jnp.sum(weights * value) / scale  # O(1) values
+
+    rng = np.random.default_rng(3)
+    eps = jnp.asarray(rng.uniform(2.0, 6.0, len(mesh.elements("oxide"))))
+    grad = jax.grad(objective)(eps)
+    assert np.abs(np.asarray(grad)).max() > 0
+    h = 1e-4
+    for _ in range(2):
+        d = rng.standard_normal(eps.shape)
+        fd = (objective(eps + h * d) - objective(eps - h * d)) / (2 * h)
+        assert float(grad @ d) == pytest.approx(float(fd), rel=1e-6)
+
+
+@pytest.mark.parametrize("solver", ["direct", "bddc_gmres"])
+def test_kept_entry_and_recomputed_entry_give_the_same_gradient(plate, solver):
+    # The forward keeps its potentials (not its solver: a capacitance
+    # gradient needs no solve) in ENTRIES; with retain_memory=0 nothing is
+    # kept and the backward re-runs the forward.
+    from gfem._engine.cache import ENTRIES
+
+    n = len(plate.mesh.elements("oxide"))
+    eps = jnp.linspace(3.0, 5.0, n)
+
+    def grad(**kw):
+        options = gfem.SolverOptions(linear_solver=solver, tolerance=1e-12, **kw)
+
+        def c_of(e):
+            m = plate.with_material("oxide", gfem.MaterialField(eps_r=e))
+            return gfem.solve(m, PROBLEM, options=options).capacitance[0, 0]
+
+        return jax.grad(c_of)(eps)
+
+    ENTRIES.clear()
+    kept = grad()
+    assert len(ENTRIES) == 1
+    (entry,) = ENTRIES._entries.values()
+    assert entry.handle is None
+    assert entry.nbytes == entry.fields["potential"].nbytes
+    ENTRIES.clear()
+    assert entry.fields == {}
+    recomputed = grad(retain_memory=0)
+    assert len(ENTRIES) == 0
+    np.testing.assert_allclose(recomputed, kept, rtol=1e-12)
