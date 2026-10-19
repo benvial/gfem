@@ -17,6 +17,8 @@ from gfem.errors import (  # noqa: E402
     MeshQualityError,
     MeshQualityWarning,
     NonDifferentiableError,
+    PortGeometryError,
+    PortModeError,
     RegionNotFoundError,
 )
 from gfem.mesh import Mesh, Region  # noqa: E402
@@ -34,8 +36,13 @@ from gfem.model import (  # noqa: E402
     enclosed_by,
 )
 from gfem.options import SolverOptions  # noqa: E402
-from gfem.problems import Electrostatic  # noqa: E402
-from gfem.results import ElectrostaticResult, Field  # noqa: E402
+from gfem.problems import Electrostatic, PortMode  # noqa: E402
+from gfem.results import (  # noqa: E402
+    ElectrostaticResult,
+    Field,
+    PortModeField,
+    PortModeResult,
+)
 from gfem.solve import solve  # noqa: E402
 
 __version__ = _version("gfem")
@@ -57,6 +64,11 @@ __all__ = [
     "MeshQualityWarning",
     "Model",
     "NonDifferentiableError",
+    "PortGeometryError",
+    "PortMode",
+    "PortModeError",
+    "PortModeField",
+    "PortModeResult",
     "Region",
     "RegionNotFoundError",
     "SolverOptions",

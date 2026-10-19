@@ -13,8 +13,11 @@ from collections.abc import Mapping
 from typing import Any, ClassVar
 
 import jax
+import numpy as np
 
-__all__ = ["Electrostatic"]
+from gfem._checks import is_traced
+
+__all__ = ["Electrostatic", "PortMode"]
 
 
 def _surfaces(value: Any, what: str) -> tuple[str, ...]:
@@ -119,3 +122,78 @@ class Electrostatic:
 
 
 jax.tree_util.register_static(Electrostatic)
+
+
+def _frequencies(value: Any) -> tuple[float, ...]:
+    if is_traced(value):
+        raise ValueError("PortMode.frequency must be fixed numbers, not traced.")
+    try:
+        f = np.asarray(value, dtype=float)
+    except (TypeError, ValueError):
+        f = np.empty((0, 0))
+    if f.ndim > 1 or f.size == 0:
+        raise ValueError(
+            "PortMode.frequency must be one frequency or a 1D sequence of them, in "
+            f"Hz; got {value!r}."
+        )
+    f = f.reshape(-1)
+    if not np.isfinite(f).all() or (f <= 0).any():
+        raise ValueError(
+            f"PortMode.frequency must be finite and > 0 Hz, got {value!r}."
+        )
+    return tuple(float(x) for x in f)
+
+
+@dataclasses.dataclass(frozen=True, init=False)
+class PortMode:
+    """The 2D port mode problem of a wave port over a frequency grid.
+
+    Solves the port's cross-section for its propagating mode at each
+    frequency: propagation constant, effective index, mode field and the
+    power-voltage impedance. The cross-section's materials are those of the
+    volume elements behind the port; its edges take the boundary conditions
+    of the surfaces that meet the port (`PEC` edges are perfect conductors,
+    `Absorbing` edges first-order absorbing, all others natural, i.e. PMC).
+
+    Args:
+        port: The name of a `WavePort` of the model.
+        frequency: One frequency or a 1D sequence of them, Hz.
+        mode: Which propagating mode, in Palace's order: by decreasing
+            effective index for lossless modes (1 = the most confined), with
+            strongly attenuated modes ranked lower. ``None``: the wave port's
+            own ``mode``.
+
+    Raises:
+        TypeError: ``port`` is not a name.
+        ValueError: A frequency is not finite and positive, or ``mode`` is
+            not an integer >= 1.
+
+    Example:
+        ``gfem.PortMode("p1", np.linspace(1e9, 100e9, 100))``
+    """
+
+    port: str
+    frequency: tuple[float, ...]
+    mode: int | None
+    _rule: ClassVar[str] = "gfem._sweep.port_mode:PortModeRule"
+
+    def __init__(self, port: str, frequency: Any, mode: int | None = None) -> None:
+        """Validate and normalize (see the class docstring)."""
+        if not isinstance(port, str):
+            raise TypeError(
+                f"PortMode.port must be the name of a WavePort, got {port!r}."
+            )
+        if mode is not None and (
+            isinstance(mode, bool)
+            or not isinstance(mode, (int, np.integer))
+            or mode < 1
+        ):
+            raise ValueError(
+                f"PortMode.mode must be an integer >= 1 or None, got {mode!r}."
+            )
+        object.__setattr__(self, "port", port)
+        object.__setattr__(self, "frequency", _frequencies(frequency))
+        object.__setattr__(self, "mode", None if mode is None else int(mode))
+
+
+jax.tree_util.register_static(PortMode)
