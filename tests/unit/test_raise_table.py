@@ -112,6 +112,35 @@ EXPECTED |= {
     )
     for kind in [("nodes",)] + [("material", "dielectric", p) for p in ALL_PROPERTIES]
 }
+# Adaptive sweep (frozen samples, so it traces): S and the kept fields'
+# reduced coordinates differentiate like the uniform sweep's S and fields.
+# The reduced basis is frozen by definition of the gradient, so a cotangent
+# on it raises for every input the solve reads.
+ADAPTIVE = gfem.Driven(
+    frequency=(4e9, 5e9, 6e9), sweep="adaptive", samples=(4e9, 6e9), keep_fields=5e9
+)
+EXPECTED |= {
+    ("driven_adaptive", out, kind): (
+        RAISES
+        if kind == ("nodes",)
+        else ZERO
+        if kind[2] not in EM_PROPERTIES
+        else GRADIENT
+        if out in ("s.values", "e_fields.coordinates")
+        else RAISES
+        if out == "e_fields.basis"
+        else ZERO
+    )
+    for out in (
+        "s.values",
+        "s.z_ref",
+        "e_fields.basis",
+        "e_fields.coordinates",
+        "e_fields.omega",
+        "e_fields.mesh.nodes",
+    )
+    for kind in [("nodes",)] + [("material", "dielectric", p) for p in ALL_PROPERTIES]
+}
 
 
 def _field(mesh, region):
@@ -163,6 +192,7 @@ def cases(model, driven_model):
         "electrostatic": (model, PROBLEMS["electrostatic"]),
         "port_mode": (port_model, gfem.PortMode("p1", 10e9)),
         "driven": (driven_model, gfem.Driven(frequency=5e9, keep_fields=True)),
+        "driven_adaptive": (driven_model, ADAPTIVE),
     }
 
 

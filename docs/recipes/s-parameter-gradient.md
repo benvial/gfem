@@ -64,3 +64,9 @@ The mesh node coordinates, port and boundary parameters (lumped `R`, `L`, `C`,
 differentiable in this version: a perturbed one raises
 `gfem.NonDifferentiableError` while JAX traces the gradient. Thermal
 properties are not read: their gradient is an exact zero.
+
+## Adaptive sweeps
+
+`Driven(sweep="adaptive")` differentiates too, with its reduced basis held
+fixed and its samples frozen (`Driven(samples=...)`): see
+[Differentiate an adaptive frequency sweep](adaptive-sweep-gradient.md).

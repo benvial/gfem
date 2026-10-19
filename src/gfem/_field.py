@@ -226,6 +226,12 @@ class ReducedFields(Sequence[Field]):
     ``n_dofs`` complex vector per field. Indexing and iterating give
     ordinary `Field` objects; every field shares the descriptor below.
 
+    The basis is frozen for gradients: a field's coefficients differentiate
+    through its coordinates only, and a cotangent on ``basis`` itself raises
+    `gfem.NonDifferentiableError` in `gfem.solve`'s backward pass. With
+    frozen samples (``Driven.samples``) the basis may end in zero columns:
+    it is padded to a size known before the solve.
+
     Attributes:
         basis: The real basis, ``(n_dofs, n)``.
         coordinates: Complex coordinates, ``(n_fields, n)``.
@@ -279,8 +285,9 @@ class ReducedFields(Sequence[Field]):
             raise TypeError(f"ReducedFields indices are ints, got {k!r}.")
         if not -len(self) <= k < len(self):
             raise IndexError(f"Field {k} of {len(self)}.")
+        # the basis is frozen: gradients flow through the coordinates only
         return Field(
-            coefficients=self.basis @ self.coordinates[k],
+            coefficients=jax.lax.stop_gradient(self.basis) @ self.coordinates[k],
             mesh=self.mesh,
             quantity=self.quantity,
             unit=self.unit,

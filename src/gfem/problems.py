@@ -261,7 +261,11 @@ class Driven:
             ``frequency``. Freezing the samples of a first sweep
             (``samples=result.sweep.sampled_frequencies``) keeps the reduced
             model's sample set fixed while the model changes, e.g. across
-            optimizer iterations.
+            optimizer iterations, so the objective is smooth in the design.
+            Under `jax.grad`, `jax.jit` or `jax.vmap` an adaptive sweep
+            needs frozen samples. Its gradients hold the reduced basis
+            fixed: equal to the full solve's at the sample frequencies,
+            accurate to the sweep's field error between them.
         keep_fields: Which electric fields the result keeps, one per kept
             frequency and excited port: ``False`` (the default) none,
             ``True`` all, or a frequency or list of frequencies of

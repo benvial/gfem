@@ -24,6 +24,13 @@ one pair ``(-sum_i W_ij A^-1 l_i, x_j)``. A kept-field cotangent, or an S
 row of a port that was not excited, takes one multi-column adjoint solve
 per frequency; that frequency's operator is prepared on first use at the
 adjoint tolerance and kept in the cache entry for later pullbacks.
+
+An adaptive sweep differentiates with its reduced basis V and sample set
+held fixed (`DrivenRule._backward_adaptive`): the cache entry keeps only V
+and the reduced model, the backward solves n x n reduced adjoints and folds
+them into at most n field pairs ``(V a, V b)`` per material term. Under a
+JAX transformation the sample set must be frozen (``Driven.samples``), so
+every output shape is known before the solve.
 """
 
 from __future__ import annotations
@@ -32,6 +39,7 @@ import dataclasses
 import functools
 import math
 from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -156,8 +164,10 @@ class DrivenRule:
     #: Material properties the driven forms read.
     reads = frozenset({"eps_r", "mu_r", "tan_delta", "conductivity"})
     #: Outputs whose cotangents the backward pass handles (``z_ref``, the
-    #: port resistances, is constant in every differentiable input).
-    differentiable_outputs = frozenset({"s", "z_ref", "e_field"})
+    #: port resistances, is constant in every differentiable input). An
+    #: adaptive sweep's kept fields differentiate through their reduced
+    #: coordinates; its basis ``e_basis`` is frozen, so not differentiable.
+    differentiable_outputs = frozenset({"s", "z_ref", "e_field", "e_coordinates"})
 
     def __init__(self, model: Model, problem: Driven, options: SolverOptions) -> None:
         """Check that the problem fits the model (see `gfem.Driven`).
@@ -237,8 +247,7 @@ class DrivenRule:
             frequency-major) or ``None``.
         """
         if self.adaptive:
-            # never under differentiation: output_specs refuses adaptive sweeps
-            return self._forward_adaptive(model), None
+            return self._forward_adaptive(model, keep=keep)
         names = model.port_names
         resistance = np.array([_resistance(p) for p in model.ports])
         columns = [names.index(n) for n in self.excite]
@@ -295,14 +304,24 @@ class DrivenRule:
             )
         return outputs, entry
 
-    def _forward_adaptive(self, model: Model) -> dict[str, object]:
+    def _forward_adaptive(
+        self, model: Model, *, keep: bool
+    ) -> tuple[dict[str, object], Entry | None]:
         """The adaptive sweep of `forward` (see `gfem._sweep.adaptive`).
 
         Outputs as `forward`'s, except that ``"iterations"`` is per sample,
         kept fields come as ``"e_basis"`` ``(ndof, n)`` real and
         ``"e_coordinates"`` ``(n_kept * n_excited, n)`` (frequency-major),
         and ``"sweep"`` holds ``{"samples": grid indices in solve order,
-        "errors", "converged", "basis_size"}``.
+        "errors", "converged", "basis_size"}``. With frozen samples, ``n``
+        is `_padded_size` (zero columns after the basis), so the kept
+        fields' shapes are known before the solve.
+
+        The entry (``keep``) holds the reduced model only: the basis
+        ``"basis"`` ``(ndof, n)``, the reduced pieces ``"operators"``
+        ``(n_pieces, n, n)``, the reduced port voltages ``"voltage"``
+        ``(n_ports, n)`` and the reduced solutions ``"coordinates"``
+        ``(n_freq, n, n_excited)``; no solver.
         """
         names = model.port_names
         resistance = np.array([_resistance(p) for p in model.ports])
@@ -379,27 +398,49 @@ class DrivenRule:
                 "basis_size": sweep.model.size,
             },
         }
+        size = sweep.model.size
         if self.kept:
             coordinates = sweep.coordinates[list(self.kept)]  # (n_kept, n, n_exc)
-            outputs["e_basis"] = sweep.basis
-            outputs["e_coordinates"] = np.swapaxes(coordinates, 1, 2).reshape(
-                -1, sweep.model.size
+            coordinates = np.swapaxes(coordinates, 1, 2).reshape(-1, size)
+            width = size if samples is None else self._padded_size()
+            basis = np.zeros((sweep.basis.shape[0], width))
+            basis[:, :size] = sweep.basis
+            padded = np.zeros((len(coordinates), width), complex)
+            padded[:, :size] = coordinates
+            outputs["e_basis"] = basis
+            outputs["e_coordinates"] = padded
+        entry = None
+        if keep:
+            entry = Entry(
+                physics=self.physics,
+                fields={
+                    "basis": sweep.basis,
+                    "operators": np.stack(sweep.model.operators),
+                    "voltage": sweep.model.outputs[0],
+                    "coordinates": sweep.coordinates,
+                },
             )
-        return outputs
+        return outputs, entry
+
+    def _padded_size(self) -> int:
+        """Most basis vectors frozen samples give: 2 per sample and excited port."""
+        samples = self.problem.samples or ()
+        return 2 * len(samples) * len(self.excite)
 
     def output_specs(self, model: Model) -> dict[str, jax.ShapeDtypeStruct]:
         """Shape and dtype of each forward output."""
-        if self.adaptive:
+        if self.adaptive and self.problem.samples is None:
             raise NotImplementedError(
-                "Driven(sweep='adaptive') cannot run under jax.jit, jax.grad or "
-                "jax.vmap in this version of gfem (no gradients through adaptive "
-                "sweeps yet): its sample set and basis size "
-                "are only known after the solve. Use sweep='uniform', or call "
-                "gfem.solve outside the transformation."
+                "Driven(sweep='adaptive') runs under jax.grad, jax.jit or jax.vmap "
+                "only with a frozen sample set: the greedy's samples and basis size "
+                "are only known after the solve. Solve once outside the "
+                "transformation and pass Driven(..., samples="
+                "result.sweep.sampled_frequencies), or use sweep='uniform'."
             )
         n_f, n_p = len(self.problem.frequency), len(model.ports)
+        n_exc = len(self.excite)
         specs = {
-            "s": jax.ShapeDtypeStruct((n_f, n_p, len(self.excite)), jnp.complex128),
+            "s": jax.ShapeDtypeStruct((n_f, n_p, n_exc), jnp.complex128),
             "z_ref": jax.ShapeDtypeStruct((n_f, n_p), jnp.float64),
         }
         if self.kept:
@@ -409,8 +450,17 @@ class DrivenRule:
                 _, space, _ = fe_space(
                     still, self.regions, self._excluded, "hcurl", self.options.order
                 )
-            width = len(self.kept) * len(self.excite)
-            specs["e_field"] = jax.ShapeDtypeStruct((space.ndof, width), jnp.complex128)
+            n_fields = len(self.kept) * n_exc
+            if self.adaptive:
+                n = self._padded_size()
+                specs["e_basis"] = jax.ShapeDtypeStruct((space.ndof, n), jnp.float64)
+                specs["e_coordinates"] = jax.ShapeDtypeStruct(
+                    (n_fields, n), jnp.complex128
+                )
+            else:
+                specs["e_field"] = jax.ShapeDtypeStruct(
+                    (space.ndof, n_fields), jnp.complex128
+                )
         return specs
 
     def role(self, kind: tuple) -> str:
@@ -446,6 +496,8 @@ class DrivenRule:
         cotangents, rows of ports that were not excited) take one
         multi-column adjoint solve. ``z_ref`` contributes nothing.
         """
+        if self.adaptive:
+            return self._backward_adaptive(model, entry, cotangents)
         solution = entry.fields["solution"]
         resistance = np.array([_resistance(p) for p in model.ports])
         names = model.port_names
@@ -499,6 +551,64 @@ class DrivenRule:
                         left=-adjoint,
                         right=x,
                         weights=_weights(k0),
+                        order=op.order,
+                        domain=domain,
+                    )
+                )
+        return pairs
+
+    def _backward_adaptive(
+        self, model: Model, entry: Entry, cotangents: dict[str, np.ndarray]
+    ) -> list[FieldPair]:
+        """The frozen-basis backward of an adaptive sweep: no full-size solve.
+
+        With the basis V and the sample set held fixed, the reduced solution
+        at ω solves ``A_r(ω) y = b_r(ω)``, ``A_r = Σ θ_k Vᵀ A_k V`` complex
+        symmetric. A cotangent ``g`` on ``y`` (from S through the reduced
+        port voltages, and from kept fields' coordinates) gives the reduced
+        adjoint ``λ = A_r^-1 g`` (n x n) and ``sum ct dy/dp = -Σ_t Σ_ab
+        G_t,ab a_t'(V_a, V_b)`` with ``G_t = Σ_ω θ_t(ω) Λ(ω) Y(ω)ᵀ``. Each
+        ``G_t`` (n x n) factors by SVD into at most n pairs ``(V a, V b)``,
+        so the element passes do not grow with the number of frequencies.
+        A cotangent on the basis itself is refused by the wrapper.
+        """
+        fields = entry.fields
+        basis, reduced = fields["basis"], fields["operators"]
+        voltage, coordinates = fields["voltage"], fields["coordinates"]
+        resistance = np.array([_resistance(p) for p in model.ports])
+        n, n_exc = basis.shape[1], len(self.excite)
+        ct_s = cotangents.get("s")
+        ct_c = cotangents.get("e_coordinates")
+        accumulated: dict[str, np.ndarray] = {}
+        with task_manager(self.options.threads):
+            op = self.operator(model)
+            domain = em_region(model, op.built)
+            for i, f in enumerate(self.problem.frequency):
+                omega = 2 * math.pi * f
+                g = np.zeros((n, n_exc), complex)
+                if ct_s is not None:
+                    g += voltage.T @ _row_weights(np.asarray(ct_s[i]), resistance)
+                if ct_c is not None and i in self.kept:
+                    k = self.kept.index(i)
+                    g += np.asarray(ct_c)[k * n_exc : (k + 1) * n_exc, :n].T
+                if not g.any():
+                    continue
+                matrix = sum(
+                    complex(piece.theta(omega)) * a
+                    for piece, a in zip(op.pieces, reduced, strict=True)
+                )
+                outer = np.linalg.solve(matrix, g) @ coordinates[i].T
+                for term, theta in _weights(op.wavenumber(omega)).items():
+                    accumulated[term] = accumulated.get(term, 0) + theta * outer
+            pairs = []
+            for term, g in accumulated.items():
+                left, right = _factor(g)
+                pairs.append(
+                    FieldPair(
+                        space=op.space,
+                        left=-(basis @ left),
+                        right=basis @ right,
+                        weights={term: 1.0},
                         order=op.order,
                         domain=domain,
                     )
@@ -564,7 +674,13 @@ class DrivenRule:
     ) -> DrivenResult:
         """`result` of an adaptive sweep: basis-backed fields, `SweepInfo`."""
         frequencies = self.problem.frequency
-        info = outputs["sweep"]
+        # Under a JAX transformation only the frozen sample set is known.
+        info: dict[str, Any] = outputs.get("sweep") or {
+            "samples": [frequencies.index(f) for f in self.problem.samples or ()],
+            "errors": None,
+            "converged": None,
+            "basis_size": None,
+        }
         sampled = set(info["samples"])
         sweep = SweepInfo(
             kind="adaptive",
@@ -612,6 +728,25 @@ def _weights(k0: float) -> dict[str, complex]:
         "absorbing": 1j * k0,
         "absorbing order 2": 1 / (2j * k0),
     }
+
+
+#: Singular values of a reduced cotangent matrix below this fraction of the
+#: largest one are dropped (their pairs add nothing).
+FACTOR_RANK = 1e-14
+
+
+def _factor(g: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """``(a, b)`` with ``g = a @ b.T`` and few columns (truncated SVD).
+
+    A matrix with a non-finite entry (an S row of a port without a
+    resistance) gives a NaN column, so the gradient is NaN like the value.
+    """
+    if not np.isfinite(g).all():
+        column = np.full((g.shape[0], 1), np.nan)
+        return column, column
+    u, sigma, vh = np.linalg.svd(g)
+    rank = max(1, int(np.count_nonzero(sigma > FACTOR_RANK * sigma[0])))
+    return u[:, :rank] * sigma[:rank], vh[:rank].T
 
 
 def _row_weights(ct: np.ndarray, resistance: np.ndarray) -> np.ndarray:
