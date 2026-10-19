@@ -88,7 +88,17 @@ EXPECTED |= {
     ("driven", out, kind): (
         ZERO if kind[0] == "material" and kind[2] not in EM_PROPERTIES else RAISES
     )
-    for out in ("s.values", "s.z_ref")
+    for out in (
+        "s.values",
+        "s.z_ref",
+        # kept fields (one per excited port): coefficients, the input mesh
+        # passed through, and the constant angular frequency
+        *(
+            f"e_fields.{k}.{leaf}"
+            for k in (0, 1)
+            for leaf in ("coefficients", "mesh.nodes", "omega")
+        ),
+    )
     for kind in [("nodes",)] + [("material", "dielectric", p) for p in ALL_PROPERTIES]
 }
 
@@ -141,7 +151,7 @@ def cases(model, driven_model):
     return {
         "electrostatic": (model, PROBLEMS["electrostatic"]),
         "port_mode": (port_model, gfem.PortMode("p1", 10e9)),
-        "driven": (driven_model, gfem.Driven(frequency=5e9)),
+        "driven": (driven_model, gfem.Driven(frequency=5e9, keep_fields=True)),
     }
 
 

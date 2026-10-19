@@ -5,6 +5,8 @@ from __future__ import annotations
 import dataclasses
 import math
 from collections.abc import Mapping
+from importlib.metadata import version
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import jax
@@ -12,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.constants
 
+from gfem._checks import is_traced
 from gfem._field import Field, FieldMap
 from gfem._pytree import register_fields
 
@@ -273,7 +276,9 @@ class NetworkParameters:
     `LumpedPort` the reference impedance is its resistance; an inductance or
     capacitance of the port loads the network in parallel. A port without
     a resistance has no reference impedance: its ``z_ref`` and its row of S
-    are NaN.
+    are NaN. `y`, `z` and `renormalize` are `jax.numpy` functions of S and
+    ``z_ref``, so they differentiate like S; `to_touchstone` writes a file.
+    The conventions are spelled out in `gfem.conventions`.
 
     Attributes:
         values: S, complex, shape ``(n_freq, n_ports, n_excited)``.
@@ -312,6 +317,191 @@ class NetworkParameters:
         """``20 log10 |S[to, from]|`` over frequency, dB."""
         return 20 * jnp.log10(jnp.abs(self[to, source]))
 
+    def y(self) -> jax.Array:
+        """The admittance matrix in siemens, ``(n_freq, n_ports, n_ports)``.
+
+        Rows and columns in `ports` order. With ``F = diag(1 / (2 sqrt(Re
+        z_ref)))`` and ``G = diag(z_ref)``, ``Y = F^-1 (S G + G*)^-1 (I - S) F``
+        (power waves). Written in `jax.numpy`, so it differentiates like S.
+        Entries are NaN where a port has no reference impedance.
+
+        Raises:
+            ValueError: Not every port was excited, so S is not square.
+        """
+        s, g, ratio = self._s_g_ratio("y()")
+        eye = jnp.broadcast_to(jnp.eye(s.shape[-1]), s.shape)
+        sg = s * g[:, None, :] + _diag(jnp.conj(g))
+        return jnp.linalg.solve(sg, eye - s) * ratio
+
+    def z(self) -> jax.Array:
+        """The impedance matrix in ohm, ``(n_freq, n_ports, n_ports)``.
+
+        Rows and columns in `ports` order. With ``F = diag(1 / (2 sqrt(Re
+        z_ref)))`` and ``G = diag(z_ref)``, ``Z = F^-1 (I - S)^-1 (S G + G*) F``
+        (power waves). Written in `jax.numpy`, so it differentiates like S.
+        Entries are NaN where a port has no reference impedance.
+
+        Raises:
+            ValueError: Not every port was excited, so S is not square.
+        """
+        s, g, ratio = self._s_g_ratio("z()")
+        eye = jnp.broadcast_to(jnp.eye(s.shape[-1]), s.shape)
+        sg = s * g[:, None, :] + _diag(jnp.conj(g))
+        return jnp.linalg.solve(eye - s, sg) * ratio
+
+    def renormalize(self, z_new: Any) -> NetworkParameters:
+        """The same network under new reference impedances.
+
+        Power-wave renormalization: the network (its Z matrix) is unchanged,
+        only the waves that describe it change. Written in `jax.numpy`, so
+        it differentiates with respect to S and ``z_new``.
+
+        Args:
+            z_new: The new reference impedance in ohm: one value for every
+                port, one per port in `ports` order, or an array
+                ``(n_freq, n_ports)``. May be complex, with a positive real
+                part.
+
+        Returns:
+            `NetworkParameters` with ``z_ref`` set to ``z_new``, every port
+            excited, columns in `ports` order.
+
+        Raises:
+            ValueError: Not every port was excited, ``z_new`` has the wrong
+                shape, or a real part is not positive.
+        """
+        s = self._square("renormalize()")
+        n_f, n = s.shape[0], s.shape[1]
+        if not is_traced(z_new):
+            arr = np.asarray(z_new)
+            if (arr.ndim == 1 and arr.shape != (n,)) or arr.ndim > 2:
+                raise ValueError(
+                    "renormalize takes one reference impedance, one per port "
+                    f"({n} ports: {', '.join(map(repr, self.ports))}) or an array "
+                    f"({n_f}, {n}); got shape {arr.shape}."
+                )
+            if not (np.real(arr) > 0).all():
+                raise ValueError(
+                    "Power-wave reference impedances need a positive real part "
+                    f"(a resistance), got {z_new!r}."
+                )
+        new = jnp.broadcast_to(jnp.asarray(z_new), (n_f, n))
+        z = jnp.asarray(self.z_ref, dtype=complex)
+        zn = new.astype(complex)
+        # a' = P a + Q b and b' = U a + T b per port, so S' = (U + T S)(P + Q S)^-1,
+        # each side scaled by 1 / (2 sqrt(Re Z Re Z')).
+        p = jnp.conj(z) + zn
+        q = z - zn
+        u = jnp.conj(z) - jnp.conj(zn)
+        t = z + jnp.conj(zn)
+        num = _diag(u) + t[:, :, None] * s
+        den = _diag(p) + q[:, :, None] * s
+        s0 = jnp.swapaxes(
+            jnp.linalg.solve(jnp.swapaxes(den, 1, 2), jnp.swapaxes(num, 1, 2)), 1, 2
+        )
+        d = jnp.sqrt(jnp.real(z) * jnp.real(zn))
+        return NetworkParameters(
+            values=s0 * d[:, None, :] / d[:, :, None],
+            z_ref=new,
+            frequency=self.frequency,
+            ports=self.ports,
+            excited=self.ports,
+        )
+
+    def to_touchstone(self, path: str | Path, z0: float | None = None) -> Path:
+        """Write S to a Touchstone 1.1 file (``.sNp``, real/imaginary, Hz).
+
+        A Touchstone 1.1 file has one real reference impedance for every
+        port. Without ``z0`` the file is labelled with `z_ref`, which must
+        then be one real value for every port and frequency: gfem never
+        labels a port with an impedance S was not computed for. With
+        ``z0``, S is first renormalized to it (`renormalize`). Port names
+        and the conventions are written as comments.
+
+        Args:
+            path: The file, named ``*.s<n_ports>p``.
+            z0: The reference impedance to renormalize to, ohm (real, > 0).
+
+        Returns:
+            The path written.
+
+        Raises:
+            ValueError: The file name does not match the port count, not
+                every port was excited, a port has no reference impedance,
+                or `z_ref` is not one real value and ``z0`` is not given.
+            TypeError: The values are traced by JAX.
+        """
+        path = Path(path)
+        n = len(self.ports)
+        suffix = f".s{n}p"
+        if path.suffix.lower() != suffix:
+            raise ValueError(
+                f"A {n}-port Touchstone file is named *{suffix}; got {path.name!r}."
+            )
+        if is_traced(self.values) or is_traced(self.z_ref):
+            raise TypeError(
+                "to_touchstone needs concrete values and cannot run under jax.jit, "
+                "jax.grad or jax.vmap; write the file outside the transformed "
+                "function."
+            )
+        s = np.asarray(self._square("to_touchstone()"))
+        z_ref = np.asarray(self.z_ref)
+        nan = np.isnan(z_ref).any(axis=0)
+        missing = [p for p, bad in zip(self.ports, nan, strict=True) if bad]
+        if missing:
+            raise ValueError(
+                f"Port {', '.join(map(repr, missing))} has no reference impedance "
+                "(z_ref is NaN): a LumpedPort without a resistance, or a WavePort "
+                "without a voltage_path. S cannot be labelled or renormalized "
+                "without one; give the port a resistance or a voltage_path."
+            )
+        if z0 is None:
+            first = z_ref.flat[0]
+            if not (np.all(z_ref == first) and np.imag(first) == 0):
+                found = np.unique(np.round(z_ref, 12))
+                raise ValueError(
+                    "A Touchstone 1.1 file has one real reference impedance for "
+                    f"every port, but z_ref takes the values {found.tolist()} ohm. "
+                    "Pass z0= (e.g. z0=50.0) to renormalize S to one reference "
+                    "first."
+                )
+            z0 = float(np.real(first))
+        else:
+            if (
+                isinstance(z0, (bool, complex, np.complexfloating))
+                or not isinstance(z0, (int, float, np.integer, np.floating))
+                or not math.isfinite(z0)
+                or z0 <= 0
+            ):
+                raise ValueError(
+                    "to_touchstone z0 must be one real reference impedance > 0 "
+                    f"ohm, got {z0!r}; use renormalize() for complex references."
+                )
+            z0 = float(z0)
+            s = np.asarray(self.renormalize(z0).values)
+        path.write_text(_touchstone(self, s, z0))
+        return path
+
+    def _square(self, what: str) -> jax.Array:
+        """S with every port as a column, in `ports` order."""
+        missing = [p for p in self.ports if p not in self.excited]
+        if missing:
+            raise ValueError(
+                f"{what} needs the full scattering matrix, but only "
+                f"{', '.join(map(repr, self.excited))} were excited, not "
+                f"{', '.join(map(repr, missing))}. Solve with Driven(excite=None) "
+                "to excite every port."
+            )
+        order = [self.excited.index(p) for p in self.ports]
+        return jnp.asarray(self.values)[:, :, order]
+
+    def _s_g_ratio(self, what: str) -> tuple[jax.Array, jax.Array, jax.Array]:
+        s = self._square(what)
+        g = jnp.asarray(self.z_ref, dtype=complex)
+        r = jnp.sqrt(jnp.real(g))
+        # F^-1 M F: entry (i, j) times F_j / F_i = sqrt(Re z_i / Re z_j)
+        return s, g, r[:, :, None] / r[:, None, :]
+
     def __repr__(self) -> str:
         return (
             f"NetworkParameters(ports={list(self.ports)}, "
@@ -322,20 +512,115 @@ class NetworkParameters:
 register_fields(NetworkParameters, ("values", "z_ref"))
 
 
+def _diag(v: jax.Array) -> jax.Array:
+    """``(n_freq, n)`` -> stacked diagonal matrices ``(n_freq, n, n)``."""
+    return v[:, :, None] * jnp.eye(v.shape[-1])
+
+
+def _touchstone(net: NetworkParameters, s: np.ndarray, z0: float) -> str:
+    """Touchstone 1.1 text of ``s`` (port order) with reference ``z0``."""
+    n = len(net.ports)
+    lines = [
+        f"! gfem {version('gfem')}: S-parameters, {n} port(s), {len(s)} frequencies",
+        "! Power waves (Kurokawa), time convention exp(+j omega t); |a|^2 is the",
+        "! time-averaged incident power in W",
+        *(f"! Port[{i}] = {name}" for i, name in enumerate(net.ports, start=1)),
+        f"# Hz S RI R {z0:.12g}",
+    ]
+
+    def pairs(values: np.ndarray) -> list[str]:
+        return [f"{v.real: .16e} {v.imag: .16e}" for v in values]
+
+    for f, m in zip(net.frequency, s, strict=True):
+        head = f"{f:.16e}"
+        if n <= 2:
+            # 1- and 2-port files list N11 N21 N12 N22 on one line
+            lines.append(" ".join([head, *pairs(m.T.reshape(-1))]))
+            continue
+        for i, row in enumerate(m):
+            items = pairs(row)
+            for k in range(0, n, 4):
+                lead = head if i == 0 and k == 0 else " " * len(head)
+                lines.append(" ".join([lead, *items[k : k + 4]]))
+    return "\n".join(lines) + "\n"
+
+
 @dataclasses.dataclass(frozen=True, eq=False)
 class DrivenResult:
     """The result of a `Driven` problem.
 
     Attributes:
         s: The scattering parameters (`NetworkParameters`).
+        e_fields: The kept electric fields (``Driven(keep_fields=...)``), one
+            `Field` per kept frequency and excited port, labelled by
+            `kept`; empty by default. Read them with `e_field`. Each is the
+            peak phasor (e^{+iωt}) in V/m for 1 W time-averaged incident
+            power at the excited port, every other port terminated in its
+            reference impedance ``z_ref``, so time-averaged densities carry
+            a factor 1/2 (see `gfem.conventions`). Quantity ``"E"``, on
+            H(curl) of the solve order, over the solve domain.
+        kept: ``(frequency in Hz, excited port)`` of each of `e_fields`
+            (static labels), frequency-major.
     """
 
     s: NetworkParameters
+    e_fields: tuple[Field, ...] = ()
+    kept: tuple[tuple[float, str], ...] = ()
+
+    def __post_init__(self) -> None:
+        """Hold the fields as a tuple matching their labels."""
+        object.__setattr__(self, "e_fields", tuple(self.e_fields))
+        object.__setattr__(
+            self, "kept", tuple((float(f), str(p)) for f, p in self.kept)
+        )
+        if len(self.e_fields) != len(self.kept):
+            raise ValueError(
+                f"{len(self.e_fields)} fields but {len(self.kept)} labels in kept."
+            )
 
     @property
     def frequency(self) -> np.ndarray:
         """The frequencies in Hz, ``(n_freq,)``."""
         return np.array(self.s.frequency)
+
+    def e_field(self, frequency: float, excite: str | None = None) -> Field:
+        """The kept electric field at ``frequency`` with port ``excite`` fed.
+
+        Args:
+            frequency: A kept frequency, Hz (matched to 1e-9 relative).
+            excite: The excited port; may be left out when one port was
+                excited.
+
+        Raises:
+            ValueError: No field was kept at ``frequency``, or ``excite`` is
+                needed.
+            KeyError: ``excite`` is not an excited port.
+        """
+        if not self.kept:
+            raise ValueError(
+                "This result keeps no fields: solve with Driven(..., "
+                "keep_fields=True) or keep_fields=[frequencies] to keep them."
+            )
+        if excite is None:
+            if len(self.s.excited) > 1:
+                raise ValueError(
+                    f"Ports {', '.join(map(repr, self.s.excited))} were excited; "
+                    "pass excite= to choose one."
+                )
+            excite = self.s.excited[0]
+        if excite not in self.s.excited:
+            raise KeyError(
+                f"Port {excite!r} was not excited; the excited ports are "
+                f"{', '.join(map(repr, self.s.excited))}."
+            )
+        frequencies = sorted({f for f, _ in self.kept})
+        for (f, port), field in zip(self.kept, self.e_fields, strict=True):
+            if port == excite and math.isclose(f, frequency, rel_tol=1e-9):
+                return field
+        raise ValueError(
+            f"No field kept at {frequency:g} Hz; the kept frequencies are "
+            f"{', '.join(f'{f:g}' for f in frequencies)} Hz (Driven.keep_fields)."
+        )
 
     def __repr__(self) -> str:
         f = self.frequency
@@ -344,10 +629,11 @@ class DrivenResult:
             if len(f) > 1
             else f"{f[0] / 1e9:.4g} GHz"
         )
+        fields = f", {len(self.e_fields)} kept fields" if self.e_fields else ""
         return (
             f"DrivenResult({len(f)} frequencies {span}, ports={list(self.s.ports)}, "
-            f"excited={list(self.s.excited)})"
+            f"excited={list(self.s.excited)}{fields})"
         )
 
 
-register_fields(DrivenResult, ("s",))
+register_fields(DrivenResult, ("s", "e_fields"))

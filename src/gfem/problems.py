@@ -210,6 +210,8 @@ jax.tree_util.register_static(PortMode)
 
 
 _SWEEPS = ("uniform", "adaptive")
+#: Frequency grids up to this size are listed in full in error messages.
+_LISTED = 8
 
 
 def _port_names(value: Any) -> tuple[str, ...] | None:
@@ -236,7 +238,8 @@ class Driven:
     impedance, and the electric field solves the time-harmonic Maxwell
     equations (e^{+iωt}) in the electromagnetic solve domain. The result is
     the scattering matrix (power waves, each port's reference impedance its
-    resistance; see `gfem.NetworkParameters`).
+    resistance; see `gfem.NetworkParameters`) and, on request, the electric
+    fields (see `gfem.conventions` for their amplitude).
 
     Args:
         frequency: One frequency or a 1D sequence of them, Hz.
@@ -245,11 +248,18 @@ class Driven:
         sweep: ``"uniform"`` solves every frequency in full.
             ``"adaptive"`` (a reduced model sampled at a few frequencies) is
             not available in this version.
+        keep_fields: Which electric fields the result keeps, one per kept
+            frequency and excited port: ``False`` (the default) none,
+            ``True`` all, or a frequency or list of frequencies of
+            ``frequency``. A field is a complex vector per DOF (16 bytes per
+            DOF; 160 MB at 10M DOFs), so keep only what you use.
 
     Raises:
-        TypeError: ``excite`` is not port names.
+        TypeError: ``excite`` is not port names, or ``keep_fields`` is not a
+            bool or frequencies.
         ValueError: A frequency is not finite and positive, ``excite`` is
-            empty or repeats a port, or ``sweep`` is unknown.
+            empty or repeats a port, ``sweep`` is unknown, or a
+            ``keep_fields`` frequency is not one of ``frequency``.
 
     Example:
         ``gfem.Driven(frequency=np.linspace(1e9, 100e9, 100))``
@@ -258,6 +268,7 @@ class Driven:
     frequency: tuple[float, ...]
     excite: tuple[str, ...] | None
     sweep: str
+    keep_fields: bool | tuple[float, ...]
     _rule: ClassVar[str] = "gfem._engine.driven:DrivenRule"
 
     def __init__(
@@ -266,15 +277,56 @@ class Driven:
         *,
         excite: str | Sequence[str] | None = None,
         sweep: str = "uniform",
+        keep_fields: bool | float | Sequence[float] = False,
     ) -> None:
         """Validate and normalize (see the class docstring)."""
         if sweep not in _SWEEPS:
             raise ValueError(
                 f"Driven.sweep must be 'uniform' or 'adaptive', got {sweep!r}."
             )
-        object.__setattr__(self, "frequency", _frequencies(frequency, "Driven"))
+        frequencies = _frequencies(frequency, "Driven")
+        object.__setattr__(self, "frequency", frequencies)
         object.__setattr__(self, "excite", _port_names(excite))
         object.__setattr__(self, "sweep", sweep)
+        object.__setattr__(self, "keep_fields", _kept(keep_fields, frequencies))
+
+    @property
+    def kept_frequencies(self) -> tuple[float, ...]:
+        """The frequencies whose fields are kept, in ``frequency`` order."""
+        if self.keep_fields is True:
+            return self.frequency
+        if self.keep_fields is False:
+            return ()
+        return self.keep_fields
+
+
+def _kept(value: Any, frequencies: tuple[float, ...]) -> bool | tuple[float, ...]:
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if is_traced(value):
+        raise ValueError("Driven.keep_fields must be fixed frequencies, not traced.")
+    try:
+        wanted = np.asarray(value, dtype=float).reshape(-1)
+    except (TypeError, ValueError):
+        raise TypeError(
+            f"Driven.keep_fields takes True, False or frequencies in Hz, got {value!r}."
+        ) from None
+    grid = np.asarray(frequencies)
+    kept = set()
+    for f in wanted:
+        match = np.flatnonzero(np.isclose(grid, f, rtol=1e-9, atol=0))
+        if not match.size:
+            listed = (
+                ", ".join(f"{g:g}" for g in grid)
+                if len(grid) <= _LISTED
+                else f"{len(grid)} frequencies, {grid.min():g} to {grid.max():g}"
+            )
+            raise ValueError(
+                f"Driven.keep_fields frequency {f:g} Hz is not one of the "
+                f"problem's frequencies ({listed} Hz)."
+            )
+        kept.add(int(match[0]))
+    return tuple(frequencies[i] for i in sorted(kept))
 
 
 jax.tree_util.register_static(Driven)
