@@ -383,6 +383,131 @@ def test_result_repr_and_db(line):
     assert cmath.isfinite(s21)
 
 
+# --- kept fields -----------------------------------------------------------------
+
+
+def test_keep_fields_is_off_by_default_and_normalized():
+    assert gfem.Driven(frequency=F).keep_fields is False
+    assert gfem.Driven(frequency=F, keep_fields=True).keep_fields is True
+    p = gfem.Driven(frequency=[1e9, 2e9, 3e9], keep_fields=[3e9, 1e9 * (1 + 1e-14)])
+    assert p.keep_fields == (1e9, 3e9)
+    assert gfem.Driven(frequency=[1e9, 2e9], keep_fields=2e9).keep_fields == (2e9,)
+    with pytest.raises(ValueError, match=r"4e\+09.*not one of"):
+        gfem.Driven(frequency=[1e9, 2e9], keep_fields=[4e9])
+    with pytest.raises(TypeError, match="keep_fields"):
+        gfem.Driven(frequency=1e9, keep_fields="all")
+
+
+def test_fields_are_not_kept_by_default(line):
+    result = _s(line)
+    assert result.e_fields == ()
+    with pytest.raises(ValueError, match="keep_fields"):
+        result.e_field(F, excite="p1")
+
+
+def _poynting_power(field):
+    """Time-averaged power along +x, (1/2) Re ∫ E x H* . x dV / length, W."""
+    import ngsolve as ngs
+
+    from gfem._engine.fields import LENGTH_POWER, fe_space
+
+    b = field.b()
+    excluded = field._excluded
+    parts = {}
+    for f in (field, b):
+        built, fes, region = fe_space(f.mesh, f.support, excluded, f.space, f.order)
+        factor = built.scale ** LENGTH_POWER[f.space]
+        for part, values in (("re", f.coefficients.real), ("im", f.coefficients.imag)):
+            gf = ngs.GridFunction(fes)
+            gf.vec.FV().NumPy()[:] = np.asarray(values) * factor
+            parts[f.quantity, part] = gf
+    e_re, e_im, b_re, b_im = (parts[q, p] for q in ("E", "B") for p in ("re", "im"))
+    flux = ngs.Cross(e_re, b_re) + ngs.Cross(e_im, b_im)
+    volume = ngs.Integrate(flux[0], built.mesh, definedon=region, order=8)
+    volume *= built.scale**3  # SI volume
+    return 0.5 * volume / const.mu_0 / (L * 1e-3)
+
+
+def test_kept_field_is_the_peak_phasor_for_one_watt_incident(line):
+    result = _s(line, gfem.Driven(frequency=F, keep_fields=True))
+    e = result.e_field(F, excite="p1")
+    assert isinstance(e, gfem.Field)
+    assert (e.quantity, e.unit, e.space, e.order) == ("E", "V/m", "hcurl", 2)
+    assert e.support == ("dielectric",)
+    assert e.is_complex
+    assert float(e.omega) == pytest.approx(2 * math.pi * F)
+    s = np.asarray(result.s.values)[0]
+    # the lossless line carries 1 - |S11|^2 of the 1 W incident to the far
+    # port, where its load absorbs |S21|^2
+    power = _poynting_power(e)
+    assert power == pytest.approx(1 - abs(s[0, 0]) ** 2, rel=1e-6)
+    assert power == pytest.approx(abs(s[1, 0]) ** 2, rel=1e-6)
+    # fed from port 2, the power flows the other way
+    assert _poynting_power(result.e_field(F, excite="p2")) == pytest.approx(-power)
+
+
+def test_kept_field_on_a_matched_line_carries_one_watt(mesh):
+    z0 = ETA0 * H / (W * math.sqrt(EPS))
+    matched = gfem.Model(
+        mesh,
+        materials={"dielectric": gfem.Material(eps_r=EPS)},
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+        ports=[
+            gfem.LumpedPort("p1", "port1", "+z", resistance=z0),
+            gfem.LumpedPort("p2", "port2", "+z", resistance=z0),
+        ],
+    )
+    result = _s(matched, gfem.Driven(frequency=F, excite="p1", keep_fields=True))
+    e = result.e_field(F)  # the only excited port
+    assert _poynting_power(e) == pytest.approx(1.0, rel=1e-4)
+    # peak voltage of a 1 W wave on z0: |V| = sqrt(2 z0 P), uniform E_z = V / H
+    sampled = e.to_meshio().point_data
+    ez = sampled["E_real"][:, 2] + 1j * sampled["E_imag"][:, 2]
+    # (sampled per element: the coarse mesh's non-TEM part is ~0.5 %)
+    peak = math.sqrt(2 * z0) / (H * 1e-3)
+    assert np.mean(np.abs(ez)) == pytest.approx(peak, rel=1e-3)
+    np.testing.assert_allclose(np.abs(ez), peak, rtol=1e-2)
+
+
+def test_keep_fields_selects_frequencies_and_labels_them(line):
+    problem = gfem.Driven(frequency=[2e9, 3e9, 4e9], excite="p2", keep_fields=[4e9])
+    result = _s(line, problem)
+    assert result.kept == ((4e9, "p2"),)
+    assert len(result.e_fields) == 1
+    assert float(result.e_field(4e9).omega) == pytest.approx(2 * math.pi * 4e9)
+    with pytest.raises(ValueError, match=r"3e\+09.*4e\+09"):
+        result.e_field(3e9)
+    with pytest.raises(KeyError, match="'p1'"):
+        result.e_field(4e9, excite="p1")
+    both = _s(line, gfem.Driven(frequency=F, keep_fields=True))
+    with pytest.raises(ValueError, match="excite="):
+        both.e_field(F)
+
+
+def test_kept_fields_come_out_of_jit_unchanged(line):
+    problem = gfem.Driven(frequency=F, excite="p1", keep_fields=True)
+    options = gfem.SolverOptions(linear_solver="direct")
+    plain = gfem.solve(line, problem, options=options).e_field(F).coefficients
+
+    @jax.jit
+    def coefficients(model):
+        return gfem.solve(model, problem, options=options).e_field(F).coefficients
+
+    np.testing.assert_allclose(coefficients(line), plain, rtol=1e-12, atol=1e-12)
+
+
+def test_kept_fields_round_trip_through_a_result_bundle(line, tmp_path):
+    problem = gfem.Driven(frequency=F, excite="p1", keep_fields=True)
+    options = gfem.SolverOptions(linear_solver="direct")
+    result = gfem.Job(line, problem, options).run(out=tmp_path / "out")
+    loaded = gfem.load_result(tmp_path / "out")
+    assert loaded.kept == result.kept
+    e, back = result.e_field(F), loaded.e_field(F)
+    np.testing.assert_array_equal(back.coefficients, e.coefficients)
+    assert (back.space, back.order, back.support) == (e.space, e.order, e.support)
+    assert _poynting_power(back) == pytest.approx(_poynting_power(e), rel=1e-12)
+
+
 def test_driven_job_and_result_round_trip(line, tmp_path):
     problem = gfem.Driven(frequency=[2e9, 3e9], excite="p1")
     options = gfem.SolverOptions(linear_solver="direct")

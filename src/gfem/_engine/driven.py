@@ -10,7 +10,10 @@ voltage functional, so S is symmetric to solver precision.
 
 S is read from the port voltages: with the excited port fed 1 W incident
 power (incident voltage sqrt(2 R)), ``S_ij = V_i / sqrt(2 R_i) - δ_ij``,
-the power wave of port i with reference impedance R_i.
+the power wave of port i with reference impedance R_i. The solution
+itself (volts per mesh file unit) is that 1 W field's peak phasor in the
+`gfem.Field` coefficient convention, so kept fields are the solution
+columns as they are.
 """
 
 from __future__ import annotations
@@ -27,14 +30,16 @@ from gfem._boundaries import PEC, Absorbing, Impedance, LumpedPort, WavePort
 from gfem._engine import terms
 from gfem._engine.cache import Entry, discretization
 from gfem._engine.domain import domain_key, hcurl_space
+from gfem._engine.fields import fe_space
 from gfem._engine.mesh import EngineMesh
 from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair
 from gfem._linalg import KINDS, Operator, prepare
+from gfem.mesh import Mesh
 from gfem.model import Model
 from gfem.options import SolverOptions
 from gfem.problems import Driven
-from gfem.results import DrivenResult, NetworkParameters
+from gfem.results import DrivenResult, Field, NetworkParameters
 
 __all__ = ["DEFAULT_SOLVER", "DrivenOperator", "DrivenRule", "driven_operator"]
 
@@ -154,6 +159,14 @@ class DrivenRule:
                     "impedance to feed 1 W through. Give it a resistance, or leave "
                     "it out of Driven.excite."
                 )
+        #: Indices of the frequencies whose fields are kept.
+        self.kept = tuple(problem.frequency.index(f) for f in problem.kept_frequencies)
+        mesh, active = model.mesh, model._domain.active  # noqa: SLF001
+        #: Volume regions with tetrahedra in the solve domain: the field support.
+        self.regions = tuple(r for r in mesh.volumes if active[mesh.elements(r)].any())
+        # The fields live on the mesh as given (traced or not).
+        self._mesh = model.mesh
+        self._excluded = model._domain.excluded  # noqa: SLF001
 
     def operator(self, model: Model) -> DrivenOperator:
         """The model's driven operator at its current node positions."""
@@ -172,7 +185,9 @@ class DrivenRule:
         Returns:
             ``{"s": (n_freq, n_ports, n_excited) complex, "z_ref":
             (n_freq, n_ports) ohm, "iterations": Krylov iterations per
-            frequency and excited port (empty for direct)}`` and ``None``.
+            frequency and excited port (empty for direct)}``, plus
+            ``"e_field"``, ``(ndof, n_kept * n_excited)`` complex, when
+            fields are kept (frequency-major), and ``None``.
         """
         del keep
         names = model.port_names
@@ -181,6 +196,7 @@ class DrivenRule:
         frequencies = self.problem.frequency
         s = np.zeros((len(frequencies), len(names), len(columns)), complex)
         iterations: list[tuple[int, ...]] = []
+        fields: list[np.ndarray] = []
         with task_manager(self.options.threads):
             op = self.operator(model)
             vectors = [
@@ -209,19 +225,34 @@ class DrivenRule:
                 finally:
                     handle.free()
                 previous = x
+                if n in self.kept:
+                    fields.append(np.array(x, dtype=complex))
                 waves = (voltage.T @ x) / np.sqrt(2 * resistance)[:, None]
                 waves[columns, range(len(columns))] -= 1.0
                 s[n] = waves
         z_ref = np.broadcast_to(resistance, (len(frequencies), len(names))).copy()
-        return {"s": s, "z_ref": z_ref, "iterations": iterations}, None
+        outputs = {"s": s, "z_ref": z_ref, "iterations": iterations}
+        if self.kept:
+            outputs["e_field"] = np.concatenate(fields, axis=1)
+        return outputs, None
 
     def output_specs(self, model: Model) -> dict[str, jax.ShapeDtypeStruct]:
         """Shape and dtype of each forward output."""
         n_f, n_p = len(self.problem.frequency), len(model.ports)
-        return {
+        specs = {
             "s": jax.ShapeDtypeStruct((n_f, n_p, len(self.excite)), jnp.complex128),
             "z_ref": jax.ShapeDtypeStruct((n_f, n_p), jnp.float64),
         }
+        if self.kept:
+            mesh = model.mesh
+            still = Mesh(mesh.imported_nodes, mesh._topology)  # noqa: SLF001
+            with task_manager(self.options.threads):
+                _, space, _ = fe_space(
+                    still, self.regions, self._excluded, "hcurl", self.options.order
+                )
+            width = len(self.kept) * len(self.excite)
+            specs["e_field"] = jax.ShapeDtypeStruct((space.ndof, width), jnp.complex128)
+        return specs
 
     def role(self, kind: tuple) -> str:
         """``"read"`` if the driven solve depends on input ``kind``.
@@ -251,14 +282,32 @@ class DrivenRule:
 
     def result(self, outputs: dict) -> DrivenResult:
         """The public result from the forward outputs."""
+        frequencies = self.problem.frequency
+        kept = [(frequencies[n], port) for n in self.kept for port in self.excite]
+        e_fields = [
+            Field(
+                coefficients=outputs["e_field"][:, k],
+                mesh=self._mesh,
+                quantity="E",
+                unit="V/m",
+                space="hcurl",
+                order=self.options.order,
+                support=self.regions,
+                omega=jnp.asarray(2 * math.pi * f),
+                _excluded=self._excluded,
+            )
+            for k, (f, _) in enumerate(kept)
+        ]
         return DrivenResult(
             s=NetworkParameters(
                 values=jnp.asarray(outputs["s"]),
                 z_ref=jnp.asarray(outputs["z_ref"]),
-                frequency=self.problem.frequency,
+                frequency=frequencies,
                 ports=self.port_names,
                 excited=tuple(self.excite),
-            )
+            ),
+            e_fields=tuple(e_fields),
+            kept=tuple(kept),
         )
 
 
