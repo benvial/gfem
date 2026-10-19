@@ -42,8 +42,10 @@ class ElectrostaticResult:
             entry ``i`` for excitation ``i`` (Palace's ``domain-E.csv`` at
             1 V). Excluded volumes are left out. Summed over the regions,
             excitation ``i`` stores ``capacitance[i, i] / 2``. Not
-            differentiable: a gradient through it raises
-            `gfem.NonDifferentiableError` (`mutual` and `inverse` are).
+            differentiable with respect to what the solve reads: a gradient
+            through it that reaches ``eps_r`` or the mesh nodes raises
+            `gfem.NonDifferentiableError` (`mutual` and `inverse` do
+            differentiate).
         potential: The potential of each terminal's solve, a `Field` by
             terminal name (in `terminals` order): 1 V on that terminal, 0 V on
             every other terminal and the ground. Quantity ``"V"``, in volts,
