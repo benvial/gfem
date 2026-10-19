@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import jax
@@ -11,13 +12,14 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.constants
 
+from gfem._field import Field, FieldMap
 from gfem._pytree import register_fields
 
 if TYPE_CHECKING:
     from gfem._engine.port_mode import PortModeSpace
     from gfem._port_section import PortSection
 
-__all__ = ["ElectrostaticResult", "PortModeField", "PortModeResult"]
+__all__ = ["ElectrostaticResult", "Field", "PortModeField", "PortModeResult"]
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -44,11 +46,24 @@ class ElectrostaticResult:
             through it that reaches ``eps_r`` or the mesh nodes raises
             `gfem.NonDifferentiableError` (`mutual` and `inverse` do
             differentiate).
+        potential: The potential of each terminal's solve, a `Field` by
+            terminal name (in `terminals` order): 1 V on that terminal, 0 V on
+            every other terminal and the ground. Quantity ``"V"``, in volts,
+            on H1 of the solve order. Functionals of the coefficients are
+            differentiable like the capacitance (one adjoint solve, shared
+            by the terminals).
     """
 
     capacitance: jax.Array
     terminals: tuple[str, ...]
     energy: dict[str, jax.Array] = dataclasses.field(default_factory=dict)
+    potential: Mapping[str, Field] = dataclasses.field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Hold the potentials as a read-only, ordered mapping."""
+        if not isinstance(self.potential, FieldMap):
+            fields = FieldMap(self.potential, label="terminal")
+            object.__setattr__(self, "potential", fields)
 
     @property
     def mutual(self) -> jax.Array:
@@ -101,7 +116,7 @@ class ElectrostaticResult:
         )
 
 
-register_fields(ElectrostaticResult, ("capacitance", "energy"))
+register_fields(ElectrostaticResult, ("capacitance", "energy", "potential"))
 
 
 class PortModeField:

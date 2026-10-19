@@ -47,7 +47,26 @@ scalar leaves. A `Material`'s values are fixed constants; tracing one raises
 `gfem.NonDifferentiableError` with that remedy.
 
 `jax.jit` and `jax.vmap` work on the same functions. Under `vmap` the solves
-run one after the other.
+run one after the other, so `jax.vmap(jax.grad(mutual))` over a batch of
+designs (an eroded, nominal and dilated triple, say) gives what a Python loop
+over them gives:
+
+```python
+designs = jnp.stack([eps_eroded, eps_nominal, eps_dilated])  # (3, n)
+grads = jax.vmap(jax.grad(mutual))(designs)  # (3, n)
+robust = jax.grad(lambda ds: jnp.max(jax.vmap(mutual)(ds)))(designs)
+```
+
+`jax.jacrev` of the whole matrix and a `jax.vjp` pullback called several times
+give the same numbers as fresh `jax.grad` calls. Only reverse mode is
+supported: `jax.jvp` and `jax.jacfwd` raise JAX's own `TypeError`.
+
+Between the forward and the backward pass gfem keeps what the backward needs
+(for a capacitance, the terminal potentials; never the factorization), up to
+`SolverOptions(retain_memory=...)` bytes, half of the physical memory by
+default. Older entries are dropped first; a dropped one is recomputed from the
+design when its backward runs, which costs time, never accuracy.
+`retain_memory=0` keeps nothing and always recomputes.
 
 ## What every other input gives
 

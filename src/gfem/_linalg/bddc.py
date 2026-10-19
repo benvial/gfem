@@ -88,8 +88,20 @@ class BddcHandle(NgsHandle):
             "looser tolerance."
         )
 
-    def _inverse_map(self, B: np.ndarray) -> np.ndarray:
-        return self._map(self._solver, B, after=self._check)
+    def _inverse_map(self, B: np.ndarray, tolerance: float | None) -> np.ndarray:
+        if tolerance is None or tolerance == self.tolerance:
+            return self._map(self._solver, B, after=self._check)
+        solver = self._solver
+        if solver is None:
+            raise RuntimeError("This solver handle was freed.")
+        with self._lock:  # reentrant: _map takes it again
+            prepared = self.tolerance
+            # NGSolve's Krylov solvers read .tol on every Solve
+            solver.tol = self.tolerance = tolerance  # ty: ignore[invalid-assignment]
+            try:
+                return self._map(solver, B, after=self._check)
+            finally:
+                solver.tol = self.tolerance = prepared  # ty: ignore[invalid-assignment]
 
     @property
     def nbytes(self) -> int:

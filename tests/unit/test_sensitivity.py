@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+import scipy.constants
 import structured_meshes as sm
 
 import gfem
@@ -28,29 +29,30 @@ def solved(tmp_path_factory):
     )
     problem = gfem.Electrostatic(terminals={"mid": "oxide__nitride"}, ground="bottom")
     rule = ElectrostaticRule(model, problem, gfem.SolverOptions(order=2))
-    _, entry = rule.forward(model, keep=True)
+    outputs, entry = rule.forward(model, keep=True)
     space, built = rule._space(model)
-    yield model, entry, space, em_region(model, built), eps
+    # phi^T K phi in m (K assembled in file units, um)
+    energy = outputs["capacitance"][0, 0] / scipy.constants.epsilon_0
+    yield model, entry, space, em_region(model, built), eps, energy
     entry.free()
 
 
 def _pair(solved, left, right, weight=1.0):
-    _, _, space, domain, _ = solved
+    _, _, space, domain, _, _ = solved
     return FieldPair(space, left, right, {"grad_grad": weight}, 2, domain)
 
 
 def test_element_contractions_weighted_by_eps_rebuild_the_energy(solved):
     # phi^T K phi = sum_e eps_e int_e |grad phi|^2 (oxide only: nitride is 0)
-    model, entry, _, _, eps = solved
+    model, entry, _, _, eps, energy = solved
     phi = entry.fields["potential"][:, 0]
     grads = sensitivity(model, [_pair(solved, phi, phi)], {KIND}, form="electrostatic")
-    energy = float(phi @ entry.handle.apply(phi)) * 1e-6  # um mesh: K in file units
     assert grads[KIND].shape == eps.shape
     assert float(grads[KIND] @ eps) == pytest.approx(energy, rel=1e-12)
 
 
 def test_pairs_are_bilinear_in_complex_columns_on_a_real_space(solved):
-    model, entry, _, _, _ = solved
+    model, entry, _, _, _, _ = solved
     phi = entry.fields["potential"][:, 0]
     rng = np.random.default_rng(0)
     other = rng.standard_normal(phi.shape)
