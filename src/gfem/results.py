@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Mapping
 
 import jax
 import numpy as np
 
+from gfem._field import Field
 from gfem._pytree import register_fields
 
-__all__ = ["ElectrostaticResult"]
+__all__ = ["ElectrostaticResult", "Field"]
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -24,10 +26,15 @@ class ElectrostaticResult:
             at 0 V. The diagonal is positive and the off-diagonal entries
             are negative or zero (Palace's ``terminal-C.csv`` convention).
         terminals: The terminal names (static labels).
+        potential: The potential of each terminal's solve, a `Field` by
+            terminal name (in `terminals` order): 1 V on that terminal, 0 V on
+            every other terminal and the ground. Quantity ``"V"``, in volts,
+            on H1 of the solve order.
     """
 
     capacitance: jax.Array
     terminals: tuple[str, ...]
+    potential: Mapping[str, Field]
 
     def index(self, terminal: str) -> int:
         """Row / column of ``terminal`` in `capacitance`.
@@ -59,4 +66,4 @@ class ElectrostaticResult:
         )
 
 
-register_fields(ElectrostaticResult, ("capacitance",))
+register_fields(ElectrostaticResult, ("capacitance", "potential"))

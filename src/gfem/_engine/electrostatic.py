@@ -21,17 +21,19 @@ import numpy as np
 import scipy.constants
 
 from gfem._boundaries import PEC, Conductor
+from gfem._domain import support
 from gfem._engine import quadrature
 from gfem._engine.cache import Entry, discretization
 from gfem._engine.coefficients import permittivity
 from gfem._engine.domain import boundary_region, domain_key, h1_space
 from gfem._engine.runtime import task_manager
+from gfem._field import FieldMap
 from gfem._linalg import KINDS, Operator, prepare
 from gfem.errors import RegionNotFoundError
 from gfem.model import Model
 from gfem.options import SolverOptions
 from gfem.problems import Electrostatic
-from gfem.results import ElectrostaticResult
+from gfem.results import ElectrostaticResult, Field
 
 __all__ = ["ElectrostaticRule"]
 
@@ -79,6 +81,10 @@ class ElectrostaticRule:
         for s in problem.ground:
             _check_surface(model, s, "ground")
         _check_apart(model, problem.terminals, self.ground)
+        # The potentials live on the mesh as given (traced or not).
+        self._mesh = model.mesh
+        self._support = support(model.mesh, model._domain.active)  # noqa: SLF001
+        self._excluded = model._domain.excluded  # noqa: SLF001
 
     def forward(
         self, model: Model, *, keep: bool
@@ -91,9 +97,9 @@ class ElectrostaticRule:
                 pass.
 
         Returns:
-            ``{"capacitance": (n, n) array in F}``, and the cache entry (the
-            handle and ``fields["potential"]``, one DOF column per terminal)
-            or ``None``.
+            ``{"capacitance": (n, n) array in F, "potential": (ndof, n)
+            array in V, one column per terminal}``, and the cache entry (the
+            handle and ``fields["potential"]``) or ``None``.
 
         Raises:
             ValueError: Part of the solve domain touches no terminal or
@@ -151,13 +157,31 @@ class ElectrostaticRule:
             )
         else:
             handle.free()
-        return {"capacitance": c}, entry
+        return {"capacitance": c, "potential": phi}, entry
 
     def result(self, outputs: dict) -> ElectrostaticResult:
         """The public result from the forward outputs."""
+        names = self.problem.terminal_names
+        potential = FieldMap(
+            {
+                name: Field(
+                    coefficients=jnp.asarray(outputs["potential"][:, i]),
+                    mesh=self._mesh,
+                    quantity="V",
+                    unit="V",
+                    space="h1",
+                    order=self.options.order,
+                    support=self._support,
+                    _excluded=self._excluded,
+                )
+                for i, name in enumerate(names)
+            },
+            label="terminal",
+        )
         return ElectrostaticResult(
             capacitance=jnp.asarray(outputs["capacitance"]),
-            terminals=self.problem.terminal_names,
+            terminals=names,
+            potential=potential,
         )
 
 

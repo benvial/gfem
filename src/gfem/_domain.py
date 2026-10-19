@@ -90,3 +90,9 @@ def em_domain(mesh: Mesh, excluded: set[tuple[int, int]]) -> EMDomain:
             counts = np.bincount(n_active[mesh.triangle_tags == r.tag], minlength=3)
             sides[r.name] = (int(counts[0]), int(counts[1]), int(counts[2]))
     return EMDomain(excluded=tuple(sorted(excluded)), active=active, sides=sides)
+
+
+def support(mesh: Mesh, active: np.ndarray) -> tuple[str, ...]:
+    """The volume regions with at least one active tetrahedron, in mesh order."""
+    tags = set(np.unique(mesh.tetrahedron_tags[active]).tolist())
+    return tuple(r.name for r in mesh.regions if r.dim == 3 and r.tag in tags)

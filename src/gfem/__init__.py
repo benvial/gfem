@@ -35,7 +35,7 @@ from gfem.model import (  # noqa: E402
 )
 from gfem.options import SolverOptions  # noqa: E402
 from gfem.problems import Electrostatic  # noqa: E402
-from gfem.results import ElectrostaticResult  # noqa: E402
+from gfem.results import ElectrostaticResult, Field  # noqa: E402
 from gfem.solve import solve  # noqa: E402
 
 __version__ = _version("gfem")
@@ -47,6 +47,7 @@ __all__ = [
     "Conductor",
     "Electrostatic",
     "ElectrostaticResult",
+    "Field",
     "Impedance",
     "LumpedPort",
     "Material",
