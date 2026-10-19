@@ -176,7 +176,10 @@ class ElectrostaticRule:
     def output_specs(self, model: Model) -> dict[str, jax.ShapeDtypeStruct]:  # noqa: ARG002
         """Shape and dtype of each forward output."""
         n = len(self.problem.terminals)
-        return {"capacitance": jax.ShapeDtypeStruct((n, n), jnp.float64)}
+        return {
+            "capacitance": jax.ShapeDtypeStruct((n, n), jnp.float64),
+            "energy": jax.ShapeDtypeStruct((len(self.regions), n), jnp.float64),
+        }
 
     def role(self, kind: tuple) -> str:
         """``"read"`` if the electrostatic solve depends on input ``kind``.

@@ -50,6 +50,16 @@ EXPECTED = {
     ("electrostatic", "capacitance", ("material", "oxide", "density")): ZERO,
     ("electrostatic", "capacitance", ("material", "oxide", "specific_heat")): ZERO,
 }
+# Region energies are not differentiable in this version: a read input
+# raises; an input the electrostatic physics never reads is still a zero.
+EXPECTED |= {
+    ("electrostatic", f"energy.{region}", kind): (
+        ZERO if outcome == ZERO else RAISES
+    )
+    for region in ("oxide", "nitride")
+    for (_, out, kind), outcome in list(EXPECTED.items())
+    if out == "capacitance"
+}
 # The port mode problem is not differentiable: every result leaf raises.
 PORT_MODE_OUTPUTS = ("frequency", "gamma", "Z_PV", "residual")
 EXPECTED |= {
