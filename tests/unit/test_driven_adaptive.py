@@ -180,6 +180,16 @@ def test_adaptive_sweeps_are_not_traceable_yet(line):
     with pytest.raises(NotImplementedError, match="adaptive"):
         s(line)
 
+    field = gfem.MaterialField.uniform("dielectric", gfem.Material(eps_r=EPS))
+    model = line.replace(materials={"dielectric": field})
+
+    def s21(m):
+        result = gfem.solve(m, problem, options=OPTIONS)
+        return jax.numpy.abs(result.s["p2", "p1"][0])
+
+    with pytest.raises(NotImplementedError, match="gradients"):
+        jax.grad(s21)(model)
+
 
 def test_adaptive_job_and_result_round_trip(line, tmp_path):
     grid = GRID[::4]
