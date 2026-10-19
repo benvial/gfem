@@ -578,15 +578,21 @@ class SweepInfo:
         tolerance: ``SolverOptions.adaptive_tolerance`` of an adaptive
             sweep, ``None`` for a uniform one.
         basis_size: The number of reduced basis vectors (0 for uniform).
+
+    Under `jax.grad`, `jax.jit` or `jax.vmap` an adaptive sweep needs
+    frozen samples (``Driven(samples=...)``), and ``sample_errors``,
+    ``converged`` and ``basis_size`` are ``None``: they are only known
+    after the solve, and this record is static. Solve outside the
+    transformation to read them.
     """
 
     kind: str
     solved: tuple[bool, ...]
     sampled_frequencies: tuple[float, ...]
-    sample_errors: tuple[float, ...]
-    converged: bool
+    sample_errors: tuple[float, ...] | None
+    converged: bool | None
     tolerance: float | None = None
-    basis_size: int = 0
+    basis_size: int | None = 0
 
     def __post_init__(self) -> None:
         """Normalize to plain Python values (hashable, JSON-friendly)."""
@@ -597,9 +603,12 @@ class SweepInfo:
             "sampled_frequencies",
             tuple(float(f) for f in self.sampled_frequencies),
         )
-        set_(self, "sample_errors", tuple(float(e) for e in self.sample_errors))
-        set_(self, "converged", bool(self.converged))
-        set_(self, "basis_size", int(self.basis_size))
+        if self.sample_errors is not None:
+            set_(self, "sample_errors", tuple(float(e) for e in self.sample_errors))
+        if self.converged is not None:
+            set_(self, "converged", bool(self.converged))
+        if self.basis_size is not None:
+            set_(self, "basis_size", int(self.basis_size))
         if self.tolerance is not None:
             set_(self, "tolerance", float(self.tolerance))
 
@@ -618,11 +627,15 @@ class SweepInfo:
     def __repr__(self) -> str:
         if self.kind == "uniform":
             return f"SweepInfo(uniform, {len(self.solved)} frequencies solved)"
+        head = (
+            f"SweepInfo(adaptive, {len(self.sampled_frequencies)} of "
+            f"{len(self.solved)} frequencies solved"
+        )
+        if self.converged is None:
+            return f"{head}, traced: no diagnostics)"
         state = "converged" if self.converged else "NOT converged"
         return (
-            f"SweepInfo(adaptive, {len(self.sampled_frequencies)} of "
-            f"{len(self.solved)} frequencies solved, basis {self.basis_size}, "
-            f"{state} at tolerance {self.tolerance:g})"
+            f"{head}, basis {self.basis_size}, {state} at tolerance {self.tolerance:g})"
         )
 
 
@@ -648,7 +661,8 @@ class DrivenResult:
             the result holds the reduced basis and one short coordinate
             vector per field, and a field's coefficients are formed when it
             is read. Their accuracy is the sweep's field error, about
-            ``SolverOptions.adaptive_tolerance`` or better.
+            ``SolverOptions.adaptive_tolerance`` or better. Gradients of an
+            adaptive sweep hold its basis fixed (see ``Driven.samples``).
         kept: ``(frequency in Hz, excited port)`` of each of `e_fields`
             (static labels), frequency-major.
         sweep: How the frequencies were solved (`SweepInfo`).
