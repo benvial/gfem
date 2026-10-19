@@ -23,11 +23,13 @@ import dataclasses
 import netgen.meshing as ngm
 import ngsolve as ngs
 import numpy as np
+import scipy.constants
 import scipy.sparse as sp
 
+from gfem._engine import quadrature
 from gfem._port_section import PortSection
 
-Z0 = 376.730313412  # vacuum wave impedance, ohm (CODATA 2018)
+Z0 = scipy.constants.mu_0 * scipy.constants.c  # vacuum wave impedance, ohm
 
 
 @dataclasses.dataclass(frozen=True)
@@ -85,7 +87,7 @@ class PortModeSpace:
     def _assemble(self) -> Pencil:
         c = self._coef
         (et, en), (vt, vn) = self.space.TnT()
-        q = 2 * self.order
+        q = quadrature.degree(self.order)
         dx = ngs.dx(intrules={ngs.TRIG: ngs.IntegrationRule(ngs.TRIG, q)})
         ds_abc = ngs.ds(
             "absorbing.*", intrules={ngs.SEGM: ngs.IntegrationRule(ngs.SEGM, q)}
@@ -169,9 +171,9 @@ class PortModeSpace:
         """
         et, en = self._gridfunction(coeffs).components
         a = ngs.grad(en) + gamma * et
-        mu0 = Z0 / 299792458.0
+        mu0 = scipy.constants.mu_0
         cf = et * ngs.Conj(self._coef["nu_tt"] * a)
-        value = ngs.Integrate(cf, self.mesh, order=2 * self.order)
+        value = ngs.Integrate(cf, self.mesh, order=quadrature.degree(self.order))
         return 0.5 * self.section.scale * 1j / (omega * mu0) * complex(value)
 
     def gauge(self, coeffs: np.ndarray, gamma: complex) -> complex:
@@ -195,7 +197,9 @@ class PortModeSpace:
         inside = ngs.IfPos(glob[da] - ca, 1.0, 0.0) * ngs.IfPos(glob[db] - cb, 1.0, 0.0)
         t = ngs.CF((float(s.frame[0].sum()), float(s.frame[1].sum())))
         cf = inside * (t * (-1j * (self._coef["nu_tt"] * a)))
-        return complex(ngs.Integrate(cf, self.mesh, order=2 * self.order))
+        return complex(
+            ngs.Integrate(cf, self.mesh, order=quadrature.degree(self.order))
+        )
 
 
 def _build_mesh(section: PortSection) -> ngs.Mesh:

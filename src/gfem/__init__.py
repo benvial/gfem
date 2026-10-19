@@ -12,7 +12,10 @@ import jax as _jax
 _jax.config.update("jax_enable_x64", True)
 
 # Submodules are imported after the switch, so no gfem array is ever float32.
+from gfem import shape  # noqa: E402
 from gfem.errors import (  # noqa: E402
+    MeshQualityError,
+    MeshQualityWarning,
     NonDifferentiableError,
     PortGeometryError,
     PortModeError,
@@ -33,8 +36,12 @@ from gfem.model import (  # noqa: E402
     enclosed_by,
 )
 from gfem.options import SolverOptions  # noqa: E402
-from gfem.problems import PortMode  # noqa: E402
-from gfem.results import PortModeField, PortModeResult  # noqa: E402
+from gfem.problems import Electrostatic, PortMode  # noqa: E402
+from gfem.results import (  # noqa: E402
+    ElectrostaticResult,
+    PortModeField,
+    PortModeResult,
+)
 from gfem.solve import solve  # noqa: E402
 
 __version__ = _version("gfem")
@@ -44,11 +51,15 @@ __all__ = [
     "PMC",
     "Absorbing",
     "Conductor",
+    "Electrostatic",
+    "ElectrostaticResult",
     "Impedance",
     "LumpedPort",
     "Material",
     "MaterialField",
     "Mesh",
+    "MeshQualityError",
+    "MeshQualityWarning",
     "Model",
     "NonDifferentiableError",
     "PortGeometryError",
@@ -62,5 +73,6 @@ __all__ = [
     "WavePort",
     "__version__",
     "enclosed_by",
+    "shape",
     "solve",
 ]

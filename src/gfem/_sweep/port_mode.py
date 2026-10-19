@@ -18,16 +18,21 @@ import math
 import jax
 import jax.numpy as jnp
 import numpy as np
+import scipy.constants
 
 from gfem._boundaries import WavePort
 from gfem._checks import is_traced
-from gfem._engine.port_mode import Z0, PortModeSpace
+from gfem._engine.port_mode import PortModeSpace
+from gfem._engine.runtime import task_manager
 from gfem._linalg.superlu import backward_error, shift_invert_eigs
-from gfem._port_mode import C0, PortMode, PortModeField, PortModeResult
 from gfem._port_section import PortSection, port_section
 from gfem.errors import NonDifferentiableError, PortModeError
 from gfem.model import Model
 from gfem.options import SolverOptions
+from gfem.problems import PortMode
+from gfem.results import PortModeField, PortModeResult
+
+__all__ = ["PortModeRule"]
 
 # The shift is this factor above the largest bulk (Re eps)(Re mu), as in Palace.
 _TARGET = 1.1
@@ -40,47 +45,90 @@ _UNCONVERGED = 1e-3
 # Gauss-Legendre rule for voltage line integrals: points per piece, pieces.
 _GAUSS = np.polynomial.legendre.leggauss(4)
 _PIECES = 32
+_Z0 = scipy.constants.mu_0 * scipy.constants.c
 
 
-def solve_port_mode(
-    model: Model, problem: PortMode, options: SolverOptions
-) -> PortModeResult:
-    """Solve ``problem`` on ``model`` (the `gfem.solve` path for `PortMode`)."""
-    if any(is_traced(leaf) for leaf in jax.tree_util.tree_leaves(model)):
-        raise NonDifferentiableError(
-            "The port mode problem is not differentiable in gfem v0.1 (port modes "
-            "are constants of a solve). Solve PortMode outside the function you "
-            "differentiate."
+class PortModeRule:
+    """Host-side solve of a `PortMode` problem on a `Model`.
+
+    Construction runs the static checks; `forward` extracts the port's
+    cross-section and solves it at every frequency. Port modes are constants
+    of a solve: there is no backward pass.
+    """
+
+    physics = "em"
+    #: Material properties the port mode problem reads.
+    reads = frozenset({"eps_r", "mu_r", "tan_delta", "conductivity"})
+
+    def __init__(self, model: Model, problem: PortMode, options: SolverOptions) -> None:
+        """Check that the problem fits the model (see `gfem.PortMode`).
+
+        Raises:
+            NonDifferentiableError: The model is traced by JAX.
+            ValueError: ``problem.port`` is not a wave port of the model.
+        """
+        if not isinstance(problem, PortMode):
+            raise TypeError(f"Expected gfem.PortMode, got {problem!r}.")
+        if any(is_traced(leaf) for leaf in jax.tree_util.tree_leaves(model)):
+            raise NonDifferentiableError(
+                "The port mode problem is not differentiable in gfem v0.1 (port "
+                "modes are constants of a solve). Solve PortMode outside the "
+                "function you differentiate."
+            )
+        self.problem = problem
+        self.options = options
+        self.port = _wave_port(model, problem.port)
+        self.mode = self.port.mode if problem.mode is None else problem.mode
+
+    def forward(self, model: Model, *, keep: bool) -> tuple[dict, None]:
+        """Solve the port mode at every frequency.
+
+        Args:
+            model: The model, with concrete leaves.
+            keep: Ignored: nothing is kept for a backward pass.
+
+        Returns:
+            The outputs (``gamma`` in 1/m, ``Z_PV``, ``residual``, the mode
+            coefficients and the discrete space) and ``None``.
+        """
+        del keep
+        section = port_section(model, self.port)
+        with task_manager(self.options.threads):
+            space = PortModeSpace(section, self.options.order)
+        path = _voltage_rule(section) if self.port.voltage_path is not None else None
+        gammas, residuals, z_pv, coeffs = [], [], [], []
+        for f in self.problem.frequency:
+            gamma, residual, c = _solve_one(space, f, self.mode)
+            z = math.nan
+            if path is not None:
+                v = _voltage(space, c, path)
+                if v.real < 0:
+                    c, v = -c, -v
+                z = abs(v) ** 2 / 2.0
+            gammas.append(gamma / section.scale)
+            residuals.append(residual)
+            z_pv.append(z)
+            coeffs.append(c)
+        outputs = {
+            "gamma": np.array(gammas, complex),
+            "Z_PV": np.array(z_pv, float),
+            "residual": np.array(residuals, float),
+            "coeffs": np.array(coeffs),
+            "space": space,
+        }
+        return outputs, None
+
+    def result(self, outputs: dict) -> PortModeResult:
+        """The public result from the forward outputs."""
+        return PortModeResult(
+            port=self.port.name,
+            mode=self.mode,
+            frequency=jnp.asarray(np.asarray(self.problem.frequency)),
+            gamma=jnp.asarray(outputs["gamma"]),
+            Z_PV=jnp.asarray(outputs["Z_PV"]),
+            residual=jnp.asarray(outputs["residual"]),
+            e_field=PortModeField(outputs["space"], outputs["coeffs"]),
         )
-    port = _wave_port(model, problem.port)
-    mode = port.mode if problem.mode is None else problem.mode
-    section = port_section(model, port)
-    space = PortModeSpace(section, options.order)
-    path = _voltage_rule(section) if port.voltage_path is not None else None
-
-    freqs = np.asarray(problem.frequency)
-    gammas, residuals, z_pv, coeffs = [], [], [], []
-    for f in freqs:
-        gamma, residual, c = _solve_one(space, f, mode)
-        z = math.nan
-        if path is not None:
-            v = _voltage(space, c, path)
-            if v.real < 0:
-                c, v = -c, -v
-            z = abs(v) ** 2 / 2.0
-        gammas.append(gamma / section.scale)
-        residuals.append(residual)
-        z_pv.append(z)
-        coeffs.append(c)
-    return PortModeResult(
-        port=port.name,
-        mode=mode,
-        frequency=jnp.asarray(freqs),
-        gamma=jnp.asarray(np.array(gammas, complex)),
-        Z_PV=jnp.asarray(np.array(z_pv, float)),
-        residual=jnp.asarray(np.array(residuals, float)),
-        e_field=PortModeField(space, np.array(coeffs)),
-    )
 
 
 def _wave_port(model: Model, name: str) -> WavePort:
@@ -110,10 +158,10 @@ def _solve_one(
         coefficient vector of ``(E_t, E_n)``.
     """
     section = space.section
-    k0_si = 2 * math.pi * frequency / C0
+    k0_si = 2 * math.pi * frequency / scipy.constants.c
     k0 = k0_si * section.scale
     a, b = space.pencil.at(k0)
-    n2_shift, n2_max = section.index_squared(float(section.sigma.max()) * Z0 / k0_si)
+    n2_shift, n2_max = section.index_squared(float(section.sigma.max()) * _Z0 / k0_si)
     k_max = math.sqrt(n2_max) * k0
     shift = -_TARGET * n2_shift * k0**2
 

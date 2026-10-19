@@ -330,7 +330,7 @@ def test_port_mode_is_not_differentiable(plate_mesh):
 
 def test_solve_rejects_unknown_problems_and_options(plate_mesh):
     model = plate(plate_mesh)
-    with pytest.raises(TypeError, match="unknown problem"):
+    with pytest.raises(TypeError, match="problem type"):
         gfem.solve(model, "PortMode")  # ty: ignore[invalid-argument-type]
     with pytest.raises(TypeError, match="SolverOptions"):
         gfem.solve(model, gfem.PortMode("p1", 1e9), options={"order": 2})  # ty: ignore[invalid-argument-type]

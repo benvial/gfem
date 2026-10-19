@@ -1,5 +1,199 @@
-"""Problem definitions: electrostatic, driven, eigenmode and port mode."""
+"""Problem types: what to solve on a model, as frozen values.
 
-from gfem._port_mode import PortMode
+A problem names the physics analysis and its physical inputs (terminals,
+frequencies, ...). The model holds everything about the device; the solver
+options hold the numerics. ``gfem.solve(model, problem)`` dispatches on the
+problem's type.
+"""
 
-__all__ = ["PortMode"]
+from __future__ import annotations
+
+import dataclasses
+from collections.abc import Mapping
+from typing import Any, ClassVar
+
+import jax
+import numpy as np
+
+from gfem._checks import is_traced
+
+__all__ = ["Electrostatic", "PortMode"]
+
+
+def _surfaces(value: Any, what: str) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, (list, tuple)) and all(isinstance(s, str) for s in value):
+        return tuple(value)
+    raise TypeError(
+        f"{what} must be a surface name or a list of surface names, got {value!r}."
+    )
+
+
+@dataclasses.dataclass(frozen=True, init=False)
+class Electrostatic:
+    """The Maxwell capacitance matrix between named terminals.
+
+    For each terminal in turn, the potential is 1 V on that terminal and
+    0 V on every other terminal and on ground, and the charge-free Laplace
+    equation div(eps grad V) = 0 is solved in the electromagnetic solve
+    domain (the model's excluded volumes are left out). Surfaces that are
+    neither terminal nor ground carry no surface charge (zero normal
+    displacement), except that every surface of a `PEC` or `Conductor`
+    boundary of the model that is not a terminal is grounded, as conductors
+    are. Ports and other boundaries are charge-free.
+
+    Only the real part of the permittivity is read: losses
+    (``tan_delta``, ``conductivity``, a negative imaginary ``eps_r``) and
+    ``mu_r`` do not enter the electrostatic problem.
+
+    Args:
+        terminals: Terminal name -> its surface name or names (a conductor's
+            shell), in capacitance-matrix order. A list of surface names
+            makes one terminal per surface, named after it.
+        ground: The surface name or names held at 0 V besides the model's
+            conductors. Empty: only the model's `PEC` / `Conductor`
+            surfaces, or no ground at all (then each row of the matrix sums
+            to zero).
+
+    Raises:
+        TypeError: A name is not a string.
+        ValueError: No terminal, or a surface in two terminals or in a
+            terminal and the ground.
+
+    Example:
+        ``gfem.Electrostatic(terminals={"trace": ["m1_xy", "m1_z"]},
+        ground="ground")``
+    """
+
+    terminals: tuple[tuple[str, tuple[str, ...]], ...]
+    ground: tuple[str, ...]
+    _rule: ClassVar[str] = "gfem._engine.electrostatic:ElectrostaticRule"
+
+    def __init__(
+        self,
+        terminals: Mapping[str, str | list[str] | tuple[str, ...]] | list[str],
+        ground: str | list[str] | tuple[str, ...] = (),
+    ) -> None:
+        """Validate and normalize (see the class docstring)."""
+        if isinstance(terminals, Mapping):
+            items = []
+            for name, surfaces in terminals.items():
+                if not isinstance(name, str):
+                    raise TypeError(f"Terminal names must be strings, got {name!r}.")
+                items.append((name, _surfaces(surfaces, f"terminals[{name!r}]")))
+        else:
+            items = [(s, (s,)) for s in _surfaces(terminals, "terminals")]
+        if not items:
+            raise ValueError(
+                "Electrostatic needs at least one terminal, e.g. "
+                "terminals={'trace': 'trace_surface'}."
+            )
+        ground = _surfaces(ground, "ground") if ground else ()
+        owner: dict[str, str] = {}
+        for name, surfaces in items:
+            if len(set(surfaces)) != len(surfaces):
+                raise ValueError(f"Terminal {name!r} lists a surface twice.")
+            for s in surfaces:
+                if s in owner:
+                    raise ValueError(
+                        f"Surface {s!r} is in terminals {owner[s]!r} and {name!r}; "
+                        "a surface belongs to one terminal."
+                    )
+                owner[s] = name
+        for s in ground:
+            if s in owner:
+                raise ValueError(
+                    f"Surface {s!r} is both in terminal {owner[s]!r} and in the "
+                    "ground; remove it from one of them."
+                )
+        object.__setattr__(self, "terminals", tuple(items))
+        object.__setattr__(self, "ground", tuple(dict.fromkeys(ground)))
+
+    @property
+    def terminal_names(self) -> tuple[str, ...]:
+        """Terminal names, in capacitance-matrix order."""
+        return tuple(name for name, _ in self.terminals)
+
+    def __repr__(self) -> str:
+        terms = ", ".join(f"{n!r}: {list(s)}" for n, s in self.terminals)
+        ground = f", ground={list(self.ground)}" if self.ground else ""
+        return f"Electrostatic(terminals={{{terms}}}{ground})"
+
+
+jax.tree_util.register_static(Electrostatic)
+
+
+def _frequencies(value: Any) -> tuple[float, ...]:
+    if is_traced(value):
+        raise ValueError("PortMode.frequency must be fixed numbers, not traced.")
+    try:
+        f = np.asarray(value, dtype=float)
+    except (TypeError, ValueError):
+        f = np.empty((0, 0))
+    if f.ndim > 1 or f.size == 0:
+        raise ValueError(
+            "PortMode.frequency must be one frequency or a 1D sequence of them, in "
+            f"Hz; got {value!r}."
+        )
+    f = f.reshape(-1)
+    if not np.isfinite(f).all() or (f <= 0).any():
+        raise ValueError(
+            f"PortMode.frequency must be finite and > 0 Hz, got {value!r}."
+        )
+    return tuple(float(x) for x in f)
+
+
+@dataclasses.dataclass(frozen=True, init=False)
+class PortMode:
+    """The 2D port mode problem of a wave port over a frequency grid.
+
+    Solves the port's cross-section for its propagating mode at each
+    frequency: propagation constant, effective index, mode field and the
+    power-voltage impedance. The cross-section's materials are those of the
+    volume elements behind the port; its edges take the boundary conditions
+    of the surfaces that meet the port (`PEC` edges are perfect conductors,
+    `Absorbing` edges first-order absorbing, all others natural, i.e. PMC).
+
+    Args:
+        port: The name of a `WavePort` of the model.
+        frequency: One frequency or a 1D sequence of them, Hz.
+        mode: Which propagating mode, in Palace's order: by decreasing
+            effective index for lossless modes (1 = the most confined), with
+            strongly attenuated modes ranked lower. ``None``: the wave port's
+            own ``mode``.
+
+    Raises:
+        TypeError: ``port`` is not a name.
+        ValueError: A frequency is not finite and positive, or ``mode`` is
+            not an integer >= 1.
+
+    Example:
+        ``gfem.PortMode("p1", np.linspace(1e9, 100e9, 100))``
+    """
+
+    port: str
+    frequency: tuple[float, ...]
+    mode: int | None
+    _rule: ClassVar[str] = "gfem._sweep.port_mode:PortModeRule"
+
+    def __init__(self, port: str, frequency: Any, mode: int | None = None) -> None:
+        """Validate and normalize (see the class docstring)."""
+        if not isinstance(port, str):
+            raise TypeError(
+                f"PortMode.port must be the name of a WavePort, got {port!r}."
+            )
+        if mode is not None and (
+            isinstance(mode, bool)
+            or not isinstance(mode, (int, np.integer))
+            or mode < 1
+        ):
+            raise ValueError(
+                f"PortMode.mode must be an integer >= 1 or None, got {mode!r}."
+            )
+        object.__setattr__(self, "port", port)
+        object.__setattr__(self, "frequency", _frequencies(frequency))
+        object.__setattr__(self, "mode", None if mode is None else int(mode))
+
+
+jax.tree_util.register_static(PortMode)
