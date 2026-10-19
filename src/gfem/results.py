@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.constants
 
-from gfem._field import Field
+from gfem._field import Field, FieldMap
 from gfem._pytree import register_fields
 
 if TYPE_CHECKING:
@@ -43,6 +43,12 @@ class ElectrostaticResult:
     capacitance: jax.Array
     terminals: tuple[str, ...]
     potential: Mapping[str, Field]
+
+    def __post_init__(self) -> None:
+        """Hold the potentials as a read-only, ordered mapping."""
+        if not isinstance(self.potential, FieldMap):
+            fields = FieldMap(self.potential, label="terminal")
+            object.__setattr__(self, "potential", fields)
 
     def index(self, terminal: str) -> int:
         """Row / column of ``terminal`` in `capacitance`.

@@ -281,3 +281,25 @@ def test_to_pyvista_without_pyvista_names_the_extra(cap, monkeypatch):
     monkeypatch.setitem(sys.modules, "pyvista", None)
     with pytest.raises(ImportError, match=r"gfem\[viz\]"):
         cap.potential["top"].to_pyvista()
+
+
+def test_potentials_round_trip_through_a_result_bundle(stack, tmp_path):
+    problem = gfem.Electrostatic(terminals={"top": "top", "mid": "oxide__nitride"})
+    options = gfem.SolverOptions(order=2)
+    result = gfem.Job(stack, problem, options).run(out=tmp_path / "out")
+    sidecar = np.load(tmp_path / "out" / "result.npz")
+    assert ".potential['top'].coefficients" in sidecar.files
+
+    loaded = gfem.load_result(tmp_path / "out")
+    assert list(loaded.potential) == ["top", "mid"]
+    with pytest.raises(KeyError, match="'top', 'mid'"):
+        loaded.potential["bottom"]
+    for name in ("top", "mid"):
+        a, b = result.potential[name], loaded.potential[name]
+        descriptor = ("quantity", "unit", "space", "order", "support", "omega")
+        for attr in descriptor:
+            assert getattr(b, attr) == getattr(a, attr)
+        np.testing.assert_array_equal(b.coefficients, a.coefficients)
+        np.testing.assert_array_equal(
+            b.to_meshio().point_data["V"], a.to_meshio().point_data["V"]
+        )
