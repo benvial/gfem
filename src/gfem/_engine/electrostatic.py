@@ -202,7 +202,8 @@ class ElectrostaticRule:
             # per terminal; not implemented.
             return (
                 "gfem cannot differentiate the electrostatic region energies "
-                "(result.energy). Differentiate the capacitance instead (the "
+                "(result.energy) with respect to eps_r or the mesh nodes. "
+                "Differentiate the capacitance instead (the "
                 "total energy of excitation i is capacitance[i, i] / 2), or wrap "
                 "result.energy in jax.lax.stop_gradient to use its value without "
                 "its derivative."

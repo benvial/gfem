@@ -12,9 +12,11 @@ host; this module owns everything JAX sees:
   which inputs are perturbed and the backward which outputs carry a
   cotangent): a perturbed input that the rule does not read gets an exact
   zero; a perturbed input it reads but the sensitivity kernel cannot
-  differentiate, or a cotangent on an output the rule cannot differentiate,
-  raises `gfem.NonDifferentiableError`. ``jax.lax.stop_gradient`` is the
-  opt-out: it makes the input unperturbed or the cotangent a symbolic zero.
+  differentiate, or a cotangent on an output the rule cannot differentiate
+  while some perturbed input is read, raises `gfem.NonDifferentiableError`
+  (when every perturbed input is unread, every output's zero is exact).
+  ``jax.lax.stop_gradient`` is the opt-out: it makes the input unperturbed
+  or the cotangent a symbolic zero.
 - **Residuals** are an integer cache key and the design state (the input
   leaves). The forward stores its heavy objects (solver handle, fields) in
   ``gfem._engine.cache.ENTRIES``; the backward rebuilds the model from the
