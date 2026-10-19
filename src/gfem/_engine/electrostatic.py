@@ -13,8 +13,8 @@ residual on the free ones), so the capacitance is far more accurate than
 the solver tolerance.
 
 The terminal potentials are their own adjoints (``dC_ij = phi_i^T dK phi_j``),
-so a capacitance gradient needs no solve; the handle is kept only for
-potential functionals.
+so a capacitance gradient needs no solve: a kept entry holds the potentials
+only, never the factorization or preconditioner.
 """
 
 from __future__ import annotations
@@ -104,13 +104,12 @@ class ElectrostaticRule:
 
         Args:
             model: The model, with concrete leaves.
-            keep: Keep the solver handle and the potentials for a backward
-                pass.
+            keep: Keep the potentials for a backward pass.
 
         Returns:
             ``{"capacitance": (n, n) array in F, "energy": (len(regions), n)
-            array in J}``, and the cache entry (the handle and
-            ``fields["potential"]``, one DOF column per terminal) or ``None``.
+            array in J}``, and the cache entry (``fields["potential"]``, one DOF
+            column per terminal; no handle) or ``None``.
 
         Raises:
             ValueError: Part of the solve domain touches no terminal or
@@ -145,9 +144,9 @@ class ElectrostaticRule:
             scale = scipy.constants.epsilon_0 * built.scale
             c = phi.T @ handle.apply(phi) * scale
             energy = 0.5 * scale * self._region_energies(model, built, space, eps, phi)
+        handle.free()
         c = 0.5 * (c + c.T)
         if not np.isfinite(c).all():
-            handle.free()
             raise ValueError(
                 "The electrostatic potential is undetermined: some part of the "
                 "solve domain touches no terminal and no ground. Add a ground "
@@ -155,11 +154,7 @@ class ElectrostaticRule:
             )
         entry = None
         if keep:
-            entry = Entry(
-                physics=self.physics, handle=handle, fields={"potential": phi}
-            )
-        else:
-            handle.free()
+            entry = Entry(physics=self.physics, fields={"potential": phi})
         return {"capacitance": c, "energy": energy}, entry
 
     def _space(self, model: Model) -> tuple[ngs.FESpace, EngineMesh]:

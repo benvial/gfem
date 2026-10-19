@@ -53,9 +53,7 @@ EXPECTED = {
 # Region energies are not differentiable in this version: a read input
 # raises; an input the electrostatic physics never reads is still a zero.
 EXPECTED |= {
-    ("electrostatic", f"energy.{region}", kind): (
-        ZERO if outcome == ZERO else RAISES
-    )
+    ("electrostatic", f"energy.{region}", kind): (ZERO if outcome == ZERO else RAISES)
     for region in ("oxide", "nitride")
     for (_, out, kind), outcome in list(EXPECTED.items())
     if out == "capacitance"

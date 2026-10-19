@@ -115,6 +115,18 @@ def test_zero_budget_keeps_nothing():
     assert len(entries) == 0
 
 
+def test_an_entry_over_its_budget_is_not_kept_and_evicts_nothing():
+    entries = EntryCache()
+    kept = _entry(40)
+    key = entries.put(kept, budget=100)
+    big = _entry(60)
+    assert entries.get(entries.put(big, budget=50)) is None
+    assert big.handle is None
+    entries.put(_entry(1), budget=0)
+    assert entries.get(key) is kept  # other solves' entries stay
+    assert not kept.handle.freed
+
+
 def test_entry_bytes_count_fields_and_handle():
     e = Entry(physics="em", handle=FakeHandle(100), fields={"u": np.zeros(10)})
     assert e.nbytes == 180
@@ -129,22 +141,21 @@ def test_default_budget_is_half_the_machine():
 # --- a kept forward solve --------------------------------------------------------
 
 
-def test_kept_electrostatic_solve_holds_a_handle_ready_for_an_adjoint(model):
+def test_kept_electrostatic_solve_holds_the_potentials_and_no_solver(model):
+    # a capacitance gradient needs no solve: the factorization is not kept
     problem = gfem.Electrostatic(terminals={"top": "top"}, ground="bottom")
     rule = ElectrostaticRule(model, problem, gfem.SolverOptions(order=2))
     outputs, entry = rule.forward(model, keep=True)
     assert entry is not None
     assert entry.physics == "em"
+    assert entry.handle is None
     phi = entry.fields["potential"]
-    handle = entry.handle
-    # phi already satisfies the free-DOF equations: one more solve on the
-    # same factors (what an adjoint does) corrects nothing
-    correction = handle.solve(-handle.apply(phi))
-    assert np.abs(correction).max() < 1e-12
-    # phi^T K phi is eps_r A / d in file units (unit cube, eps_r = 2)
-    assert float(phi[:, 0] @ handle.apply(phi[:, 0])) == pytest.approx(2.0, rel=1e-12)
+    assert phi.shape[1] == 1
+    assert entry.nbytes == phi.nbytes
+    # 1 V on the top plate, 0 V on the bottom one
+    assert phi[:, 0].max() == pytest.approx(1.0, abs=1e-6)
+    assert phi[:, 0].min() == pytest.approx(0.0, abs=1e-6)
     assert outputs["capacitance"].shape == (1, 1)
-    entry.free()
 
 
 def test_unkept_solve_returns_no_entry(model):

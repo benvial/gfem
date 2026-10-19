@@ -156,6 +156,24 @@ def test_bddc_tolerance_sets_the_residual(built):
     assert loose.iterations[-1] < tight.iterations[-1]
 
 
+def test_one_bddc_handle_solves_an_adjoint_at_its_own_tolerance(built):
+    # the forward's preconditioner serves an adjoint solve to another tolerance
+    rng = np.random.default_rng(5)
+    op, space = _laplace(built, order=4)
+    handle = prepare(op, symmetry="hermitian", kind="bddc_gmres", tolerance=1e-2)
+    free = np.array(list(space.FreeDofs()))
+    B = rng.standard_normal(handle.ndof)
+    handle.solve(B)
+    forward = handle.iterations[-1]
+    X = handle.solve(B, tolerance=1e-12)
+    assert handle.iterations[-1] > forward
+    assert _residual(handle, B, X, free) < 1e-8
+    handle.solve(B)  # back to the prepared tolerance
+    assert handle.iterations[-1] == forward
+    direct = prepare(_laplace(built, order=4)[0], symmetry="hermitian", kind="direct")
+    np.testing.assert_array_equal(direct.solve(B, tolerance=1e-3), direct.solve(B))
+
+
 def test_bddc_coarse_inverse_is_sparse_cholesky_never_the_default(built):
     handle = prepare(_laplace(built)[0], symmetry="hermitian", kind="bddc_gmres")
     flags = handle._preconditioner.flags.ToDict()
