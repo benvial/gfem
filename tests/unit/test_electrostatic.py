@@ -256,15 +256,3 @@ def test_solve_rejects_wrong_argument_types(stack):
         gfem.solve(stack.mesh, gfem.Electrostatic(terminals=STACK))
     with pytest.raises(TypeError, match="SolverOptions"):
         gfem.solve(stack, gfem.Electrostatic(terminals=STACK), options={"order": 2})
-
-
-def test_traced_model_is_not_solvable_yet(stack):
-    n = len(stack.mesh.elements("oxide"))
-    problem = gfem.Electrostatic(terminals=STACK, ground="bottom")
-
-    def c_top(eps):
-        model = stack.with_material("oxide", gfem.MaterialField(eps_r=eps))
-        return gfem.solve(model, problem).capacitance[0, 0]
-
-    with pytest.raises(NotImplementedError, match="jax"):
-        jax.grad(c_top)(np.full(n, 3.9))

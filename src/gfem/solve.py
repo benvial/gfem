@@ -8,6 +8,7 @@ from typing import Any
 import jax
 from jax.core import Tracer
 
+from gfem._adjoint import solve_vjp
 from gfem.model import Model
 from gfem.options import SolverOptions
 from gfem.shape import _check_quality
@@ -20,6 +21,16 @@ def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -
 
     A pure function of its inputs: the model and problem are not changed,
     and the same inputs give the same result.
+
+    It is also a JAX function of the model's array leaves: `jax.grad`,
+    `jax.jit` and `jax.vmap` (sequential solves) apply. Each input then
+    has a gradient (for an electrostatic capacitance: the `MaterialField`
+    ``eps_r`` values), an exact zero gradient if the problem never reads it
+    (``conductivity`` in electrostatics), or raises
+    `gfem.NonDifferentiableError` while JAX traces, if the problem reads it
+    but gfem cannot differentiate it (mesh node coordinates in this
+    version). `jax.lax.stop_gradient` on an input or an output is the
+    opt-out. Only reverse mode is supported.
 
     Args:
         model: The device.
@@ -35,6 +46,8 @@ def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -
         RegionNotFoundError: The problem names a region the mesh lacks.
         ValueError: The problem does not fit the model; the message gives
             the remedy.
+        NonDifferentiableError: Under `jax.grad`, an input or output gfem
+            does not differentiate is perturbed or used.
     """
     if not isinstance(model, Model):
         raise TypeError(f"solve needs a gfem.Model, got {type(model).__name__}.")
@@ -45,11 +58,8 @@ def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -
             f"options must be a gfem.SolverOptions, got {type(options).__name__}."
         )
     rule = _rule_class(problem)(model, problem, options)
-    if any(isinstance(leaf, Tracer) for leaf in jax.tree.leaves(model)):
-        raise NotImplementedError(
-            "This version of gfem cannot solve under jax.grad, jax.jit or "
-            "jax.vmap yet: pass concrete arrays."
-        )
+    if any(isinstance(leaf, Tracer) for leaf in jax.tree.leaves((model, problem))):
+        return rule.result(solve_vjp(rule, model, problem))
     # A moved mesh must still be valid on the solve domain.
     _check_quality(model.mesh, model._domain.active, stacklevel=3)  # noqa: SLF001
     outputs, _ = rule.forward(model, keep=False)

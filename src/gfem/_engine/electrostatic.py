@@ -15,6 +15,7 @@ potential functionals.
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import ngsolve as ngs
 import numpy as np
@@ -24,8 +25,10 @@ from gfem._boundaries import PEC, Conductor
 from gfem._engine import quadrature
 from gfem._engine.cache import Entry, discretization
 from gfem._engine.coefficients import permittivity
-from gfem._engine.domain import boundary_region, domain_key, h1_space
+from gfem._engine.domain import boundary_region, domain_key, em_region, h1_space
+from gfem._engine.mesh import EngineMesh
 from gfem._engine.runtime import task_manager
+from gfem._engine.sensitivity import FieldPair
 from gfem._linalg import KINDS, Operator, prepare
 from gfem.errors import RegionNotFoundError
 from gfem.model import Model
@@ -48,8 +51,12 @@ class ElectrostaticRule:
     """
 
     physics = "em"
+    #: The operator family in the property-to-form-term table.
+    form = "electrostatic"
     #: Material properties the electrostatic forms read.
     reads = frozenset({"eps_r"})
+    #: Outputs whose cotangents the backward pass handles.
+    differentiable_outputs = frozenset({"capacitance"})
 
     def __init__(
         self, model: Model, problem: Electrostatic, options: SolverOptions
@@ -101,12 +108,7 @@ class ElectrostaticRule:
         """
         order = self.options.order
         with task_manager(self.options.threads):
-            disc = discretization(model.mesh)
-            built = disc.built
-            space = disc.space(
-                (domain_key(model), "h1", order),
-                lambda: h1_space(model, built, order),
-            )
+            space, built = self._space(model)
             regions = [
                 boundary_region(built, surfaces)
                 for _, surfaces in self.problem.terminals
@@ -152,6 +154,67 @@ class ElectrostaticRule:
         else:
             handle.free()
         return {"capacitance": c}, entry
+
+    def _space(self, model: Model) -> tuple[ngs.FESpace, EngineMesh]:
+        order = self.options.order
+        disc = discretization(model.mesh)
+        built = disc.built
+        space = disc.space(
+            (domain_key(model), "h1", order),
+            lambda: h1_space(model, built, order),
+        )
+        return space, built
+
+    def output_specs(self, model: Model) -> dict[str, jax.ShapeDtypeStruct]:  # noqa: ARG002
+        """Shape and dtype of each forward output."""
+        n = len(self.problem.terminals)
+        return {"capacitance": jax.ShapeDtypeStruct((n, n), jnp.float64)}
+
+    def role(self, kind: tuple) -> str:
+        """``"read"`` if the electrostatic solve depends on input ``kind``.
+
+        The permittivity and the node coordinates are read; every other
+        material property (losses, ``mu_r``, thermal values), boundary and
+        port value is not, so its gradient is an exact zero.
+        """
+        if kind[0] == "material":
+            return "read" if kind[2] in self.reads else "unread"
+        if kind[0] in ("boundary", "port"):
+            return "unread"
+        return "read"
+
+    def nondifferentiable_output(self, name: str) -> str:
+        """The error message for a cotangent on output ``name``."""
+        return (
+            f"gfem cannot differentiate the electrostatic output {name!r}. Wrap "
+            "it in jax.lax.stop_gradient to use its value without its derivative."
+        )
+
+    def backward(
+        self, model: Model, entry: Entry, cotangents: dict[str, np.ndarray]
+    ) -> list[FieldPair]:
+        """Fold the capacitance cotangent into field pairs.
+
+        The terminal potentials are their own adjoints:
+        ``sum_ij ct_ij dC_ij = sum_i phi_i^T dK (sum_j G_ij phi_j)`` with
+        ``G`` the symmetric part of ``ct`` (C is symmetrized), so no solve.
+        """
+        phi = entry.fields["potential"]
+        ct = np.asarray(cotangents["capacitance"], dtype=float)
+        g = 0.5 * (ct + ct.T)
+        with task_manager(self.options.threads):
+            space, built = self._space(model)
+            domain = em_region(model, built)
+        return [
+            FieldPair(
+                space=space,
+                left=phi,
+                right=phi @ g.T,
+                weights={"grad_grad": scipy.constants.epsilon_0},
+                order=self.options.order,
+                domain=domain,
+            )
+        ]
 
     def result(self, outputs: dict) -> ElectrostaticResult:
         """The public result from the forward outputs."""
