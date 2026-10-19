@@ -46,3 +46,33 @@ def hcurl_space(
         definedon=em_region(model, built),
     )
     return ngs.Compress(space)
+
+
+def domain_key(model: Model) -> tuple:
+    """The electromagnetic physics domain, as a cache key.
+
+    Two models with the same mesh topology and excluded entities share
+    their spaces.
+    """
+    return ("em", model._domain.excluded)  # noqa: SLF001
+
+
+def h1_space(model: Model, built: EngineMesh, order: int) -> ngs.FESpace:
+    """Real H1 space of ``order`` on the electromagnetic domain, compressed.
+
+    No Dirichlet DOFs are marked: problems fix the DOFs they need.
+    """
+    space = ngs.H1(built.mesh, order=order, definedon=em_region(model, built))
+    return ngs.Compress(space)
+
+
+def boundary_region(built: EngineMesh, surfaces: tuple[str, ...]) -> ngs.Region:
+    """The NGSolve boundary region of these surface names (exact names)."""
+    names = built.mesh.GetBoundaries()
+    bits = ngs.BitArray(len(names))
+    bits.Clear()
+    wanted = set(surfaces)
+    for j, name in enumerate(names):
+        if name in wanted:
+            bits.Set(j)
+    return ngs.Region(built.mesh, ngs.BND, bits)

@@ -1,1 +1,73 @@
-"""The differentiable `solve` entry point."""
+"""`gfem.solve`: the one verb that turns a model and a problem into a result."""
+
+from __future__ import annotations
+
+import importlib
+from typing import Any
+
+import jax
+from jax.core import Tracer
+
+from gfem.model import Model
+from gfem.options import SolverOptions
+from gfem.shape import _check_quality
+
+__all__ = ["solve"]
+
+
+def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -> Any:
+    """Solve one problem type on a model.
+
+    A pure function of its inputs: the model and problem are not changed,
+    and the same inputs give the same result.
+
+    Args:
+        model: The device.
+        problem: What to solve, e.g. `gfem.Electrostatic`.
+        options: The numerics; ``None`` is ``SolverOptions()``.
+
+    Returns:
+        The problem type's result, e.g. `gfem.ElectrostaticResult` for an
+        `Electrostatic` problem.
+
+    Raises:
+        TypeError: An argument has the wrong type.
+        RegionNotFoundError: The problem names a region the mesh lacks.
+        ValueError: The problem does not fit the model; the message gives
+            the remedy.
+    """
+    if not isinstance(model, Model):
+        raise TypeError(f"solve needs a gfem.Model, got {type(model).__name__}.")
+    if options is None:
+        options = SolverOptions()
+    elif not isinstance(options, SolverOptions):
+        raise TypeError(
+            f"options must be a gfem.SolverOptions, got {type(options).__name__}."
+        )
+    rule = _rule_class(problem)(model, problem, options)
+    if any(isinstance(leaf, Tracer) for leaf in jax.tree.leaves(model)):
+        raise NotImplementedError(
+            "This version of gfem cannot solve under jax.grad, jax.jit or "
+            "jax.vmap yet: pass concrete arrays."
+        )
+    # A moved mesh must still be valid on the solve domain.
+    _check_quality(model.mesh, model._domain.active, stacklevel=3)  # noqa: SLF001
+    outputs, _ = rule.forward(model, keep=False)
+    return rule.result(outputs)
+
+
+def _rule_class(problem: Any) -> type:
+    """The engine rule of a problem type, imported on first use.
+
+    Each problem class names its rule as ``_rule = "module:Class"``, so a new
+    problem type needs no change here, and importing gfem does not import
+    the engine.
+    """
+    path = getattr(type(problem), "_rule", None)
+    if not isinstance(path, str):
+        raise TypeError(
+            "solve needs a problem type such as gfem.Electrostatic(...), got "
+            f"{type(problem).__name__}."
+        )
+    module, name = path.split(":")
+    return getattr(importlib.import_module(module), name)
