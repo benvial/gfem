@@ -54,8 +54,9 @@ build-backend = "uv_build"
 [tool.pytest.ini_options]
 # Test tiers are markers. tests/conftest.py marks every test by its directory
 # (tests/unit -> unit, tests/verification -> verification, ...). The heavy and
-# GPU tiers are opt-in, e.g. `pytest -m reference`.
-addopts = "--tb=short --strict-markers -m 'not reference and not benchmark and not cuda'"
+# GPU tiers are opt-in, e.g. `pytest -m reference`. importlib mode lets
+# tiers share test file names (tests/unit/test_x.py, tests/verification/test_x.py).
+addopts = "--tb=short --strict-markers --import-mode=importlib -m 'not reference and not benchmark and not cuda'"
 markers = [
   "unit: fast tests run on every PR on all platforms (tests/unit)",
   "verification: convergence, manufactured-solution and Taylor tests (tests/verification)",

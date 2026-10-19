@@ -28,6 +28,9 @@ from gfem.model import (  # noqa: E402
     enclosed_by,
 )
 from gfem.options import SolverOptions  # noqa: E402
+from gfem.problems import Electrostatic  # noqa: E402
+from gfem.results import ElectrostaticResult  # noqa: E402
+from gfem.solve import solve  # noqa: E402
 
 __version__ = _version("gfem")
 
@@ -36,6 +39,8 @@ __all__ = [
     "PMC",
     "Absorbing",
     "Conductor",
+    "Electrostatic",
+    "ElectrostaticResult",
     "Impedance",
     "LumpedPort",
     "Material",
@@ -49,4 +54,5 @@ __all__ = [
     "WavePort",
     "__version__",
     "enclosed_by",
+    "solve",
 ]
