@@ -10,6 +10,7 @@ from jax.core import Tracer
 
 from gfem.model import Model
 from gfem.options import SolverOptions
+from gfem.shape import _check_quality
 
 __all__ = ["solve"]
 
@@ -49,6 +50,8 @@ def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -
             "This version of gfem cannot solve under jax.grad, jax.jit or "
             "jax.vmap yet: pass concrete arrays."
         )
+    # A moved mesh must still be valid on the solve domain.
+    _check_quality(model.mesh, model._domain.active, stacklevel=3)  # noqa: SLF001
     outputs, _ = rule.forward(model, keep=False)
     return rule.result(outputs)
 

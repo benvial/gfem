@@ -176,6 +176,14 @@ def test_moved_nodes_change_the_capacitance(stack):
 # --- errors ------------------------------------------------------------------------
 
 
+def test_an_inverted_moved_mesh_raises_before_solving(stack):
+    mirrored = jax.tree.unflatten(
+        jax.tree.structure(stack.mesh), [stack.mesh.nodes.at[:, 2].multiply(-1.0)]
+    )
+    with pytest.raises(gfem.MeshQualityError):
+        _c(stack.replace(mesh=mirrored), gfem.Electrostatic(terminals=STACK))
+
+
 def test_unknown_surface_raises_with_a_hint(stack):
     with pytest.raises(gfem.RegionNotFoundError, match="'top'"):
         _c(stack, gfem.Electrostatic(terminals={"t": "tpo"}, ground="bottom"))
