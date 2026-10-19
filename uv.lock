@@ -738,7 +738,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "jax", specifier = ">=0.12" },
-    { name = "meshio", specifier = ">=5.3" },
+    { name = "meshio", specifier = ">=5.3.5" },
     { name = "ngsolve", specifier = ">=6.2.2608,<6.3" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "nvmath-python", extras = ["cu12"], marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'cuda12') or (sys_platform == 'win32' and extra == 'cuda12')", specifier = ">=1.0,<1.1" },

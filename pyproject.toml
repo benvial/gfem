@@ -24,7 +24,7 @@ classifiers = [
 # only: a cap would collide with optax / equinox in users' environments.
 dependencies = [
   "jax>=0.12",
-  "meshio>=5.3",
+  "meshio>=5.3.5",
   "ngsolve>=6.2.2608,<6.3",
   "numpy>=2.0",
   "scipy>=1.15",
