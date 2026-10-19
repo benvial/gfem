@@ -8,6 +8,8 @@ generated from the pytrees, so a new leaf without an expected outcome
 fails here.
 """
 
+from pathlib import Path
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -19,6 +21,7 @@ from gfem._adjoint import solve_vjp
 from gfem._adjoint.solve_vjp import input_kind
 from gfem._engine.electrostatic import ElectrostaticRule
 
+DATA = Path(__file__).parent / "data"
 GRADIENT, ZERO, RAISES = "gradient", "zero", "raises"
 
 ALL_PROPERTIES = {
@@ -47,6 +50,18 @@ EXPECTED = {
     ("electrostatic", "capacitance", ("material", "oxide", "density")): ZERO,
     ("electrostatic", "capacitance", ("material", "oxide", "specific_heat")): ZERO,
 }
+# The port mode problem is not differentiable: every result leaf raises.
+PORT_MODE_OUTPUTS = ("frequency", "gamma", "Z_PV", "residual")
+EXPECTED |= {
+    ("port_mode", out, kind): RAISES
+    for out in PORT_MODE_OUTPUTS
+    for kind in [("nodes",)] + [("material", "fill", p) for p in ALL_PROPERTIES]
+}
+
+
+def _field(mesh, region):
+    n = len(mesh.elements(region))
+    return gfem.MaterialField(**{k: np.full(n, v) for k, v in ALL_PROPERTIES.items()})
 
 
 @pytest.fixture(scope="module")
@@ -55,13 +70,26 @@ def model(tmp_path_factory):
     layers = (("oxide", 0.5), ("nitride", 0.25))
     sm.write_msh22(path, sm.plate(4.0, 3.0, layers, (1, 1, 1)))
     mesh = gfem.Mesh.from_gmsh(path)
-    n = len(mesh.elements("oxide"))
-    field = gfem.MaterialField(**{k: np.full(n, v) for k, v in ALL_PROPERTIES.items()})
     return gfem.Model(
         mesh,
-        materials={"oxide": field, "nitride": gfem.Material(eps_r=7.5)},
+        materials={"oxide": _field(mesh, "oxide"), "nitride": gfem.Material(eps_r=7.5)},
         boundaries=[gfem.PEC("bottom")],
     )
+
+
+@pytest.fixture(scope="module")
+def cases(model):
+    mesh = gfem.Mesh.from_gmsh(DATA / "parallel_plate.msh", length_unit="um")
+    port_model = gfem.Model(
+        mesh,
+        materials={"fill": _field(mesh, "fill")},
+        boundaries=[gfem.PEC("plates")],
+        ports=[gfem.WavePort("p1", "port1"), gfem.WavePort("p2", "port2")],
+    )
+    return {
+        "electrostatic": (model, PROBLEMS["electrostatic"]),
+        "port_mode": (port_model, gfem.PortMode("p1", 10e9)),
+    }
 
 
 PROBLEMS = {
@@ -71,31 +99,29 @@ PROBLEMS = {
 }
 
 
-def _cells(model):
-    for problem_name, problem in PROBLEMS.items():
+def _cells(cases):
+    for problem_name, (model, problem) in cases.items():
         result = gfem.solve(model, problem)
-        outputs = jax.tree_util.tree_flatten_with_path(result)[0]
-        inputs = [
-            (i, input_kind(path, "model"))
-            for i, (path, _) in enumerate(
-                jax.tree_util.tree_flatten_with_path(model)[0]
-            )
-        ] + [
-            (None, input_kind(path, "problem"))
+        model_leaves = jax.tree_util.tree_flatten_with_path(model)[0]
+        kinds = [input_kind(path, "model") for path, _ in model_leaves] + [
+            input_kind(path, "problem")
             for path, _ in jax.tree_util.tree_flatten_with_path(problem)[0]
         ]
-        for out_path, _ in outputs:
+        for out_path, _ in jax.tree_util.tree_flatten_with_path(result)[0]:
             out_name = jax.tree_util.keystr(out_path, simple=True, separator=".")
-            for index, kind in inputs:
-                yield problem_name, problem, out_name, out_path, index, kind
+            for index, kind in enumerate(kinds):
+                yield problem_name, model, problem, out_name, out_path, index, kind
 
 
 def _objective(model, problem, out_path, index):
-    leaves, treedef = jax.tree.flatten(model)
+    """The weighted sum of one result leaf as a function of one input leaf."""
+    leaves, treedef = jax.tree.flatten((model, problem))
 
     def objective(x):
-        moved = jax.tree.unflatten(treedef, [*leaves[:index], x, *leaves[index + 1 :]])
-        result = gfem.solve(moved, problem)
+        moved, moved_problem = jax.tree.unflatten(
+            treedef, [*leaves[:index], x, *leaves[index + 1 :]]
+        )
+        result = gfem.solve(moved, moved_problem)
         (value,) = [
             v
             for p, v in jax.tree_util.tree_flatten_with_path(result)[0]
@@ -107,19 +133,19 @@ def _objective(model, problem, out_path, index):
     return objective, leaves[index]
 
 
-def test_every_cell_has_an_expected_outcome(model):
-    cells = {(p, o, k) for p, _, o, _, _, k in _cells(model)}
+def test_every_cell_has_an_expected_outcome(cases):
+    cells = {(p, o, k) for p, _, _, o, _, _, k in _cells(cases)}
     assert cells == set(EXPECTED)
 
 
-def test_raise_table(model):
-    for problem_name, problem, out_name, out_path, index, kind in _cells(model):
-        expected = EXPECTED[(problem_name, out_name, kind)]
+def test_raise_table(cases):
+    for name, model, problem, out_name, out_path, index, kind in _cells(cases):
+        expected = EXPECTED[(name, out_name, kind)]
         objective, x = _objective(model, problem, out_path, index)
-        cell = f"{problem_name} {out_name} x {kind}"
+        cell = f"{name} {out_name} x {kind}"
         if expected == RAISES:
             # raised while tracing, before any host work
-            with pytest.raises(gfem.NonDifferentiableError, match="stop_gradient"):
+            with pytest.raises(gfem.NonDifferentiableError):
                 jax.make_jaxpr(jax.grad(objective))(x)
             continue
         grad = np.asarray(jax.grad(objective)(x))
@@ -128,6 +154,16 @@ def test_raise_table(model):
             assert not grad.any(), cell
         else:
             assert np.abs(grad).max() > 0, cell
+
+
+def test_unsupported_input_error_names_the_input_and_the_opt_out(model):
+    objective, x = _objective(
+        model, PROBLEMS["electrostatic"], (jax.tree_util.GetAttrKey("capacitance"),), 0
+    )
+    with pytest.raises(
+        gfem.NonDifferentiableError, match=r"mesh\.nodes.*stop_gradient"
+    ):
+        jax.make_jaxpr(jax.grad(objective))(x)
 
 
 def test_stop_gradient_opts_a_read_input_out(model):
