@@ -330,14 +330,19 @@ def _electrostatic_args(problem: Electrostatic, _: _codec.Context) -> dict[str, 
 
 def _port_mode_field_args(field: PortModeField, _: _codec.Context) -> dict[str, Any]:
     space = field._space  # noqa: SLF001
-    return {"section": space.section, "order": space.order, "coeffs": field._coeffs}  # noqa: SLF001
+    return {
+        "section": space.section,
+        "order": space.order,
+        "basis": field._basis,  # noqa: SLF001
+        "coords": field._coords,  # noqa: SLF001
+    }
 
 
 def _port_mode_field_from_args(args: dict[str, Any], _: _codec.Context) -> Any:
     from gfem._engine.port_mode import PortModeSpace
 
     space = PortModeSpace(args["section"], args["order"])
-    return PortModeField(space, args["coeffs"])
+    return PortModeField(space, args["basis"], args["coords"])
 
 
 def _job_from_args(args: dict[str, Any], _: _codec.Context) -> Job:
