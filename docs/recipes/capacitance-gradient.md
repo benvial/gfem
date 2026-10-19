@@ -81,7 +81,10 @@ grads = jax.grad(objective)(model)  # grads.materials[...] holds the field gradi
 ```
 
 The same works on an output that has no gradient: wrap it in
-`stop_gradient` where the objective uses it.
+`stop_gradient` where the objective uses it. Of the electrostatic outputs,
+`capacitance` and the matrices derived from it (`mutual`, `inverse`)
+differentiate; the per-region `energy` does not yet, and raises when a
+gradient through it reaches `eps_r`.
 
 Errors that only the data can reveal are raised on the host during the
 backward pass. JAX re-raises them as `jax.errors.JaxRuntimeError`; the message

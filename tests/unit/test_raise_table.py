@@ -50,10 +50,14 @@ EXPECTED = {
     ("electrostatic", "capacitance", ("material", "oxide", "density")): ZERO,
     ("electrostatic", "capacitance", ("material", "oxide", "specific_heat")): ZERO,
 }
-# Region energies are not stationary in the potential (they would need an
-# adjoint solve per terminal): a cotangent on them raises, whatever the input.
+# Region energies are not functions of the capacitance (they would need one
+# adjoint solve per terminal): they raise for every input the solve reads,
+# and are exact zeros for the inputs it never reads. (`mutual` and `inverse`
+# are jnp functions of `capacitance`, not leaves: they differentiate.)
 EXPECTED |= {
-    ("electrostatic", f"energy.{region}", kind): RAISES
+    ("electrostatic", f"energy.{region}", kind): (
+        ZERO if kind[0] == "material" and kind[2] != "eps_r" else RAISES
+    )
     for region in ("oxide", "nitride")
     for kind in [("nodes",)] + [("material", "oxide", p) for p in ALL_PROPERTIES]
 }
