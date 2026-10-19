@@ -177,8 +177,13 @@ class CudssHandle(NgsHandle):
             raise
         return solver
 
-    def _inverse_map(self, B: np.ndarray, tolerance: float | None) -> np.ndarray:  # noqa: ARG002
-        """The inverse on the free rows of ``B`` (direct: no ``tolerance``)."""
+    def _inverse_map(
+        self,
+        B: np.ndarray,
+        tolerance: float | None,  # noqa: ARG002
+        x0: np.ndarray | None = None,  # noqa: ARG002
+    ) -> np.ndarray:
+        """The inverse on the free rows of ``B`` (direct: no ``tolerance``, ``x0``)."""
         cols, flat = self._columns(B)
         solver = self._solver
         if solver is None:

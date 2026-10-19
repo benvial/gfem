@@ -31,12 +31,19 @@ def em_region(model: Model, built: EngineMesh) -> ngs.Region:
 
 
 def hcurl_space(
-    model: Model, built: EngineMesh, order: int, *, complex_valued: bool = True
+    model: Model,
+    built: EngineMesh,
+    order: int,
+    *,
+    complex_valued: bool = True,
+    dirichlet: tuple[str, ...] = (),
 ) -> ngs.FESpace:
     """First-kind Nédélec space of ``order`` on the electromagnetic domain.
 
     DOFs of excluded volumes are compressed away, so the space's size is the
-    system size.
+    system size. The tangential DOFs on the ``dirichlet`` surfaces (exact
+    names, e.g. `PEC`) are fixed: left out of ``FreeDofs()``, which BDDC
+    reads. The DOF numbering does not depend on ``dirichlet``.
     """
     space = ngs.HCurl(
         built.mesh,
@@ -44,8 +51,15 @@ def hcurl_space(
         type1=True,
         complex=complex_valued,
         definedon=em_region(model, built),
+        dirichlet=_bc_numbers(built, dirichlet),
     )
     return ngs.Compress(space)
+
+
+def _bc_numbers(built: EngineMesh, names: tuple[str, ...]) -> list[int]:
+    """1-based NGSolve boundary numbers of these surface names (exact names)."""
+    wanted = set(names)
+    return [j + 1 for j, n in enumerate(built.mesh.GetBoundaries()) if n in wanted]
 
 
 def domain_key(model: Model) -> tuple:
@@ -65,10 +79,11 @@ def h1_space(
     The DOFs on the ``dirichlet`` surfaces (exact names) are fixed: they are
     left out of ``FreeDofs()``, which BDDC reads.
     """
-    wanted = set(dirichlet)
-    bcs = [j + 1 for j, n in enumerate(built.mesh.GetBoundaries()) if n in wanted]
     space = ngs.H1(
-        built.mesh, order=order, definedon=em_region(model, built), dirichlet=bcs
+        built.mesh,
+        order=order,
+        definedon=em_region(model, built),
+        dirichlet=_bc_numbers(built, dirichlet),
     )
     return ngs.Compress(space)
 

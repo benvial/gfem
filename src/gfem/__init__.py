@@ -41,10 +41,12 @@ from gfem.model import (  # noqa: E402
     enclosed_by,
 )
 from gfem.options import SolverOptions  # noqa: E402
-from gfem.problems import Electrostatic, PortMode  # noqa: E402
+from gfem.problems import Driven, Electrostatic, PortMode  # noqa: E402
 from gfem.results import (  # noqa: E402
+    DrivenResult,
     ElectrostaticResult,
     Field,
+    NetworkParameters,
     PortModeField,
     PortModeResult,
 )
@@ -59,6 +61,8 @@ __all__ = [
     "Conductor",
     "DeviceMemoryWarning",
     "DeviceUnavailableError",
+    "Driven",
+    "DrivenResult",
     "Electrostatic",
     "ElectrostaticResult",
     "Field",
@@ -71,6 +75,7 @@ __all__ = [
     "MeshQualityError",
     "MeshQualityWarning",
     "Model",
+    "NetworkParameters",
     "NonDifferentiableError",
     "PortGeometryError",
     "PortMode",

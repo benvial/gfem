@@ -40,8 +40,15 @@ from gfem._pytree import register_fields
 from gfem.mesh import Mesh
 from gfem.model import EnclosedBy, Model
 from gfem.options import SolverOptions
-from gfem.problems import Electrostatic, PortMode
-from gfem.results import ElectrostaticResult, Field, PortModeField, PortModeResult
+from gfem.problems import Driven, Electrostatic, PortMode
+from gfem.results import (
+    DrivenResult,
+    ElectrostaticResult,
+    Field,
+    NetworkParameters,
+    PortModeField,
+    PortModeResult,
+)
 from gfem.solve import solve
 
 __all__ = ["Job", "load_result"]
@@ -367,6 +374,9 @@ for _cls in (
     ElectrostaticResult,
     Field,
     PortModeResult,
+    Driven,
+    DrivenResult,
+    NetworkParameters,
     PortSection,
 ):
     _codec.register(_cls)

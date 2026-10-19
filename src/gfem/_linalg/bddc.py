@@ -17,8 +17,10 @@ from gfem._linalg import Operator, Symmetry
 from gfem._linalg.base import NgsHandle, host_bytes
 from gfem._linalg.direct import INVERSE
 
-#: The coarse (wirebasket) problem's solver: always a direct factorization.
-COARSE = {"coarsetype": "direct", "inverse": INVERSE}
+#: The coarse (wirebasket) problem's solver: always an explicit sparse Cholesky
+#: factorization. (``coarsetype="direct"`` is not set: on the driven H(curl)
+#: reference it made the setup 5x slower and GMRES take 68 iterations, not 49.)
+COARSE = {"inverse": INVERSE}
 
 
 class BddcHandle(NgsHandle):
@@ -72,36 +74,83 @@ class BddcHandle(NgsHandle):
                 form.mat, preconditioner.mat, tol=tolerance, maxiter=maxiter
             )
 
-    def _check(self, solver) -> None:
+    def _check(self, solver, reference: float | None = None) -> None:
+        """Record the iterations; raise if the solve stopped unconverged.
+
+        ``reference`` is the residual the tolerance is relative to; ``None``
+        is the first residual of the iteration.
+        """
         self.iterations.append(int(solver.iterations))
         residuals = solver.residuals
+        if not residuals:
+            return
+        start = residuals[0] if reference is None else reference
         # Krylov solvers stop early on an exact (lucky) breakdown too.
-        if len(residuals) < self.maxiter or residuals[-1] <= (
-            self.tolerance * residuals[0]
-        ):
+        if len(residuals) < self.maxiter or residuals[-1] <= self.tolerance * start:
             return
         name = "CG" if self.symmetry == "hermitian" else "GMRES"
         raise RuntimeError(
             f"BDDC + {name} did not converge to the relative tolerance "
             f"{self.tolerance:g} in {self.maxiter} iterations (reached "
-            f"{residuals[-1] / residuals[0]:.2g}). Use linear_solver='direct', or a "
+            f"{residuals[-1] / start:.2g}). Use linear_solver='direct', or a "
             "looser tolerance."
         )
 
-    def _inverse_map(self, B: np.ndarray, tolerance: float | None) -> np.ndarray:
-        if tolerance is None or tolerance == self.tolerance:
-            return self._map(self._solver, B, after=self._check)
+    def _inverse_map(
+        self, B: np.ndarray, tolerance: float | None, x0: np.ndarray | None = None
+    ) -> np.ndarray:
         solver = self._solver
         if solver is None:
             raise RuntimeError("This solver handle was freed.")
-        with self._lock:  # reentrant: _map takes it again
+        with self._lock:  # reentrant: _map and _warm take it again
             prepared = self.tolerance
-            # NGSolve's Krylov solvers read .tol on every Solve
-            solver.tol = self.tolerance = tolerance  # ty: ignore[invalid-assignment]
+            if tolerance is not None:
+                # NGSolve's Krylov solvers read .tol on every Solve
+                solver.tol = self.tolerance = tolerance  # ty: ignore[invalid-assignment]
             try:
+                if x0 is not None and self.symmetry != "hermitian":
+                    return self._warm(B, x0)
                 return self._map(solver, B, after=self._check)
             finally:
                 solver.tol = self.tolerance = prepared  # ty: ignore[invalid-assignment]
+
+    def _warm(self, B: np.ndarray, x0: np.ndarray) -> np.ndarray:
+        """GMRES from the initial guess ``x0``, to ``tolerance * |P b|``.
+
+        The stopping residual is relative to the preconditioned right-hand
+        side, not to the first residual, so a good guess saves iterations.
+        A guess whose residual exceeds ``|P b|`` (worse than zero) is
+        dropped.
+        """
+        cols, flat = self._columns(B)
+        guesses, _ = self._columns(x0)
+        matrix = self._matrix
+        pre = self._preconditioner
+        if matrix is None or self._solver is None or pre is None:
+            raise RuntimeError("This solver handle was freed.")
+        out = np.zeros(cols.shape, dtype=np.complex128 if self._complex else float)
+        b, x, r = (matrix.CreateColVector() for _ in range(3))
+        with self._lock:
+            for j in range(cols.shape[1]):
+                b.FV().NumPy()[:] = cols[:, j]
+                r.data = pre.mat * b
+                reference = ngs.Norm(r)
+                x.FV().NumPy()[:] = guesses[:, j]
+                r.data = b - matrix * x
+                b_res = r.CreateVector()
+                b_res.data = pre.mat * r
+                if ngs.Norm(b_res) >= reference:
+                    x[:] = 0
+                solver = ngs.solvers.GMResSolver(
+                    matrix,
+                    pre.mat,
+                    atol=self.tolerance * reference,
+                    maxiter=self.maxiter,
+                )
+                solver.Solve(rhs=b, sol=x, initialize=False)
+                self._check(solver, reference)
+                out[:, j] = x.FV().NumPy()
+        return out[:, 0] if flat else out
 
     @property
     def nbytes(self) -> int:

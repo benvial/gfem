@@ -176,7 +176,6 @@ def test_one_bddc_handle_solves_an_adjoint_at_its_own_tolerance(built):
 def test_bddc_coarse_inverse_is_sparse_cholesky_never_the_default(built):
     handle = prepare(_laplace(built)[0], symmetry="hermitian", kind="bddc_gmres")
     flags = handle._preconditioner.flags.ToDict()
-    assert flags["coarsetype"] == "direct"
     assert flags["inverse"] == "sparsecholesky"
 
 
@@ -189,6 +188,45 @@ def test_bddc_complex_symmetric_operator_uses_gmres(built):
     X = handle.solve(B)
     assert _residual(handle, B, X, free) < 1e-5
     np.testing.assert_allclose(handle.solve(B, transpose=True), X, rtol=1e-12)
+
+
+def test_gmres_initial_guess_saves_iterations_at_the_same_tolerance(built):
+    # GMRES stops at tolerance * |P b| whatever the start, so a good initial
+    # guess (the previous frequency's solution) saves iterations.
+    def handle_at(shift):
+        op, _ = _laplace(built, complex_valued=True, shift=shift, order=4)
+        return prepare(
+            op, symmetry="complex_symmetric", kind="bddc_gmres", tolerance=1e-8
+        )
+
+    first, second = handle_at(1 - 2j), handle_at(1.1 - 2j)
+    free = second._free
+    rng = np.random.default_rng(8)
+    B = rng.standard_normal((first.ndof, 2)) + 0j
+    previous = first.solve(B)
+    cold = second.solve(B)
+    warm = second.solve(B, x0=previous)
+    assert all(
+        w < c for w, c in zip(second.iterations[2:], second.iterations[:2], strict=True)
+    )
+    np.testing.assert_allclose(warm, cold, atol=1e-6 * np.abs(cold).max())
+    cold_residual = _residual(second, B[:, 0], cold[:, 0], free)
+    assert _residual(second, B[:, 0], warm[:, 0], free) < 10 * cold_residual
+    np.testing.assert_array_equal(warm[~free], 0)
+    # a guess worse than zero is dropped; the exact solution needs no iteration
+    second.solve(B[:, 0], x0=1e6 * np.ones(second.ndof))
+    assert second.iterations[-1] <= second.iterations[0]
+    second.solve(B[:, 0], x0=warm[:, 0])
+    assert second.iterations[-1] <= 1
+
+
+def test_direct_ignores_the_initial_guess(built):
+    op, space = _laplace(built, complex_valued=True, shift=1 - 2j)
+    handle = prepare(op, symmetry="complex_symmetric", kind="direct")
+    b = np.ones(space.ndof, complex)
+    np.testing.assert_array_equal(
+        handle.solve(b, x0=np.ones(space.ndof)), handle.solve(b)
+    )
 
 
 def test_bddc_needs_the_fixed_dofs_marked_in_the_space(built):

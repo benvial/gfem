@@ -75,10 +75,16 @@ class NgsHandle:
                 out[:, j] = y.FV().NumPy()
         return out[:, 0] if flat else out
 
-    def _inverse_map(self, B: np.ndarray, tolerance: float | None) -> np.ndarray:  # noqa: ARG002
+    def _inverse_map(
+        self,
+        B: np.ndarray,
+        tolerance: float | None,  # noqa: ARG002
+        x0: np.ndarray | None = None,  # noqa: ARG002
+    ) -> np.ndarray:
         """Hook for subclasses: the inverse on the free rows of ``B``.
 
-        Direct backends ignore ``tolerance``.
+        ``x0`` (same shape as ``B``, zero on fixed rows) is an initial guess.
+        Direct backends ignore ``tolerance`` and ``x0``.
         """
         return self._map(self._solver, B)
 
@@ -88,6 +94,7 @@ class NgsHandle:
         *,
         transpose: bool = False,
         tolerance: float | None = None,
+        x0: np.ndarray | None = None,
     ) -> np.ndarray:
         """``A_ff X_f = B_f`` on the free DOFs; ``X`` is zero on fixed DOFs.
 
@@ -95,8 +102,9 @@ class NgsHandle:
         complex symmetric operator, the conjugate one for a complex
         Hermitian operator. ``tolerance`` is the relative residual of this
         solve for iterative backends (an adjoint solve on the forward's
-        preconditioner); ``None`` is the prepared tolerance. Direct
-        backends ignore it.
+        preconditioner); ``None`` is the prepared tolerance. ``x0``, the
+        shape of ``B``, is an initial guess for iterative backends; its fixed
+        rows are not read. Direct backends ignore both.
 
         Raises:
             RuntimeError: The handle was freed.
@@ -112,13 +120,27 @@ class NgsHandle:
                 "operator."
             )
         if conjugate:
-            return np.conj(self.solve(np.conj(B), tolerance=tolerance))
-        B = np.where(self._free if B.ndim == 1 else self._free[:, None], B, 0)
+            guess = None if x0 is None else np.conj(x0)
+            return np.conj(self.solve(np.conj(B), tolerance=tolerance, x0=guess))
+        free = self._free if B.ndim == 1 else self._free[:, None]
+        B = np.where(free, B, 0)
+        if x0 is not None:
+            x0 = np.asarray(x0)
+            if x0.shape != B.shape:
+                raise ValueError(
+                    f"The initial guess has shape {x0.shape}, the right-hand "
+                    f"sides {B.shape}."
+                )
+            x0 = np.where(free, x0, 0)
         if not self._complex and np.iscomplexobj(B):
-            return self._inverse_map(B.real, tolerance) + 1j * self._inverse_map(
-                B.imag, tolerance
+            re = None if x0 is None else x0.real
+            im = None if x0 is None else x0.imag
+            return self._inverse_map(B.real, tolerance, re) + 1j * self._inverse_map(
+                B.imag, tolerance, im
             )
-        return self._inverse_map(B, tolerance)
+        if x0 is not None and not self._complex:
+            x0 = x0.real
+        return self._inverse_map(B, tolerance, x0)
 
     def apply(self, X: np.ndarray) -> np.ndarray:
         """``A X`` with the full assembled matrix.

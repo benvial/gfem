@@ -195,3 +195,54 @@ def coax_quarter(
         return np.stack([r * np.cos(t), r * np.sin(t), z], axis=1)
 
     return structured(edges, lambda _: "dielectric", surface, mapping)
+
+
+def strip_line(
+    length: float,
+    width: float,
+    height: float,
+    n: tuple[int, int, int],
+    *,
+    layers: tuple[tuple[str, float], ...] | None = None,
+    split_ports: bool = False,
+):
+    """A parallel-plate line along x: plates at z = 0 and z = height.
+
+    Volume "dielectric" (or ``layers`` of (name, thickness) from z = 0).
+    Surfaces "bottom" (z = 0), "top" (z = height), "port1" (x = 0),
+    "port2" (x = length) and "side" (y walls); with ``split_ports`` each
+    port face is cut at y = width / 2 into "<port>a" (y below) and
+    "<port>b". Layer interfaces are "<lower>__<upper>". ``n`` cells along
+    x, y and z (per layer).
+    """
+    layers = (("dielectric", height),) if layers is None else layers
+    tops = np.cumsum([t for _, t in layers])
+    zs = [np.zeros(1)]
+    for (_, t), z1 in zip(layers, tops, strict=True):
+        zs.append(z1 - t + np.linspace(0, t, n[2] + 1)[1:])
+    edges = (
+        np.linspace(0, length, n[0] + 1),
+        np.linspace(0, width, n[1] + 1),
+        np.concatenate(zs),
+    )
+    eps = 1e-9 * max(length, width, tops[-1])
+
+    def volume(c):
+        return layers[int(np.searchsorted(tops, c[2]))][0]
+
+    def surface(c):
+        for x, name in ((0.0, "port1"), (length, "port2")):
+            if abs(c[0] - x) < eps:
+                if split_ports:
+                    return name + ("a" if c[1] < width / 2 else "b")
+                return name
+        if abs(c[2]) < eps:
+            return "bottom"
+        if abs(c[2] - tops[-1]) < eps:
+            return "top"
+        for (lo, _), (hi, _), z in zip(layers, layers[1:], tops, strict=False):
+            if abs(c[2] - z) < eps:
+                return f"{lo}__{hi}"
+        return "side"
+
+    return structured(edges, volume, surface)

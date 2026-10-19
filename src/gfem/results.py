@@ -19,7 +19,14 @@ if TYPE_CHECKING:
     from gfem._engine.port_mode import PortModeSpace
     from gfem._port_section import PortSection
 
-__all__ = ["ElectrostaticResult", "Field", "PortModeField", "PortModeResult"]
+__all__ = [
+    "DrivenResult",
+    "ElectrostaticResult",
+    "Field",
+    "NetworkParameters",
+    "PortModeField",
+    "PortModeResult",
+]
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -253,3 +260,94 @@ class PortModeResult:
 
 
 register_fields(PortModeResult, ("frequency", "gamma", "Z_PV", "residual", "solved"))
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class NetworkParameters:
+    """Scattering parameters over frequency, labelled by port name.
+
+    Power waves (Kurokawa) under e^{+iωt}, each port with its own reference
+    impedance ``z_ref``: ``values[f, i, j]`` is the outgoing wave at port
+    ``ports[i]`` when port ``excited[j]`` is fed 1 W incident power and
+    every other port is terminated in its reference impedance. For a
+    `LumpedPort` the reference impedance is its resistance; an inductance or
+    capacitance of the port loads the network in parallel. A port without
+    a resistance has no reference impedance: its ``z_ref`` and its row of S
+    are NaN.
+
+    Attributes:
+        values: S, complex, shape ``(n_freq, n_ports, n_excited)``.
+        z_ref: Reference impedance of each port in ohm, shape
+            ``(n_freq, n_ports)``.
+        frequency: The frequencies in Hz (static labels).
+        ports: Port names, the row order of S (the model's port order).
+        excited: Names of the excited ports, the column order of S.
+    """
+
+    values: jax.Array
+    z_ref: jax.Array
+    frequency: tuple[float, ...]
+    ports: tuple[str, ...]
+    excited: tuple[str, ...]
+
+    def __getitem__(self, key: tuple[str, str]) -> jax.Array:
+        """``S[to, from]`` over frequency, ``(n_freq,)``: e.g. ``s["p2", "p1"]``.
+
+        Raises:
+            KeyError: ``to`` is not a port, or ``from`` is not an excited port.
+        """
+        to, source = key
+        if to not in self.ports:
+            raise KeyError(
+                f"No port {to!r}; the ports are {', '.join(map(repr, self.ports))}."
+            )
+        if source not in self.excited:
+            raise KeyError(
+                f"Port {source!r} was not excited; the excited ports are "
+                f"{', '.join(map(repr, self.excited))} (see Driven.excite)."
+            )
+        return self.values[:, self.ports.index(to), self.excited.index(source)]
+
+    def db(self, to: str, source: str) -> jax.Array:
+        """``20 log10 |S[to, from]|`` over frequency, dB."""
+        return 20 * jnp.log10(jnp.abs(self[to, source]))
+
+    def __repr__(self) -> str:
+        return (
+            f"NetworkParameters(ports={list(self.ports)}, "
+            f"excited={list(self.excited)}, {len(self.frequency)} frequencies)"
+        )
+
+
+register_fields(NetworkParameters, ("values", "z_ref"))
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class DrivenResult:
+    """The result of a `Driven` problem.
+
+    Attributes:
+        s: The scattering parameters (`NetworkParameters`).
+    """
+
+    s: NetworkParameters
+
+    @property
+    def frequency(self) -> np.ndarray:
+        """The frequencies in Hz, ``(n_freq,)``."""
+        return np.array(self.s.frequency)
+
+    def __repr__(self) -> str:
+        f = self.frequency
+        span = (
+            f"{f.min() / 1e9:.4g}-{f.max() / 1e9:.4g} GHz"
+            if len(f) > 1
+            else f"{f[0] / 1e9:.4g} GHz"
+        )
+        return (
+            f"DrivenResult({len(f)} frequencies {span}, ports={list(self.s.ports)}, "
+            f"excited={list(self.s.excited)})"
+        )
+
+
+register_fields(DrivenResult, ("s",))

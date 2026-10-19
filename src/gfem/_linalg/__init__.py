@@ -17,8 +17,10 @@ Backends:
   NGSolve's UMFPACK default. One factorization serves every right-hand side.
 - ``"bddc_gmres"``: NGSolve BDDC with a sparse Cholesky coarse problem, and
   conjugate gradients (Hermitian operators) or GMRES (the others) to the
-  relative ``tolerance``. BDDC reads the fixed DOFs from the space, so the
-  operator's free DOFs must be the space's ``FreeDofs()``.
+  relative ``tolerance``. GMRES takes an initial guess (``solve(B, x0=...)``,
+  e.g. the previous frequency's solution) and then stops at ``tolerance``
+  times the preconditioned right-hand side. BDDC reads the fixed DOFs from
+  the space, so the operator's free DOFs must be the space's ``FreeDofs()``.
 - ``"cudss"``: the ``direct`` solver on a GPU (``device="cuda"`` or
   ``"cuda:N"``), NVIDIA cuDSS. The host holds all data; the factors stay on
   the GPU. Symmetric and Hermitian operators only. Needs the cuda extra; an
@@ -81,11 +83,14 @@ class Handle(Protocol):
         *,
         transpose: bool = False,
         tolerance: float | None = None,
+        x0: np.ndarray | None = None,
     ) -> np.ndarray:
         """Solve ``A X = B`` on the free DOFs; ``B`` is ``(ndof,)`` or ``(ndof, k)``.
 
         ``tolerance`` overrides the prepared relative residual of iterative
-        backends for this solve (adjoint solves); direct backends ignore it.
+        backends for this solve (adjoint solves); ``x0`` (the shape of ``B``)
+        is an initial guess for iterative backends. Direct backends ignore
+        both.
         """
         ...
 
