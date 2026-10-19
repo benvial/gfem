@@ -41,7 +41,7 @@ from gfem.mesh import Mesh
 from gfem.model import EnclosedBy, Model
 from gfem.options import SolverOptions
 from gfem.problems import Electrostatic, PortMode
-from gfem.results import ElectrostaticResult, PortModeField, PortModeResult
+from gfem.results import ElectrostaticResult, Field, PortModeField, PortModeResult
 from gfem.solve import solve
 
 __all__ = ["Job", "load_result"]
@@ -360,6 +360,7 @@ for _cls in (
     SolverOptions,
     PortMode,
     ElectrostaticResult,
+    Field,
     PortModeResult,
     PortSection,
 ):

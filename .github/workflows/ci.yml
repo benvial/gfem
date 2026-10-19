@@ -32,7 +32,8 @@ jobs:
         python-version: ${{ matrix.python }}
         enable-cache: true
     - name: Install
-      run: uv sync --locked
+      # viz: Field.to_pyvista is unit-tested (no rendering, no display needed)
+      run: uv sync --locked --extra viz
     - name: Ruff
       run: uv run ruff check --no-fix .
     - name: Ruff format

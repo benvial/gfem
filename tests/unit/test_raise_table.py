@@ -50,6 +50,18 @@ EXPECTED = {
     ("electrostatic", "capacitance", ("material", "oxide", "density")): ZERO,
     ("electrostatic", "capacitance", ("material", "oxide", "specific_heat")): ZERO,
 }
+# Terminal potentials: their coefficients differentiate like the capacitance;
+# their mesh is the input mesh passed through (node gradients raise in solve).
+EXPECTED |= {
+    ("electrostatic", f"potential.{t}.{leaf}", kind): (
+        EXPECTED[("electrostatic", "capacitance", kind)]
+        if leaf == "coefficients" or kind == ("nodes",)
+        else ZERO
+    )
+    for t in ("top",)
+    for leaf in ("coefficients", "mesh.nodes")
+    for kind in [("nodes",)] + [("material", "oxide", p) for p in ALL_PROPERTIES]
+}
 # Region energies are not functions of the capacitance (they would need one
 # adjoint solve per terminal): they raise for every input the solve reads,
 # and are exact zeros for the inputs it never reads. (`mutual` and `inverse`
@@ -71,8 +83,10 @@ EXPECTED |= {
 
 
 def _field(mesh, region):
+    # values vary per element, so the terminal potentials depend on them
     n = len(mesh.elements(region))
-    return gfem.MaterialField(**{k: np.full(n, v) for k, v in ALL_PROPERTIES.items()})
+    ramp = np.linspace(1.0, 1.5, n)
+    return gfem.MaterialField(**{k: v * ramp for k, v in ALL_PROPERTIES.items()})
 
 
 @pytest.fixture(scope="module")
@@ -104,9 +118,7 @@ def cases(model):
 
 
 PROBLEMS = {
-    "electrostatic": gfem.Electrostatic(
-        terminals={"top": "top", "mid": "oxide__nitride"}, ground="bottom"
-    ),
+    "electrostatic": gfem.Electrostatic(terminals={"top": "top"}, ground="bottom"),
 }
 
 
@@ -186,7 +198,7 @@ def test_energy_error_names_the_output_and_the_opt_out(model):
         result = gfem.solve(m, problem)
         energy = result.energy["oxide"]
         energy = jax.lax.stop_gradient(energy) if stop else energy
-        return result.capacitance[1, 1] + energy.sum()
+        return result.capacitance[0, 0] + energy.sum()
 
     eps = jnp.full(n, 3.9)
     with pytest.raises(
@@ -201,7 +213,7 @@ def test_stop_gradient_opts_a_read_input_out(model):
 
     def objective(m):
         frozen = m.replace(mesh=jax.lax.stop_gradient(m.mesh))
-        return gfem.solve(frozen, problem).capacitance[1, 1]  # mid sees the oxide
+        return gfem.solve(frozen, problem).capacitance[0, 0]  # in series with oxide
 
     grads = jax.grad(objective)(model)
     assert not np.asarray(grads.mesh.nodes).any()
@@ -228,16 +240,16 @@ def test_nondifferentiable_output_raises_unless_stop_gradient(model):
         m = model.with_material("oxide", gfem.MaterialField(eps_r=eps))
         out = solve_vjp(rule, m, problem)
         extra = jax.lax.stop_gradient(out["extra"]) if stop else out["extra"]
-        return out["capacitance"][1, 1] + extra
+        return out["capacitance"][0, 0] + extra
 
     eps = jnp.full(n, 3.9)
     with pytest.raises(gfem.NonDifferentiableError, match="'extra'"):
         jax.make_jaxpr(jax.grad(lambda e: objective(e, stop=False)))(eps)
     grad = jax.grad(lambda e: objective(e, stop=True))(eps)
 
-    def c_mid(e):
+    def c_top(e):
         m = model.with_material("oxide", gfem.MaterialField(eps_r=e))
-        return gfem.solve(m, problem).capacitance[1, 1]
+        return gfem.solve(m, problem).capacitance[0, 0]
 
     assert np.abs(np.asarray(grad)).max() > 0
-    np.testing.assert_allclose(grad, jax.grad(c_mid)(eps), rtol=1e-14)
+    np.testing.assert_allclose(grad, jax.grad(c_top)(eps), rtol=1e-14)

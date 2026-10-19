@@ -92,8 +92,8 @@ def test_result_is_labelled_symmetric_with_palace_signs(stack):
 def test_result_is_a_pytree_of_the_matrix_and_the_region_energies(stack):
     cap = _c(stack, gfem.Electrostatic(terminals=STACK, ground="bottom"))
     leaves, tree = jax.tree.flatten(cap)
-    assert len(leaves) == 3
     assert leaves[0] is cap.capacitance
+    assert any(leaf is cap.potential["top"].coefficients for leaf in leaves)
     assert isinstance(cap.capacitance, jax.Array)
     assert cap.capacitance.dtype == np.float64
     assert all(isinstance(e, jax.Array) for e in cap.energy.values())
