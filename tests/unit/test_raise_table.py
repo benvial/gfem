@@ -50,6 +50,13 @@ EXPECTED = {
     ("electrostatic", "capacitance", ("material", "oxide", "density")): ZERO,
     ("electrostatic", "capacitance", ("material", "oxide", "specific_heat")): ZERO,
 }
+# Region energies are not stationary in the potential (they would need an
+# adjoint solve per terminal): a cotangent on them raises, whatever the input.
+EXPECTED |= {
+    ("electrostatic", f"energy.{region}", kind): RAISES
+    for region in ("oxide", "nitride")
+    for kind in [("nodes",)] + [("material", "oxide", p) for p in ALL_PROPERTIES]
+}
 # The port mode problem is not differentiable: every result leaf raises.
 PORT_MODE_OUTPUTS = ("frequency", "gamma", "Z_PV", "residual")
 EXPECTED |= {
@@ -164,6 +171,25 @@ def test_unsupported_input_error_names_the_input_and_the_opt_out(model):
         gfem.NonDifferentiableError, match=r"mesh\.nodes.*stop_gradient"
     ):
         jax.make_jaxpr(jax.grad(objective))(x)
+
+
+def test_energy_error_names_the_output_and_the_opt_out(model):
+    problem = PROBLEMS["electrostatic"]
+    n = len(model.mesh.elements("oxide"))
+
+    def objective(eps, *, stop):
+        m = model.with_material("oxide", gfem.MaterialField(eps_r=eps))
+        result = gfem.solve(m, problem)
+        energy = result.energy["oxide"]
+        energy = jax.lax.stop_gradient(energy) if stop else energy
+        return result.capacitance[1, 1] + energy.sum()
+
+    eps = jnp.full(n, 3.9)
+    with pytest.raises(
+        gfem.NonDifferentiableError, match=r"result\.energy.*stop_gradient"
+    ):
+        jax.make_jaxpr(jax.grad(lambda e: objective(e, stop=False)))(eps)
+    assert np.abs(np.asarray(jax.grad(lambda e: objective(e, stop=True))(eps))).max()
 
 
 def test_stop_gradient_opts_a_read_input_out(model):

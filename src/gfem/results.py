@@ -39,7 +39,9 @@ class ElectrostaticResult:
             the solve domain, by region name: an ``(n_terminals,)`` array,
             entry ``i`` for excitation ``i`` (Palace's ``domain-E.csv`` at
             1 V). Excluded volumes are left out. Summed over the regions,
-            excitation ``i`` stores ``capacitance[i, i] / 2``.
+            excitation ``i`` stores ``capacitance[i, i] / 2``. Not
+            differentiable: a gradient through it raises
+            `gfem.NonDifferentiableError` (`mutual` and `inverse` are).
     """
 
     capacitance: jax.Array
