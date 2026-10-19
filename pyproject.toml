@@ -30,6 +30,9 @@ dependencies = [
   "scipy>=1.15",
 ]
 
+[project.scripts]
+gfem = "gfem.__main__:main"
+
 [project.optional-dependencies]
 # cuDSS through nvmath-python. A no-op on macOS, so a shared requirements file
 # still installs there. The two CUDA extras exclude each other.

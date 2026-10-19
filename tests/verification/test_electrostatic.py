@@ -11,6 +11,8 @@ the discretization error falls fast with p to that geometric floor.
 import itertools
 import math
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 import scipy.constants
@@ -105,6 +107,18 @@ def test_two_terminal_stack_gives_the_maxwell_matrix_of_two_capacitors(tmp_path)
     expected = np.array([[c2, -c2], [-c2, c1 + c2]])
     assert cap.terminals == ("top", "mid")
     np.testing.assert_allclose(cap.capacitance, expected, rtol=1e-11)
+    # top couples only to mid (c2), mid to ground through the oxide (c1)
+    np.testing.assert_allclose(
+        cap.mutual, [[0, c2], [c2, c1]], rtol=1e-11, atol=1e-11 * c1
+    )
+    # elastance: unit charge on top raises it by 1/c1 + 1/c2, mid by 1/c1
+    np.testing.assert_allclose(
+        cap.inverse, [[1 / c1 + 1 / c2, 1 / c1], [1 / c1, 1 / c1]], rtol=1e-10
+    )
+    # top at 1 V fills only the nitride; mid at 1 V both layers
+    assert list(cap.energy) == ["oxide", "nitride"]
+    np.testing.assert_allclose(cap.energy["oxide"], [0, c1 / 2], atol=1e-11 * c1)
+    np.testing.assert_allclose(cap.energy["nitride"], [c2 / 2, c2 / 2], rtol=1e-11)
 
 
 # --- coaxial line ----------------------------------------------------------------
@@ -154,3 +168,99 @@ def test_coax_higher_orders_converge_at_the_straight_sided_geometry_rate(
 def test_coax_error_falls_with_order_on_one_mesh(tmp_path):
     errors = [_coax_error(tmp_path, 4, order) for order in (1, 2, 3)]
     assert errors[0] > 10 * errors[1] > errors[2]
+
+
+def test_coax_capacitance_and_energy_agree_on_both_solvers(tmp_path):
+    # order 3: BDDC + CG iterates (face DOFs are off the wirebasket)
+    mesh = sm.coax_quarter(A, B, LENGTH, n_r=4, n_theta=8)
+    model = gfem.Model(
+        gfem.Mesh.from_gmsh(sm.write_msh22(tmp_path / "coax.msh", mesh)),
+        materials={"dielectric": gfem.Material()},
+    )
+    problem = gfem.Electrostatic(terminals={"inner": "inner"}, ground="outer")
+    caps = [
+        gfem.solve(model, problem, options=gfem.SolverOptions(order=3, linear_solver=s))
+        for s in ("direct", "bddc_gmres")
+    ]
+    np.testing.assert_allclose(caps[1].capacitance, caps[0].capacitance, rtol=1e-10)
+    np.testing.assert_allclose(
+        caps[1].energy["dielectric"], caps[0].energy["dielectric"], rtol=1e-10
+    )
+    # the stored energy at 1 V is C / 2
+    np.testing.assert_allclose(
+        caps[0].energy["dielectric"], caps[0].capacitance[0, 0] / 2, rtol=1e-12
+    )
+
+
+# --- gradients w.r.t. the permittivity -------------------------------------------
+
+SOLVERS = ["direct", "bddc_gmres"]
+
+
+def _gradient_case(tmp_path, solver):
+    """J(eps) = <W, C(eps)> on a two-terminal stack with random P0 fields."""
+    layers = (("oxide", 0.5), ("nitride", 0.25))
+    path = sm.write_msh22(
+        tmp_path / "grad.msh", sm.plate(40.0, 30.0, layers, (3, 2, 2))
+    )
+    mesh = gfem.Mesh.from_gmsh(path)
+    model = gfem.Model(
+        mesh, materials={"oxide": gfem.Material(), "nitride": gfem.Material()}
+    )
+    problem = gfem.Electrostatic(
+        terminals={"top": "top", "mid": "oxide__nitride"}, ground="bottom"
+    )
+    options = gfem.SolverOptions(order=2, linear_solver=solver, tolerance=1e-12)
+    weights = np.array([[1.0, 0.3], [-0.7, 2.0]])  # not symmetric on purpose
+    n_ox = len(mesh.elements("oxide"))
+
+    def objective(eps):
+        m = model.replace(
+            materials={
+                "oxide": gfem.MaterialField(eps_r=eps[:n_ox]),
+                "nitride": gfem.MaterialField(eps_r=eps[n_ox:]),
+            }
+        )
+        c = gfem.solve(m, problem, options=options).capacitance
+        return jnp.sum(weights * c) / (EPS0 * UM)  # O(1) values
+
+    rng = np.random.default_rng(42)
+    eps = jnp.asarray(rng.uniform(2.0, 9.0, len(mesh.tetrahedra)))
+    return objective, eps, rng
+
+
+@pytest.mark.parametrize("solver", SOLVERS)
+def test_capacitance_gradient_matches_central_differences(tmp_path, solver):
+    objective, eps, rng = _gradient_case(tmp_path, solver)
+    grad = jax.grad(objective)(eps)
+    h = 1e-4
+    for _ in range(3):
+        d = rng.standard_normal(eps.shape)
+        d /= np.linalg.norm(d)
+        fd = (objective(eps + h * d) - objective(eps - h * d)) / (2 * h)
+        assert float(grad @ d) == pytest.approx(float(fd), rel=1e-6)
+
+
+@pytest.mark.parametrize("solver", SOLVERS)
+def test_capacitance_taylor_remainder_is_second_order(tmp_path, solver):
+    objective, eps, rng = _gradient_case(tmp_path, solver)
+    j0, grad = jax.value_and_grad(objective)(eps)
+    d = rng.standard_normal(eps.shape)
+    hs = np.array([1e-2, 1e-3, 1e-4])
+    remainders = [abs(float(objective(eps + h * d) - j0 - h * (grad @ d))) for h in hs]
+    slopes = np.diff(np.log(remainders)) / np.diff(np.log(hs))
+    assert slopes == pytest.approx([2.0, 2.0], abs=0.1)
+
+
+def test_complex_permittivity_gradient_is_the_real_part_derivative(tmp_path):
+    # Electrostatics reads Re(eps_r): the cotangent of a complex leaf is
+    # dJ/dRe(eps) (JAX's convention: dJ/dx - i dJ/dy, and dJ/dy = 0).
+    objective, eps, rng = _gradient_case(tmp_path, "direct")
+    lossy = eps * (1 - 0.05j)
+    grad = jax.grad(objective)(lossy)
+    assert grad.dtype == jnp.complex128
+    assert not np.asarray(grad.imag).any()
+    d = rng.standard_normal(eps.shape)
+    h = 1e-4
+    fd = (objective(lossy + h * d) - objective(lossy - h * d)) / (2 * h)
+    assert float(grad.real @ d) == pytest.approx(float(fd), rel=1e-6)

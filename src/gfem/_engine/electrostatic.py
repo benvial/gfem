@@ -6,37 +6,50 @@ terminals and the ground, and solves the charge-free Laplace problem
 every v vanishing on the fixed surfaces. Then ``C_ij = a(phi_i, phi_j)``,
 which equals Palace's energy formula ``E(phi_i + phi_j) - (C_ii + C_jj) / 2``
 and is symmetric. All terminals share one prepared operator: the right-hand
-sides are the liftings, solved together.
+sides are the liftings, solved together: by CG + BDDC by default, or by
+one sparse Cholesky factorization (``direct``). ``phi_i^T K phi_j`` is
+quadratic in the solver error (the error vanishes on the fixed DOFs, the
+residual on the free ones), so the capacitance is far more accurate than
+the solver tolerance.
 
 The terminal potentials are their own adjoints (``dC_ij = phi_i^T dK phi_j``),
-so a capacitance gradient needs no solve; the handle is kept only for
-potential functionals.
+so a capacitance gradient needs no solve: a kept entry holds the potentials
+only, and the forward frees its factorization or preconditioner. A potential
+cotangent prepares the operator again in the backward pass (once per entry,
+at the adjoint tolerance) for its adjoint solve.
 """
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import ngsolve as ngs
 import numpy as np
 import scipy.constants
 
+from gfem._adjoint import adjoint_tolerance
 from gfem._boundaries import PEC, Conductor
 from gfem._engine import quadrature
 from gfem._engine.cache import Entry, discretization
 from gfem._engine.coefficients import permittivity
-from gfem._engine.domain import boundary_region, domain_key, h1_space
+from gfem._engine.domain import boundary_region, domain_key, em_region, h1_space
+from gfem._engine.fields import fe_space
+from gfem._engine.mesh import EngineMesh
 from gfem._engine.runtime import task_manager
-from gfem._linalg import KINDS, Operator, prepare
+from gfem._engine.sensitivity import FieldPair
+from gfem._field import FieldMap
+from gfem._linalg import KINDS, Handle, Operator, prepare
 from gfem.errors import RegionNotFoundError
+from gfem.mesh import Mesh
 from gfem.model import Model
 from gfem.options import SolverOptions
 from gfem.problems import Electrostatic
-from gfem.results import ElectrostaticResult
+from gfem.results import ElectrostaticResult, Field
 
 __all__ = ["ElectrostaticRule"]
 
-#: The linear solver for ``linear_solver="auto"``.
-DEFAULT_SOLVER = "direct"
+#: The linear solver for ``linear_solver="auto"``: CG + BDDC.
+DEFAULT_SOLVER = "bddc_gmres"
 
 
 class ElectrostaticRule:
@@ -48,8 +61,12 @@ class ElectrostaticRule:
     """
 
     physics = "em"
+    #: The operator family in the property-to-form-term table.
+    form = "electrostatic"
     #: Material properties the electrostatic forms read.
     reads = frozenset({"eps_r"})
+    #: Outputs whose cotangents the backward pass handles (not ``energy``).
+    differentiable_outputs = frozenset({"capacitance", "potential"})
 
     def __init__(
         self, model: Model, problem: Electrostatic, options: SolverOptions
@@ -64,7 +81,8 @@ class ElectrostaticRule:
         if self.kind not in KINDS:
             raise NotImplementedError(
                 f"linear_solver={kind!r} is not available for electrostatic "
-                "problems in this version of gfem; use linear_solver='direct'."
+                "problems in this version of gfem; use one of "
+                f"{', '.join(repr(k) for k in KINDS)}."
             )
         in_terminal = {s for _, surfaces in problem.terminals for s in surfaces}
         conductors = tuple(
@@ -79,6 +97,14 @@ class ElectrostaticRule:
         for s in problem.ground:
             _check_surface(model, s, "ground")
         _check_apart(model, problem.terminals, self.ground)
+        #: Surfaces at a fixed potential: the terminals and the ground.
+        self.fixed = tuple(sorted(in_terminal.union(self.ground)))
+        mesh, active = model.mesh, model._domain.active  # noqa: SLF001
+        #: Volume regions with tetrahedra in the solve domain, mesh order.
+        self.regions = tuple(r for r in mesh.volumes if active[mesh.elements(r)].any())
+        # The potentials live on the mesh as given (traced or not).
+        self._mesh = model.mesh
+        self._excluded = model._domain.excluded  # noqa: SLF001
 
     def forward(
         self, model: Model, *, keep: bool
@@ -87,47 +113,26 @@ class ElectrostaticRule:
 
         Args:
             model: The model, with concrete leaves.
-            keep: Keep the solver handle and the potentials for a backward
-                pass.
+            keep: Keep the potentials for a backward pass.
 
         Returns:
-            ``{"capacitance": (n, n) array in F}``, and the cache entry (the
-            handle and ``fields["potential"]``, one DOF column per terminal)
-            or ``None``.
+            ``{"capacitance": (n, n) array in F, "energy": (len(regions), n)
+            array in J, "potential": (ndof, n) array in V, one column per
+            terminal}``, and the cache entry (``fields["potential"]``; no
+            handle) or ``None``.
 
         Raises:
             ValueError: Part of the solve domain touches no terminal or
                 ground, so its potential is undetermined.
         """
-        order = self.options.order
         with task_manager(self.options.threads):
-            disc = discretization(model.mesh)
-            built = disc.built
-            space = disc.space(
-                (domain_key(model), "h1", order),
-                lambda: h1_space(model, built, order),
-            )
+            space, built = self._space(model)
             regions = [
                 boundary_region(built, surfaces)
                 for _, surfaces in self.problem.terminals
             ]
-            fixed = [space.GetDofs(r) for r in regions]
-            if self.ground:
-                fixed.append(space.GetDofs(boundary_region(built, self.ground)))
-            free = space.FreeDofs() & ~fixed[0]
-            for dofs in fixed[1:]:
-                free &= ~dofs
-
-            u, v = space.TnT()
-            form = ngs.BilinearForm(space, symmetric=True)
             eps = permittivity(model, built)
-            form += eps * ngs.grad(u) * ngs.grad(v) * quadrature.dx(order)
-            handle = prepare(
-                Operator(form, free),
-                symmetry="hermitian",
-                kind=self.kind,
-                device=self.options.device,
-            )
+            handle = self._prepare(space, eps, self.options.tolerance)
             lift = np.zeros((space.ndof, len(regions)))
             for i, region in enumerate(regions):
                 gf = ngs.GridFunction(space)
@@ -136,9 +141,10 @@ class ElectrostaticRule:
             phi = lift + handle.solve(-handle.apply(lift))
             scale = scipy.constants.epsilon_0 * built.scale
             c = phi.T @ handle.apply(phi) * scale
+            energy = 0.5 * scale * self._region_energies(model, built, space, eps, phi)
+        handle.free()
         c = 0.5 * (c + c.T)
         if not np.isfinite(c).all():
-            handle.free()
             raise ValueError(
                 "The electrostatic potential is undetermined: some part of the "
                 "solve domain touches no terminal and no ground. Add a ground "
@@ -146,19 +152,191 @@ class ElectrostaticRule:
             )
         entry = None
         if keep:
-            entry = Entry(
-                physics=self.physics, handle=handle, fields={"potential": phi}
+            entry = Entry(physics=self.physics, fields={"potential": phi})
+        return {"capacitance": c, "energy": energy, "potential": phi}, entry
+
+    def _prepare(
+        self, space: ngs.FESpace, eps: ngs.CoefficientFunction, tolerance: float
+    ) -> Handle:
+        """The prepared operator ``int eps_r grad u . grad v`` (file units)."""
+        order = self.options.order
+        u, v = space.TnT()
+        form = ngs.BilinearForm(space, symmetric=True)
+        form += eps * ngs.grad(u) * ngs.grad(v) * quadrature.dx(order)
+        return prepare(
+            Operator(form, space.FreeDofs()),
+            symmetry="hermitian",
+            kind=self.kind,
+            device=self.options.device,
+            tolerance=tolerance,
+        )
+
+    def _space(self, model: Model) -> tuple[ngs.FESpace, EngineMesh]:
+        order = self.options.order
+        disc = discretization(model.mesh)
+        built = disc.built
+        fixed = self.fixed
+        space = disc.space(
+            (domain_key(model), "h1", order, fixed),
+            lambda: h1_space(model, built, order, fixed),
+        )
+        return space, built
+
+    def output_specs(self, model: Model) -> dict[str, jax.ShapeDtypeStruct]:
+        """Shape and dtype of each forward output (from the mesh topology)."""
+        n = len(self.problem.terminals)
+        mesh = model.mesh
+        still = Mesh(mesh.imported_nodes, mesh._topology)  # noqa: SLF001
+        with task_manager(self.options.threads):
+            _, space, _ = fe_space(
+                still, self.regions, self._excluded, "h1", self.options.order
             )
-        else:
-            handle.free()
-        return {"capacitance": c}, entry
+        return {
+            "capacitance": jax.ShapeDtypeStruct((n, n), jnp.float64),
+            "energy": jax.ShapeDtypeStruct((len(self.regions), n), jnp.float64),
+            "potential": jax.ShapeDtypeStruct((space.ndof, n), jnp.float64),
+        }
+
+    def role(self, kind: tuple) -> str:
+        """``"read"`` if the electrostatic solve depends on input ``kind``.
+
+        The permittivity and the node coordinates are read; every other
+        material property (losses, ``mu_r``, thermal values), boundary and
+        port value is not, so its gradient is an exact zero.
+        """
+        if kind[0] == "material":
+            return "read" if kind[2] in self.reads else "unread"
+        if kind[0] in ("boundary", "port"):
+            return "unread"
+        return "read"
+
+    def nondifferentiable_output(self, name: str) -> str:
+        """The error message for a cotangent on output ``name``."""
+        if name == "energy":
+            # dE_r = phi^T dK_r phi / 2 + phi^T K_r dphi: unlike C, the region
+            # energy is not stationary in phi, so it needs one adjoint solve
+            # per terminal; not implemented.
+            return (
+                "gfem cannot differentiate the electrostatic region energies "
+                "(result.energy) with respect to eps_r or the mesh nodes. "
+                "Differentiate the capacitance instead (the "
+                "total energy of excitation i is capacitance[i, i] / 2), or wrap "
+                "result.energy in jax.lax.stop_gradient to use its value without "
+                "its derivative."
+            )
+        return (
+            f"gfem cannot differentiate the electrostatic output {name!r}. Wrap "
+            "it in jax.lax.stop_gradient to use its value without its derivative."
+        )
+
+    def backward(
+        self, model: Model, entry: Entry, cotangents: dict[str, np.ndarray]
+    ) -> list[FieldPair]:
+        """Fold the capacitance and potential cotangents into field pairs.
+
+        The terminal potentials are their own adjoints for the capacitance:
+        ``sum_ij ct_ij dC_ij = sum_i phi_i^T dK (sum_j G_ij phi_j)`` with
+        ``G`` the symmetric part of ``ct`` (C is symmetrized), so no solve.
+        A potential cotangent ``ct_i`` takes one adjoint solve per terminal,
+        all columns at once: ``K phi_i = 0`` on the free DOFs gives
+        ``ct_i . dphi_i = -lambda_i^T dK phi_i`` with ``K lambda_i = ct_i``
+        (zero on the fixed DOFs), K the SI operator. Its operator is
+        prepared on first use at the adjoint tolerance and kept in the entry
+        for later pullbacks.
+        """
+        phi = entry.fields["potential"]
+        eps0 = scipy.constants.epsilon_0
+        with task_manager(self.options.threads):
+            space, built = self._space(model)
+            domain = em_region(model, built)
+            left, right = [], []
+            if "capacitance" in cotangents:
+                ct = np.asarray(cotangents["capacitance"], dtype=float)
+                left.append(phi)
+                right.append(phi @ (0.5 * (ct + ct.T)).T)
+            if "potential" in cotangents:
+                ct = np.asarray(cotangents["potential"], dtype=float)
+                tolerance = adjoint_tolerance(self.options)
+                if entry.handle is None:
+                    eps = permittivity(model, built)
+                    entry.handle = self._prepare(space, eps, tolerance)
+                # the handle solves the form without eps0 * scale
+                adjoint = entry.handle.solve(ct, tolerance=tolerance)
+                adjoint /= eps0 * built.scale
+                left.append(-adjoint)
+                right.append(phi)
+        return [
+            FieldPair(
+                space=space,
+                left=np.concatenate(left, axis=1),
+                right=np.concatenate(right, axis=1),
+                weights={"grad_grad": eps0},
+                order=self.options.order,
+                domain=domain,
+            )
+        ]
 
     def result(self, outputs: dict) -> ElectrostaticResult:
         """The public result from the forward outputs."""
+        names = self.problem.terminal_names
+        potential = FieldMap(
+            {
+                name: Field(
+                    coefficients=jnp.asarray(outputs["potential"][:, i]),
+                    mesh=self._mesh,
+                    quantity="V",
+                    unit="V",
+                    space="h1",
+                    order=self.options.order,
+                    support=self.regions,
+                    _excluded=self._excluded,
+                )
+                for i, name in enumerate(names)
+            },
+            label="terminal",
+        )
         return ElectrostaticResult(
             capacitance=jnp.asarray(outputs["capacitance"]),
-            terminals=self.problem.terminal_names,
+            terminals=names,
+            energy={
+                r: jnp.asarray(e)
+                for r, e in zip(self.regions, outputs["energy"], strict=True)
+            },
+            potential=potential,
         )
+
+    def _region_energies(
+        self,
+        model: Model,
+        built: EngineMesh,
+        space: ngs.FESpace,
+        eps: ngs.CoefficientFunction,
+        phi: np.ndarray,
+    ) -> np.ndarray:
+        """``phi_i^T K_r phi_i``, shape ``(len(self.regions), n_terminals)``.
+
+        One element pass per terminal (a P0 linear form on the pinned rule),
+        summed per region over its active tetrahedra.
+        """
+        order = self.options.order
+        mesh = model.mesh
+        p0 = ngs.L2(built.mesh, order=0)
+        q = p0.TestFunction()
+        gf = ngs.GridFunction(space)
+        grad = ngs.grad(gf)
+        form = ngs.LinearForm(p0)
+        form += (eps * grad) * grad * q * quadrature.dx(order)
+        per_tet = np.zeros((len(mesh.tetrahedra), phi.shape[1]))
+        for i in range(phi.shape[1]):
+            gf.vec.FV().NumPy()[:] = phi[:, i]
+            form.Assemble()
+            per_tet[built.tetrahedron_order, i] = form.vec.FV().NumPy()
+        active = model._domain.active  # noqa: SLF001
+        out = np.zeros((len(self.regions), phi.shape[1]))
+        for k, region in enumerate(self.regions):
+            tets = mesh.elements(region)
+            out[k] = per_tet[tets[active[tets]]].sum(axis=0)
+        return out
 
 
 def _check_surface(model: Model, name: str, role: str) -> None:

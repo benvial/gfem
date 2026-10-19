@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import jax
@@ -11,31 +12,79 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.constants
 
+from gfem._field import Field, FieldMap
 from gfem._pytree import register_fields
 
 if TYPE_CHECKING:
     from gfem._engine.port_mode import PortModeSpace
     from gfem._port_section import PortSection
 
-__all__ = ["ElectrostaticResult", "PortModeField", "PortModeResult"]
+__all__ = ["ElectrostaticResult", "Field", "PortModeField", "PortModeResult"]
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
 class ElectrostaticResult:
     """The result of an `Electrostatic` problem.
 
+    Excitation ``i`` puts terminal ``i`` at 1 V and every other terminal
+    and the ground at 0 V.
+
     Attributes:
         capacitance: The Maxwell capacitance matrix in farads, shape
             ``(n_terminals, n_terminals)``, rows and columns in `terminals`
-            order: ``capacitance[i, j]`` is the charge on terminal ``i`` per
-            volt on terminal ``j`` with every other terminal and the ground
-            at 0 V. The diagonal is positive and the off-diagonal entries
-            are negative or zero (Palace's ``terminal-C.csv`` convention).
+            order: ``capacitance[i, j]`` is the charge on terminal ``i`` in
+            excitation ``j``. The diagonal is positive and the off-diagonal
+            entries are negative or zero (Palace's ``terminal-C.csv``
+            convention).
         terminals: The terminal names (static labels).
+        energy: Electric energy in joules stored in each volume region of
+            the solve domain, by region name: an ``(n_terminals,)`` array,
+            entry ``i`` for excitation ``i`` (Palace's ``domain-E.csv`` at
+            1 V). Excluded volumes are left out. Summed over the regions,
+            excitation ``i`` stores ``capacitance[i, i] / 2``. Not
+            differentiable with respect to what the solve reads: a gradient
+            through it that reaches ``eps_r`` or the mesh nodes raises
+            `gfem.NonDifferentiableError` (`mutual` and `inverse` do
+            differentiate).
+        potential: The potential of each terminal's solve, a `Field` by
+            terminal name (in `terminals` order): 1 V on that terminal, 0 V on
+            every other terminal and the ground. Quantity ``"V"``, in volts,
+            on H1 of the solve order. Functionals of the coefficients are
+            differentiable like the capacitance (one adjoint solve, shared
+            by the terminals).
     """
 
     capacitance: jax.Array
     terminals: tuple[str, ...]
+    energy: dict[str, jax.Array] = dataclasses.field(default_factory=dict)
+    potential: Mapping[str, Field] = dataclasses.field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Hold the potentials as a read-only, ordered mapping."""
+        if not isinstance(self.potential, FieldMap):
+            fields = FieldMap(self.potential, label="terminal")
+            object.__setattr__(self, "potential", fields)
+
+    @property
+    def mutual(self) -> jax.Array:
+        """The mutual capacitance matrix in farads (Palace ``terminal-Cm.csv``).
+
+        Off the diagonal, ``mutual[i, j] = -capacitance[i, j]``, the
+        capacitance between terminals ``i`` and ``j``; on it, the row sum
+        of `capacitance`, the capacitance of terminal ``i`` to ground.
+        """
+        c = self.capacitance
+        return jnp.diag(c.sum(axis=1)) - (c - jnp.diag(jnp.diag(c)))
+
+    @property
+    def inverse(self) -> jax.Array:
+        """The inverse of `capacitance` in 1/F (Palace ``terminal-Cinv.csv``).
+
+        Entry ``[i, j]`` is the voltage of terminal ``i`` per coulomb on
+        terminal ``j``, the others carrying no charge. Without a ground the
+        rows of `capacitance` sum to zero and it has no inverse.
+        """
+        return jnp.linalg.inv(self.capacitance)
 
     def index(self, terminal: str) -> int:
         """Row / column of ``terminal`` in `capacitance`.
@@ -67,7 +116,7 @@ class ElectrostaticResult:
         )
 
 
-register_fields(ElectrostaticResult, ("capacitance",))
+register_fields(ElectrostaticResult, ("capacitance", "energy", "potential"))
 
 
 class PortModeField:
