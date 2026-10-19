@@ -11,12 +11,15 @@ the discretization error falls fast with p to that geometric floor.
 import itertools
 import math
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 import scipy.constants
 import structured_meshes as sm
 
 import gfem
+from gfem._linalg import KINDS
 
 EPS0 = scipy.constants.epsilon_0
 UM = 1e-6
@@ -188,3 +191,85 @@ def test_coax_capacitance_and_energy_agree_on_both_solvers(tmp_path):
     np.testing.assert_allclose(
         caps[0].energy["dielectric"], caps[0].capacitance[0, 0] / 2, rtol=1e-12
     )
+
+
+# --- gradients w.r.t. the permittivity -------------------------------------------
+
+SOLVERS = [
+    "direct",
+    pytest.param(
+        "bddc_gmres",
+        marks=pytest.mark.skipif(
+            "bddc_gmres" not in KINDS, reason="the bddc backend is not available yet"
+        ),
+    ),
+]
+
+
+def _gradient_case(tmp_path, solver):
+    """J(eps) = <W, C(eps)> on a two-terminal stack with random P0 fields."""
+    layers = (("oxide", 0.5), ("nitride", 0.25))
+    path = sm.write_msh22(
+        tmp_path / "grad.msh", sm.plate(40.0, 30.0, layers, (3, 2, 2))
+    )
+    mesh = gfem.Mesh.from_gmsh(path)
+    model = gfem.Model(
+        mesh, materials={"oxide": gfem.Material(), "nitride": gfem.Material()}
+    )
+    problem = gfem.Electrostatic(
+        terminals={"top": "top", "mid": "oxide__nitride"}, ground="bottom"
+    )
+    options = gfem.SolverOptions(order=2, linear_solver=solver, tolerance=1e-12)
+    weights = np.array([[1.0, 0.3], [-0.7, 2.0]])  # not symmetric on purpose
+    n_ox = len(mesh.elements("oxide"))
+
+    def objective(eps):
+        m = model.replace(
+            materials={
+                "oxide": gfem.MaterialField(eps_r=eps[:n_ox]),
+                "nitride": gfem.MaterialField(eps_r=eps[n_ox:]),
+            }
+        )
+        c = gfem.solve(m, problem, options=options).capacitance
+        return jnp.sum(weights * c) / (EPS0 * UM)  # O(1) values
+
+    rng = np.random.default_rng(42)
+    eps = jnp.asarray(rng.uniform(2.0, 9.0, len(mesh.tetrahedra)))
+    return objective, eps, rng
+
+
+@pytest.mark.parametrize("solver", SOLVERS)
+def test_capacitance_gradient_matches_central_differences(tmp_path, solver):
+    objective, eps, rng = _gradient_case(tmp_path, solver)
+    grad = jax.grad(objective)(eps)
+    h = 1e-4
+    for _ in range(3):
+        d = rng.standard_normal(eps.shape)
+        d /= np.linalg.norm(d)
+        fd = (objective(eps + h * d) - objective(eps - h * d)) / (2 * h)
+        assert float(grad @ d) == pytest.approx(float(fd), rel=1e-6)
+
+
+@pytest.mark.parametrize("solver", SOLVERS)
+def test_capacitance_taylor_remainder_is_second_order(tmp_path, solver):
+    objective, eps, rng = _gradient_case(tmp_path, solver)
+    j0, grad = jax.value_and_grad(objective)(eps)
+    d = rng.standard_normal(eps.shape)
+    hs = np.array([1e-2, 1e-3, 1e-4])
+    remainders = [abs(float(objective(eps + h * d) - j0 - h * (grad @ d))) for h in hs]
+    slopes = np.diff(np.log(remainders)) / np.diff(np.log(hs))
+    assert slopes == pytest.approx([2.0, 2.0], abs=0.1)
+
+
+def test_complex_permittivity_gradient_is_the_real_part_derivative(tmp_path):
+    # Electrostatics reads Re(eps_r): the cotangent of a complex leaf is
+    # dJ/dRe(eps) (JAX's convention: dJ/dx - i dJ/dy, and dJ/dy = 0).
+    objective, eps, rng = _gradient_case(tmp_path, "direct")
+    lossy = eps * (1 - 0.05j)
+    grad = jax.grad(objective)(lossy)
+    assert grad.dtype == jnp.complex128
+    assert not np.asarray(grad.imag).any()
+    d = rng.standard_normal(eps.shape)
+    h = 1e-4
+    fd = (objective(lossy + h * d) - objective(lossy - h * d)) / (2 * h)
+    assert float(grad.real @ d) == pytest.approx(float(fd), rel=1e-6)
