@@ -1,0 +1,21 @@
+# Licence-gate policy, read by tools/licence_gate.py.
+#
+# GPL / LGPL dependencies are allowed; non-free and non-commercial licences are
+# not. A distribution whose metadata the gate cannot read fails until someone
+# reads its actual licence and records it under [overrides].
+
+# Proprietary NVIDIA runtime reached only through the optional cuda12 / cuda13
+# extras (cuDSS via nvmath-python). gfem stays MIT so these remain usable.
+allow-proprietary = ["cuda-*", "cutensor-*", "nvidia-*"]
+
+[overrides.cuda-toolkit]
+licence = "LicenseRef-NVIDIA-Proprietary"
+reason = "Metapackage with no licence metadata; pulls the NVIDIA CUDA runtime wheels (CUDA EULA)."
+
+[overrides.nvidia-cudss-cu12]
+licence = "LicenseRef-NVIDIA-Proprietary"
+reason = "Metadata says LicenseRef-Nvidia-cuDSS-License: the proprietary cuDSS EULA, redistributable, no non-commercial term."
+
+[overrides.nvidia-cudss-cu13]
+licence = "LicenseRef-NVIDIA-Proprietary"
+reason = "Metadata says LicenseRef-Nvidia-cuDSS-License: the proprietary cuDSS EULA, redistributable, no non-commercial term."
