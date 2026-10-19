@@ -11,6 +11,10 @@ import jax as _jax
 
 _jax.config.update("jax_enable_x64", True)
 
+# Submodules are imported after the switch, so no gfem array is ever float32.
+from gfem.errors import RegionNotFoundError  # noqa: E402
+from gfem.mesh import Mesh, Region  # noqa: E402
+
 __version__ = _version("gfem")
 
-__all__ = ["__version__"]
+__all__ = ["Mesh", "Region", "RegionNotFoundError", "__version__"]
