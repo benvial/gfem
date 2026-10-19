@@ -48,6 +48,8 @@ from gfem.results import (
     NetworkParameters,
     PortModeField,
     PortModeResult,
+    ReducedFields,
+    SweepInfo,
 )
 from gfem.solve import solve
 
@@ -378,6 +380,8 @@ for _cls in (
     DrivenResult,
     NetworkParameters,
     PortSection,
+    SweepInfo,
+    ReducedFields,
 ):
     _codec.register(_cls)
 _codec.register(Electrostatic, to_args=_electrostatic_args)
