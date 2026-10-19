@@ -19,7 +19,11 @@ Backends:
   conjugate gradients (Hermitian operators) or GMRES (the others) to the
   relative ``tolerance``. BDDC reads the fixed DOFs from the space, so the
   operator's free DOFs must be the space's ``FreeDofs()``.
-- ``"cudss"`` is not available in this version.
+- ``"cudss"``: the ``direct`` solver on a GPU (``device="cuda"`` or
+  ``"cuda:N"``), NVIDIA cuDSS. The host holds all data; the factors stay on
+  the GPU. Symmetric and Hermitian operators only. Needs the cuda extra; an
+  unusable device raises `gfem.DeviceUnavailableError`, never falls back to
+  the CPU.
 
 `factorize` gives a ``direct`` handle on a real symmetric SciPy matrix, for
 auxiliary systems assembled outside NGSolve.
@@ -102,6 +106,7 @@ def prepare(
     device: str = "cpu",
     tolerance: float = 1e-6,
     maxiter: int = MAXITER,
+    width: int = 1,
 ) -> Handle:
     """Assemble ``operator`` and set up the ``kind`` backend.
 
@@ -110,19 +115,36 @@ def prepare(
         symmetry: ``"hermitian"`` (real symmetric or complex Hermitian),
             ``"complex_symmetric"`` (A^T = A) or ``"general"``.
         kind: The backend.
-        device: ``"cpu"``; GPU backends are not available in this version.
+        device: ``"cpu"``, or ``"cuda"`` / ``"cuda:N"`` for the ``direct``
+            backend on a GPU (cuDSS). The GPU is checked before assembly.
         tolerance: Relative residual of iterative backends.
         maxiter: Most iterations of iterative backends; a solve that does
             not converge in them raises RuntimeError.
+        width: Right-hand-side columns the GPU solver solves at once (the
+            usual block width: terminals, ports); wider blocks go in chunks,
+            narrower ones are zero-padded. CPU backends ignore it.
 
     Raises:
-        NotImplementedError: The backend or device is not available.
-        ValueError: The backend cannot handle this symmetry.
+        NotImplementedError: The backend is not available, or the GPU
+            solver gets a general operator.
+        ValueError: The backend cannot handle this symmetry, or a GPU is
+            asked for an iterative backend.
+        gfem.DeviceUnavailableError: The GPU cannot be used.
     """
     if device != "cpu":
-        raise NotImplementedError(
-            f"device={device!r}: GPU solves are not available in this version of "
-            "gfem; use device='cpu'."
+        from gfem import _cuda
+
+        if kind != "direct":
+            raise ValueError(
+                f"device={device!r} needs kind='direct': only the direct solver "
+                f"runs on a GPU, not {kind!r}."
+            )
+        device_id = _cuda.require(device)
+        _cuda.warn_if_jax_preallocates()
+        from gfem._linalg.cudss import CudssHandle
+
+        return CudssHandle.from_operator(
+            operator, symmetry, device_id=device_id, width=width
         )
     if kind == "direct":
         from gfem._linalg.direct import DirectHandle

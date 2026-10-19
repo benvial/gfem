@@ -283,16 +283,6 @@ def test_bddc_default_agrees_with_the_direct_solver(tmp_path, solver):
     np.testing.assert_allclose(bddc.capacitance, direct.capacitance, rtol=1e-9)
 
 
-def test_gpu_device_raises_not_available(stack):
-    with pytest.raises(NotImplementedError, match="device"):
-        _c(
-            stack,
-            gfem.Electrostatic(terminals=STACK),
-            linear_solver="direct",
-            device="cuda",
-        )
-
-
 def test_solve_rejects_wrong_argument_types(stack):
     with pytest.raises(TypeError, match="problem type"):
         gfem.solve(stack, "electrostatic")

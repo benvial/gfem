@@ -9,6 +9,7 @@ import pytest
 import structured_meshes as sm
 
 import gfem
+from gfem import _cuda
 from gfem.__main__ import main
 
 LAYERS = (("oxide", 0.5), ("nitride", 0.25))
@@ -63,7 +64,9 @@ def test_no_override_records_the_job_device(model, tmp_path):
 
 
 @pytest.mark.parametrize("device", ["cuda", "tpu"])
-def test_a_device_that_cannot_run_exits_1(model, tmp_path, capsys, device):
+def test_a_device_that_cannot_run_exits_1(model, tmp_path, capsys, monkeypatch, device):
+    monkeypatch.setattr(_cuda, "_query", lambda: _cuda.Probe(0, "CUDA_ERROR_NO_DEVICE"))
+    _cuda.probe.cache_clear()
     job = _job(model, tmp_path, linear_solver="direct")
     out = tmp_path / "results"
     assert main(["run", str(job), "--out", str(out), "--device", device]) == 1
@@ -71,6 +74,21 @@ def test_a_device_that_cannot_run_exits_1(model, tmp_path, capsys, device):
     assert err.startswith("gfem: error:")
     assert "device" in err
     assert not (out / "result.json").exists()
+    _cuda.probe.cache_clear()
+
+
+def test_a_gpu_job_without_a_gpu_names_the_cuda_error(
+    model, tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr(_cuda, "_query", lambda: _cuda.Probe(0, "CUDA_ERROR_NO_DEVICE"))
+    _cuda.probe.cache_clear()
+    job = _job(model, tmp_path, linear_solver="direct", device="cuda")
+    assert main(["run", str(job), "--out", str(tmp_path / "r")]) == 1
+    err = capsys.readouterr().err
+    assert "DeviceUnavailableError" in err
+    assert "CUDA_ERROR_NO_DEVICE" in err
+    assert "--device cpu" in err
+    _cuda.probe.cache_clear()
 
 
 def test_a_broken_job_exits_1(model, tmp_path, capsys):

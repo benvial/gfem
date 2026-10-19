@@ -169,6 +169,7 @@ class ElectrostaticRule:
             kind=self.kind,
             device=self.options.device,
             tolerance=tolerance,
+            width=len(self.problem.terminals),
         )
 
     def _space(self, model: Model) -> tuple[ngs.FESpace, EngineMesh]:
