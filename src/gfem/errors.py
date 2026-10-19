@@ -32,3 +32,12 @@ class RegionNotFoundError(LookupError):
             f"No {kind} named {name!r} in the mesh (gmsh physical-group names).{hint}"
         )
         self.name = name
+
+
+class NonDifferentiableError(TypeError):
+    """A gradient was asked of something gfem does not differentiate.
+
+    The message names the quantity, the reason and the remedy. To use such a
+    value in an objective without its derivative, wrap it in
+    `jax.lax.stop_gradient`.
+    """
