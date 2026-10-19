@@ -317,12 +317,6 @@ def _with(line, **changes):
 @pytest.mark.parametrize(
     ("change", "problem", "error", "message"),
     [
-        (
-            {},
-            gfem.Driven(frequency=F, sweep="adaptive"),
-            NotImplementedError,
-            "adaptive",
-        ),
         ({}, gfem.Driven(frequency=F, excite="p3"), ValueError, "'p3'"),
         ({"ports": []}, None, ValueError, "no ports"),
         (

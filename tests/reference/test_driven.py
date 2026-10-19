@@ -277,3 +277,95 @@ def test_driven_per_sample_time_against_palace(reference, name):
         f"{_db(palace_s[1, 0]):.4f} dB (sign of the curl term; not asserted)"
     )
     assert ratio <= 1.5
+
+
+# --- adaptive sweep ---------------------------------------------------------------
+
+#: Palace's 300-point adaptive sweep on this laptop: wall time (s) and peak
+#: RSS (GiB), from the reference README.
+PALACE_SWEEP = {"r8": (592.0, 1.60), "r4": (1359.0, 3.36)}
+#: Frequencies (GHz) near which adaptive is checked against full solves, at
+#: the nearest grid frequency the sweep did not solve.
+CHECKS = (10.0, 25.0, 50.0, 66.6, 90.0)
+
+_ADAPTIVE: dict[str, tuple] = {}
+
+
+def _adaptive(reference, name):
+    """The adaptive sweep of a case on Palace's 300-point grid (cached)."""
+    if name not in _ADAPTIVE:
+        case = reference / name
+        model = _model(case)
+        frequency, palace = _palace(case)
+        options = gfem.SolverOptions(threads=THREADS)
+        problem = gfem.Driven(frequency=frequency, sweep="adaptive")
+        start = time.perf_counter()
+        result = gfem.solve(model, problem, options=options)
+        wall = time.perf_counter() - start
+        _ADAPTIVE[name] = (model, frequency, palace, result, wall, _peak_rss_gib())
+    return _ADAPTIVE[name]
+
+
+def _report(name, result, wall, rss):
+    info = result.sweep
+    errors = info.sample_errors
+    confirming = next(
+        (k for k, e in enumerate(reversed(errors)) if not e < info.tolerance),
+        len(errors),
+    )
+    share = confirming / len(errors)
+    print(  # noqa: T201
+        f"{name} adaptive: {len(errors)} samples at "
+        f"{[round(f / 1e9, 3) for f in info.sampled_frequencies]} GHz, errors "
+        f"{[f'{e:.2e}' for e in errors]}, basis {info.basis_size}, converged "
+        f"{info.converged}, confirmation share {share:.2f}; {wall:.1f} s, peak RSS "
+        f"{rss:.2f} GiB, load {os.getloadavg()}"
+    )
+
+
+@pytest.mark.parametrize("name", ["r8_abc1", "r4_abc1"])
+def test_adaptive_parity_s_matches_palace_over_the_grid(reference, name):
+    _, frequency, palace, result, wall, rss = _adaptive(reference, name)
+    _report(name, result, wall, rss)
+    assert len(frequency) == 300
+    assert result.sweep.converged
+    diff = np.abs(np.asarray(result.s.values) - palace).max(axis=(1, 2))
+    print(  # noqa: T201
+        f"{name}: max |dS| vs Palace {diff.max():.3g} at "
+        f"{frequency[diff.argmax()] / 1e9:.3f} GHz"
+    )
+    assert diff.max() <= TOLERANCE
+
+
+def test_adaptive_matches_uniform_solves_between_samples(reference):
+    model, frequency, _, result, wall, rss = _adaptive(reference, "r8")
+    _report("r8", result, wall, rss)
+    solved = np.array(result.sweep.solved)
+    rows = []
+    for f in CHECKS:
+        nearest = np.argsort(np.abs(frequency - f * 1e9))
+        rows.append(next(int(i) for i in nearest if not solved[i]))
+    options = gfem.SolverOptions(threads=THREADS)
+    uniform = gfem.solve(model, gfem.Driven(frequency=frequency[rows]), options=options)
+    adaptive = np.asarray(result.s.values)[rows]
+    diff = np.abs(np.asarray(uniform.s.values) - adaptive).max(axis=(1, 2))
+    print(  # noqa: T201
+        f"r8: |dS| adaptive vs uniform {np.round(diff, 9).tolist()} at "
+        f"{np.round(frequency[rows] / 1e9, 3).tolist()} GHz"
+    )
+    assert diff.max() <= TOLERANCE
+
+
+@pytest.mark.parametrize("name", ["r8", "r4"])
+def test_adaptive_sweep_time_against_palace(reference, name):
+    _, _, _, result, wall, rss = _adaptive(reference, name)
+    _report(name, result, wall, rss)
+    palace_wall, palace_rss = PALACE_SWEEP[name]
+    print(  # noqa: T201
+        f"{name}: 300-point sweep {wall:.1f} s = {wall / palace_wall:.3f}x Palace "
+        f"({palace_wall:.0f} s); peak RSS {rss:.2f} GiB = {rss / palace_rss:.2f}x "
+        f"Palace ({palace_rss} GiB)"
+    )
+    assert result.sweep.converged
+    assert wall <= 1.5 * palace_wall
+    assert rss <= 1.5 * palace_rss

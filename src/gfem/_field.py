@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import importlib
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -18,7 +18,7 @@ from gfem.mesh import Mesh
 if TYPE_CHECKING:
     import meshio
 
-__all__ = ["SPACES", "Field", "FieldMap"]
+__all__ = ["SPACES", "Field", "FieldMap", "ReducedFields"]
 
 #: Finite-element spaces a `Field` can live on, by name: H1 (continuous
 #: scalar), H(curl) (tangentially continuous vector), H(div) (normally
@@ -214,6 +214,96 @@ class Field:
 
 
 register_fields(Field, ("coefficients", "mesh", "omega"))
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class ReducedFields(Sequence[Field]):
+    """Fields stored as one shared basis and a short coordinate vector each.
+
+    An adaptive frequency sweep keeps its fields this way: field ``k`` has
+    the coefficients ``basis @ coordinates[k]``, formed when it is read, so
+    the result holds one ``(n_dofs, n)`` real basis instead of one
+    ``n_dofs`` complex vector per field. Indexing and iterating give
+    ordinary `Field` objects; every field shares the descriptor below.
+
+    Attributes:
+        basis: The real basis, ``(n_dofs, n)``.
+        coordinates: Complex coordinates, ``(n_fields, n)``.
+        omega: Angular frequency of each field, rad/s, ``(n_fields,)``.
+        mesh: As for `Field`.
+        quantity: As for `Field`.
+        unit: As for `Field`.
+        space: As for `Field`.
+        order: As for `Field`.
+        support: As for `Field`.
+    """
+
+    basis: jax.Array
+    coordinates: jax.Array
+    omega: jax.Array
+    mesh: Mesh
+    quantity: str
+    unit: str
+    space: str
+    order: int
+    support: tuple[str, ...]
+    _excluded: tuple[tuple[int, int], ...] = ()
+
+    def __post_init__(self) -> None:
+        """Hold the arrays as JAX arrays with matching shapes."""
+        basis = jnp.asarray(self.basis)
+        coordinates = jnp.asarray(self.coordinates)
+        omega = jnp.asarray(self.omega)
+        shapes_match = (
+            basis.ndim == coordinates.ndim == 2
+            and coordinates.shape[1] == basis.shape[1]
+            and omega.shape == coordinates.shape[:1]
+        )
+        if not shapes_match:
+            raise ValueError(
+                f"ReducedFields shapes do not match: basis {basis.shape}, "
+                f"coordinates {coordinates.shape}, omega {omega.shape}."
+            )
+        object.__setattr__(self, "basis", basis)
+        object.__setattr__(self, "coordinates", coordinates)
+        object.__setattr__(self, "omega", omega)
+        object.__setattr__(self, "support", tuple(self.support))
+
+    def __len__(self) -> int:
+        """The number of fields."""
+        return self.coordinates.shape[0]
+
+    def __getitem__(self, k: int) -> Field:  # ty: ignore[invalid-method-override]
+        """Field ``k``, its coefficients formed from the basis."""
+        if isinstance(k, bool) or not isinstance(k, int):
+            raise TypeError(f"ReducedFields indices are ints, got {k!r}.")
+        if not -len(self) <= k < len(self):
+            raise IndexError(f"Field {k} of {len(self)}.")
+        return Field(
+            coefficients=self.basis @ self.coordinates[k],
+            mesh=self.mesh,
+            quantity=self.quantity,
+            unit=self.unit,
+            space=self.space,
+            order=self.order,
+            support=self.support,
+            omega=self.omega[k],
+            _excluded=self._excluded,
+        )
+
+    def __iter__(self) -> Iterator[Field]:
+        """The fields, in order."""
+        return (self[k] for k in range(len(self)))
+
+    def __repr__(self) -> str:
+        return (
+            f"ReducedFields({len(self)} {self.quantity} fields in {self.unit}, "
+            f"basis of {self.basis.shape[1]} vectors over {self.basis.shape[0]} "
+            f"coefficients, {self.space} order {self.order})"
+        )
+
+
+register_fields(ReducedFields, ("basis", "coordinates", "omega", "mesh"))
 
 
 class FieldMap(Mapping[str, Field]):
