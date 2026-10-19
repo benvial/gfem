@@ -19,6 +19,7 @@ from gfem.errors import (  # noqa: E402
     NonDifferentiableError,
     PortGeometryError,
     PortModeError,
+    PortModeTrackingWarning,
     RegionNotFoundError,
 )
 from gfem.mesh import Mesh, Region  # noqa: E402
@@ -67,6 +68,7 @@ __all__ = [
     "PortModeError",
     "PortModeField",
     "PortModeResult",
+    "PortModeTrackingWarning",
     "Region",
     "RegionNotFoundError",
     "SolverOptions",

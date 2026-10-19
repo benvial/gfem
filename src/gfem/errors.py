@@ -77,3 +77,13 @@ class PortModeError(RuntimeError):
     frequency of the band. The message names the port, the frequency and the
     remedy.
     """
+
+
+class PortModeTrackingWarning(UserWarning):
+    """A wave port's mode crosses another mode inside the frequency band.
+
+    gfem follows the physical mode (by its overlap with the neighbouring
+    frequency's mode) through the crossing, so beyond it the mode is no
+    longer the n-th in Palace's per-frequency order and S-parameters differ
+    from Palace's there. Filter it with Python's `warnings` module.
+    """

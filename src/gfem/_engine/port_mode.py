@@ -19,6 +19,7 @@ Coordinates are in the mesh file's unit, so ``k0`` is per local unit.
 from __future__ import annotations
 
 import dataclasses
+import functools
 
 import netgen.meshing as ngm
 import ngsolve as ngs
@@ -125,6 +126,69 @@ class PortModeSpace:
         )
         return m[self.free][:, self.free].tocsr()
 
+    def _vector(self, integrand) -> np.ndarray:
+        form = ngs.LinearForm(self.space)
+        form += integrand
+        form.Assemble()
+        return np.array(form.vec.FV().NumPy())[self.free]
+
+    def _dx(self):
+        q = quadrature.degree(self.order)
+        return ngs.dx(intrules={ngs.TRIG: ngs.IntegrationRule(ngs.TRIG, q)})
+
+    @functools.cached_property
+    def mass(self) -> sp.csr_matrix:
+        """Unweighted L2 mass of ``(e_t, e_n)`` on free DOFs (real SPD).
+
+        The inner product that tracks a mode across frequencies.
+        """
+        (et, en), (vt, vn) = self.space.TnT()
+        return self._matrix([(et * vt + en * vn) * self._dx()]).real.tocsr()
+
+    @functools.cached_property
+    def power_forms(self) -> tuple[sp.csr_matrix, sp.csr_matrix]:
+        """The matrices of the power integral, on free DOFs.
+
+        ``int E_t . conj(nu_tt (grad E_n + gamma E_t)) = c^T G conj(c) +
+        conj(gamma) c^T T conj(c)``; rows belong to the unconjugated factor
+        (see `power`).
+        """
+        (et, en), (vt, _vn) = self.space.TnT()
+        nu = ngs.Conj(self._coef["nu_tt"])
+        g = self._matrix([(nu * ngs.grad(en)) * vt * self._dx()])
+        t = self._matrix([(nu * et) * vt * self._dx()])
+        return g, t
+
+    @functools.cached_property
+    def gauge_forms(self) -> tuple[np.ndarray, np.ndarray]:
+        """``l_n`` and ``l_t`` with ``gauge(c, gamma) = -i (l_n + gamma l_t) . c``.
+
+        Free-DOF vectors; see `gauge`.
+        """
+        _, (vt, vn) = self.space.TnT()
+        weight = self._quadrant() * self._coef["nu_tt"]
+        t = self._gauge_direction()
+        dx = self._dx()
+        ln = self._vector((t * (weight * ngs.grad(vn))) * dx)
+        lt = self._vector((t * (weight * vt)) * dx)
+        return ln, lt
+
+    def _quadrant(self) -> ngs.CoefficientFunction:
+        s = self.section
+        glob = [
+            s.origin[k] + ngs.x * s.frame[0, k] + ngs.y * s.frame[1, k]
+            for k in (0, 1, 2)
+        ]
+        corners = s.to_global(s.points) / s.scale
+        lo, hi = corners.min(axis=0), corners.max(axis=0)
+        da, db = np.argsort(hi - lo)[::-1][:2]
+        ca, cb = 0.5 * (lo + hi)[da], 0.5 * (lo + hi)[db]
+        return ngs.IfPos(glob[da] - ca, 1.0, 0.0) * ngs.IfPos(glob[db] - cb, 1.0, 0.0)
+
+    def _gauge_direction(self) -> ngs.CoefficientFunction:
+        s = self.section
+        return ngs.CF((float(s.frame[0].sum()), float(s.frame[1].sum())))
+
     # --- fields ---------------------------------------------------------------
 
     def full(self, x: np.ndarray) -> np.ndarray:
@@ -185,17 +249,8 @@ class PortModeSpace:
         """
         et, en = self._gridfunction(coeffs).components
         a = ngs.grad(en) + gamma * et
-        s = self.section
-        glob = [
-            s.origin[k] + ngs.x * s.frame[0, k] + ngs.y * s.frame[1, k]
-            for k in (0, 1, 2)
-        ]
-        corners = s.to_global(s.points) / s.scale
-        lo, hi = corners.min(axis=0), corners.max(axis=0)
-        da, db = np.argsort(hi - lo)[::-1][:2]
-        ca, cb = 0.5 * (lo + hi)[da], 0.5 * (lo + hi)[db]
-        inside = ngs.IfPos(glob[da] - ca, 1.0, 0.0) * ngs.IfPos(glob[db] - cb, 1.0, 0.0)
-        t = ngs.CF((float(s.frame[0].sum()), float(s.frame[1].sum())))
+        inside = self._quadrant()
+        t = self._gauge_direction()
         cf = inside * (t * (-1j * (self._coef["nu_tt"] * a)))
         return complex(
             ngs.Integrate(cf, self.mesh, order=quadrature.degree(self.order))
