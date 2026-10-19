@@ -21,6 +21,7 @@ from gfem.errors import (  # noqa: E402
     PortModeError,
     RegionNotFoundError,
 )
+from gfem.job import Job, load_result  # noqa: E402
 from gfem.mesh import Mesh, Region  # noqa: E402
 from gfem.model import (  # noqa: E402
     PEC,
@@ -54,6 +55,7 @@ __all__ = [
     "Electrostatic",
     "ElectrostaticResult",
     "Impedance",
+    "Job",
     "LumpedPort",
     "Material",
     "MaterialField",
@@ -73,6 +75,7 @@ __all__ = [
     "WavePort",
     "__version__",
     "enclosed_by",
+    "load_result",
     "shape",
     "solve",
 ]
