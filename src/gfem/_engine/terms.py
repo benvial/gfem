@@ -58,6 +58,9 @@ __all__ = [
     "LumpedElement",
     "LumpedPortData",
     "Piece",
+    "absorbing_faces",
+    "excitation_per_voltage",
+    "face_owner",
     "lumped_ports",
     "pieces",
     "port_vectors",
@@ -317,8 +320,6 @@ def _absorbing_coefficients(
     second-order one (mu_r^-1 times 1 / sqrt(eps_r mu_r), the 1/k of the
     adjacent material relative to k0).
     """
-    mesh = model.mesh
-    active = model._domain.active  # noqa: SLF001
     mu = element_tensors(model, "mu_r")
     if eps.ndim == 3:
         eps = np.trace(eps, axis1=1, axis2=2) / 3
@@ -326,13 +327,42 @@ def _absorbing_coefficients(
         mu = np.trace(mu, axis1=1, axis2=2) / 3
     eps, mu = np.real(eps), np.real(mu)
     values = np.stack([np.sqrt(eps / mu), 1 / (mu * np.sqrt(eps * mu))], axis=1)
-    nb = mesh.triangle_neighbours
-    out = np.zeros((len(nb), 2))
+    owner = face_owner(model)
+    out = np.zeros((len(owner), 2))
+    ok = owner >= 0
+    out[ok] = values[owner[ok]]
+    return out[:, 0], out[:, 1]
+
+
+def face_owner(model: Model) -> np.ndarray:
+    """The solve-domain tetrahedron whose values a face term reads, per triangle.
+
+    The tetrahedron behind the triangle's normal when it is in the solve
+    domain, else the one in front, else -1.
+    """
+    active = model._domain.active  # noqa: SLF001
+    nb = model.mesh.triangle_neighbours
+    owner = np.full(len(nb), -1)
     for side in (1, 0):
         tet = nb[:, side]
         ok = (tet >= 0) & active[np.maximum(tet, 0)]
-        out[ok] = values[tet[ok]]
-    return out[:, 0], out[:, 1]
+        owner[ok] = tet[ok]
+    return owner
+
+
+def absorbing_faces(model: Model, order: int = 1) -> tuple[tuple[str, ...], np.ndarray]:
+    """The surfaces of the absorbing terms of ``order`` and every face's owner.
+
+    ``order=1`` names every `Absorbing` surface (the first-order term is
+    part of both orders), ``order=2`` the second-order ones; the owner per
+    triangle is `face_owner`.
+    """
+    surfaces = tuple(
+        b.surface
+        for b in model.boundaries
+        if isinstance(b, Absorbing) and b.order >= order
+    )
+    return surfaces, face_owner(model)
 
 
 def _conductor(
@@ -410,6 +440,16 @@ def _impedance(built: EngineMesh, order: int, b: Impedance) -> list[Piece]:
     return _rlc(f"impedance {b.surface}", built.scale, [sheet])
 
 
+def excitation_per_voltage(resistance: float) -> float:
+    """``b / l`` of a lumped port of ``resistance`` ohm (see `port_vectors`).
+
+    Each element's excitation weight is ``2 eta0 sqrt(2 R) / (R n width)``
+    and its voltage weight ``1 / (n width)``: the excitation vector is the
+    voltage vector times ``2 eta0 sqrt(2 / R)``.
+    """
+    return 2.0 * ETA0 * math.sqrt(2.0 / resistance)
+
+
 def port_vectors(
     space: ngs.FESpace, built: EngineMesh, order: int, data: LumpedPortData
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -418,7 +458,9 @@ def port_vectors(
     Returns ``(b, l)``: the right-hand side of 1 W incident power is
     ``i k0 b`` (incident voltage sqrt(2 R) on every element), and the port
     voltage of a field with coefficients ``x`` is ``l @ x``, the mean over
-    the elements of ``(1 / width) ∫ d . E``.
+    the elements of ``(1 / width) ∫ d . E``. The two are parallel, ``b =
+    excitation_per_voltage(R) * l``, which makes S reciprocal and lets the
+    port solutions serve as their own adjoints.
     """
     v = space.TestFunction()
     r = data.port.rlc[0]

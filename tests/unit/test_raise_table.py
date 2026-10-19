@@ -2,7 +2,8 @@
 
 Each (problem, result leaf, input leaf) cell is one of three outcomes:
 a finite, nonzero gradient; an exact zero, because the problem's physics
-never reads that input; or `gfem.NonDifferentiableError` at trace time.
+never reads that input (or the leaf is a constant of it, like a port's
+reference impedance); or `gfem.NonDifferentiableError` at trace time.
 Never a silent zero for an input the physics reads. The cells are
 generated from the pytrees, so a new leaf without an expected outcome
 fails here.
@@ -81,18 +82,28 @@ EXPECTED |= {
     for kind in [("nodes",)] + [("material", "fill", p) for p in ALL_PROPERTIES]
 }
 
-# Driven results are not differentiable yet: every leaf raises for the inputs
-# the driven forms read, and is an exact zero for the thermal properties.
+# Driven: S and the kept field coefficients differentiate with respect to
+# every electromagnetic property and are exact zeros for the thermal ones.
+# z_ref (the port resistances), the kept fields' mesh (the input mesh passed
+# through) and their angular frequency are constants of the materials. Node
+# coordinates raise for every leaf (no shape gradients yet).
 EM_PROPERTIES = ("eps_r", "mu_r", "tan_delta", "conductivity")
+_DRIVEN_DEPENDENT = (
+    "s.values",
+    *(f"e_fields.{k}.coefficients" for k in (0, 1)),
+)
 EXPECTED |= {
     ("driven", out, kind): (
-        ZERO if kind[0] == "material" and kind[2] not in EM_PROPERTIES else RAISES
+        RAISES
+        if kind == ("nodes",)
+        else GRADIENT
+        if out in _DRIVEN_DEPENDENT and kind[2] in EM_PROPERTIES
+        else ZERO
     )
     for out in (
         "s.values",
         "s.z_ref",
-        # kept fields (one per excited port): coefficients, the input mesh
-        # passed through, and the constant angular frequency
+        # kept fields (one per excited port)
         *(
             f"e_fields.{k}.{leaf}"
             for k in (0, 1)

@@ -549,6 +549,10 @@ def _touchstone(net: NetworkParameters, s: np.ndarray, z0: float) -> str:
 class DrivenResult:
     """The result of a `Driven` problem.
 
+    ``s.values`` and the kept fields' coefficients are differentiable with
+    respect to every electromagnetic `MaterialField` value (``eps_r``,
+    ``mu_r``, ``tan_delta``, ``conductivity``); ``s.z_ref`` is constant.
+
     Attributes:
         s: The scattering parameters (`NetworkParameters`).
         e_fields: The kept electric fields (``Driven(keep_fields=...)``), one
