@@ -11,12 +11,17 @@ with k0 = ω scale / c, the wavenumber per file unit, and the pieces
 - ``curl_curl``, θ = 1: ∫ mu_r^-1 curl E · curl v;
 - ``mass``, θ = -k0²: ∫ eps_r (1 - i tan_delta) E · v;
 - ``conductivity``, θ = i k0: ∫ eta0 sigma scale E · v;
-- ``absorbing``, θ = i k0: ∫ sqrt(eps_r / mu_r) E_t · v_t on first-order
-  absorbing surfaces (real parts of the adjacent element's values);
+- ``absorbing``, θ = i k0: ∫ sqrt(eps_r / mu_r) E_t · v_t on every
+  absorbing surface (real parts of the adjacent element's values);
+- ``absorbing order 2``, θ = 1 / (2 i k0): ∫ mu_r^-1 (eps_r mu_r)^-1/2
+  (n · curl E)(n · curl v) on second-order absorbing surfaces (the
+  textbook sign, see `gfem.Absorbing`);
 - a conductor, θ = i k0 eta0 / Z_s(ω): ∫ E_t · v_t on its surface, with
-  Z_s the surface impedance of a metal of finite thickness;
-- a lumped port element, θ = i k0, 1, -k0²: ∫ E_t · v_t times eta0 / R_s,
-  mu0 scale / L_s, C_s / (eps0 scale), its R, L and C per square.
+  Z_s the surface impedance of a metal of finite thickness (thickness
+  doubled on mesh-exterior faces, see `gfem.conventions`);
+- an impedance boundary or a lumped port element, θ = i k0, 1, -k0²:
+  ∫ E_t · v_t times eta0 / R_s, mu0 scale / L_s, C_s / (eps0 scale), its R,
+  L and C per square.
 
 Each θ is a closed-form scalar function of ω and each a_k is assembled
 without ω, so an adaptive sweep can project the pieces once. A term that
@@ -34,7 +39,7 @@ import ngsolve as ngs
 import numpy as np
 import scipy.constants as const
 
-from gfem._boundaries import Absorbing, Conductor, LumpedPort
+from gfem._boundaries import Absorbing, Conductor, Impedance, LumpedPort
 from gfem._engine import quadrature
 from gfem._engine.coefficients import (
     coefficient,
@@ -44,6 +49,7 @@ from gfem._engine.coefficients import (
 )
 from gfem._engine.domain import boundary_region
 from gfem._engine.mesh import EngineMesh
+from gfem.conventions import EXTERIOR_THICKNESS_FACTOR
 from gfem.errors import PortGeometryError
 from gfem.model import Model
 
@@ -260,17 +266,33 @@ def pieces(
             )
         )
 
-    absorbing = tuple(b.surface for b in model.boundaries if isinstance(b, Absorbing))
+    absorbing = [b for b in model.boundaries if isinstance(b, Absorbing)]
     if absorbing:
-        admittance = surface_p0(built, _absorbing_admittance(model, eps))
-        form = _tangential(built, absorbing, order)
+        admittance, curl = _absorbing_coefficients(model, eps)
+        form = _tangential(built, tuple(b.surface for b in absorbing), order)
+        y_cf = surface_p0(built, admittance)
         out.append(
-            Piece("absorbing", lambda w: 1j * k(w), lambda u, v: form(u, v, admittance))
+            Piece("absorbing", lambda w: 1j * k(w), lambda u, v: form(u, v, y_cf))
         )
+        second = tuple(b.surface for b in absorbing if b.order == 2)
+        if second:
+            curl_cf = surface_p0(built, curl)
+            ds = quadrature.ds(order, definedon=boundary_region(built, second))
+            out.append(
+                Piece(
+                    "absorbing order 2",
+                    lambda w: 1 / (2j * k(w)),
+                    lambda u, v: (
+                        curl_cf * ngs.curl(u).Trace() * ngs.curl(v).Trace() * ds
+                    ),
+                )
+            )
 
     for b in model.boundaries:
         if isinstance(b, Conductor):
             out.extend(_conductor(model, built, order, b))
+        elif isinstance(b, Impedance):
+            out.extend(_impedance(built, order, b))
 
     for data in ports:
         out.extend(_port(built, order, data))
@@ -284,8 +306,17 @@ def _loss(model: Model) -> np.ndarray:
     return factor if eps.ndim == 1 else factor[:, None, None]
 
 
-def _absorbing_admittance(model: Model, eps: np.ndarray) -> np.ndarray:
-    """sqrt(Re eps_r / Re mu_r) of the solve-domain element behind each triangle."""
+def _absorbing_coefficients(
+    model: Model, eps: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-triangle coefficients of the absorbing terms.
+
+    From the real parts of the solve-domain element behind each triangle
+    (tensors through their mean diagonal): ``sqrt(eps_r / mu_r)`` for the
+    first-order term and ``1 / (mu_r sqrt(eps_r mu_r))`` for the
+    second-order one (mu_r^-1 times 1 / sqrt(eps_r mu_r), the 1/k of the
+    adjacent material relative to k0).
+    """
     mesh = model.mesh
     active = model._domain.active  # noqa: SLF001
     mu = element_tensors(model, "mu_r")
@@ -293,14 +324,15 @@ def _absorbing_admittance(model: Model, eps: np.ndarray) -> np.ndarray:
         eps = np.trace(eps, axis1=1, axis2=2) / 3
     if mu.ndim == 3:
         mu = np.trace(mu, axis1=1, axis2=2) / 3
-    values = np.sqrt(np.real(eps) / np.real(mu))
+    eps, mu = np.real(eps), np.real(mu)
+    values = np.stack([np.sqrt(eps / mu), 1 / (mu * np.sqrt(eps * mu))], axis=1)
     nb = mesh.triangle_neighbours
-    out = np.zeros(len(nb))
+    out = np.zeros((len(nb), 2))
     for side in (1, 0):
         tet = nb[:, side]
         ok = (tet >= 0) & active[np.maximum(tet, 0)]
         out[ok] = values[tet[ok]]
-    return out
+    return out[:, 0], out[:, 1]
 
 
 def _conductor(
@@ -312,7 +344,7 @@ def _conductor(
     form = _tangential(built, (b.surface,), order)
     on = mesh.triangle_tags == mesh.region(b.surface).tag
     one_sided = (mesh.triangle_neighbours < 0).any(axis=1)
-    groups = [(1.0, on & ~one_sided), (2.0, on & one_sided)]
+    groups = [(1.0, on & ~one_sided), (EXTERIOR_THICKNESS_FACTOR, on & one_sided)]
     if b.thickness is None:
         groups = [(1.0, on)]
     groups = [(m, mask) for m, mask in groups if mask.any()]
@@ -333,12 +365,15 @@ def _conductor(
     return out
 
 
-def _port(built: EngineMesh, order: int, data: LumpedPortData) -> list[Piece]:
-    scale = built.scale
+def _rlc(label: str, scale: float, sheets: list) -> list[Piece]:
+    """Pieces of per-square R, L and C in parallel on surfaces.
+
+    ``sheets`` holds ``(form, R_s, L_s, C_s)``, ``None`` where absent: the
+    admittance i k0 eta0 / R_s + mu0 scale / L_s - k0^2 C_s / (eps0 scale)
+    in the equation's units, one piece per kind.
+    """
     weights: dict[str, list] = {"R": [], "L": [], "C": []}
-    for element in data.elements:
-        rs, ls, cs = data.per_square(element)
-        form = _tangential(built, (element.surface,), order)
+    for form, rs, ls, cs in sheets:
         if rs is not None:
             weights["R"].append((form, ETA0 / rs))
         if ls is not None:
@@ -351,14 +386,28 @@ def _port(built: EngineMesh, order: int, data: LumpedPortData) -> list[Piece]:
         "C": lambda w: -(wavenumber(w, scale) ** 2),
     }
     out = []
-    for kind, terms in weights.items():
-        if terms:
+    for kind, items in weights.items():
+        if items:
 
-            def integrand(u, v, terms=terms):
-                return sum(form(u, v, c) for form, c in terms)
+            def integrand(u, v, items=items):
+                return sum(form(u, v, c) for form, c in items)
 
-            out.append(Piece(f"port {data.port.name} {kind}", thetas[kind], integrand))
+            out.append(Piece(f"{label} {kind}", thetas[kind], integrand))
     return out
+
+
+def _port(built: EngineMesh, order: int, data: LumpedPortData) -> list[Piece]:
+    sheets = [
+        (_tangential(built, (e.surface,), order), *data.per_square(e))
+        for e in data.elements
+    ]
+    return _rlc(f"port {data.port.name}", built.scale, sheets)
+
+
+def _impedance(built: EngineMesh, order: int, b: Impedance) -> list[Piece]:
+    form = _tangential(built, (b.surface,), order)
+    sheet = (form, b.resistance, b.inductance, b.capacitance)
+    return _rlc(f"impedance {b.surface}", built.scale, [sheet])
 
 
 def port_vectors(

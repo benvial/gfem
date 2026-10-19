@@ -318,18 +318,6 @@ def _with(line, **changes):
     ("change", "problem", "error", "message"),
     [
         (
-            {"boundaries": [gfem.PEC("bottom"), gfem.Impedance("top", resistance=1.0)]},
-            None,
-            NotImplementedError,
-            "Impedance",
-        ),
-        (
-            {"boundaries": [gfem.PEC("bottom"), gfem.Absorbing("top", order=2)]},
-            None,
-            NotImplementedError,
-            "order=2",
-        ),
-        (
             {},
             gfem.Driven(frequency=F, sweep="adaptive"),
             NotImplementedError,

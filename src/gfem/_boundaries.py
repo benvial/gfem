@@ -71,7 +71,22 @@ class PMC:
 class Absorbing:
     """First- or second-order absorbing boundary on an exterior surface.
 
-    Order 2 is the textbook second-order form (curl term with 1/(2ik)).
+    Under e^{+iωt}, with k = k0 sqrt(eps_r mu_r) in the material behind the
+    surface and n its outward normal, the condition is
+
+        n x (mu_r^-1 curl E) = i (k / mu_r) E_t + β curl[n (n · mu_r^-1 curl E)]
+
+    with β = 1 / (2ik) at order 2 and β = 0 at order 1: the plane-wave
+    expansion k_n ≈ k - k_t² / (2k) of an outgoing wave (Jin, *The Finite
+    Element Method in Electromagnetics*, §9.3, with the radius of curvature
+    taken infinite). Its weak form adds i (k / mu_r) ∮ E_t · v_t and, at
+    order 2, (1 / (2ik)) ∮ mu_r^-1 (n · curl E)(n · curl v). Only the curl part of the
+    second-order term is kept; the β ∇_t(∇ · E_t) part is dropped, as in
+    Palace and COMSOL, because the tangential divergence of a Nédélec trace
+    is not square-integrable. Palace ≤ 0.18 uses the opposite sign of the
+    curl term, which reflects more than order 1; gfem uses the textbook
+    sign only, so on a tight air box the two codes differ at order 2 (they
+    agree at order 1 and on adequately sized boxes).
 
     Attributes:
         surface: The surface region's name.
@@ -97,8 +112,12 @@ class Absorbing:
 class Conductor:
     """A finite-conductivity metal surface, modelled by its surface impedance.
 
-    On an interior surface it is one sheet; on an exterior surface the metal
-    is one-sided and its thickness counts twice (Palace's convention).
+    Each face adds iω / Z_s(ω) ∫ E_t · v_t, with Z_s the surface impedance of
+    one face of a metal film (HFSS / Palace finite-thickness form). On an
+    interior surface it is one term for the whole sheet, so a film much
+    thinner than its skin depth is a sheet admittance of about sigma t / 2; on
+    an exterior surface the metal is one-sided and its thickness counts
+    twice (sigma t). This is Palace's convention; see `gfem.conventions`.
 
     Attributes:
         surface: The surface region's name.
