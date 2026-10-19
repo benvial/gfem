@@ -1,11 +1,87 @@
-"""Sign, unit and normalization conventions (time dependence e^{+iωt}, power waves).
+"""Sign, unit and normalization conventions of gfem's results.
+
+Every complex result and every docstring that mentions a phasor follows
+the conventions below. Each section is self-contained; new physics adds a
+section rather than changing an existing one, because changing a
+convention silently changes users' numbers.
+
+Units
+-----
+SI at the API: metres, seconds, hertz, volts, amperes, ohms, siemens,
+farads, joules, watts, kelvin (reserved for thermal problems). Only the
+mesh file declares its own length unit (``Mesh.from_gmsh(...,
+length_unit=)``); gfem converts on import, and every field value is in SI
+(an electric field in V/m, whatever the mesh unit).
+
+Time dependence
+---------------
+Time-harmonic quantities are complex phasors under e^{+iωt}: the physical
+field is ``Re(E exp(+iωt))``. This is Palace's convention (its operator
+is ``K + iωC - ω²M``) and the electrical engineering one (Touchstone,
+scikit-rf, SPICE write ``j`` for ``i``). Consequences:
+
+- a wave travelling along ``+s`` is ``exp(-gamma s)``, with
+  ``gamma = alpha + i beta`` and attenuation ``alpha >= 0``;
+- a lossy permittivity is ``ε_r (1 - i tan δ)`` (negative imaginary part);
+- an inductor's impedance is ``+iωL``, a capacitor's ``1 / (iωC)``;
+- a decaying eigenmode has ``Im ω > 0``.
+
+Phasors and field amplitude
+---------------------------
+Phasors are peak values, not RMS: ``|E|`` is the amplitude of the
+oscillation. A driven field (``Driven(keep_fields=...)``) is the field
+for 1 W time-averaged incident power at the excited port, with every other
+port terminated in its reference impedance ``z_ref`` (a lumped port's L
+and C, if any, belong to the network and load it in parallel). It is the
+field behind one column of S: the excited port's incident wave is
+``a = 1`` (√W), every other port's is 0.
+Eigenmode fields have an arbitrary normalization. A port mode field is
+normalized to 1 W time-averaged power through the port.
+
+Network parameters
+------------------
+S-parameters are power waves (Kurokawa) with a reference impedance per
+port and per frequency, ``z_ref``:
+
+    a_i = (V_i + z_i I_i) / (2 sqrt(Re z_i)),
+    b_i = (V_i - conj(z_i) I_i) / (2 sqrt(Re z_i)),   b = S a,
+
+with ``V``, ``I`` peak port voltage and current, so ``|a_i|^2`` is the
+time-averaged incident power in W (``|a| = 1`` is 1 W). When ``z_ref`` is
+real, power waves and pseudo-waves coincide.
+
+- A `LumpedPort`'s ``z_ref`` is its resistance. A port without a
+  resistance has no reference impedance: its ``z_ref`` and its row of S are
+  NaN, and it cannot be excited.
+- A `WavePort`'s S is normalized to unit modal power; its ``z_ref`` is the
+  power-voltage impedance ``Z_PV`` along its ``voltage_path`` (NaN without
+  one).
+- ``NetworkParameters.y()``, ``.z()`` and ``.renormalize(z_new)`` use the
+  power-wave formulas; ``to_touchstone`` labels a file with ``z_ref`` only
+  when it is one real value, and otherwise needs ``z0=`` to renormalize
+  first. gfem never labels a port 50 Ω unless S was computed or
+  renormalized for 50 Ω.
+
+Time-averaged densities
+-----------------------
+For peak phasors, the time average of a product of two harmonic quantities
+carries a factor 1/2:
+
+- electric energy density ``w_e = Re(E · D*) / 4`` (1/2 for the time
+  average of ``(E · D) / 2``), magnetic ``w_m = Re(B · H*) / 4``;
+- Poynting vector ``S = Re(E x H*) / 2``;
+- ohmic loss density ``p = Re(sigma_eff) |E|^2 / 2``;
+- a lumped port's power ``|V|^2 / (2 R)``.
+
+With 1 W incident, the power a driven field delivers into the network
+through the excited port is ``1 - |S_ii|^2`` W, and the power arriving at
+port j's termination is ``|S_ji|^2`` W.
 
 Surface conductors
 ------------------
-
-A `gfem.Conductor` face adds the boundary term ``iω/Z_s(ω) ∫ E_t · v_t``
-(e^{+iωt}), with ``Z_s`` the surface impedance of a metal of conductivity
-sigma and thickness t in the finite-thickness form of HFSS and Palace
+A `Conductor` face adds the boundary term ``iω/Z_s(ω) ∫ E_t · v_t``, with
+``Z_s`` the surface impedance of a metal of conductivity sigma and
+thickness t in the finite-thickness form of HFSS and Palace
 (``surfaceconductivityoperator.cpp``)::
 
     Z_s = (1 / (sigma δ)) [(sinh nu + sin nu) + i (sinh nu - sin nu)]
@@ -33,11 +109,29 @@ This is Palace's convention face for face, so gsim layouts give the same
 discrete problem in both codes.
 """
 
-#: Sheet admittance of one `gfem.Conductor` term on an interior surface for a
-#: film much thinner than its skin depth, in units of sigma t (conductivity
-#: times thickness).
-INTERIOR_SHEET_ADMITTANCE = 0.5
+from __future__ import annotations
 
-#: Factor on a `gfem.Conductor`'s thickness on mesh-exterior faces, where the
-#: metal is one-sided.
+__all__ = [
+    "EXTERIOR_THICKNESS_FACTOR",
+    "INCIDENT_POWER",
+    "INTERIOR_SHEET_ADMITTANCE",
+    "PHASOR",
+    "TIME_DEPENDENCE",
+    "WAVES",
+]
+
+#: The time dependence of every complex phasor.
+TIME_DEPENDENCE = "exp(+iωt)"
+#: Phasors are peak values (not RMS).
+PHASOR = "peak"
+#: Time-averaged incident power at the excited port of a driven field, W.
+INCIDENT_POWER = 1.0
+#: The wave definition of S-parameters.
+WAVES = "power"
+#: Sheet admittance of one `Conductor` term on an interior surface for a film
+#: much thinner than its skin depth, in units of sigma t (conductivity times
+#: thickness).
+INTERIOR_SHEET_ADMITTANCE = 0.5
+#: Factor on a `Conductor`'s thickness on mesh-exterior faces, where the metal
+#: is one-sided.
 EXTERIOR_THICKNESS_FACTOR = 2.0
