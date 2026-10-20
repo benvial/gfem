@@ -29,6 +29,7 @@ import pytest
 
 import gfem
 from gfem._engine.driven import DrivenRule
+from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import sensitivity
 from gfem.shape import boundary_morph
 
@@ -81,14 +82,15 @@ def test_shape_kernel_costs_a_tenth_of_a_forward_solve_per_pair(r8):
     assert len(pairs) == 1
     assert pairs[0].left.shape[1] == 1
 
-    def kernel():
-        return sensitivity(
-            r8,
-            pairs,
-            {("nodes",)},
-            form=rule.form,
-            shape=lambda: rule.shape_terms(r8),
-        )[("nodes",)]
+    def kernel():  # as the backward pass runs it
+        with task_manager(THREADS):
+            return sensitivity(
+                r8,
+                pairs,
+                {("nodes",)},
+                form=rule.form,
+                shape=lambda: rule.shape_terms(r8),
+            )[("nodes",)]
 
     kernel()  # warm
     start = time.perf_counter()

@@ -33,12 +33,19 @@ travel with their elements):
 - gradient (H1), ``int (C grad u) . grad v``: the value tensor of the
   gradients.
 
-Surface terms are few and small; NGSolve's ``DiffShape`` differentiates
-them, on the real Lagrangian ``Re(theta a(l, r))`` written with real
-fields only (``DiffShape`` mistreats an H(curl) field multiplied by a
-complex number before its dot product). Every form is integrated on the
-pinned rule of degree 2p, exact for these terms and their shape
-derivatives on straight-sided elements.
+Surface terms of the two shapes the operators have, tangential traces
+``int c u_t . v_t`` and normal curls ``int c (n . curl u)(n . curl v)``,
+use the same kind of hand-written transport on their faces (see
+`_trace_shape`): on gsim meshes the metal shells carry as many faces as the
+volume has elements, so they are not cheap. Any other surface form is
+differentiated by NGSolve's ``DiffShape``, on the real Lagrangian
+``Re(theta a(l, r))`` written with real fields only (``DiffShape``
+mistreats an H(curl) field multiplied by a complex number before its dot
+product); the trace terms are checked against it. Every form is integrated exactly
+on straight-sided elements: on the pinned rule of degree 2p, or, for the
+curl and gradient terms (products of first derivatives, degree 2p - 2), on
+the exact rule of that degree, which gives the same values with fewer
+points.
 
 Adding a problem type means adding table rows (and, for a new operator
 term, an entry of `TERMS`), not a code path. Later passes plug in beside
@@ -261,11 +268,15 @@ class ShapeTerm:
         name: The term's key in the pairs' `FieldPair.weights`.
         kind: ``"gradient"`` (``int (C grad u) . grad v``, H1), ``"value"``
             (``int (C u) . v``, H(curl)), ``"curl"`` (``int (C curl u) .
-            curl v``) or ``"surface"`` (any surface form, differentiated by
+            curl v``), ``"trace"`` (``int c u_t . v_t`` on a surface),
+            ``"curl trace"`` (``int c (n . curl u)(n . curl v)``), or
+            ``"surface"`` (any other surface form, differentiated by
             ``DiffShape``).
         coefficient: For a volume kind, ``C``: an element-wise constant
             NGSolve coefficient, scalar or 3 x 3, real or complex, the same
-            the forward form reads.
+            the forward form reads; for a trace kind, the face-wise
+            constant scalar ``c``.
+        region: For a trace kind, the boundary region it is integrated on.
         integrand: For ``"surface"``: ``(u, v) -> integrals`` of the form
             with its coefficient and pinned quadrature (real coefficients),
             for real fields ``u`` and ``v``.
@@ -276,8 +287,9 @@ class ShapeTerm:
     """
 
     name: str
-    kind: Literal["gradient", "value", "curl", "surface"]
+    kind: Literal["gradient", "value", "curl", "trace", "curl trace", "surface"]
     coefficient: Any = None
+    region: Any = None
     integrand: Callable[[Any, Any], Any] | None = None
     space: ngs.FESpace | None = None
     length_power: int = 0
@@ -410,47 +422,115 @@ def _transport(term: ShapeTerm, u: Any, v: Any) -> Any:
     return c * ((u * v) * identity - ngs.OuterProduct(u, v) - ngs.OuterProduct(v, u))
 
 
-def _volume_shape(term: ShapeTerm, pair: FieldPair, theta: complex, gw: Any) -> Any:
-    """``int Re(theta sum_k T(left_k, right_k)) : grad W`` for one pair."""
-    total = None
+def _volume_shape(
+    terms: Sequence[tuple[ShapeTerm, complex]], pair: FieldPair, gw: Any
+) -> Any:
+    """``int Re(sum_t theta_t sum_k T_t(left_k, right_k)) : grad W``, one pair.
+
+    On the pair's fields as they are (complex fields stay complex: no
+    ``DiffShape``, no splitting). Value terms are integrated on the pinned
+    rule; curl and gradient terms, products of first derivatives, on the
+    exact rule of their lower degree (`quadrature.dx_derivatives`).
+    """
+    totals: dict[bool, Any] = {}
     for a, lefts in _parts(pair.space, pair.left):
         for b, rights in _parts(pair.space, pair.right):
-            weight = complex(theta * a * b)
-            factor: complex | float = weight.real if weight.imag == 0 else weight
-            for u, v in zip(lefts, rights, strict=True):
-                part = factor * _transport(term, u, v)
-                total = part if total is None else total + part
-    if total is None:  # pragma: no cover - a pair has at least one column
-        return None
-    if total.is_complex:
-        total = total.real
-    integrand = ngs.InnerProduct(gw, total)
-    return integrand * quadrature.dx(pair.order, definedon=pair.domain)
+            for term, theta in terms:
+                weight = complex(theta * a * b)
+                factor: complex | float = weight.real if weight.imag == 0 else weight
+                derivatives = term.kind != "value"
+                for u, v in zip(lefts, rights, strict=True):
+                    part = factor * _transport(term, u, v)
+                    total = totals.get(derivatives)
+                    totals[derivatives] = part if total is None else total + part
+    out = None
+    for derivatives, total in totals.items():
+        tensor = total.real if total.is_complex else total
+        rule = quadrature.dx_derivatives if derivatives else quadrature.dx
+        part = ngs.InnerProduct(gw, tensor) * rule(pair.order, definedon=pair.domain)
+        out = part if out is None else out + part
+    return out
 
 
-def _real_fields(space: ngs.FESpace, vectors: np.ndarray) -> list[tuple[complex, list]]:
-    """``vectors`` as ``[(factor, real fields on space)]``."""
-    if not np.iscomplexobj(vectors):
-        return [(1.0, _gridfunctions(space, vectors))]
-    return [
-        (1.0, _gridfunctions(space, np.ascontiguousarray(vectors.real))),
-        (1j, _gridfunctions(space, np.ascontiguousarray(vectors.imag))),
-    ]
+def _trace_shape(
+    terms: Sequence[tuple[ShapeTerm, complex]], pair: FieldPair, w: Any
+) -> Any:
+    """The surface transport of the trace terms, on the pair's fields as they are.
+
+    With ``Gs`` the surface gradient of the displacement (``grad W`` times
+    the tangential projector) a tangential trace ``u_t`` of an H(curl) field
+    moves covariantly on its face and ``ds`` grows by ``tr Gs``:
+
+    - ``int c u_t . v_t`` changes by ``int c ((u_t . v_t) tr Gs - u_t .
+      Gs v_t - v_t . Gs u_t)``;
+    - ``int c (n . curl u)(n . curl v)`` (a surface density) by
+      ``-int c (n . curl u)(n . curl v) tr Gs``.
+    """
+    gs = ngs.grad(w).Trace()
+    divergence = ngs.Trace(gs)
+    out = None
+    for a, lefts in _parts(pair.space, pair.left):
+        for b, rights in _parts(pair.space, pair.right):
+            for term, theta in terms:
+                weight = complex(theta * a * b)
+                factor: complex | float = weight.real if weight.imag == 0 else weight
+                total = None
+                for u, v in zip(lefts, rights, strict=True):
+                    if term.kind == "trace":
+                        ut, vt = u.Trace(), v.Trace()
+                        part = (ut * vt) * divergence - ut * (gs * vt) - vt * (gs * ut)
+                    else:
+                        part = -(ngs.curl(u).Trace() * ngs.curl(v).Trace()) * divergence
+                    total = part if total is None else total + part
+                if total is None:  # pragma: no cover - a pair has columns
+                    continue
+                integrand = factor * term.coefficient * total
+                if integrand.is_complex:
+                    integrand = integrand.real
+                ds = quadrature.ds(pair.order, definedon=term.region)
+                part = integrand * ds
+                out = part if out is None else out + part
+    return out
 
 
-def _surface_shape(term: ShapeTerm, pair: FieldPair, theta: complex, w: Any) -> Any:
-    """``DiffShape`` of ``Re(theta sum_k a(left_k, right_k))``, real fields only."""
-    if term.space is None or term.integrand is None:  # pragma: no cover - rule bug
-        msg = f"The surface shape term {term.name!r} has no space or integrand."
-        raise ValueError(msg)
+def _real_parts(space: ngs.FESpace, vectors: np.ndarray) -> list[tuple[float, list]]:
+    """``vectors`` as ``[(sign, real fields on space)]``: ``Re(l . s)`` pieces.
+
+    ``Re(a(l, s)) = a(Re l, Re s) - a(Im l, Im s)`` for a real bilinear form,
+    so the left fields carry the sign (+1 real part, -1 imaginary part).
+    """
+    out = [(1.0, _gridfunctions(space, np.ascontiguousarray(vectors.real)))]
+    if np.iscomplexobj(vectors) and vectors.imag.any():
+        out.append((-1.0, _gridfunctions(space, np.ascontiguousarray(vectors.imag))))
+    return out
+
+
+def _surface_shape(
+    terms: Sequence[tuple[ShapeTerm, complex]], pair: FieldPair, w: Any
+) -> Any:
+    """``DiffShape`` of ``Re(sum_t theta_t sum_k a_t(left_k, right_k))``.
+
+    Written with real fields only: theta is folded into the right fields
+    (``s = theta right``) and ``Re(a(l, s)) = a(Re l, Re s) - a(Im l, Im s)``.
+    """
     lagrangian = None
-    for a, lefts in _real_fields(term.space, pair.left):
-        for b, rights in _real_fields(term.space, pair.right):
-            weight = complex(theta * a * b).real
-            if weight == 0:
-                continue
-            for u, v in zip(lefts, rights, strict=True):
-                part = weight * term.integrand(u, v)
+    lefts: dict[int, list] = {}
+    for term, theta in terms:
+        space = term.space
+        if space is None or term.integrand is None:  # pragma: no cover - rule bug
+            msg = f"The surface shape term {term.name!r} has no space or integrand."
+            raise ValueError(msg)
+        if id(space) not in lefts:
+            lefts[id(space)] = _real_parts(space, _columns(pair.left))
+        right = theta * _columns(pair.right)
+        rights = [
+            _gridfunctions(space, np.ascontiguousarray(right.real)),
+            _gridfunctions(space, np.ascontiguousarray(right.imag)),
+        ]
+        for (sign, fields), others in zip(lefts[id(space)], rights, strict=False):
+            for u, v in zip(fields, others, strict=True):
+                part = term.integrand(u, v)
+                part = part if sign == 1.0 else -1.0 * part
                 lagrangian = part if lagrangian is None else lagrangian + part
     return None if lagrangian is None else lagrangian.DiffShape(w)
 
@@ -464,28 +544,35 @@ def _node_pass(
     space = ngs.VectorH1(built.mesh, order=1)
     w = space.TestFunction()
     gw = ngs.grad(w)
-    forms: dict[int, ngs.LinearForm] = {}
-    for term in shape_terms:
-        for pair in pairs:
+    form = ngs.LinearForm(space)
+    empty = True
+    for pair in pairs:
+        volume, traces, surface = [], [], []
+        for term in shape_terms:
             theta = pair.weights.get(term.name)
             if theta is None or theta == 0:
                 continue
+            weighted = (term, theta * built.scale**term.length_power)
             if term.kind == "surface":
-                part = _surface_shape(term, pair, theta, w)
+                surface.append(weighted)
+            elif term.kind in ("trace", "curl trace"):
+                traces.append(weighted)
             else:
-                part = _volume_shape(term, pair, theta, gw)
-            if part is None:
-                continue
-            if term.length_power not in forms:
-                forms[term.length_power] = ngs.LinearForm(space)
-            forms[term.length_power] += part
-    out = np.zeros((n_nodes, 3))
-    for power, form in forms.items():
-        form.Assemble()
-        values = form.vec.FV().NumPy().reshape(3, -1).T
-        out += values[:n_nodes] * built.scale**power
+                volume.append(weighted)
+        for part in (
+            _volume_shape(volume, pair, gw) if volume else None,
+            _trace_shape(traces, pair, w) if traces else None,
+            _surface_shape(surface, pair, w) if surface else None,
+        ):
+            if part is not None:
+                form += part
+                empty = False
+    if empty:
+        return np.zeros((n_nodes, 3))
+    form.Assemble()
+    values = form.vec.FV().NumPy().reshape(3, -1).T[:n_nodes]
     # per metre: the engine mesh is in file units of `scale` metres
-    return out / built.scale
+    return values / built.scale
 
 
 def sensitivity(

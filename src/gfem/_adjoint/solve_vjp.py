@@ -275,6 +275,7 @@ def _host_backward(
     live_names: tuple[str, ...],
 ) -> tuple:
     from gfem._engine.cache import ENTRIES
+    from gfem._engine.runtime import task_manager
     from gfem._engine.sensitivity import sensitivity
 
     n_inputs = len(kinds)
@@ -288,15 +289,17 @@ def _host_backward(
     try:
         cotangents = {n: np.asarray(c) for n, c in zip(live_names, cts, strict=True)}
         pairs = rule.backward(model, entry, cotangents)
-        grads = sensitivity(
-            model,
-            pairs,
-            {kinds[i] for i in wanted},
-            form=rule.form,
-            shape=functools.partial(rule.shape_terms, model)
-            if hasattr(rule, "shape_terms")
-            else None,
-        )
+        # the element passes assemble on the solve's threads
+        with task_manager(rule.options.threads):
+            grads = sensitivity(
+                model,
+                pairs,
+                {kinds[i] for i in wanted},
+                form=rule.form,
+                shape=functools.partial(rule.shape_terms, model)
+                if hasattr(rule, "shape_terms")
+                else None,
+            )
     finally:
         if fresh is not None:
             fresh.free()

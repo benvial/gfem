@@ -124,11 +124,15 @@ class Piece:
         integrand: ``(trial, test) -> integrals`` of the form, with no ω.
         kind: How the form depends on the node coordinates, for shape
             gradients: ``"curl"`` (``∫ (C curl u) · curl v``), ``"value"``
-            (``∫ (C u) · v``), ``"surface"`` (a surface form), or ``"port"``
-            (a port's term, which reads only the port's own geometry: shape
-            gradients hold port nodes in place).
-        coefficient: ``C`` of a ``"curl"`` or ``"value"`` piece, the
-            element-wise coefficient its integrand reads.
+            (``∫ (C u) · v``), ``"trace"`` (``∫ c u_t · v_t`` on surfaces),
+            ``"curl trace"`` (``∫ c (n · curl u)(n · curl v)``), another
+            ``"surface"`` form, or ``"port"`` (a port's term, which reads
+            only the port's own geometry: shape gradients hold port nodes
+            in place).
+        coefficient: ``C`` (``c``) of a volume (trace) piece, the element-
+            (face-) wise coefficient its integrand reads.
+        region: The boundary region of a ``"trace"`` or ``"curl trace"``
+            piece.
 
     Raises:
         ValueError: ``theta`` does not give one scalar: the term is not
@@ -138,8 +142,9 @@ class Piece:
     name: str
     theta: Callable[[float], complex]
     integrand: Callable[[Any, Any], Any]
-    kind: Literal["curl", "value", "surface", "port"] = "surface"
+    kind: Literal["curl", "value", "trace", "curl trace", "surface", "port"] = "surface"
     coefficient: Any = None
+    region: Any = None
 
     def __post_init__(self) -> None:
         """Check that θ is a scalar function of ω."""
@@ -270,13 +275,22 @@ def lumped_ports(model: Model, scale: float) -> tuple[LumpedPortData, ...]:
 # --- the pieces ------------------------------------------------------------------
 
 
-def _tangential(built: EngineMesh, surfaces: tuple[str, ...], order: int):
-    region = boundary_region(built, surfaces)
+@dataclasses.dataclass(frozen=True, eq=False)
+class _Tangential:
+    """``∫ weight E_t · v_t`` on a boundary region, on the pinned rule."""
 
-    def integrand(u, v, weight=1.0):
-        return weight * u.Trace() * v.Trace() * quadrature.ds(order, definedon=region)
+    region: Any
+    order: int
 
-    return integrand
+    def __call__(self, u: Any, v: Any, weight: Any = 1.0) -> Any:
+        ds = quadrature.ds(self.order, definedon=self.region)
+        return weight * u.Trace() * v.Trace() * ds
+
+
+def _tangential(
+    built: EngineMesh, surfaces: tuple[str, ...], order: int
+) -> _Tangential:
+    return _Tangential(boundary_region(built, surfaces), order)
 
 
 def _inverse(values: np.ndarray) -> np.ndarray:
@@ -337,12 +351,20 @@ def pieces(
         form = _tangential(built, tuple(b.surface for b in absorbing), order)
         y_cf = surface_p0(built, admittance)
         out.append(
-            Piece("absorbing", lambda w: 1j * k(w), lambda u, v: form(u, v, y_cf))
+            Piece(
+                "absorbing",
+                lambda w: 1j * k(w),
+                lambda u, v: form(u, v, y_cf),
+                kind="trace",
+                coefficient=y_cf,
+                region=form.region,
+            )
         )
         second = tuple(b.surface for b in absorbing if b.order == 2)
         if second:
             curl_cf = surface_p0(built, curl)
-            ds = quadrature.ds(order, definedon=boundary_region(built, second))
+            region = boundary_region(built, second)
+            ds = quadrature.ds(order, definedon=region)
             out.append(
                 Piece(
                     "absorbing order 2",
@@ -350,6 +372,9 @@ def pieces(
                     lambda u, v: (
                         curl_cf * ngs.curl(u).Trace() * ngs.curl(v).Trace() * ds
                     ),
+                    kind="curl trace",
+                    coefficient=curl_cf,
+                    region=region,
                 )
             )
 
@@ -447,24 +472,35 @@ def _conductor(
         def theta(w, h=h):
             return 1j * wavenumber(w, scale) * ETA0 / surface_impedance(sigma, h, w)
 
+        coefficient: Any = 1.0
         if len(groups) == 1:
             integrand = form
         else:
-            indicator = surface_p0(built, mask.astype(float))
-            integrand = lambda u, v, c=indicator: form(u, v, c)  # noqa: E731
+            coefficient = surface_p0(built, mask.astype(float))
+            integrand = lambda u, v, c=coefficient: form(u, v, c)  # noqa: E731
         name = f"conductor {b.surface}" + ("" if factor == 1.0 else " (one-sided)")
-        out.append(Piece(name, theta, integrand))
+        out.append(
+            Piece(
+                name,
+                theta,
+                integrand,
+                kind="trace",
+                coefficient=coefficient,
+                region=form.region,
+            )
+        )
     return out
 
 
 def _rlc(
-    label: str, scale: float, sheets: list, kind: Literal["surface", "port"]
+    label: str, scale: float, sheets: list, kind: Literal["trace", "port"]
 ) -> list[Piece]:
     """Pieces of per-square R, L and C in parallel on surfaces.
 
     ``sheets`` holds ``(form, R_s, L_s, C_s)``, ``None`` where absent: the
     admittance i k0 eta0 / R_s + mu0 scale / L_s - k0^2 C_s / (eps0 scale)
-    in the equation's units, one piece per kind.
+    in the equation's units, one piece per kind. A ``"trace"`` piece has
+    one sheet.
     """
     weights: dict[str, list] = {"R": [], "L": [], "C": []}
     for form, rs, ls, cs in sheets:
@@ -487,7 +523,11 @@ def _rlc(
                 return sum(form(u, v, c) for form, c in items)
 
             name = f"{label} {element}"
-            out.append(Piece(name, thetas[element], integrand, kind=kind))
+            extra: dict[str, Any] = {}
+            if kind == "trace":
+                ((form, c),) = items
+                extra = {"coefficient": c, "region": form.region}
+            out.append(Piece(name, thetas[element], integrand, kind=kind, **extra))
     return out
 
 
@@ -502,7 +542,7 @@ def _port(built: EngineMesh, order: int, data: LumpedPortData) -> list[Piece]:
 def _impedance(built: EngineMesh, order: int, b: Impedance) -> list[Piece]:
     form = _tangential(built, (b.surface,), order)
     sheet = (form, b.resistance, b.inductance, b.capacitance)
-    return _rlc(f"impedance {b.surface}", built.scale, [sheet], "surface")
+    return _rlc(f"impedance {b.surface}", built.scale, [sheet], "trace")
 
 
 def wave_port_piece(

@@ -214,3 +214,39 @@ def test_driven_node_gradient_matches_fd_on_complex_fields(line, piece):
     fd = derivative(value, nodes, direction, 2e-7)
     ad = float(np.sum(got[NODES] * direction))
     assert ad == pytest.approx(fd, rel=1e-6)
+
+
+@pytest.mark.parametrize(
+    "piece",
+    [
+        "absorbing",
+        "absorbing order 2",
+        "conductor top (one-sided)",
+        "impedance lower__upper R",
+    ],
+)
+def test_surface_transport_matches_diffshape_on_real_folded_fields(line, piece):
+    # the hand-written surface terms against DiffShape of the real Lagrangian
+    # Re(theta a(l, r)) on Re/Im-split fields (the generic surface path)
+    rule = DrivenRule(
+        line, gfem.Driven(frequency=20e9), gfem.SolverOptions(order=ORDER)
+    )
+    (term,) = [t for t in rule.shape_terms(line) if t.name == piece]
+    op = rule.operator(line)
+    (source,) = [p for p in op.pieces if p.name == piece]
+    generic = ShapeTerm(
+        piece, "surface", integrand=source.integrand, space=rule.real_space(line)
+    )
+    rng = np.random.default_rng(4)
+    ndof = op.space.ndof
+    left = rng.standard_normal((ndof, 2)) + 1j * rng.standard_normal((ndof, 2))
+    right = rng.standard_normal((ndof, 2)) + 1j * rng.standard_normal((ndof, 2))
+    theta = complex(source.theta(2 * np.pi * 20e9))
+    pair = FieldPair(
+        op.space, left, right, {piece: theta}, ORDER, em_region(line, op.built)
+    )
+    got = sensitivity(line, [pair], {NODES}, form="driven", shape=lambda: [term])
+    ref = sensitivity(line, [pair], {NODES}, form="driven", shape=lambda: [generic])
+    scale = np.abs(ref[NODES]).max()
+    assert scale > 0
+    np.testing.assert_allclose(got[NODES], ref[NODES], rtol=0, atol=1e-12 * scale)

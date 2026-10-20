@@ -236,8 +236,17 @@ class DrivenRule:
         self._excluded = model._domain.excluded  # noqa: SLF001
 
     def operator(self, model: Model) -> DrivenOperator:
-        """The model's driven operator at its current node positions."""
-        return driven_operator(model, self.options.order)
+        """The model's driven operator at its current node positions.
+
+        The last model's operator is kept, so that a backward pass and its
+        shape terms build it once.
+        """
+        last = getattr(self, "_last_operator", None)
+        if last is not None and last[0] is model:
+            return last[1]
+        op = driven_operator(model, self.options.order)
+        self._last_operator = (model, op)
+        return op
 
     def forward(
         self, model: Model, *, keep: bool
@@ -584,25 +593,37 @@ class DrivenRule:
         """
         _check_ports_held(model)
         op = self.operator(model)
-        pec = _pec(model)
-        real = discretization(model.mesh).space(
-            (domain_key(model), "hcurl", op.order, pec, "real"),
-            lambda: hcurl_space(
-                model, op.built, op.order, complex_valued=False, dirichlet=pec
-            ),
-        )
         out = []
         for piece in op.pieces:
             if piece.kind == "port":
                 continue
             if piece.kind == "surface":
                 term = ShapeTerm(
-                    piece.name, "surface", integrand=piece.integrand, space=real
+                    piece.name,
+                    "surface",
+                    integrand=piece.integrand,
+                    space=self.real_space(model),
                 )
             else:
-                term = ShapeTerm(piece.name, piece.kind, coefficient=piece.coefficient)
+                term = ShapeTerm(
+                    piece.name,
+                    piece.kind,
+                    coefficient=piece.coefficient,
+                    region=piece.region,
+                )
             out.append(term)
         return out
+
+    def real_space(self, model: Model) -> ngs.FESpace:
+        """A real H(curl) space with the solve's DOF numbering (for ``DiffShape``)."""
+        op = self.operator(model)
+        pec = _pec(model)
+        return discretization(model.mesh).space(
+            (domain_key(model), "hcurl", op.order, pec, "real"),
+            lambda: hcurl_space(
+                model, op.built, op.order, complex_valued=False, dirichlet=pec
+            ),
+        )
 
     def unsupported_input(self, kind: tuple) -> str | None:
         """Why a read input cannot be differentiated here, or ``None``."""
