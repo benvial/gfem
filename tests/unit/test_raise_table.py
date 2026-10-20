@@ -142,12 +142,30 @@ EXPECTED |= {
     for kind in [("nodes",)] + [("material", "dielectric", p) for p in ALL_PROPERTIES]
 }
 
+# Eigenmode results are not differentiable yet (eigenvalue gradients come
+# later): like driven, every leaf raises for the inputs the forms read.
+EXPECTED |= {
+    ("eigenmode", out, kind): (
+        ZERO if kind[0] == "material" and kind[2] not in EM_PROPERTIES else RAISES
+    )
+    for out in (
+        "omega",
+        "error",
+        "q_port.p1",
+        "q_port.p2",
+        "bulk_participation.dielectric",
+        *(f"e_fields.0.{leaf}" for leaf in ("coefficients", "mesh.nodes", "omega")),
+    )
+    for kind in [("nodes",)] + [("material", "dielectric", p) for p in ALL_PROPERTIES]
+}
 
-def _field(mesh, region):
+
+def _field(mesh, region, **overrides):
     # values vary per element, so the terminal potentials depend on them
     n = len(mesh.elements(region))
     ramp = np.linspace(1.0, 1.5, n)
-    return gfem.MaterialField(**{k: v * ramp for k, v in ALL_PROPERTIES.items()})
+    values = ALL_PROPERTIES | overrides
+    return gfem.MaterialField(**{k: v * ramp for k, v in values.items()})
 
 
 @pytest.fixture(scope="module")
@@ -180,7 +198,24 @@ def driven_model(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def cases(model, driven_model):
+def eigen_model(tmp_path_factory):
+    # weakly damped (resistive ports, little conduction): the modes are sharp
+    path = tmp_path_factory.mktemp("resonator") / "line.msh"
+    sm.write_msh22(path, sm.strip_line(4.0, 2.0, 1.0, (4, 1, 1)))
+    mesh = gfem.Mesh.from_gmsh(path, length_unit="mm")
+    return gfem.Model(
+        mesh,
+        materials={"dielectric": _field(mesh, "dielectric", conductivity=1e-3)},
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+        ports=[
+            gfem.LumpedPort("p1", "port1", "+z", impedance=1000.0),
+            gfem.LumpedPort("p2", "port2", "+z", impedance=1000.0),
+        ],
+    )
+
+
+@pytest.fixture(scope="module")
+def cases(model, driven_model, eigen_model):
     mesh = gfem.Mesh.from_gmsh(DATA / "parallel_plate.msh", length_unit="um")
     port_model = gfem.Model(
         mesh,
@@ -193,6 +228,7 @@ def cases(model, driven_model):
         "port_mode": (port_model, gfem.PortMode("p1", 10e9)),
         "driven": (driven_model, gfem.Driven(frequency=5e9, keep_fields=True)),
         "driven_adaptive": (driven_model, ADAPTIVE),
+        "eigenmode": (eigen_model, gfem.Eigenmode(target=17e9)),
     }
 
 

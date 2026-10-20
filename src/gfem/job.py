@@ -40,9 +40,10 @@ from gfem._pytree import register_fields
 from gfem.mesh import Mesh
 from gfem.model import EnclosedBy, Model
 from gfem.options import SolverOptions
-from gfem.problems import Driven, Electrostatic, PortMode
+from gfem.problems import Driven, Eigenmode, Electrostatic, PortMode
 from gfem.results import (
     DrivenResult,
+    EigenmodeResult,
     ElectrostaticResult,
     Field,
     NetworkParameters,
@@ -382,6 +383,8 @@ for _cls in (
     PortSection,
     SweepInfo,
     ReducedFields,
+    Eigenmode,
+    EigenmodeResult,
 ):
     _codec.register(_cls)
 _codec.register(Electrostatic, to_args=_electrostatic_args)

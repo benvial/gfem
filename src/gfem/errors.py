@@ -112,6 +112,18 @@ class DeviceMemoryWarning(UserWarning):
     """
 
 
+class EigenmodeConvergenceError(RuntimeError):
+    """Fewer modes than ``Eigenmode.n_modes`` converged.
+
+    gfem returns no partial result. The message names the modes that did
+    not converge, their best backward error, and the remedies: move
+    ``target`` closer to the wanted modes, loosen
+    ``SolverOptions.eigen_tolerance`` or raise
+    ``SolverOptions.max_refine_iterations``, or, for a mode with a Q below
+    about 2, find the resonance from a `Driven` sweep instead.
+    """
+
+
 class SweepNotConvergedWarning(UserWarning):
     """An adaptive frequency sweep stopped at its sample cap before converging.
 
