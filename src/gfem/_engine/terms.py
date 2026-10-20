@@ -26,14 +26,24 @@ with k0 = ω scale / c, the wavenumber per file unit, and the pieces
 Each θ is a closed-form scalar function of ω and each a_k is assembled
 without ω, so an adaptive sweep can project the pieces once. A term that
 cannot be written this way is not a `Piece`: constructing one raises.
+
+Each piece declares its frequency class. Most θ are polynomials of degree
+at most 2 in ω (``"polynomial"``); a conductor's θ (through Z_s, which
+grows as the square root of ω) and the second-order absorbing term's (a
+pole at ω = 0) are not (``"nonpolynomial"``). A nonpolynomial piece also
+supplies dθ/dω, and both are analytic in ω, so they hold at the complex
+frequencies of an eigenmode problem. Its ``seed_power`` p says how an
+eigenmode seed freezes it at a shift ω_s: θ(ω) ≈ θ(ω_s) (ω / ω_s)^p,
+which keeps an explicit i ω (p = 1) exact.
 """
 
 from __future__ import annotations
 
+import cmath
 import dataclasses
 import math
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 import ngsolve as ngs
 import numpy as np
@@ -65,6 +75,7 @@ __all__ = [
     "pieces",
     "port_vectors",
     "surface_impedance",
+    "surface_impedance_slope",
     "wavenumber",
 ]
 
@@ -73,6 +84,10 @@ ETA0 = const.mu_0 * const.c
 _PROBE = 2 * math.pi * 1e9
 #: |d . n| above which a port direction is not tangent to its surface.
 _TANGENT = 1e-6
+#: Re(h / (2 delta)) above which a metal film is thick to machine precision.
+_THICK = 25.0
+#: |h / (2 delta)| below which the film slope uses its series.
+_SMALL = 1e-4
 
 
 def wavenumber(omega: float, scale: float) -> float:
@@ -88,15 +103,25 @@ class Piece:
         name: What the piece is (``"mass"``, ``"port p1 R"``, ...).
         theta: θ(ω), a complex scalar for an angular frequency in rad/s.
         integrand: ``(trial, test) -> integrals`` of the form, with no ω.
+        frequency_class: ``"polynomial"`` (θ a polynomial of degree at most
+            2 in ω) or ``"nonpolynomial"``.
+        d_theta: dθ/dω of a nonpolynomial piece (``None`` for a polynomial
+            one).
+        seed_power: The power of ω an eigenmode seed keeps exact when it
+            freezes a nonpolynomial piece (0, 1 or 2).
 
     Raises:
         ValueError: ``theta`` does not give one scalar: the term is not
-            affine in frequency.
+            affine in frequency; or a nonpolynomial piece without
+            ``d_theta``.
     """
 
     name: str
-    theta: Callable[[float], complex]
+    theta: Callable[[complex], complex]
     integrand: Callable[[Any, Any], Any]
+    frequency_class: Literal["polynomial", "nonpolynomial"] = "polynomial"
+    d_theta: Callable[[complex], complex] | None = None
+    seed_power: int = 0
 
     def __post_init__(self) -> None:
         """Check that θ is a scalar function of ω."""
@@ -107,14 +132,23 @@ class Piece:
                 "frequency-independent form times a scalar function of the "
                 "frequency), so gfem cannot sweep it."
             )
+        if self.frequency_class not in ("polynomial", "nonpolynomial"):
+            raise ValueError(f"Unknown frequency class {self.frequency_class!r}.")
+        if self.frequency_class == "nonpolynomial" and (
+            self.d_theta is None or self.seed_power not in (0, 1, 2)
+        ):
+            raise ValueError(
+                f"The nonpolynomial term {self.name!r} needs d_theta and a "
+                "seed_power of 0, 1 or 2."
+            )
 
 
-def _constant(omega: float) -> complex:  # noqa: ARG001
+def _constant(omega: complex) -> complex:  # noqa: ARG001
     """θ = 1: a frequency-independent piece."""
     return 1.0
 
 
-def surface_impedance(sigma: float, thickness: float | None, omega: float) -> complex:
+def surface_impedance(sigma: float, thickness: float | None, omega: complex) -> complex:
     """Surface impedance of a metal, ohm per square (Palace's HFSS form).
 
     Thick metal: ``Z_s = (1 + i) / (sigma delta)`` with skin depth
@@ -123,20 +157,41 @@ def surface_impedance(sigma: float, thickness: float | None, omega: float) -> co
     (cosh v - cos v)``, ``v = h / delta``. For a thin film it tends to
     ``2 / (sigma h)``: each face of the film carries half its current.
 
+    Both are written as one analytic function of ω, ``Z_s = (g / sigma)
+    coth(g h / 2)`` with ``g = sqrt(i omega mu0 sigma) = (1 + i) / delta``
+    (principal root), so a complex ω (an eigenfrequency) continues them.
+
     Args:
         sigma: Conductivity, S/m.
         thickness: Thickness in m, or ``None`` for thick metal.
-        omega: Angular frequency, rad/s.
+        omega: Angular frequency, rad/s (complex for an eigenmode).
     """
-    delta = math.sqrt(2.0 / (const.mu_0 * sigma * omega))
-    real = imag = 1.0 / (sigma * delta)
+    g = cmath.sqrt(1j * omega * const.mu_0 * sigma)
+    z = g / sigma
     if thickness is not None:
-        v = thickness / delta
-        if v < 50:  # beyond, the correction is 1 to machine precision
-            den = math.cosh(v) - math.cos(v)
-            real *= (math.sinh(v) + math.sin(v)) / den
-            imag *= (math.sinh(v) - math.sin(v)) / den
-    return complex(real, imag)
+        u = 0.5 * g * thickness
+        if u.real < _THICK:  # beyond, coth u is 1 to machine precision
+            z /= cmath.tanh(u)
+    return complex(z)
+
+
+def surface_impedance_slope(
+    sigma: float, thickness: float | None, omega: complex
+) -> complex:
+    """``(omega / Z_s) dZ_s/domega``: 1/2 for thick metal, 0 for a thin film.
+
+    With ``u = g h / 2`` (see `surface_impedance`), ``(1 - 2 u / sinh 2u)
+    / 2``.
+    """
+    if thickness is None:
+        return 0.5
+    g = cmath.sqrt(1j * omega * const.mu_0 * sigma)
+    u = 0.5 * g * thickness
+    if u.real >= _THICK:
+        return 0.5
+    if abs(u) < _SMALL:  # 2u / sinh 2u = 1 - (2u)^2 / 6 + ...
+        return complex((2 * u) ** 2 / 12)
+    return complex(0.5 * (1 - 2 * u / cmath.sinh(2 * u)))
 
 
 # --- lumped ports ----------------------------------------------------------------
@@ -288,6 +343,9 @@ def pieces(
                     lambda u, v: (
                         curl_cf * ngs.curl(u).Trace() * ngs.curl(v).Trace() * ds
                     ),
+                    frequency_class="nonpolynomial",
+                    d_theta=lambda w: -1 / (2j * k(w) * w),
+                    seed_power=0,
                 )
             )
 
@@ -385,13 +443,27 @@ def _conductor(
         def theta(w, h=h):
             return 1j * wavenumber(w, scale) * ETA0 / surface_impedance(sigma, h, w)
 
+        def d_theta(w, h=h):
+            # θ ∝ ω / Z_s: dθ/dω = θ (1 - (ω / Z_s) dZ_s/dω) / ω
+            slope = surface_impedance_slope(sigma, h, w)
+            return theta(w, h) * (1 - slope) / w
+
         if len(groups) == 1:
             integrand = form
         else:
             indicator = surface_p0(built, mask.astype(float))
             integrand = lambda u, v, c=indicator: form(u, v, c)  # noqa: E731
         name = f"conductor {b.surface}" + ("" if factor == 1.0 else " (one-sided)")
-        out.append(Piece(name, theta, integrand))
+        out.append(
+            Piece(
+                name,
+                theta,
+                integrand,
+                frequency_class="nonpolynomial",
+                d_theta=d_theta,
+                seed_power=1,
+            )
+        )
     return out
 
 

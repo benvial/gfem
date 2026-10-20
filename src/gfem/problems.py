@@ -403,6 +403,16 @@ class Eigenmode:
     ``|omega| / (2 Im omega)``. The `n_modes` modes whose frequency
     ``Re omega / 2 pi`` is nearest ``target`` are returned, nearest first.
 
+    A `Conductor` (its surface impedance grows as the square root of the
+    frequency) or a second-order `Absorbing` boundary (a term in 1 /
+    frequency) makes the eigenproblem nonlinear. The modes are then seeded
+    with those factors frozen at ``target`` and each one is refined on the
+    exact frequency dependence (residual inverse iteration on the
+    factorization the seed already made), so frequency and Q do not depend
+    on ``target``. Conductor and radiation losses must be perturbations
+    (Q above about 5); for a strongly radiating structure, find the
+    resonance from a `gfem.Driven` sweep.
+
     Lumped ports are terminations here: nothing is excited. A port with a
     resistance gets a coupling Q, a port with an inductance a participation
     ratio (see `gfem.EigenmodeResult`).
@@ -417,9 +427,9 @@ class Eigenmode:
 
     `gfem.solve` raises `gfem.EigenmodeConvergenceError` when fewer than
     ``n_modes`` modes converge (never a partial result), and
-    NotImplementedError for a `WavePort`, a `Conductor` or a second-order
-    `Absorbing` boundary, whose frequency dependence this version cannot
-    solve for.
+    NotImplementedError for a `WavePort` (its propagation constant would
+    have to be solved at the complex eigenfrequency): replace it with a
+    `LumpedPort` of the line impedance, or use a `gfem.Driven` sweep.
 
     Example:
         ``gfem.Eigenmode(target=5e9, n_modes=2)``

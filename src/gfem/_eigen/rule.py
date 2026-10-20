@@ -2,12 +2,16 @@
 
 The operator is the driven operator's pieces (`gfem._engine.driven`) sorted
 by power of the frequency (`gfem._eigen.operator`): ``T(k) = K + k D +
-k^2 M``, ``k = ω scale / c``. Without damping the problem is linear in
-``k^2``; with lumped or impedance resistance, conductivity or a first-order
-absorbing boundary it is quadratic. One factorization of ``T(sigma)`` at
-the target serves the shift-invert Arnoldi (`gfem._eigen.arpack`, with the
-divergence-free projection), the Rayleigh functional and the refinement of
-any pair short of the tolerance (`gfem._eigen.refine`).
+k^2 M + A(k)``, ``k = ω scale / c``. Without damping the problem is linear
+in ``k^2``; with lumped or impedance resistance, conductivity or a
+first-order absorbing boundary it is quadratic; a `Conductor` or a
+second-order absorbing boundary adds the nonpolynomial ``A(k)``, which the
+seed freezes at the target. One factorization of ``T(sigma)`` at the
+target serves the shift-invert Arnoldi of the seed (`gfem._eigen.arpack`,
+with the divergence-free projection), the Rayleigh functional and the
+residual inverse iteration that refines every seed on the true ``T(k)``
+(`gfem._eigen.refine`). A `WavePort` raises: its propagation constant
+would have to be solved at the complex eigenfrequency.
 
 Post-processing follows Palace: electric energy ``E = 1/2 Re ∫ D* . E`` per
 volume region plus ``C |V|^2 / 2`` per capacitive lumped port; a port's
@@ -25,10 +29,10 @@ import ngsolve as ngs
 import numpy as np
 import scipy.constants as const
 
-from gfem._boundaries import PEC, Absorbing, Conductor, LumpedPort, WavePort
+from gfem._boundaries import PEC, LumpedPort, WavePort
 from gfem._eigen.arpack import shift_invert
 from gfem._eigen.divfree import DivFreeProjector
-from gfem._eigen.operator import EigenOperator, assemble, split
+from gfem._eigen.operator import EigenOperator, NonPolynomial, assemble, split
 from gfem._eigen.refine import Refined, refine
 from gfem._engine import terms
 from gfem._engine.cache import Entry, discretization
@@ -65,6 +69,11 @@ _OVERLAP = 0.9
 #: Arnoldi runs, each asking for twice as many pairs as the last, before
 #: too few modes near the target is an error.
 _ATTEMPTS = 3
+#: Arnoldi tolerance of a nonlinear problem's frozen seeds. Their roots are
+#: off the true ones by the freeze error anyway and every seed is refined,
+#: so converging them further only spends shift solves (most of them on the
+#: cluster of near-static relaxation modes the frozen surface terms leave).
+_SEED_TOLERANCE = 1e-3
 
 
 class EigenmodeRule:
@@ -140,6 +149,7 @@ class EigenmodeRule:
             omega_t = 2 * math.pi * self.problem.target
             sigma = terms.wavenumber(omega_t, scale)
             classes = split(op.pieces, scale, sigma)
+            powers = classes.powers
             free = np.array(list(space.FreeDofs()), dtype=bool)  # ty: ignore[invalid-argument-type]
 
             def shifted(k: complex):
@@ -156,13 +166,19 @@ class EigenmodeRule:
                 shift=sigma,
                 prepare=shifted,
                 damping=(
-                    assemble(space, classes[1], matrix_free=True)
-                    if classes[1]
-                    else None
+                    assemble(space, powers[1], matrix_free=True) if powers[1] else None
                 ),
-                mass=assemble(space, classes[2]),
+                mass=assemble(space, powers[2]),
                 free=free,
                 scale=scale,
+                nonpolynomial=tuple(
+                    NonPolynomial.from_piece(
+                        piece,
+                        assemble(space, [(1.0, piece)], matrix_free=True),
+                        scale,
+                    )
+                    for piece in classes.nonpolynomial
+                ),
             )
             projector = None
             try:
@@ -171,11 +187,12 @@ class EigenmodeRule:
                 # the companion problem also holds each mode's mirror image
                 # -conj(k), as near the shift as the mode's Re k is
                 nev = max(2 * n_modes, n_modes + 2)
-                nev *= 1 if eop.damping is None else 2
+                nev *= 2 if eop.seed_damped else 1
+                seed_tolerance = opts.eigen_tolerance
+                if eop.nonpolynomial:
+                    seed_tolerance = max(seed_tolerance, _SEED_TOLERANCE)
                 for _ in range(_ATTEMPTS):
-                    k, vectors = shift_invert(
-                        eop, projector, nev, tol=opts.eigen_tolerance
-                    )
+                    k, vectors = shift_invert(eop, projector, nev, tol=seed_tolerance)
                     modes, failed = self._select(eop, k, vectors, sigma)
                     if len(modes) == n_modes or failed:
                         break
@@ -184,7 +201,7 @@ class EigenmodeRule:
                     raise EigenmodeConvergenceError(
                         self._convergence_message(eop, modes, failed)
                     )
-                if eop.damping is None and _is_real(eop):
+                if not eop.seed_damped and not eop.nonpolynomial and _is_real(eop):
                     modes = [
                         Refined(m.k.real, m.x, m.error, m.iterations, m.converged)
                         for m in modes
@@ -453,20 +470,4 @@ def _check_supported(model: Model) -> None:
                 "complex eigenfrequency. Replace it with gfem.LumpedPort("
                 f"{port.name!r}, ..., impedance=<line impedance>), or find the "
                 "resonance and Q from a gfem.Driven sweep."
-            )
-    for b in model.boundaries:
-        if isinstance(b, Conductor):
-            raise NotImplementedError(
-                f"Eigenmode with the gfem.Conductor on {b.surface!r} is not "
-                "available in this version of gfem: its surface impedance grows "
-                "as the square root of the frequency, which makes the eigenproblem "
-                "nonlinear. Use gfem.PEC for the metal, or find the resonance and Q "
-                "from a gfem.Driven sweep."
-            )
-        if isinstance(b, Absorbing) and b.order == 2:
-            raise NotImplementedError(
-                f"Eigenmode with the second-order gfem.Absorbing on {b.surface!r} "
-                "is not available in this version of gfem: its 1/frequency term "
-                "makes the eigenproblem nonlinear. Use Absorbing(order=1), or find "
-                "the resonance and Q from a gfem.Driven sweep."
             )
