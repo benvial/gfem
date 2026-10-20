@@ -191,3 +191,14 @@ def test_wave_port_results_round_trip_through_a_bundle(plate_mesh, tmp_path):
     np.testing.assert_array_equal(
         loaded.port_modes["p1"].gamma, result.port_modes["p1"].gamma
     )
+
+
+def test_characteristic_impedance_needs_kept_port_mode_fields(plate_mesh, plate_result):
+    path = ((W / 2, 0.0, 0.0), (W / 2, D, 0.0))
+    with pytest.raises(ValueError, match="keep_fields"):
+        gfem.characteristic_impedance(plate_result.port_modes["p1"], path)
+    kept = gfem.solve(
+        line(plate_mesh), gfem.Driven(F, excite="p1", keep_fields=True), options=OPTIONS
+    )
+    z = np.asarray(gfem.characteristic_impedance(kept.port_modes["p1"], path))
+    np.testing.assert_allclose(z, z_tem(), rtol=1e-8)
