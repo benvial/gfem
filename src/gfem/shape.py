@@ -19,10 +19,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as sp
-from jax.core import Tracer
 
 from gfem import _morph
 from gfem._boundaries import surfaces_of
+from gfem._checks import is_traced
 from gfem._sparse import Coo, coo, spd_solve
 from gfem.errors import MeshQualityError, MeshQualityWarning, RegionNotFoundError
 from gfem.mesh import LENGTH_UNITS, Mesh
@@ -305,7 +305,7 @@ class BoundaryMorph:
         u = self._free.matvec(z) + self._prescribed.matvec(t)
         nodes = jnp.asarray(self._x0) + u.reshape(self._x0.shape)
         mesh = jax.tree_util.tree_unflatten(self._treedef, [nodes])
-        if not isinstance(t, Tracer):
+        if not is_traced(t):
             _check_quality(mesh, self._active, stacklevel=2)
         return mesh
 

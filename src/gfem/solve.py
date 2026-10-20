@@ -5,10 +5,8 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
-import jax
-from jax.core import Tracer
-
 from gfem._adjoint import solve_vjp
+from gfem._checks import is_traced
 from gfem.model import Model
 from gfem.options import SolverOptions
 from gfem.shape import _check_quality
@@ -58,7 +56,7 @@ def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -
             f"options must be a gfem.SolverOptions, got {type(options).__name__}."
         )
     rule = _rule_class(problem)(model, problem, options)
-    if any(isinstance(leaf, Tracer) for leaf in jax.tree.leaves((model, problem))):
+    if is_traced((model, problem)):
         return rule.result(solve_vjp(rule, model, problem))
     # A moved mesh must still be valid on the solve domain.
     _check_quality(model.mesh, model._domain.active, stacklevel=3)  # noqa: SLF001

@@ -10,8 +10,9 @@ from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
-from jax.core import Tracer
 
+from gfem._checks import is_traced
+from gfem._probe import field_at
 from gfem._pytree import register_fields
 from gfem.mesh import Mesh
 
@@ -176,7 +177,7 @@ class Field:
                 surfaces as a ``jax.errors.JaxRuntimeError`` with the same
                 message.
         """
-        return importlib.import_module("gfem.measurements").probe(self, points)
+        return field_at(self, points)
 
     def to_meshio(self) -> meshio.Mesh:
         """The field sampled for visualization, as a `meshio.Mesh`.
@@ -223,7 +224,7 @@ class Field:
         return pyvista.from_meshio(self.to_meshio())
 
     def _check_concrete(self, method: str) -> None:
-        if any(isinstance(leaf, Tracer) for leaf in jax.tree.leaves(self)):
+        if is_traced(self):
             raise TypeError(
                 f"Field.{method} needs concrete values and cannot run under "
                 "jax.jit, jax.grad or jax.vmap; export the field outside the "

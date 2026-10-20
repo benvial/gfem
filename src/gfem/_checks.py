@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+import jax
 import numpy as np
 from jax.core import Tracer
 
@@ -12,12 +13,8 @@ from gfem.errors import NonDifferentiableError
 
 
 def is_traced(value: Any) -> bool:
-    """Whether ``value`` (or anything inside a tuple / list) is a JAX tracer."""
-    if isinstance(value, Tracer):
-        return True
-    if isinstance(value, (tuple, list)):
-        return any(is_traced(v) for v in value)
-    return False
+    """Whether ``value``, or any leaf of it as a JAX pytree, is a JAX tracer."""
+    return any(isinstance(leaf, Tracer) for leaf in jax.tree.leaves(value))
 
 
 def check_fixed(value: Any, what: str) -> None:
