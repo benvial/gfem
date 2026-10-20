@@ -117,11 +117,15 @@ def test_conductor_plates_make_a_lossy_passive_reciprocal_line(plate_mesh):
     model = line(plate_mesh).replace(
         boundaries=[gfem.Conductor("plates", conductivity=5.8e7)]
     )
-    r = gfem.solve(model, gfem.Driven(F), options=OPTIONS)
+    # direct: GMRES at tolerance 1e-6 leaves S off by up to ~1e-6, so S01 - S10
+    # (2.4e-7 here, 2.6e-6 on another CPU) would gate the solver, not the
+    # physics. The direct solve's asymmetry is 1.6e-10 at any thread count.
+    options = dataclasses.replace(OPTIONS, linear_solver="direct")
+    r = gfem.solve(model, gfem.Driven(F), options=options)
     s = np.asarray(r.s.values)
     gamma = np.asarray(r.port_modes["p1"].gamma)
     assert (gamma.real > 0).all()
-    np.testing.assert_allclose(s[:, 0, 1], s[:, 1, 0], atol=1e-6)
+    np.testing.assert_allclose(s[:, 0, 1], s[:, 1, 0], rtol=0, atol=1e-8)
     power = np.abs(s[:, 0, 0]) ** 2 + np.abs(s[:, 1, 0]) ** 2
     assert (power < 1).all()
     # the Robin term keeps Re k_n only: the lossy line is matched to O(alpha/beta)
