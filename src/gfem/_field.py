@@ -151,6 +151,33 @@ class Field:
             order=max(self.order - 1, 0),
         )
 
+    def at(self, points: Any) -> jax.Array:
+        """The field's values at points, in SI units.
+
+        A JAX function of the coefficients: under `jax.grad` the gradient
+        flows back into the solve that made the field (material-field
+        gradients of a probed driven field, for example). The points and
+        the mesh node coordinates are fixed: perturbing them raises
+        `gfem.NonDifferentiableError`. Works under `jax.jit` and `jax.vmap`.
+
+        Args:
+            points: One point ``(3,)`` or ``(n, 3)`` points, in metres.
+
+        Returns:
+            ``(n, 3)`` for a vector field (``E``, ``B``), ``(n,)`` for a
+            scalar one (``V``); without the leading axis for one point.
+            Complex for a phasor.
+
+        Raises:
+            ValueError: A point is outside the mesh, or inside a volume where
+                the field is not defined: outside its ``support``, or inside
+                a volume the model excludes from the solve (inside metal).
+                Under `jax.jit` with traced points or node coordinates, this
+                surfaces as a ``jax.errors.JaxRuntimeError`` with the same
+                message.
+        """
+        return importlib.import_module("gfem.measurements").probe(self, points)
+
     def to_meshio(self) -> meshio.Mesh:
         """The field sampled for visualization, as a `meshio.Mesh`.
 

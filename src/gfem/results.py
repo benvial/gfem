@@ -794,6 +794,10 @@ class EigenmodeResult:
             capacitors' ``C |V|^2 / 2`` (the total time-averaged energy of
             a lossless mode), and its phase makes ``integral of D . E dV``
             real and positive.
+        materials: The model's materials the modes were solved with, by
+            volume region (`Material` or `MaterialField`). Measurements
+            that need the media around a surface read them
+            (`gfem.interface_participation`).
     """
 
     omega: jax.Array
@@ -802,10 +806,12 @@ class EigenmodeResult:
     participation: dict[str, jax.Array] = dataclasses.field(default_factory=dict)
     bulk_participation: dict[str, jax.Array] = dataclasses.field(default_factory=dict)
     e_fields: tuple[Field, ...] = ()
+    materials: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Hold the fields as a tuple."""
+        """Hold the fields as a tuple and the materials as a dict."""
         object.__setattr__(self, "e_fields", tuple(self.e_fields))
+        object.__setattr__(self, "materials", dict(self.materials))
 
     @property
     def frequency(self) -> jax.Array:
@@ -847,5 +853,13 @@ class EigenmodeResult:
 
 register_fields(
     EigenmodeResult,
-    ("omega", "error", "q_port", "participation", "bulk_participation", "e_fields"),
+    (
+        "omega",
+        "error",
+        "q_port",
+        "participation",
+        "bulk_participation",
+        "e_fields",
+        "materials",
+    ),
 )

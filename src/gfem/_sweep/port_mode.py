@@ -54,7 +54,7 @@ from gfem.options import SolverOptions
 from gfem.problems import PortMode
 from gfem.results import PortModeField, PortModeResult
 
-__all__ = ["PortModeRule", "PortModeSweep", "port_mode_sweep"]
+__all__ = ["PortModeRule", "PortModeSweep", "path_voltage", "port_mode_sweep"]
 
 # The shift is this factor above the largest bulk (Re eps)(Re mu), as in Palace.
 _TARGET = 1.1
@@ -722,9 +722,14 @@ def _voltage_functional(
     return np.einsum("kpc,pc->k", e, wts)
 
 
-def _voltage_rule(section: PortSection) -> tuple[np.ndarray, np.ndarray]:
-    """Plane points and weights (local direction x length, m) of the path."""
-    path = np.asarray(section.port.voltage_path, float)
+def _voltage_rule(
+    section: PortSection, path: np.ndarray | None = None
+) -> tuple[np.ndarray, np.ndarray]:
+    """Plane points and weights (local direction x length, m) of a path.
+
+    ``path`` defaults to the wave port's ``voltage_path``.
+    """
+    path = np.asarray(section.port.voltage_path if path is None else path, float)
     _local, dist = section.to_local(path)
     if (np.abs(dist) > 1e-5 * section.diameter).any():
         raise ValueError(
@@ -740,3 +745,11 @@ def _voltage_rule(section: PortSection) -> tuple[np.ndarray, np.ndarray]:
             pts.append(section.to_local(p + np.outer(s, q - p))[0])
             wts.append(np.outer(w / (2 * _PIECES), d_local))
     return np.concatenate(pts), np.concatenate(wts)
+
+
+def path_voltage(
+    space: PortModeSpace, basis: np.ndarray, coords: np.ndarray, path: np.ndarray
+) -> np.ndarray:
+    """``V = int E . dl`` along ``path`` (m) of each field ``basis @ coords[i]``."""
+    rule = _voltage_rule(space.section, path)
+    return coords @ _voltage_functional(space, basis, rule)
