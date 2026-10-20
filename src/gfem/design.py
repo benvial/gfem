@@ -20,7 +20,8 @@ is the user's own (optax, nlopt, scipy, ...).
   eroded, nominal and dilated designs of an etch tolerance. Optimizing the
   worst of the three guarantees the length scale on both phases.
 - A **layer grid** (`LayerGrid`) holds a planar pixel design, constant
-  through a volume's thickness along mesh z, as planar fabrication makes it.
+  through a volume's thickness along mesh z, as planar fabrication makes it,
+  or the pattern of a horizontal sheet (`gfem.SheetField`, ``to_faces``).
 """
 
 from __future__ import annotations
@@ -139,19 +140,27 @@ def robust(rho: jax.Array, *, beta: float, delta: float, eta: float = 0.5) -> Ro
 
 
 class LayerGrid:
-    """A planar pixel grid of design values over a volume region's footprint.
+    """A planar pixel grid of design values over a region's footprint.
 
     The grid covers the region's xy extent (mesh z is the wafer normal) with
     square pixels of side `pitch`, centred on the footprint. A design array
     ``rho`` has `shape` ``(ny, nx)``: row ``i`` is at ``y[i]``, column ``j``
-    at ``x[j]``. `to_elements` gives each element of the region the bilinear
-    interpolation of the pixel values at its centroid's (x, y), so the design
-    is constant through the region's thickness. Filter and project on the
-    grid (`helmholtz_filter`, `project`), then map to the elements::
+    at ``x[j]``. On a volume region, `to_elements` gives each element the
+    bilinear interpolation of the pixel values at its centroid's (x, y), so
+    the design is constant through the region's thickness. Filter and
+    project on the grid (`helmholtz_filter`, `project`), then map to the
+    elements::
 
         grid = gfem.design.LayerGrid(mesh, "design", pitch=2e-6)
         blur = gfem.design.helmholtz_filter(grid, radius=20e-6)
         density = grid.to_elements(gfem.design.project(blur(rho), beta=8.0))
+
+    On a horizontal surface region (a sheet design: every face normal along
+    mesh z), `to_faces` does the same at each face centroid, the input of
+    `gfem.SheetField.interpolate`::
+
+        grid = gfem.design.LayerGrid(mesh, "M1_design", pitch=2e-6)
+        fill = gfem.SheetField.interpolate(grid.to_faces(rho_bar))
 
     The map is linear and fixed (built from the mesh as given), so its
     gradient is its transpose. Pixels that no element centroid samples get
@@ -159,39 +168,41 @@ class LayerGrid:
     non-rectangular footprint are such pixels; `sampled` masks them.
 
     Attributes:
-        region: The volume region.
+        region: The volume or surface region.
         pitch: Pixel side (m).
         shape: ``(ny, nx)``.
         origin: Lower-left corner of the grid ``(x, y)`` (m).
         x: Pixel-centre x coordinates, ``(nx,)`` (m).
         y: Pixel-centre y coordinates, ``(ny,)`` (m).
-        sampled: ``(ny, nx)`` bool, pixels some element centroid samples.
-        n_elements: Number of elements of the region (the length of
-            `to_elements`' output, in ``mesh.elements(region)`` order).
+        sampled: ``(ny, nx)`` bool, pixels some element (face) centroid
+            samples.
+        n_elements: On a volume, the number of its elements (the length of
+            `to_elements`' output, in ``mesh.elements(region)`` order);
+            ``None`` on a surface.
+        n_faces: On a surface, the number of its faces (the length of
+            `to_faces`' output, in ``mesh.elements(region)`` order); ``None``
+            on a volume.
     """
 
     def __init__(self, mesh: Mesh, region: str, *, pitch: float) -> None:
-        """Lay a pixel grid over a volume region's xy footprint.
+        """Lay a pixel grid over a volume or horizontal surface's footprint.
 
         Args:
             mesh: The mesh, with concrete node coordinates.
-            region: A volume region of the mesh.
+            region: A volume region, or a surface whose faces are all
+                horizontal (normal along mesh z).
             pitch: Pixel side (m), > 0.
 
         Raises:
             RegionNotFoundError: The mesh has no such region.
-            NotImplementedError: ``region`` is a surface.
-            ValueError: ``pitch <= 0``, or the mesh nodes are traced.
+            ValueError: ``pitch <= 0``, the mesh nodes are traced, or a
+                face of the surface is not horizontal.
 
         Warns:
-            UserWarning: Some pixels are sampled by no element centroid.
+            UserWarning: Some pixels are sampled by no element (face)
+                centroid.
         """
         r = mesh.region(region)
-        if r.dim != 3:
-            raise NotImplementedError(
-                f"LayerGrid: {region!r} is a surface; a layer grid needs a volume "
-                "region (sheet designs on surfaces are not available yet)."
-            )
         pitch = static_float(pitch, "LayerGrid.pitch", "The pixel grid is fixed.")
         if pitch <= 0:
             raise ValueError(f"LayerGrid: pitch must be > 0 m, got {pitch}.")
@@ -201,10 +212,14 @@ class LayerGrid:
                 "outside jax.jit / jax.grad, from a mesh with concrete nodes."
             )
         nodes = np.asarray(mesh.nodes)
-        tets = mesh.tetrahedra[mesh.elements(region)]
-        points = nodes[tets].mean(axis=1)[:, :2]
-        lo = nodes[tets.ravel()].min(axis=0)[:2]
-        hi = nodes[tets.ravel()].max(axis=0)[:2]
+        if r.dim == 3:
+            cells = mesh.tetrahedra[mesh.elements(region)]
+        else:
+            cells = mesh.triangles[mesh.elements(region)]
+            _check_horizontal(nodes, cells, region)
+        points = nodes[cells].mean(axis=1)[:, :2]
+        lo = nodes[cells.ravel()].min(axis=0)[:2]
+        hi = nodes[cells.ravel()].max(axis=0)[:2]
         n = [
             max(1, math.ceil((h - l) / pitch - 1e-9))
             for l, h in zip(lo, hi, strict=True)
@@ -217,7 +232,9 @@ class LayerGrid:
         self.origin = origin
         self.x = origin[0] + (np.arange(n[0]) + 0.5) * pitch
         self.y = origin[1] + (np.arange(n[1]) + 0.5) * pitch
-        self.n_elements = len(tets)
+        self.n_elements = len(cells) if r.dim == 3 else None
+        self.n_faces = len(cells) if r.dim == 2 else None
+        self._what = "element" if r.dim == 3 else "face"
         self._index, self._weight = _bilinear(points, origin, pitch, self.shape)
         weight = np.bincount(
             self._index.ravel(), self._weight.ravel(), minlength=n[0] * n[1]
@@ -229,7 +246,7 @@ class LayerGrid:
         if dead:
             warnings.warn(
                 f"LayerGrid on {region!r}: {dead} of {self.sampled.size} pixels "
-                "are sampled by no element centroid, so they get no gradient and "
+                f"are sampled by no {self._what} centroid, so they get no gradient and "
                 "do not reach the solve. Refine the mesh in the region, or coarsen "
                 f"the pitch (now {pitch:g} m). Pixels outside a non-rectangular "
                 "footprint are always unsampled: mask them with grid.sampled.",
@@ -248,24 +265,78 @@ class LayerGrid:
             input of `gfem.MaterialField.interpolate`.
 
         Raises:
-            ValueError: ``rho`` does not have the grid's shape.
+            ValueError: ``rho`` does not have the grid's shape, or the grid
+                is on a surface (use `to_faces`).
         """
+        if self.n_elements is None:
+            raise ValueError(
+                f"LayerGrid.to_elements: the grid is on the surface {self.region!r}; "
+                "map a sheet design to its faces with grid.to_faces(rho)."
+            )
+        return self._interpolate(rho, "to_elements")
+
+    def to_faces(self, rho: jax.Array) -> jax.Array:
+        """Per-face values of a pixel array: bilinear at face centroids.
+
+        Args:
+            rho: Pixel values, shape `shape`.
+
+        Returns:
+            ``(n_faces,)`` values in ``mesh.elements(region)`` order, the
+            input of `gfem.SheetField.interpolate`.
+
+        Raises:
+            ValueError: ``rho`` does not have the grid's shape, or the grid
+                is on a volume (use `to_elements`).
+        """
+        if self.n_faces is None:
+            raise ValueError(
+                f"LayerGrid.to_faces: the grid is on the volume {self.region!r}; "
+                "map a layer design to its elements with grid.to_elements(rho)."
+            )
+        return self._interpolate(rho, "to_faces")
+
+    def _interpolate(self, rho: jax.Array, name: str) -> jax.Array:
         rho = jnp.asarray(rho)
         if rho.shape != self.shape:
             raise ValueError(
-                f"LayerGrid.to_elements: rho has shape {rho.shape}, but the grid "
+                f"LayerGrid.{name}: rho has shape {rho.shape}, but the grid "
                 f"on {self.region!r} has shape {self.shape} (ny, nx)."
             )
         return jnp.sum(rho.reshape(-1)[self._index] * self._weight, axis=1)
 
     def __repr__(self) -> str:
+        n = self.n_elements if self.n_faces is None else self.n_faces
         return (
             f"LayerGrid({self.region!r}, pitch={self.pitch:g} m, shape={self.shape}, "
-            f"{self.n_elements} elements)"
+            f"{n} {self._what}s)"
         )
 
 
 jax.tree_util.register_static(LayerGrid)
+
+
+#: |n_z| below 1 - this of a face's unit normal: not horizontal.
+_HORIZONTAL = 1e-9
+
+
+def _check_horizontal(nodes: np.ndarray, triangles: np.ndarray, region: str) -> None:
+    """Raise unless every face's normal is along mesh z."""
+    p = nodes[triangles]
+    normal = np.cross(p[:, 1] - p[:, 0], p[:, 2] - p[:, 0])
+    nz = np.abs(normal[:, 2]) / np.linalg.norm(normal, axis=1)
+    bad = np.flatnonzero(nz < 1 - _HORIZONTAL)
+    if len(bad):
+        first = ", ".join(str(int(i)) for i in bad[:5])
+        raise ValueError(
+            f"LayerGrid: the surface {region!r} is not horizontal: {len(bad)} of "
+            f"{len(triangles)} faces have a normal off mesh z (faces {first}"
+            f"{', ...' if len(bad) > 5 else ''} in mesh.elements({region!r}) "
+            "order). A layer grid patterns a horizontal sheet only; vertical "
+            "sidewalls are not layer-designable. Give the design its own "
+            "horizontal surface region, or pass per-face densities to "
+            "gfem.SheetField.interpolate directly."
+        )
 
 
 def _bilinear(

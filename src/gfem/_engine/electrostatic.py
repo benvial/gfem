@@ -28,7 +28,7 @@ import numpy as np
 import scipy.constants
 
 from gfem._adjoint import adjoint_tolerance
-from gfem._boundaries import PEC, Conductor
+from gfem._boundaries import PEC, Conductor, Impedance
 from gfem._engine import quadrature
 from gfem._engine.cache import Entry, discretization
 from gfem._engine.coefficients import permittivity
@@ -84,6 +84,17 @@ class ElectrostaticRule:
                 "problems in this version of gfem; use one of "
                 f"{', '.join(repr(k) for k in KINDS)}."
             )
+        for b in model.boundaries:
+            if isinstance(b, (Conductor, Impedance)) and b.fill is not None:
+                raise NotImplementedError(
+                    f"{type(b).__name__} on {b.surface!r} carries a sheet field "
+                    "(fill=), but a partly filled conducting sheet is not an "
+                    "electrostatic object: electrostatic conductors are terminals "
+                    "at a fixed potential. Fix the metal pattern (a PEC or "
+                    "terminal on the metal's own surface), or optimize the "
+                    "capacitance through a gfem.Driven or gfem.Eigenmode "
+                    "surrogate, where the sheet field is differentiable."
+                )
         in_terminal = {s for _, surfaces in problem.terminals for s in surfaces}
         conductors = tuple(
             b.surface

@@ -23,6 +23,7 @@ from gfem._boundaries import (
 )
 from gfem._domain import EMDomain, em_domain, enclosed_entities
 from gfem._materials import Material, MaterialField
+from gfem._sheet import SheetField
 from gfem.errors import RegionNotFoundError
 from gfem.mesh import Mesh
 
@@ -39,6 +40,7 @@ __all__ = [
     "MaterialField",
     "Model",
     "Port",
+    "SheetField",
     "WavePort",
     "enclosed_by",
 ]
@@ -244,6 +246,8 @@ class Model:
                     "a wave port must be an exterior surface of the "
                     "electromagnetic solve domain."
                 )
+            if isinstance(item, (Conductor, Impedance)) and item.fill is not None:
+                self._check_sheet(item)
             if isinstance(item, WavePort):
                 for edge in item.pec_edges:
                     _check_surface(mesh, edge, f"WavePort {item.name!r} pec_edges")
@@ -254,6 +258,35 @@ class Model:
                     f"{_PHYSICS_NAMES[physics]} boundary condition or port: "
                     f"{', '.join(repr(i) for i in items)}. Keep one."
                 )
+
+    def _check_sheet(self, item: Conductor | Impedance) -> None:
+        """A sheet field: on an interior surface, one fill value per face."""
+        what = type(item).__name__
+        surface, field = item.surface, item.fill
+        if field is None:  # pragma: no cover - the caller checks
+            return
+        if field.surface is not None and field.surface != surface:
+            raise ValueError(
+                f"{what} on {surface!r} carries a SheetField built for surface "
+                f"{field.surface!r}; attach it to a boundary on that surface."
+            )
+        n0, n1, _ = self._domain.sides[surface]
+        if n0 or n1:
+            raise ValueError(
+                f"{what} on {surface!r}: a SheetField needs an interior surface, "
+                "with the electromagnetic solve domain on both sides of every "
+                f"face, but {n0 + n1} face(s) of {surface!r} are on the domain's "
+                "exterior (the mesh boundary or the shell of an excluded volume). "
+                "There, fill 0 would not be a void (it would leave a PMC wall or "
+                "a hole in a conductor). Put the design on an interior sheet."
+            )
+        expected = len(self.mesh.elements(surface))
+        if field.n_faces != expected:
+            raise ValueError(
+                f"{what} on {surface!r}: its SheetField has {field.n_faces} fill "
+                f"values, but {surface!r} has {expected} faces: give one value per "
+                f"face, in the order of mesh.elements({surface!r})."
+            )
 
     # --- public views ---------------------------------------------------------
 

@@ -276,3 +276,49 @@ def strip_line(
         return surface(c)
 
     return structured(edges, volume, named)
+
+
+def sheet_line(
+    length: float,
+    width: float,
+    height: float,
+    n: tuple[int, int, int],
+    *,
+    span: tuple[float, float] | None = None,
+):
+    """A parallel-plate line along x glued from two halves at z = height / 2.
+
+    The plates are the y walls, "plate1" (y = 0) and "plate2" (y = width),
+    so the TEM field is along y, tangential to the horizontal interior
+    surface "sheet" between the volumes "lower" and "upper". Surfaces
+    "port1" (x = 0), "port2" (x = length) and "side" (z = 0, height). With
+    ``span = (x0, x1)`` only the interface faces between x0 and x1 are
+    "sheet" (the rest carries no surface; the node layout is unchanged).
+    ``n`` cells along x, y and z (per half; even counts keep the halves
+    apart).
+    """
+    edges = (
+        np.linspace(0, length, n[0] + 1),
+        np.linspace(0, width, n[1] + 1),
+        np.linspace(0, height, 2 * n[2] + 1),
+    )
+    eps = 1e-9 * max(length, width, height)
+
+    def volume(c):
+        return "lower" if c[2] < height / 2 else "upper"
+
+    def surface(c):
+        if abs(c[2] - height / 2) < eps:
+            if span is not None and not span[0] < c[0] < span[1]:
+                return ""
+            return "sheet"
+        for x, name in ((0.0, "port1"), (length, "port2")):
+            if abs(c[0] - x) < eps:
+                return name
+        if abs(c[1]) < eps:
+            return "plate1"
+        if abs(c[1] - width) < eps:
+            return "plate2"
+        return "side"
+
+    return structured(edges, volume, surface)
