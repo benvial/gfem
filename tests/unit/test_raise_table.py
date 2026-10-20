@@ -167,11 +167,23 @@ EXPECTED |= {
     for kind in [("nodes",)] + [("material", "core", p) for p in ALL_PROPERTIES]
 }
 
-# Eigenmode results are not differentiable yet (eigenvalue gradients come
-# later): like driven, every leaf raises for the inputs the forms read.
+# Eigenmode: the eigenvalues (omega, also as each mode field's omega)
+# differentiate with respect to every electromagnetic property; quantities of
+# the mode fields (backward error, port Q, participations, the fields) raise
+# for the inputs the forms read. The cluster labels are integers, the mode
+# fields' mesh is the input mesh passed through: exact zeros. Node
+# coordinates raise for every leaf (no shape gradients yet).
+_EIGEN_DEPENDENT = ("omega", "e_fields.0.omega")
+_EIGEN_CONSTANT = ("cluster", "e_fields.0.mesh.nodes")
 EXPECTED |= {
     ("eigenmode", out, kind): (
-        ZERO if kind[0] == "material" and kind[2] not in EM_PROPERTIES else RAISES
+        RAISES
+        if kind == ("nodes",)
+        else ZERO
+        if kind[2] not in EM_PROPERTIES or out in _EIGEN_CONSTANT
+        else GRADIENT
+        if out in _EIGEN_DEPENDENT
+        else RAISES
     )
     for out in (
         "omega",
@@ -179,20 +191,17 @@ EXPECTED |= {
         "q_port.p1",
         "q_port.p2",
         "bulk_participation.dielectric",
+        "cluster",
         *(f"e_fields.0.{leaf}" for leaf in ("coefficients", "mesh.nodes", "omega")),
     )
     for kind in [("nodes",)] + [("material", "dielectric", p) for p in ALL_PROPERTIES]
 }
 # The result carries the model's materials as solved (for measurements): each
-# leaf is its input passed through. The solve still raises at trace time for
-# every input it reads, so only the thermal leaves differentiate (identity).
+# leaf is its input passed through (identity); node coordinates still raise
+# at trace time in the solve.
 EXPECTED |= {
     ("eigenmode", f"materials.dielectric.{out}", kind): (
-        RAISES
-        if kind == ("nodes",) or kind[2] in EM_PROPERTIES
-        else GRADIENT
-        if kind[2] == out
-        else ZERO
+        RAISES if kind == ("nodes",) else GRADIENT if kind[2] == out else ZERO
     )
     for out in ALL_PROPERTIES
     for kind in [("nodes",)] + [("material", "dielectric", p) for p in ALL_PROPERTIES]

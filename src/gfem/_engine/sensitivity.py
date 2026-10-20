@@ -202,6 +202,12 @@ FORM_TERMS: dict[tuple[str, str], tuple[Coefficient, ...]] = {
         Coefficient("conductivity", lambda _: terms.ETA0, holomorphic=False),
     ),
 }
+# eigenmode: the driven pieces (`gfem._eigen.operator`), weighted at the
+# complex eigenvalue
+FORM_TERMS |= {
+    ("eigenmode", prop): FORM_TERMS[("driven", prop)]
+    for prop in ("eps_r", "tan_delta", "mu_r", "conductivity")
+}
 
 
 @dataclasses.dataclass(frozen=True, eq=False)

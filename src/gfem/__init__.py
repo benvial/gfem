@@ -15,6 +15,7 @@ _jax.config.update("jax_enable_x64", True)
 from gfem import conventions, design, shape  # noqa: E402
 from gfem._cuda import cuda_available  # noqa: E402
 from gfem.errors import (  # noqa: E402
+    DegenerateModeError,
     DeviceMemoryWarning,
     DeviceUnavailableError,
     EigenmodeConvergenceError,
@@ -68,6 +69,7 @@ __all__ = [
     "PMC",
     "Absorbing",
     "Conductor",
+    "DegenerateModeError",
     "DeviceMemoryWarning",
     "DeviceUnavailableError",
     "Driven",
