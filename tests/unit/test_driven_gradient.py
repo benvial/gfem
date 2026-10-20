@@ -112,10 +112,8 @@ def test_gradient_beside_a_per_axis_lossy_crystal(tmp_path):
         return jnp.sum(jnp.abs(s) ** 2 * jnp.array([[1.0, 0.5], [2.0, -1.0]]))
 
     p = jnp.asarray(rng.uniform(2.0, 5.0, n))
-    d = rng.standard_normal(n)
-    h = 1e-5
-    fd = (objective(p + h * d) - objective(p - h * d)) / (2 * h)
-    assert float(jax.grad(objective)(p) @ d) == pytest.approx(float(fd), rel=1e-6)
+    directions = unit_directions(rng, p.shape, 2)
+    assert_gradient_matches(objective, p, directions, step=STEPS["eps_r"])
 
 
 def test_unexcited_port_rows_use_an_adjoint_solve(line):

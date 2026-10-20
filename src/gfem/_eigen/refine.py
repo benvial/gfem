@@ -9,7 +9,7 @@ the backward error reaches the eigen tolerance.
 The error contracts by about ``|k - sigma| / |k' - sigma|`` per step (``k'``
 the next eigenvalue). When it contracts by less than 2x over two steps, the
 operator is refactorized at the current ``k`` (complex: a low-Q mode is far
-from any real shift), at most `MAX_SHIFTS` times per solve; the iteration
+from any real shift), at most `MAX_SHIFTS` times per mode; the iteration
 then converges like Rayleigh quotient iteration.
 
 For a polynomial ``T`` an Arnoldi pair usually meets the tolerance at once
@@ -29,7 +29,7 @@ from gfem._eigen.operator import EigenOperator
 
 __all__ = ["MAX_SHIFTS", "Refined", "refine"]
 
-#: Refactorizations allowed per solve.
+#: Refactorizations allowed per refined mode.
 MAX_SHIFTS = 3
 
 
@@ -59,8 +59,12 @@ def refine(
     *,
     tolerance: float,
     max_iterations: int,
+    reshift: bool = False,
 ) -> Refined:
     """Refine the pair ``(k, x)`` to backward error ``tolerance``.
+
+    ``reshift``: refactorize at ``k`` before the first correction step (the
+    current shift is nearer another mode than this one).
 
     Returns the best pair seen (``converged`` False if it misses the
     tolerance after ``max_iterations`` steps).
@@ -68,6 +72,7 @@ def refine(
     x = x / np.linalg.norm(x)
     best: Refined | None = None
     history: list[float] = []
+    shifts = 0
     for step in range(max_iterations + 1):
         k = op.rayleigh(x, k)
         error = op.backward_error(k, x)
@@ -77,8 +82,9 @@ def refine(
         if error <= tolerance or step == max_iterations:
             break
         stalled = len(history) >= 3 and history[-1] > 0.5 * history[-3]
-        if stalled and op.shifts < MAX_SHIFTS:
+        if (reshift and step == 0) or (stalled and shifts < MAX_SHIFTS):
             op.reshift(k)
+            shifts += 1
             history.clear()
         x = x - op.solve(op.apply(k, x))
         x = x / np.linalg.norm(x)
