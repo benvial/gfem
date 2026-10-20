@@ -6,27 +6,32 @@ high-water mark of every test that ran before, not of the solve a test gates.
 the peak RSS of that process: what a standalone run (and Palace's
 whole-process figure) measures.
 
-Linux carries ``ru_maxrss`` over fork and exec, so a spawned child would still
-report the caller's high-water mark. The child reads its own ``VmHWM``
-(``/proc/self/status``, per address space, fresh after exec) and, where the
-kernel has no ``VmHWM`` (gVisor), the largest ``VmRSS`` a sampling thread
-saw; ``ru_maxrss`` only without ``/proc`` (macOS).
+Linux and gVisor carry ``ru_maxrss`` over fork and exec, so the spawned child
+would still report the caller's high-water mark. Instead:
+
+- where the kernel keeps ``VmHWM`` (Linux; per address space, fresh after
+  exec) the child reports it;
+- elsewhere (gVisor, Modal's sandbox) the caller, idle while it waits and
+  outside the child's GIL, samples the child's ``VmRSS`` every
+  `SAMPLE_INTERVAL`; the child adds its own reading just before it returns.
+  A peak held for less than about one interval can be missed;
+- without ``/proc`` (macOS) the child reports ``ru_maxrss``.
 
 The call must be a module-level function of a Python file (a test module
-works: the child loads it by path); arguments and return value travel by
-pickle, so the return value must not use classes defined in that file.
+works: the child loads it by path); arguments, return value and exception
+travel by pickle, so they must not use classes defined in that file.
 """
 
 import importlib.util
 import multiprocessing
 import resource
 import sys
-import threading
-from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-#: Seconds between RSS samples where the kernel keeps no VmHWM.
-SAMPLE_INTERVAL = 0.01
+#: Seconds between the caller's samples of the child's RSS.
+SAMPLE_INTERVAL = 0.001
+#: Ignore VmHWM (tests run the gVisor path on Linux with it).
+SAMPLED_ONLY = False
 
 
 def isolated(function, *args, **kwargs):
@@ -35,48 +40,62 @@ def isolated(function, *args, **kwargs):
     if "<locals>" in name:
         raise ValueError(f"{name} is not a module-level function")
     context = multiprocessing.get_context("spawn")
-    with ProcessPoolExecutor(max_workers=1, mp_context=context) as pool:
-        job = pool.submit(_call, function.__code__.co_filename, name, args, kwargs)
-        return job.result()
-
-
-def _call(path, name, args, kwargs):
-    spec = importlib.util.spec_from_file_location("_isolated_target", path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    sampled = [0]
-    done = threading.Event()
-
-    def sample():
-        while True:
-            sampled[0] = max(sampled[0], _status().get("VmRSS", 0))
-            if done.wait(SAMPLE_INTERVAL):
-                return
-
-    sampler = threading.Thread(target=sample, daemon=True)
-    sampler.start()
+    receive, send = context.Pipe(duplex=False)
+    path = function.__code__.co_filename
+    child = context.Process(
+        target=_child, args=(send, (path, name), args, kwargs, SAMPLED_ONLY)
+    )
+    child.start()
+    send.close()
+    sampled = 0
     try:
-        value = getattr(module, name)(*args, **kwargs)
+        while not receive.poll(SAMPLE_INTERVAL):
+            sampled = max(sampled, _status(child.pid).get("VmRSS", 0))
+        try:
+            ok, value, kib = receive.recv()
+        except EOFError:
+            child.join()
+            raise RuntimeError(
+                f"{name} died in its process (exit code {child.exitcode})"
+            ) from None
     finally:
-        done.set()
-        sampler.join()
-    status = _status()
-    if not status:  # no /proc
-        kib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        if sys.platform == "darwin":  # bytes there
-            kib /= 1024
-    else:
-        kib = max(status.get("VmHWM", 0), status.get("VmRSS", 0), sampled[0])
-    return value, kib / 2**20
+        receive.close()
+        child.join()
+    if not ok:
+        raise value
+    return value, max(kib, sampled) / 2**20
 
 
-def _status() -> dict[str, int]:
-    """The kB fields of ``/proc/self/status`` (empty without ``/proc``)."""
+def _child(send, target, args, kwargs, sampled_only):
+    path, name = target
     try:
-        lines = Path("/proc/self/status").read_text().splitlines()
+        spec = importlib.util.spec_from_file_location("_isolated_target", path)
+        assert spec is not None
+        assert spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        value = getattr(module, name)(*args, **kwargs)
+        status = _status("self")
+        if not status:  # no /proc
+            kib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            if sys.platform == "darwin":  # bytes there
+                kib /= 1024
+        elif "VmHWM" in status and not sampled_only:
+            kib = status["VmHWM"]
+        else:
+            kib = status.get("VmRSS", 0)
+        reply = (True, value, kib)
+    except BaseException as error:  # noqa: BLE001 - re-raised in the caller
+        reply = (False, error, 0)
+    send.send(reply)
+    send.close()
+
+
+def _status(pid) -> dict[str, int]:
+    """The kB fields of ``/proc/<pid>/status`` (empty without it)."""
+    try:
+        lines = Path(f"/proc/{pid}/status").read_text().splitlines()
     except OSError:
         return {}
     fields = {}
