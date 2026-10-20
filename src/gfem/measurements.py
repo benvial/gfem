@@ -25,7 +25,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 import jax
 import jax.numpy as jnp
@@ -54,7 +54,8 @@ __all__ = [
 
 #: The thin-layer models of `interface_participation` (Wenner et al., Appl.
 #: Phys. Lett. 99, 113513 (2011); Palace's ``Dielectric`` types).
-INTERFACE_KINDS = ("default", "MA", "MS", "SA")
+InterfaceKind = Literal["default", "MA", "MS", "SA"]
+INTERFACE_KINDS = get_args(InterfaceKind)
 #: A medium is vacuum when its fastest light speed is within this of c
 #: (Palace's test).
 _VACUUM = 1.0 - 1e-6
@@ -109,7 +110,7 @@ def interface_participation(
     thickness: Any,
     eps_r: Any,
     *,
-    kind: str = "default",
+    kind: InterfaceKind = "default",
     tan_delta: Any = None,
 ) -> InterfaceParticipation:
     """Electric energy participation of a thin dielectric layer on a surface.
@@ -266,7 +267,7 @@ def _surface_geometry(field: Field, surfaces: tuple[str, ...]) -> _SurfaceGeomet
 @functools.partial(jax.jit, static_argnames=("geometry", "kind"))
 def _layer_energy(
     geometry: _SurfaceGeometry,
-    kind: str,
+    kind: InterfaceKind,
     *,
     coefficients: jax.Array,
     nodes: jax.Array,

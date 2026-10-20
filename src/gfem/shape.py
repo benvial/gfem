@@ -13,7 +13,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Callable, Sequence
 from types import ModuleType
-from typing import Any
+from typing import Any, Literal, get_args
 
 import jax
 import jax.numpy as jnp
@@ -42,7 +42,8 @@ __all__ = [
 #: triggers a `MeshQualityWarning`.
 WARN_QUALITY_RATIO = 0.25
 
-_EXTENSIONS = ("elastic", "laplace")
+Extension = Literal["elastic", "laplace"]
+_EXTENSIONS = get_args(Extension)
 
 # Corners of a tet and their three edges, ordered so that each corner's
 # determinant is +6 V on a positively oriented tet.
@@ -221,7 +222,7 @@ class BoundaryMorph:
     points: np.ndarray
     normals: np.ndarray
     surface: str
-    extension: str
+    extension: Extension
     _treedef: Any
     _x0: np.ndarray
     _active: np.ndarray
@@ -238,7 +239,7 @@ class BoundaryMorph:
         mesh: Mesh,
         active: np.ndarray,
         surface: str,
-        extension: str,
+        extension: Extension,
         nodes: np.ndarray,
         normals: np.ndarray,
         free: sp.csr_array,
@@ -331,7 +332,7 @@ def boundary_morph(
     where: Callable[[np.ndarray], np.ndarray] | None = None,
     grows: str | None = None,
     fixed: Sequence[str] = (),
-    extension: str = "elastic",
+    extension: Extension = "elastic",
 ) -> BoundaryMorph:
     """Move a named surface of the mesh by normal displacements of its nodes.
 

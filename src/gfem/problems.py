@@ -11,7 +11,7 @@ from __future__ import annotations
 import dataclasses
 import math
 from collections.abc import Mapping, Sequence
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal, get_args
 
 import jax
 import numpy as np
@@ -210,7 +210,8 @@ class PortMode:
 jax.tree_util.register_static(PortMode)
 
 
-_SWEEPS = ("uniform", "adaptive")
+Sweep = Literal["uniform", "adaptive"]
+_SWEEPS = get_args(Sweep)
 #: Frequency grids up to this size are listed in full in error messages.
 _LISTED = 8
 
@@ -299,7 +300,7 @@ class Driven:
 
     frequency: tuple[float, ...]
     excite: tuple[str, ...] | None
-    sweep: str
+    sweep: Sweep
     keep_fields: bool | tuple[float, ...]
     samples: tuple[float, ...] | None = None
     _rule: ClassVar[str] = "gfem._engine.driven:DrivenRule"
@@ -309,7 +310,7 @@ class Driven:
         frequency: Any,
         *,
         excite: str | Sequence[str] | None = None,
-        sweep: str = "uniform",
+        sweep: Sweep = "uniform",
         samples: Sequence[float] | None = None,
         keep_fields: bool | float | Sequence[float] = False,
     ) -> None:
