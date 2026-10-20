@@ -28,9 +28,9 @@ def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -
     ``eps_r`` values), an exact zero gradient if the problem never reads it
     (``conductivity`` in electrostatics), or raises
     `gfem.NonDifferentiableError` while JAX traces, if the problem reads it
-    but gfem cannot differentiate it (mesh node coordinates in this
-    version). `jax.lax.stop_gradient` on an input or an output is the
-    opt-out. Only reverse mode is supported.
+    but gfem cannot differentiate it (for example a problem value such as
+    a frequency, or a field-derived output). `jax.lax.stop_gradient` on an
+    input or an output is the opt-out. Only reverse mode is supported.
 
     Args:
         model: The device.

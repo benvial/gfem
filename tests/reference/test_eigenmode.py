@@ -44,7 +44,7 @@ import pytest
 import gfem
 
 THREADS = 4
-#: The ticket's parity tolerances (relative), on Re f and Q.
+#: Parity tolerances against Palace (relative), on Re f and Q.
 PARITY_F, PARITY_Q = 1e-5, 1e-3
 #: Palace's run on the imported mesh (``Model.RefineCrackElements`` false:
 #: no local bisection next to the PEC sheet; eigen and linear tolerances
