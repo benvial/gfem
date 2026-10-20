@@ -136,6 +136,29 @@ def test_loss_tangent_divides_the_eigenvalue_exactly(mesh):
     np.testing.assert_allclose(lossy.q, abs(expected) / (2 * expected.imag))
 
 
+def test_per_axis_loss_tangent_acts_along_its_axis(mesh):
+    # the mode is E_z: only the principal values along z (the first axis
+    # here) matter, as an isotropic eps_r, tan_delta with those values (up
+    # to the discrete field's small E_x / E_y part; the mean tan_delta would
+    # give a 17x larger Im omega)
+    problem = gfem.Eigenmode(target=8e9)
+    isotropic = complex(gfem.solve(_line(mesh, tan_delta=0.01), problem).omega[0])
+    per_axis = gfem.Model(
+        mesh,
+        materials={
+            "dielectric": gfem.Material(
+                eps_r=(EPS, 7.0, 2.0),
+                tan_delta=(0.01, 0.3, 0.2),
+                axes=((0, 0, 1), (1, 0, 0), (0, 1, 0)),
+            )
+        },
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+    )
+    omega = complex(gfem.solve(per_axis, problem).omega[0])
+    np.testing.assert_allclose(omega.real, isotropic.real, rtol=1e-5)
+    np.testing.assert_allclose(omega.imag, isotropic.imag, rtol=1e-3)
+
+
 def test_bulk_participation_shares_the_energy_between_regions(tmp_path):
     # one dielectric in two layers: the TEM field is uniform in z, so each
     # layer holds its thickness's share of the energy (to the cosine's

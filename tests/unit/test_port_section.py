@@ -62,6 +62,21 @@ def test_materials_come_from_the_volume_behind_each_triangle(slab_model):
     )
 
 
+def test_per_axis_loss_tangent_is_split_along_the_port_frame(slab_model):
+    # port normal = z: eps_nn holds the z value, the tangential block the x
+    # and y ones seen along the frame's in-plane axes u, v
+    slab = gfem.Material(eps_r=4.0, tan_delta=(0.01, 0.02, 0.03))
+    model = slab_model.replace(materials={**slab_model.materials, "slab": slab})
+    s = port_section(model, model.ports[0])
+    centroid = s.to_global(s.points[s.triangles].mean(axis=1))
+    in_slab = centroid[:, 0] < 8e-3
+    np.testing.assert_allclose(s.eps_nn[in_slab], 4.0 * (1 - 0.03j))
+    uv = s.frame[:2, :2]  # rows: u, v in (x, y)
+    expected = uv @ np.diag(4.0 * (1 - 1j * np.array([0.01, 0.02]))) @ uv.T
+    tangential = s.eps_tt[in_slab]
+    np.testing.assert_allclose(tangential, np.broadcast_to(expected, tangential.shape))
+
+
 def test_every_outer_edge_is_on_the_pec_walls(slab_model):
     s = port_section(slab_model, slab_model.ports[0])
     edges = np.sort(s.triangles[:, [[0, 1], [1, 2], [2, 0]]].reshape(-1, 2), axis=1)

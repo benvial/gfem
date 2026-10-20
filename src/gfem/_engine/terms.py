@@ -9,7 +9,8 @@ electric field E (volts per file unit) is
 with k0 = ω scale / c, the wavenumber per file unit, and the pieces
 
 - ``curl_curl``, θ = 1: ∫ mu_r^-1 curl E · curl v;
-- ``mass``, θ = -k0²: ∫ eps_r (1 - i tan_delta) E · v;
+- ``mass``, θ = -k0²: ∫ eps_r (1 - i tan_delta) E · v (per principal axis
+  for a per-axis `Material`);
 - ``conductivity``, θ = i k0: ∫ eta0 sigma scale E · v;
 - ``absorbing``, θ = i k0: ∫ sqrt(eps_r / mu_r) E_t · v_t on every
   absorbing surface (real parts of the adjacent element's values);
@@ -45,6 +46,7 @@ from gfem._engine.coefficients import (
     coefficient,
     element_tensors,
     element_values,
+    lossy_eps,
     surface_p0,
 )
 from gfem._engine.domain import boundary_region
@@ -249,7 +251,7 @@ def pieces(
     dx = quadrature.dx(order)
     active = model._domain.active  # noqa: SLF001
 
-    eps = element_tensors(model, "eps_r") * _loss(model)
+    eps = lossy_eps(model)
     nu = coefficient(built, _inverse(element_tensors(model, "mu_r")))
     eps_cf = coefficient(built, eps)
     out = [
@@ -300,13 +302,6 @@ def pieces(
     for data in ports:
         out.extend(_port(built, order, data))
     return out
-
-
-def _loss(model: Model) -> np.ndarray:
-    """The factor 1 - i tan_delta per tetrahedron, shaped like eps_r."""
-    factor = 1.0 - 1j * element_values(model, "tan_delta").real
-    eps = element_tensors(model, "eps_r")
-    return factor if eps.ndim == 1 else factor[:, None, None]
 
 
 def _absorbing_coefficients(

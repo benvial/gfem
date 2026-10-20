@@ -65,6 +65,26 @@ def test_anisotropic_material_takes_three_principal_values_and_orthonormal_axes(
         gfem.Material(eps_r=(1.0, 2.0, 3.0), axes=((1, 0, 0), (1, 1, 0), (0, 0, 1)))
 
 
+def test_loss_tangent_takes_three_values_along_the_axes():
+    # sapphire: Palace's LossTan is one value per principal axis, like eps_r
+    m = gfem.Material(
+        eps_r=(9.3, 9.3, 11.5),
+        tan_delta=np.array([3e-5, 3e-5, 8.6e-5]),
+        axes=((0.8, 0.6, 0), (-0.6, 0.8, 0), (0, 0, 1)),
+    )
+    assert m.tan_delta == (3e-5, 3e-5, 8.6e-5)
+    assert not m.isotropic
+    assert not gfem.Material(eps_r=4.0, tan_delta=(0.0, 0.0, 1e-3)).isotropic
+    hash(m)
+    with pytest.raises(ValueError, match="three"):
+        gfem.Material(tan_delta=(1e-3, 2e-3))
+    with pytest.raises(ValueError, match="passive") as err:
+        gfem.Material(tan_delta=(1e-3, -1e-4, 0.0))
+    assert "tan_delta" in str(err.value)
+    with pytest.raises(ValueError, match="isotropic"):
+        gfem.MaterialField.uniform("r", gfem.Material(tan_delta=(0.0, 0.0, 1e-3)))
+
+
 def test_material_conductivity_is_documented_as_electrical():
     assert "electrical" in gfem.Material.__doc__
     assert "S/m" in gfem.Material.__doc__

@@ -160,7 +160,7 @@ def test_boundaries_ports_and_exclusions_round_trip(tmp_path):
             "a": gfem.Material(
                 eps_r=(2.0, 3.0, 4.0),
                 axes=((0, 1, 0), (1, 0, 0), (0, 0, 1)),
-                tan_delta=1e-3,
+                tan_delta=(1e-3, 2e-3, 3e-5),
                 name="sapphire",
             ),
             "b": gfem.Material(eps_r=1.0, conductivity=2.5, thermal_conductivity=1.4),

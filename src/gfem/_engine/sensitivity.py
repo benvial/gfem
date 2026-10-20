@@ -168,6 +168,10 @@ def _d_c2_d_mu(v: Values) -> np.ndarray:
 #: The property-to-form-term table: ``(form, property) -> coefficients``.
 #: A ``(form, property)`` pair absent here is read by no term the kernel
 #: can differentiate.
+#: Rows read isotropic element values: design inputs are `MaterialField`
+#: leaves, which are isotropic. A `Material` with per-axis eps_r / tan_delta
+#: is a constant (its tensor enters the forward pieces only), and the values
+#: its elements show here (means) are never differentiated.
 FORM_TERMS: dict[tuple[str, str], tuple[Coefficient, ...]] = {
     # a(u, v) = eps0 int Re(eps_r) grad u . grad v
     ("electrostatic", "eps_r"): (

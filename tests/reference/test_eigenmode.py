@@ -45,6 +45,9 @@ import gfem
 THREADS = 4
 #: The ticket's parity tolerances (relative), on Re f and Q.
 PARITY_F, PARITY_Q = 1e-5, 1e-3
+#: Palace's run on the imported mesh (``Model.RefineCrackElements`` false:
+#: no local bisection next to the PEC sheet), beside the original run.
+SAME_MESH = "palace_nobisect"
 #: gfem on the reference meshes: (Re f in Hz, Q) per mode, nearest the target
 #: first.
 GOLDEN = {
@@ -76,7 +79,7 @@ def _model(case: Path) -> tuple[gfem.Model, dict]:
         material = gfem.Material(
             eps_r=m["Permittivity"],
             mu_r=m.get("Permeability", 1.0),
-            tan_delta=float(np.mean(m.get("LossTan", 0.0))),
+            tan_delta=_per_axis(m.get("LossTan", 0.0)),
             axes=m.get("MaterialAxes"),
         )
         for tag in m["Attributes"]:
@@ -102,9 +105,17 @@ def _model(case: Path) -> tuple[gfem.Model, dict]:
     return model, config
 
 
+def _per_axis(value: float | list[float]) -> float | tuple[float, ...]:
+    return tuple(value) if isinstance(value, list) else float(value)
+
+
 def _palace(case: Path) -> tuple[np.ndarray, np.ndarray]:
-    """Palace's eig.csv and port-Q.csv rows."""
-    out = case / "output" / "palace"
+    """eig.csv and port-Q.csv rows of Palace's run on the imported mesh."""
+    out = case / "output" / SAME_MESH
+    if not (out / "eig.csv").exists():
+        pytest.skip(f"no Palace run without bisection in {out}")
+    stdout = (out / "palace.stdout").read_text()
+    assert "local bisection" not in stdout
     eig = np.loadtxt(out / "eig.csv", delimiter=",", skiprows=1, ndmin=2)
     q_port = np.loadtxt(out / "port-Q.csv", delimiter=",", skiprows=1, ndmin=2)
     return eig, q_port

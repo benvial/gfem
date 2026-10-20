@@ -188,6 +188,31 @@ def test_lossy_line_is_passive(mesh):
     assert np.linalg.svd(s, compute_uv=False).max() < 1 - 1e-3
 
 
+def test_per_axis_loss_tangent_acts_along_its_axis(mesh):
+    # the TEM field is E_z: only the principal values along z (the second
+    # axis here) load the line, as an isotropic material with those values
+    # would (up to the discrete field's small E_x / E_y part)
+    def model(material):
+        return gfem.Model(
+            mesh,
+            materials={"dielectric": material},
+            boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+            ports=[
+                gfem.LumpedPort("p1", "port1", "+z"),
+                gfem.LumpedPort("p2", "port2", "+z"),
+            ],
+        )
+
+    per_axis = gfem.Material(
+        eps_r=(3.0, EPS, 6.0),
+        tan_delta=(0.2, 0.02, 0.1),
+        axes=((0, 1, 0), (0, 0, 1), (1, 0, 0)),
+    )
+    s = np.asarray(_s(model(per_axis)).s.values)
+    isotropic = np.asarray(_s(model(gfem.Material(eps_r=EPS, tan_delta=0.02))).s.values)
+    np.testing.assert_allclose(s, isotropic, atol=1e-5)
+
+
 def test_bddc_gmres_is_the_default_and_matches_direct(line):
     problem = gfem.Driven(frequency=[3e9, 4e9])
     direct = np.asarray(_s(line, problem).s.values)

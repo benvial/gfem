@@ -785,7 +785,9 @@ class EigenmodeResult:
             region of the solve domain, by region name: the fraction of the
             mode's electric energy ``E`` stored in it (Palace's
             ``domain-E.csv`` ratios). Times the region's ``tan_delta``, it
-            is the region's contribution to ``1 / Q``.
+            is the region's contribution to ``1 / Q`` (for a per-axis
+            ``tan_delta`` that holds only if the field lies along one
+            principal axis).
         e_fields: The mode fields, one `Field` per mode (read them with
             `e_field`): peak phasors in V/m, quantity ``"E"``, on H(curl)
             of the solve order over the solve domain, each with its mode's
