@@ -225,6 +225,7 @@ class EigenmodeRule:
                 symmetry="complex_symmetric",
                 kind=self.kind,
                 device=opts.device,
+                threads=opts.threads,
                 tolerance=min(opts.tolerance, _INNER * opts.eigen_tolerance),
                 width=1,
             )

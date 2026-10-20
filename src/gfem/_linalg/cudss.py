@@ -15,6 +15,9 @@ This is the only module that imports nvmath.
 
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
+
 import numpy as np
 import scipy.sparse as sp
 
@@ -28,6 +31,32 @@ def _nvmath():
     import nvmath.sparse.advanced as nsa
 
     return nsa
+
+
+_THREADING_LAYER = "libcudss_mtlayer_gomp.so.0"
+
+
+def _nvidia_roots() -> list[Path]:
+    """Directories of the ``nvidia`` namespace package, where the wheels unpack."""
+    try:
+        spec = importlib.util.find_spec("nvidia")
+    except (ImportError, ValueError):
+        return []
+    return [Path(p) for p in (spec.submodule_search_locations or [])] if spec else []
+
+
+def threading_layer() -> str | None:
+    """The cuDSS OpenMP threading layer of the installed wheel, or ``None``.
+
+    Looks in ``nvidia/cu13/lib`` then ``nvidia/cu12/lib`` (the two wheel
+    layouts); ``None`` when neither holds it, and cuDSS plans on one thread.
+    """
+    for root in _nvidia_roots():
+        for layout in ("cu13", "cu12"):
+            path = root / layout / "lib" / _THREADING_LAYER
+            if path.is_file():
+                return str(path)
+    return None
 
 
 def _free_device_memory(device_id: int) -> int:
@@ -87,8 +116,13 @@ class CudssHandle(NgsHandle):
         is_complex: bool,
         device_id: int = 0,
         width: int = 1,
+        threads: int | None = None,
     ) -> None:
-        """Factorize an assembled NGSolve matrix on GPU ``device_id``."""
+        """Factorize an assembled NGSolve matrix on GPU ``device_id``.
+
+        ``threads=1`` keeps cuDSS's host-side planning on one thread; otherwise
+        it uses the wheel's threading layer when there is one.
+        """
         if symmetry == "general":
             self._refuse()
         if width < 1:
@@ -103,12 +137,19 @@ class CudssHandle(NgsHandle):
         self._lower = lower_triangle(full.astype(self._dtype), self._free)
         self.width = width
         self.device_id = device_id
+        self._multithreading_lib = None if threads == 1 else threading_layer()
         self.hybrid_memory = False
         self._solver = self._factorize()
 
     @classmethod
     def from_operator(
-        cls, operator: Operator, symmetry: Symmetry, *, device_id: int, width: int
+        cls,
+        operator: Operator,
+        symmetry: Symmetry,
+        *,
+        device_id: int,
+        width: int,
+        threads: int | None = None,
     ) -> CudssHandle:
         """Assemble and factorize on the GPU (see `gfem._linalg.prepare`)."""
         if symmetry == "general":
@@ -122,6 +163,7 @@ class CudssHandle(NgsHandle):
             is_complex=bool(form.space.is_complex),
             device_id=device_id,
             width=width,
+            threads=threads,
         )
 
     @staticmethod
@@ -146,6 +188,7 @@ class CudssHandle(NgsHandle):
         options = nsa.DirectSolverOptions(
             sparse_system_type=matrix_type,
             sparse_system_view=nsa.DirectSolverMatrixViewType.LOWER,
+            multithreading_lib=self._multithreading_lib,
         )
         execution = nsa.ExecutionCUDA(
             device_id=self.device_id,
