@@ -35,6 +35,7 @@ import scipy.constants as const
 from jax.core import Tracer
 
 from gfem._adjoint.measure import measure
+from gfem._checks import check_fixed
 from gfem._materials import Material
 from gfem._pytree import register_fields
 from gfem.conventions import MODE_ENERGY
@@ -537,6 +538,7 @@ def characteristic_impedance(mode: PortModeResult, voltage_path: Any) -> jax.Arr
         TypeError: ``mode`` is not a `gfem.PortModeResult`.
         ValueError: The path is malformed or leaves the port plane, or
             ``mode`` carries no field (a driven result without kept fields).
+        NonDifferentiableError: ``voltage_path`` is traced by JAX.
     """
     from gfem._sweep.port_mode import path_voltage
     from gfem.results import PortModeResult
@@ -546,8 +548,7 @@ def characteristic_impedance(mode: PortModeResult, voltage_path: Any) -> jax.Arr
             "characteristic_impedance needs a gfem.PortModeResult, got "
             f"{type(mode).__name__}."
         )
-    if _traced(voltage_path):
-        raise ValueError("voltage_path must be fixed numbers, not JAX tracers.")
+    check_fixed(voltage_path, "voltage_path must be fixed numbers")
     path = np.asarray(voltage_path, dtype=float)
     if path.ndim != 2 or path.shape[1] != 3 or len(path) < 2:
         raise ValueError(

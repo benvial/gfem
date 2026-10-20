@@ -16,7 +16,7 @@ from typing import Any, ClassVar
 import jax
 import numpy as np
 
-from gfem._checks import is_traced
+from gfem._checks import check_fixed
 
 __all__ = ["Driven", "Eigenmode", "Electrostatic", "PortMode"]
 
@@ -126,8 +126,7 @@ jax.tree_util.register_static(Electrostatic)
 
 
 def _frequencies(value: Any, owner: str = "PortMode") -> tuple[float, ...]:
-    if is_traced(value):
-        raise ValueError(f"{owner}.frequency must be fixed numbers, not traced.")
+    check_fixed(value, f"{owner}.frequency must be fixed numbers")
     try:
         f = np.asarray(value, dtype=float)
     except (TypeError, ValueError):
@@ -174,6 +173,7 @@ class PortMode:
         TypeError: ``port`` is not a name.
         ValueError: A frequency is not finite and positive, or ``mode`` is
             not an integer >= 1.
+        NonDifferentiableError: ``frequency`` is traced by JAX.
 
     `gfem.solve` raises `PortModeError` when the mode is below cutoff
     somewhere in the band (naming the estimated cutoff) or degenerate, and
@@ -290,6 +290,8 @@ class Driven:
             given without ``sweep="adaptive"``, is empty or repeats a
             frequency, or a ``samples`` or ``keep_fields`` frequency is not one
             of ``frequency``.
+        NonDifferentiableError: ``frequency``, ``samples`` or
+            ``keep_fields`` is traced by JAX.
 
     Example:
         ``gfem.Driven(frequency=np.linspace(1e9, 100e9, 100))``
@@ -336,8 +338,7 @@ class Driven:
 def _kept(value: Any, frequencies: tuple[float, ...]) -> bool | tuple[float, ...]:
     if isinstance(value, (bool, np.bool_)):
         return bool(value)
-    if is_traced(value):
-        raise ValueError("Driven.keep_fields must be fixed frequencies, not traced.")
+    check_fixed(value, "Driven.keep_fields must be fixed frequencies")
     try:
         wanted = np.asarray(value, dtype=float).reshape(-1)
     except (TypeError, ValueError):
@@ -358,8 +359,7 @@ def _samples(
             "Driven.samples freezes the samples of an adaptive sweep; pass "
             "sweep='adaptive' with it."
         )
-    if is_traced(value):
-        raise ValueError("Driven.samples must be fixed frequencies, not traced.")
+    check_fixed(value, "Driven.samples must be fixed frequencies")
     try:
         wanted = np.asarray(value, dtype=float).reshape(-1)
     except (TypeError, ValueError):
@@ -433,6 +433,7 @@ class Eigenmode:
     Raises:
         ValueError: ``target`` is not a finite positive number, or
             ``n_modes`` is not an integer >= 1.
+        NonDifferentiableError: ``target`` is traced by JAX.
 
     `gfem.solve` raises `gfem.EigenmodeConvergenceError` when fewer than
     ``n_modes`` modes converge (never a partial result), and
@@ -450,8 +451,7 @@ class Eigenmode:
 
     def __init__(self, target: float, n_modes: int = 1) -> None:
         """Validate and normalize (see the class docstring)."""
-        if is_traced(target):
-            raise ValueError("Eigenmode.target must be a fixed number, not traced.")
+        check_fixed(target, "Eigenmode.target must be a fixed number")
         try:
             value = float(target)
         except (TypeError, ValueError):

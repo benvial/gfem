@@ -34,12 +34,14 @@ class RegionNotFoundError(LookupError):
         self.name = name
 
 
-class NonDifferentiableError(TypeError):
+class NonDifferentiableError(TypeError, ValueError):
     """A gradient was asked of something gfem does not differentiate.
 
     The message names the quantity, the reason and the remedy. To use such a
     value in an objective without its derivative, wrap it in
-    `jax.lax.stop_gradient`.
+    `jax.lax.stop_gradient`. Fixed physics values (a problem's frequencies,
+    a port's direction) raise it when JAX traces them; it is also a
+    `ValueError`, so a handler for invalid values still catches those.
     """
 
 

@@ -20,6 +20,25 @@ def is_traced(value: Any) -> bool:
     return False
 
 
+def check_fixed(value: Any, what: str) -> None:
+    """Raise if ``value``, a fixed physics value, is traced by JAX.
+
+    Args:
+        value: The user's value.
+        what: The requirement, e.g. ``"Driven.frequency must be fixed
+            numbers"``.
+
+    Raises:
+        NonDifferentiableError: ``value`` is traced by JAX.
+    """
+    if is_traced(value):
+        raise NonDifferentiableError(
+            f"{what}, not traced by JAX: gfem does not differentiate with respect "
+            "to it. Build it from concrete values, outside the function JAX "
+            "transforms."
+        )
+
+
 def static_float(value: Any, what: str, remedy: str) -> float:
     """A finite host float, or a physics error.
 
