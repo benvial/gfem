@@ -2,11 +2,14 @@
 
 The system is affine in frequency,
 
-    A(ω) = Σ_k θ_k(ω) A_k,    B(ω) = Σ_j E_j φ_j(ω),    y(ω) = Σ_j ψ_j(ω) L_jᵀ x,
+    A(ω) = Σ_k θ_k(ω) A_k + Σ_c U_c C_c(ω) U_cᵀ,
+    B(ω) = Σ_j E_j φ_j(ω),    y(ω) = Σ_j ψ_j(ω) L_jᵀ x,
 
 with every A_k frequency-independent and complex symmetric (A_kᵀ = A_k),
-E_j and L_j blocks of full-length vectors and θ_k, φ_j, ψ_j scalars or
-small matrices of ω. One column of B per excitation.
+U_c, E_j and L_j blocks of full-length vectors and θ_k, C_c, φ_j, ψ_j
+scalars or small matrices of ω. The low-rank terms U_c C_c Uᵀ_c (a wave
+port's modal correction) are never assembled: the reduced model keeps
+Vᵀ U_c. One column of B per excitation.
 
 The sweep solves the full system at a few grid frequencies (all excitations
 in one call) and projects it on a real orthonormal basis V of the real and
@@ -20,6 +23,13 @@ solutions over the excitations. The sweep has converged when ``memory``
 consecutive samples fall below ``tolerance`` or the grid is used up; it
 stops with `gfem.SweepNotConvergedWarning` at ``max_samples``. Outputs at
 every grid frequency come from the reduced model.
+
+Adjoint loads (``AffineSystem.adjoint_loads``): output functionals whose
+adjoint ``A^-T g`` the solutions do not span (an output not parallel to
+any excitation). Each sample solves them with the excitations and adds
+their solutions to the basis, so at a sample the Galerkin adjoint is exact
+like the solution, and a gradient with the basis held fixed equals the
+full solve's there.
 
 Pure NumPy: the engine supplies the full solve and the piece products.
 Excitations and outputs are sums of blocks with frequency-dependent
@@ -72,9 +82,14 @@ class AffineSystem:
         apply: ``(k, X) -> A_k X`` for a real ``(N, m)`` block ``X``.
         excitation: The right-hand side terms (one column per excitation).
         outputs: The output terms.
-        solve: ``(ω, B, x0) -> X``: the full solve at ω for the right-hand
-            sides ``B`` ``(N, n_excitations)``, from the initial guess
-            ``x0`` (``None`` for none).
+        solve: ``(ω, B, x0) -> X``: the full solve at ω (low-rank terms
+            included) for the right-hand sides ``B`` ``(N, n_excitations)``,
+            from the initial guess ``x0`` (``None`` for none).
+        corrections: Low-rank operator terms ``U C(ω) Uᵀ``: ``vectors`` is
+            ``U`` ``(N, p)``, ``coefficients`` ``ω -> (p, p)``.
+        adjoint_loads: ``ω -> (N, q)``: loads solved at each sample with the
+            excitations (``q`` may be 0), their solutions added to the basis
+            (see the module docstring); ``None`` for none.
     """
 
     thetas: Sequence[Callable[[float], complex]]
@@ -82,6 +97,8 @@ class AffineSystem:
     excitation: Sequence[AffineTerm]
     outputs: Sequence[AffineTerm]
     solve: Callable[[float, np.ndarray, np.ndarray | None], np.ndarray]
+    corrections: Sequence[AffineTerm] = ()
+    adjoint_loads: Callable[[float], np.ndarray] | None = None
 
     def rhs(self, omega: float) -> np.ndarray:
         """The right-hand sides at ω, ``(N, n_excitations)``."""
@@ -105,6 +122,10 @@ class ReducedModel:
         self.excitation = [np.zeros((0, t.vectors.shape[1])) for t in system.excitation]
         #: L_jᵀ V per output term.
         self.outputs = [np.zeros((t.vectors.shape[1], 0)) for t in system.outputs]
+        #: Vᵀ U_c per low-rank operator term.
+        self.corrections = [
+            np.zeros((0, t.vectors.shape[1])) for t in system.corrections
+        ]
 
     @property
     def size(self) -> int:
@@ -154,16 +175,28 @@ class ReducedModel:
             np.hstack([r, t.vectors.T @ new])
             for r, t in zip(self.outputs, self.system.outputs, strict=True)
         ]
+        self.corrections = [
+            np.vstack([r, new.T @ t.vectors])
+            for r, t in zip(self.corrections, self.system.corrections, strict=True)
+        ]
         self.basis = basis
         return new.shape[1]
 
-    def coordinates(self, omega: float) -> np.ndarray:
-        """Reduced solution at ω, ``(n, n_excitations)``: V y is the field."""
+    def matrix(self, omega: float) -> np.ndarray:
+        """The reduced operator ``Vᵀ A(ω) V``, ``(n, n)``, low-rank terms included."""
         system = self.system
         matrix = sum(
             complex(theta(omega)) * a
             for theta, a in zip(system.thetas, self.operators, strict=True)
         )
+        for r, t in zip(self.corrections, system.corrections, strict=True):
+            matrix = matrix + r @ np.asarray(t.coefficients(omega)) @ r.T
+        return np.asarray(matrix)
+
+    def coordinates(self, omega: float) -> np.ndarray:
+        """Reduced solution at ω, ``(n, n_excitations)``: V y is the field."""
+        system = self.system
+        matrix = self.matrix(omega)
         rhs = sum(
             r @ np.asarray(t.coefficients(omega))
             for r, t in zip(self.excitation, system.excitation, strict=True)
@@ -246,11 +279,28 @@ def adaptive_sweep(
         guess = None
         if model.size:
             guess = model.basis @ model.coordinates(omega)
-        x = np.asarray(system.solve(omega, system.rhs(omega), guess))
+        rhs = system.rhs(omega)
+        width = rhs.shape[1]
+        loads = None
+        if system.adjoint_loads is not None:
+            loads = np.asarray(system.adjoint_loads(omega))
+        if loads is not None and loads.shape[1]:
+            # one solve: the loads are extra columns, from a zero guess
+            x0 = None
+            if guess is not None:
+                x0 = np.concatenate([guess, np.zeros(loads.shape, complex)], axis=1)
+            both = np.asarray(
+                system.solve(omega, np.concatenate([rhs, loads], axis=1), x0)
+            )
+            x, duals = both[:, :width], both[:, width:]
+        else:
+            x, duals = np.asarray(system.solve(omega, rhs, guess)), None
         error = math.inf
         if measure and guess is not None:
             error = _error(x, guess)
         model.extend(x)
+        if duals is not None:
+            model.extend(duals)
         snapshots.append(model.basis.T @ x)
         chosen.append(i)
         errors.append(error)

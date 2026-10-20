@@ -54,7 +54,7 @@ from gfem.options import SolverOptions
 from gfem.problems import PortMode
 from gfem.results import PortModeField, PortModeResult
 
-__all__ = ["PortModeRule", "PortModeSweep", "port_mode_sweep"]
+__all__ = ["PortModeRule", "PortModeSweep", "path_voltage", "port_mode_sweep"]
 
 # The shift is this factor above the largest bulk (Re eps)(Re mu), as in Palace.
 _TARGET = 1.1
@@ -71,6 +71,10 @@ _FLOOR = 10.0
 _AMBIGUOUS = 0.05
 # Relative distance of two propagation constants that are one degenerate mode.
 _DEGENERATE = 1e-8
+# A surface impedance on the port's edges (the internal inductance of a
+# conductor, an inductive sheet) slows the mode beyond the bulk wavenumber;
+# propagating candidates may then reach this multiple of it.
+_SLOW_WAVE = 2.0
 # With at most this many frequencies every one is solved exactly.
 _EXACT_ONLY = 3
 # A new mode adds its part orthogonal to the basis unless that part is below
@@ -649,7 +653,7 @@ class _Reduced:
         The backward error is infinite when no pair qualifies or two overlap
         ``ref`` almost equally.
         """
-        theta = (1.0, -(k0**2), 1j * k0)
+        theta = self.space.pencil.theta(k0)
         n = self.size
         ar = np.zeros((n, n), complex)
         br = np.zeros((n, n), complex)
@@ -679,7 +683,7 @@ class _Reduced:
         return lam_i, y_i, self._backward_error(theta, lam_i, y_i)
 
     def _backward_error(
-        self, theta: tuple[float, float, complex], lam: complex, y: np.ndarray
+        self, theta: tuple[complex, ...], lam: complex, y: np.ndarray
     ) -> float:
         """``|A x - lam B x| / (|A x| + |lam| |B x|)`` of ``x = V y``, exactly."""
         n = self.size
@@ -706,11 +710,18 @@ def _overlaps(mass, x_ref: np.ndarray, vecs: np.ndarray) -> np.ndarray:
 
 
 def _wavenumbers(section: PortSection, frequency: float) -> tuple[float, float, float]:
-    """``k0``, the largest bulk wavenumber and the shift, per local unit."""
+    """``k0``, the largest propagating wavenumber and the shift, per local unit.
+
+    The largest wavenumber is the largest bulk one, times `_SLOW_WAVE` when
+    `Conductor` or `Impedance` edges can slow the mode down.
+    """
     k0_si = 2 * math.pi * frequency / scipy.constants.c
     k0 = k0_si * section.scale
     n2_shift, n2_max = section.index_squared(float(section.sigma.max()) * _Z0 / k0_si)
-    return k0, math.sqrt(n2_max) * k0, -_TARGET * n2_shift * k0**2
+    k_max = math.sqrt(n2_max) * k0
+    if len(section.impedance_terms):
+        k_max *= _SLOW_WAVE
+    return k0, k_max, -_TARGET * n2_shift * k0**2
 
 
 def _voltage_functional(
@@ -722,9 +733,14 @@ def _voltage_functional(
     return np.einsum("kpc,pc->k", e, wts)
 
 
-def _voltage_rule(section: PortSection) -> tuple[np.ndarray, np.ndarray]:
-    """Plane points and weights (local direction x length, m) of the path."""
-    path = np.asarray(section.port.voltage_path, float)
+def _voltage_rule(
+    section: PortSection, path: np.ndarray | None = None
+) -> tuple[np.ndarray, np.ndarray]:
+    """Plane points and weights (local direction x length, m) of a path.
+
+    ``path`` defaults to the wave port's ``voltage_path``.
+    """
+    path = np.asarray(section.port.voltage_path if path is None else path, float)
     _local, dist = section.to_local(path)
     if (np.abs(dist) > 1e-5 * section.diameter).any():
         raise ValueError(
@@ -740,3 +756,11 @@ def _voltage_rule(section: PortSection) -> tuple[np.ndarray, np.ndarray]:
             pts.append(section.to_local(p + np.outer(s, q - p))[0])
             wts.append(np.outer(w / (2 * _PIECES), d_local))
     return np.concatenate(pts), np.concatenate(wts)
+
+
+def path_voltage(
+    space: PortModeSpace, basis: np.ndarray, coords: np.ndarray, path: np.ndarray
+) -> np.ndarray:
+    """``V = int E . dl`` along ``path`` (m) of each field ``basis @ coords[i]``."""
+    rule = _voltage_rule(space.section, path)
+    return coords @ _voltage_functional(space, basis, rule)

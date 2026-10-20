@@ -238,9 +238,18 @@ class Driven:
     incident power while every other port is terminated in its own
     impedance, and the electric field solves the time-harmonic Maxwell
     equations (e^{+iωt}) in the electromagnetic solve domain. The result is
-    the scattering matrix (power waves, each port's reference impedance its
-    resistance; see `gfem.NetworkParameters`) and, on request, the electric
-    fields (see `gfem.conventions` for their amplitude).
+    the scattering matrix (power waves, each lumped port's reference
+    impedance its resistance; see `gfem.NetworkParameters`) and, on request,
+    the electric fields (see `gfem.conventions` for their amplitude).
+
+    A `WavePort` is fed by its port mode: before the 3D solve, a port mode
+    sweep (`gfem.PortMode`) tabulates each wave port's mode over the
+    frequencies, to ``SolverOptions.port_mode_tolerance``; the port face
+    carries Palace's port boundary (a boundary term at the mode's real
+    wavenumber plus a rank-two modal correction, so the port absorbs its
+    own mode without reflection, hybrid modes included), S is the field's
+    projection on the mode, and ``WavePort(offset=...)`` de-embeds it. The
+    modes are on the result (``DrivenResult.port_modes``).
 
     Args:
         frequency: One frequency or a 1D sequence of them, Hz.
@@ -403,6 +412,16 @@ class Eigenmode:
     ``|omega| / (2 Im omega)``. The `n_modes` modes whose frequency
     ``Re omega / 2 pi`` is nearest ``target`` are returned, nearest first.
 
+    A `Conductor` (its surface impedance grows as the square root of the
+    frequency) or a second-order `Absorbing` boundary (a term in 1 /
+    frequency) makes the eigenproblem nonlinear. The modes are then seeded
+    with those factors frozen at ``target`` and each one is refined on the
+    exact frequency dependence (residual inverse iteration on the
+    factorization the seed already made), so frequency and Q do not depend
+    on ``target``. Conductor and radiation losses must be perturbations
+    (Q above about 5); for a strongly radiating structure, find the
+    resonance from a `gfem.Driven` sweep.
+
     Lumped ports are terminations here: nothing is excited. A port with a
     resistance gets a coupling Q, a port with an inductance a participation
     ratio (see `gfem.EigenmodeResult`).
@@ -417,9 +436,9 @@ class Eigenmode:
 
     `gfem.solve` raises `gfem.EigenmodeConvergenceError` when fewer than
     ``n_modes`` modes converge (never a partial result), and
-    NotImplementedError for a `WavePort`, a `Conductor` or a second-order
-    `Absorbing` boundary, whose frequency dependence this version cannot
-    solve for.
+    NotImplementedError for a `WavePort` (its propagation constant would
+    have to be solved at the complex eigenfrequency): replace it with a
+    `LumpedPort` of the line impedance, or use a `gfem.Driven` sweep.
 
     Example:
         ``gfem.Eigenmode(target=5e9, n_modes=2)``

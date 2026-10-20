@@ -24,17 +24,31 @@ with k0 = ω scale / c, the wavenumber per file unit, and the pieces
   ∫ E_t · v_t times eta0 / R_s, mu0 scale / L_s, C_s / (eps0 scale), its R,
   L and C per square.
 
-Each θ is a closed-form scalar function of ω and each a_k is assembled
-without ω, so an adaptive sweep can project the pieces once. A term that
-cannot be written this way is not a `Piece`: constructing one raises.
+- a wave port, θ = i beta(ω) per file unit (the real part of its mode's
+  propagation constant, tabulated on the output grid by the port mode
+  sweep, see `Tabulated`): ∫ mu_r^-1 E_t · v_t on the port surface.
+
+Each θ is a closed-form scalar function of ω, or a table over the output
+grid filled before the solve, and each a_k is assembled without ω, so an
+adaptive sweep can project the pieces once. A term that cannot be written
+this way is not a `Piece`: constructing one raises.
+
+Each piece declares its frequency class. Most θ are polynomials of degree
+at most 2 in ω (``"polynomial"``); a conductor's θ (through Z_s, which
+grows as the square root of ω) and the second-order absorbing term's (a
+pole at ω = 0) are not (``"nonpolynomial"``). A nonpolynomial piece also
+supplies dθ/dω, and both are analytic in ω, so they hold at the complex
+frequencies of an eigenmode problem (an eigenmode seed linearizes θ
+around its shift with both).
 """
 
 from __future__ import annotations
 
+import cmath
 import dataclasses
 import math
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 import ngsolve as ngs
 import numpy as np
@@ -60,6 +74,7 @@ __all__ = [
     "LumpedElement",
     "LumpedPortData",
     "Piece",
+    "Tabulated",
     "absorbing_faces",
     "excitation_per_voltage",
     "face_owner",
@@ -67,6 +82,8 @@ __all__ = [
     "pieces",
     "port_vectors",
     "surface_impedance",
+    "surface_impedance_slope",
+    "wave_port_piece",
     "wavenumber",
 ]
 
@@ -75,11 +92,42 @@ ETA0 = const.mu_0 * const.c
 _PROBE = 2 * math.pi * 1e9
 #: |d . n| above which a port direction is not tangent to its surface.
 _TANGENT = 1e-6
+#: Re(h / (2 delta)) above which a metal film is thick to machine precision.
+_THICK = 25.0
+#: |h / (2 delta)| below which the film slope uses its series.
+_SMALL = 1e-4
 
 
 def wavenumber(omega: float, scale: float) -> float:
     """k0 in radians per mesh file unit."""
     return omega * scale / const.c
+
+
+class Tabulated:
+    """A θ(ω) known on a grid of angular frequencies only.
+
+    A pre-stage (the port mode sweep) fills it for every output frequency
+    before the solve; the sweep never asks for another frequency.
+    """
+
+    def __init__(self, omegas: np.ndarray, values: np.ndarray) -> None:
+        """``values[i]`` is θ at ``omegas[i]`` (rad/s)."""
+        self.omegas = np.asarray(omegas, float)
+        self.values = np.asarray(values)
+
+    def __call__(self, omega: complex) -> complex:
+        """θ at a grid ω (matched to 1e-12 relative).
+
+        Raises:
+            ValueError: ``omega`` is not on the grid.
+        """
+        k = int(np.argmin(np.abs(self.omegas - omega)))
+        if abs(self.omegas[k] - omega) > 1e-12 * abs(omega):
+            raise ValueError(
+                f"A tabulated driven term has no value at {omega / (2 * math.pi):g} "
+                "Hz: it is known on the output grid only."
+            )
+        return complex(self.values[k])
 
 
 @dataclasses.dataclass(frozen=True)
@@ -90,18 +138,32 @@ class Piece:
         name: What the piece is (``"mass"``, ``"port p1 R"``, ...).
         theta: θ(ω), a complex scalar for an angular frequency in rad/s.
         integrand: ``(trial, test) -> integrals`` of the form, with no ω.
+        frequency_class: ``"polynomial"`` (θ a polynomial of degree at most
+            2 in ω) or ``"nonpolynomial"``.
+        d_theta: dθ/dω of a nonpolynomial piece (``None`` for a polynomial
+            one).
 
     Raises:
         ValueError: ``theta`` does not give one scalar: the term is not
-            affine in frequency.
+            affine in frequency; or a nonpolynomial piece without
+            ``d_theta``.
     """
 
     name: str
-    theta: Callable[[float], complex]
+    theta: Callable[[complex], complex]
     integrand: Callable[[Any, Any], Any]
+    frequency_class: Literal["polynomial", "nonpolynomial"] = "polynomial"
+    d_theta: Callable[[complex], complex] | None = None
 
     def __post_init__(self) -> None:
         """Check that θ is a scalar function of ω."""
+        if isinstance(self.theta, Tabulated):
+            if self.theta.values.ndim != 1 or not np.isfinite(self.theta.values).all():
+                raise ValueError(
+                    f"The driven term {self.name!r} is not tabulated as one finite "
+                    "scalar per frequency."
+                )
+            return
         value = np.asarray(self.theta(_PROBE))
         if value.ndim != 0 or not np.isfinite(value):
             raise ValueError(
@@ -109,14 +171,18 @@ class Piece:
                 "frequency-independent form times a scalar function of the "
                 "frequency), so gfem cannot sweep it."
             )
+        if self.frequency_class not in ("polynomial", "nonpolynomial"):
+            raise ValueError(f"Unknown frequency class {self.frequency_class!r}.")
+        if self.frequency_class == "nonpolynomial" and self.d_theta is None:
+            raise ValueError(f"The nonpolynomial term {self.name!r} needs d_theta.")
 
 
-def _constant(omega: float) -> complex:  # noqa: ARG001
+def _constant(omega: complex) -> complex:  # noqa: ARG001
     """θ = 1: a frequency-independent piece."""
     return 1.0
 
 
-def surface_impedance(sigma: float, thickness: float | None, omega: float) -> complex:
+def surface_impedance(sigma: float, thickness: float | None, omega: complex) -> complex:
     """Surface impedance of a metal, ohm per square (Palace's HFSS form).
 
     Thick metal: ``Z_s = (1 + i) / (sigma delta)`` with skin depth
@@ -125,20 +191,41 @@ def surface_impedance(sigma: float, thickness: float | None, omega: float) -> co
     (cosh v - cos v)``, ``v = h / delta``. For a thin film it tends to
     ``2 / (sigma h)``: each face of the film carries half its current.
 
+    Both are written as one analytic function of ω, ``Z_s = (g / sigma)
+    coth(g h / 2)`` with ``g = sqrt(i omega mu0 sigma) = (1 + i) / delta``
+    (principal root), so a complex ω (an eigenfrequency) continues them.
+
     Args:
         sigma: Conductivity, S/m.
         thickness: Thickness in m, or ``None`` for thick metal.
-        omega: Angular frequency, rad/s.
+        omega: Angular frequency, rad/s (complex for an eigenmode).
     """
-    delta = math.sqrt(2.0 / (const.mu_0 * sigma * omega))
-    real = imag = 1.0 / (sigma * delta)
+    g = cmath.sqrt(1j * omega * const.mu_0 * sigma)
+    z = g / sigma
     if thickness is not None:
-        v = thickness / delta
-        if v < 50:  # beyond, the correction is 1 to machine precision
-            den = math.cosh(v) - math.cos(v)
-            real *= (math.sinh(v) + math.sin(v)) / den
-            imag *= (math.sinh(v) - math.sin(v)) / den
-    return complex(real, imag)
+        u = 0.5 * g * thickness
+        if u.real < _THICK:  # beyond, coth u is 1 to machine precision
+            z /= cmath.tanh(u)
+    return complex(z)
+
+
+def surface_impedance_slope(
+    sigma: float, thickness: float | None, omega: complex
+) -> complex:
+    """``(omega / Z_s) dZ_s/domega``: 1/2 for thick metal, 0 for a thin film.
+
+    With ``u = g h / 2`` (see `surface_impedance`), ``(1 - 2 u / sinh 2u)
+    / 2``.
+    """
+    if thickness is None:
+        return 0.5
+    g = cmath.sqrt(1j * omega * const.mu_0 * sigma)
+    u = 0.5 * g * thickness
+    if u.real >= _THICK:
+        return 0.5
+    if abs(u) < _SMALL:  # 2u / sinh 2u = 1 - (2u)^2 / 6 + ...
+        return complex((2 * u) ** 2 / 12)
+    return complex(0.5 * (1 - 2 * u / cmath.sinh(2 * u)))
 
 
 # --- lumped ports ----------------------------------------------------------------
@@ -290,6 +377,8 @@ def pieces(
                     lambda u, v: (
                         curl_cf * ngs.curl(u).Trace() * ngs.curl(v).Trace() * ds
                     ),
+                    frequency_class="nonpolynomial",
+                    d_theta=lambda w: -1 / (2j * k(w) * w),
                 )
             )
 
@@ -380,13 +469,26 @@ def _conductor(
         def theta(w, h=h):
             return 1j * wavenumber(w, scale) * ETA0 / surface_impedance(sigma, h, w)
 
+        def d_theta(w, h=h):
+            # θ ∝ ω / Z_s: dθ/dω = θ (1 - (ω / Z_s) dZ_s/dω) / ω
+            slope = surface_impedance_slope(sigma, h, w)
+            return theta(w, h) * (1 - slope) / w
+
         if len(groups) == 1:
             integrand = form
         else:
             indicator = surface_p0(built, mask.astype(float))
             integrand = lambda u, v, c=indicator: form(u, v, c)  # noqa: E731
         name = f"conductor {b.surface}" + ("" if factor == 1.0 else " (one-sided)")
-        out.append(Piece(name, theta, integrand))
+        out.append(
+            Piece(
+                name,
+                theta,
+                integrand,
+                frequency_class="nonpolynomial",
+                d_theta=d_theta,
+            )
+        )
     return out
 
 
@@ -433,6 +535,40 @@ def _impedance(built: EngineMesh, order: int, b: Impedance) -> list[Piece]:
     form = _tangential(built, (b.surface,), order)
     sheet = (form, b.resistance, b.inductance, b.capacitance)
     return _rlc(f"impedance {b.surface}", built.scale, [sheet])
+
+
+def wave_port_piece(
+    model: Model,
+    built: EngineMesh,
+    order: int,
+    *,
+    port: str,
+    surface: str,
+    theta: Tabulated,
+) -> Piece:
+    """The Robin term of a wave port: θ ∫ mu_r^-1 E_t · v_t on its surface.
+
+    ``mu_r`` is that of the solve-domain element behind each face.
+
+    Raises:
+        NotImplementedError: An anisotropic ``mu_r`` touches the port.
+    """
+    mesh = model.mesh
+    owner = face_owner(model)
+    on = mesh.triangle_tags == mesh.region(surface).tag
+    mu = element_tensors(model, "mu_r")
+    if mu.ndim == 3:
+        if np.ptp(mu[owner[on]] - mu[owner[on]][:, :1, :1] * np.eye(3)) > 0:
+            raise NotImplementedError(
+                f"WavePort {port!r}: an anisotropic mu_r touches the port; driven "
+                "wave ports support isotropic permeability only."
+            )
+        mu = mu[:, 0, 0]
+    values = np.zeros(len(owner), np.result_type(mu, float))
+    values[on] = 1.0 / mu[owner[on]]
+    form = _tangential(built, (surface,), order)
+    coef = surface_p0(built, values)
+    return Piece(f"waveport {port}", theta, lambda u, v: form(u, v, coef))
 
 
 def excitation_per_voltage(resistance: float) -> float:

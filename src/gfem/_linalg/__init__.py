@@ -27,6 +27,9 @@ Backends:
   unusable device raises `gfem.DeviceUnavailableError`, never falls back to
   the CPU.
 
+`low_rank_update` wraps a handle of ``A`` into one of ``A + U C Uᵀ``
+(Woodbury, the update never assembled): wave ports' modal corrections.
+
 `factorize` gives a ``direct`` handle on a real symmetric SciPy matrix, for
 auxiliary systems assembled outside NGSolve.
 """
@@ -39,7 +42,16 @@ from typing import Literal, Protocol
 import ngsolve as ngs
 import numpy as np
 
-__all__ = ["KINDS", "Handle", "Kind", "Operator", "Symmetry", "factorize", "prepare"]
+__all__ = [
+    "KINDS",
+    "Handle",
+    "Kind",
+    "Operator",
+    "Symmetry",
+    "factorize",
+    "low_rank_update",
+    "prepare",
+]
 
 Symmetry = Literal["complex_symmetric", "hermitian", "general"]
 Kind = Literal["direct", "bddc_gmres", "cudss"]
@@ -176,3 +188,18 @@ def factorize(matrix) -> Handle:
     from gfem._linalg.direct import DirectHandle
 
     return DirectHandle.from_scipy(matrix)
+
+
+def low_rank_update(handle: Handle, vectors: np.ndarray, coefficients) -> Handle:
+    """A handle of ``A + U C Uᵀ`` from a handle of ``A`` (Woodbury).
+
+    See `gfem._linalg.lowrank`. The result owns ``handle``.
+
+    Args:
+        handle: The prepared base operator ``A``.
+        vectors: ``U``, ``(ndof, p)``, zero on the fixed DOFs.
+        coefficients: ``C``, ``(p, p)``.
+    """
+    from gfem._linalg.lowrank import LowRankUpdate
+
+    return LowRankUpdate(handle, vectors, coefficients)
