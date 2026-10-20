@@ -59,10 +59,9 @@ import scipy.constants
 from gfem._adjoint import adjoint_tolerance
 from gfem._boundaries import (
     PEC,
-    Conductor,
-    Impedance,
     LumpedPort,
     WavePort,
+    sheet_of,
     surfaces_of,
 )
 from gfem._engine import terms
@@ -1269,7 +1268,7 @@ def _sheet_ports(model: Model) -> dict[int, tuple[str, ...]]:
     mesh = model.mesh
     out = {}
     for i, b in enumerate(model.boundaries):
-        if not isinstance(b, (Conductor, Impedance)) or b.fill is None:
+        if sheet_of(b) is None:
             continue
         sheet = _edges(mesh.triangles[mesh.elements(b.surface)])
         ports = tuple(

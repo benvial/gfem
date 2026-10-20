@@ -23,10 +23,11 @@ import scipy.sparse as sp
 from gfem import _morph
 from gfem._boundaries import surfaces_of
 from gfem._checks import is_traced
+from gfem._pytree import readonly
 from gfem._sparse import Coo, coo, spd_solve
 from gfem.errors import MeshQualityError, MeshQualityWarning, RegionNotFoundError
 from gfem.mesh import LENGTH_UNITS, Mesh
-from gfem.model import Model
+from gfem.model import Model, check_surface
 
 __all__ = [
     "WARN_QUALITY_RATIO",
@@ -260,10 +261,10 @@ class BoundaryMorph:
             "_coupling": coo(coupling),
             "_free": coo(free.tocoo()),
             "_prescribed": coo(prescribed.tocoo()),
-            "_nodes": _readonly(nodes),
+            "_nodes": readonly(nodes),
             "n_params": len(nodes),
-            "points": _readonly(np.asarray(mesh.imported_nodes)[nodes]),
-            "normals": _readonly(normals),
+            "points": readonly(np.asarray(mesh.imported_nodes)[nodes]),
+            "normals": readonly(normals),
             "surface": surface,
             "extension": extension,
         }
@@ -321,12 +322,6 @@ class BoundaryMorph:
 
 
 jax.tree_util.register_static(BoundaryMorph)
-
-
-def _readonly(a: np.ndarray) -> np.ndarray:
-    a = np.array(a)
-    a.flags.writeable = False
-    return a
 
 
 def boundary_morph(
@@ -400,7 +395,9 @@ def boundary_morph(
         msg = f"fixed= takes a list or tuple of surface names, got {fixed!r}."
         raise TypeError(msg)
     for name in (moving, *fixed):
-        _check_surface(mesh, name)
+        check_surface(
+            mesh, name, "boundary_morph", " boundary_morph moves and holds surfaces."
+        )
     if moving in fixed:
         msg = f"Surface {moving!r} is both moving and fixed=; remove it from fixed."
         raise ValueError(msg)
@@ -454,18 +451,6 @@ def boundary_morph(
         free=free,
         stiffness=stiffness,
     )
-
-
-def _check_surface(mesh: Mesh, name: str) -> None:
-    if not isinstance(name, str):
-        msg = f"Surface names are strings, got {name!r}."
-        raise TypeError(msg)
-    if name in mesh.surfaces:
-        return
-    if name in mesh.volumes:
-        msg = f"{name!r} is a volume; boundary_morph moves and holds surfaces."
-        raise ValueError(msg)
-    raise RegionNotFoundError(name, mesh.surfaces, kind="surface")
 
 
 def _select(

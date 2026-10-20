@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import meshio
 import numpy as np
 
+from gfem._pytree import readonly
 from gfem.errors import RegionNotFoundError
 
 #: Supported ``length_unit`` values and their size in metres.
@@ -123,15 +124,15 @@ class Mesh:
         nodes = points * LENGTH_UNITS[length_unit]
         topology = _Topology(
             length_unit=length_unit,
-            imported_nodes=_readonly(nodes),
+            imported_nodes=readonly(nodes),
             regions=regions,
-            tetrahedra=_readonly(tets),
-            tet_tags=_readonly(tet_tags),
-            tet_entities=_readonly(tet_entities),
-            triangles=_readonly(tris),
-            tri_tags=_readonly(tri_tags),
-            tri_entities=_readonly(tri_entities),
-            tri_neighbours=_readonly(neighbours),
+            tetrahedra=readonly(tets),
+            tet_tags=readonly(tet_tags),
+            tet_entities=readonly(tet_entities),
+            triangles=readonly(tris),
+            tri_tags=readonly(tri_tags),
+            tri_entities=readonly(tri_entities),
+            tri_neighbours=readonly(neighbours),
             source=path.resolve(),
         )
         _check_tags(topology, path)
@@ -183,7 +184,7 @@ class Mesh:
         """
         r = self.region(region)
         tags = self.tetrahedron_tags if r.dim == 3 else self.triangle_tags
-        return _readonly(np.flatnonzero(tags == r.tag))
+        return readonly(np.flatnonzero(tags == r.tag))
 
     def adjacency(self, surface: str) -> tuple[tuple[str | None, str | None], ...]:
         """The ``(domin, domout)`` volume pairs on the two sides of a surface.
@@ -304,12 +305,6 @@ class Mesh:
         -1 means outside the mesh.
         """
         return self._topology.tri_neighbours
-
-
-def _readonly(a: np.ndarray) -> np.ndarray:
-    a = np.ascontiguousarray(a)
-    a.flags.writeable = False
-    return a
 
 
 def _regions(raw: meshio.Mesh) -> tuple[Region, ...]:

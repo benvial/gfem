@@ -19,6 +19,7 @@ from gfem._boundaries import (
     LumpedPort,
     Port,
     WavePort,
+    sheet_of,
     surfaces_of,
 )
 from gfem._domain import EMDomain, em_domain, enclosed_entities
@@ -105,11 +106,26 @@ def _check_volume(mesh: Mesh, name: str, remedy: str) -> None:
     raise RegionNotFoundError(name, mesh.volumes, kind="volume")
 
 
-def _check_surface(mesh: Mesh, name: str, what: str) -> None:
+def check_surface(mesh: Mesh, name: Any, what: str, hint: str = "") -> None:
+    """Check that ``name`` names a surface region of ``mesh``.
+
+    Args:
+        mesh: The mesh.
+        name: The user's surface name.
+        what: Who names it, opening the error messages.
+        hint: The remedy appended when ``name`` is a volume.
+
+    Raises:
+        TypeError: ``name`` is not a string.
+        ValueError: ``name`` is a volume region.
+        RegionNotFoundError: The mesh has no region ``name``.
+    """
+    if not isinstance(name, str):
+        raise TypeError(f"{what}: surface names are strings, got {name!r}.")
     if name in mesh.surfaces:
         return
     if name in mesh.volumes:
-        raise ValueError(f"{what}: {name!r} is a volume, not a surface region.")
+        raise ValueError(f"{what}: {name!r} is a volume, not a surface region.{hint}")
     raise RegionNotFoundError(name, mesh.surfaces, kind="surface")
 
 
@@ -229,7 +245,7 @@ class Model:
         for item in (*self.boundaries, *self.ports):
             what = type(item).__name__
             for surface in surfaces_of(item):
-                _check_surface(mesh, surface, what)
+                check_surface(mesh, surface, what)
                 if not domain.touches(surface):
                     raise ValueError(
                         f"{what} on {surface!r}: the surface does not border the "
@@ -246,11 +262,13 @@ class Model:
                     "a wave port must be an exterior surface of the "
                     "electromagnetic solve domain."
                 )
-            if isinstance(item, (Conductor, Impedance)) and item.fill is not None:
-                self._check_sheet(item)
+            sheet = sheet_of(item)
+            if sheet is not None:
+                (surface,) = surfaces_of(item)
+                self._check_sheet(what, surface, sheet)
             if isinstance(item, WavePort):
                 for edge in item.pec_edges:
-                    _check_surface(mesh, edge, f"WavePort {item.name!r} pec_edges")
+                    check_surface(mesh, edge, f"WavePort {item.name!r} pec_edges")
         for (physics, surface), items in taken.items():
             if len(items) > 1:
                 raise ValueError(
@@ -259,12 +277,8 @@ class Model:
                     f"{', '.join(repr(i) for i in items)}. Keep one."
                 )
 
-    def _check_sheet(self, item: Conductor | Impedance) -> None:
+    def _check_sheet(self, what: str, surface: str, field: SheetField) -> None:
         """A sheet field: on an interior surface, one fill value per face."""
-        what = type(item).__name__
-        surface, field = item.surface, item.fill
-        if field is None:  # pragma: no cover - the caller checks
-            return
         if field.surface is not None and field.surface != surface:
             raise ValueError(
                 f"{what} on {surface!r} carries a SheetField built for surface "
@@ -428,7 +442,7 @@ def _excluded_entities(mesh: Mesh, excluded: tuple) -> set[tuple[int, int]]:
             out |= {(tag, int(e)) for e in set(mesh.tetrahedron_entities[idx].tolist())}
         elif isinstance(entry, EnclosedBy):
             for s in entry.surfaces:
-                _check_surface(mesh, s, repr(entry))
+                check_surface(mesh, s, repr(entry))
             found = enclosed_entities(mesh, entry.surfaces)
             if not found:
                 raise ValueError(

@@ -416,6 +416,11 @@ for _cls in (LumpedPort, WavePort):
 Port = LumpedPort | WavePort
 
 
+def sheet_of(item: Boundary | Port) -> SheetField | None:
+    """The sheet field (``fill=``) a boundary carries, or ``None``."""
+    return item.fill if isinstance(item, (Conductor, Impedance)) else None
+
+
 def surfaces_of(item: Boundary | Port) -> tuple[str, ...]:
     """The surfaces a boundary condition or port occupies."""
     if isinstance(item, LumpedPort):

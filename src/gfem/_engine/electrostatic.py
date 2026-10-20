@@ -28,7 +28,7 @@ import numpy as np
 import scipy.constants
 
 from gfem._adjoint import adjoint_tolerance
-from gfem._boundaries import PEC, Conductor, Impedance
+from gfem._boundaries import PEC, Conductor, sheet_of
 from gfem._engine import quadrature
 from gfem._engine.cache import Entry, discretization
 from gfem._engine.coefficients import permittivity
@@ -39,9 +39,8 @@ from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair, ShapeTerm
 from gfem._field import FieldMap
 from gfem._linalg import KINDS, Handle, Operator, prepare
-from gfem.errors import RegionNotFoundError
 from gfem.mesh import Mesh
-from gfem.model import Model
+from gfem.model import Model, check_surface
 from gfem.options import SolverOptions
 from gfem.problems import Electrostatic
 from gfem.results import ElectrostaticResult, Field
@@ -85,7 +84,7 @@ class ElectrostaticRule:
                 f"{', '.join(repr(k) for k in KINDS)}."
             )
         for b in model.boundaries:
-            if isinstance(b, (Conductor, Impedance)) and b.fill is not None:
+            if sheet_of(b) is not None:
                 raise NotImplementedError(
                     f"{type(b).__name__} on {b.surface!r} carries a sheet field "
                     "(fill=), but a partly filled conducting sheet is not an "
@@ -370,14 +369,12 @@ class ElectrostaticRule:
 
 
 def _check_surface(model: Model, name: str, role: str) -> None:
-    mesh = model.mesh
-    if name not in mesh.surfaces:
-        if name in mesh.volumes:
-            raise ValueError(
-                f"Electrostatic {role} {name!r} is a volume; give the surfaces of "
-                "the conductor's shell instead."
-            )
-        raise RegionNotFoundError(name, mesh.surfaces, kind="surface")
+    check_surface(
+        model.mesh,
+        name,
+        f"Electrostatic {role}",
+        " Give the surfaces of the conductor's shell instead.",
+    )
     if not model._domain.touches(name):  # noqa: SLF001
         raise ValueError(
             f"Electrostatic {role} surface {name!r} does not border the solve "
