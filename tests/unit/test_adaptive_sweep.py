@@ -8,6 +8,7 @@ handful of poles in band plus a smooth background: the greedy needs a few
 samples, never the whole grid.
 """
 
+import dataclasses
 import math
 
 import numpy as np
@@ -138,6 +139,46 @@ def test_a_low_rank_operator_term_is_projected_with_its_coefficient():
     np.testing.assert_allclose(
         sweep.model.matrix(w), full, atol=1e-12 * np.abs(full).max()
     )
+
+
+def test_adjoint_loads_join_the_basis_at_every_sample():
+    # An output functional g not parallel to the excitation: at a sample the
+    # basis holds the solution, but the Galerkin adjoint of g is exact only
+    # once A^-1 g is in the basis too.
+    system, exact, calls = _system()
+    rng = np.random.default_rng(7)
+    g = rng.standard_normal(N) + 1j * rng.standard_normal(N)
+    picks = (0, 200, 80)
+    plain = _sweep(system, samples=picks)
+    calls.clear()
+    enriched = _sweep(
+        dataclasses.replace(system, adjoint_loads=lambda _: g[:, None]),
+        samples=picks,
+    )
+    assert enriched.model.size == plain.model.size + 2 * len(picks)
+    # one full solve per sample, the loads as extra right-hand-side columns
+    assert len(calls) == len(picks)
+    for i in picks:
+        w = GRID[i]
+        adjoint = np.linalg.solve(system_matrix(system, w).T, g)
+        v = enriched.basis
+        reduced = v @ np.linalg.solve(enriched.model.matrix(w).T, v.T @ g)
+        np.testing.assert_allclose(reduced, adjoint, atol=1e-10 * abs(adjoint).max())
+        x, _ = exact(w)
+        np.testing.assert_allclose(
+            enriched.basis @ enriched.coordinates[i], x, atol=1e-11 * abs(x).max()
+        )
+    # without the loads the reduced adjoint misses
+    v = plain.basis
+    w = GRID[80]
+    adjoint = np.linalg.solve(system_matrix(system, w).T, g)
+    reduced = v @ np.linalg.solve(plain.model.matrix(w).T, v.T @ g)
+    assert np.linalg.norm(reduced - adjoint) > 1e-3 * np.linalg.norm(adjoint)
+
+
+def system_matrix(system, w):
+    eye = np.eye(N)
+    return sum(t(w) * system.apply(k, eye) for k, t in enumerate(system.thetas))
 
 
 def test_each_new_sample_starts_from_the_reduced_prediction():

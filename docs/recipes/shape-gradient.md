@@ -52,8 +52,9 @@ excitation and voltage) is held fixed by the gradient: the node gradient
 is exact for every displacement that leaves the port surfaces where they
 were imported. `boundary_morph` holds the model's ports for you. A moved
 port node raises `gfem.PortGeometryError` in the backward pass (reaching you
-as `jax.errors.JaxRuntimeError` with the message kept). Wave ports are not
-differentiable in this version at all.
+as `jax.errors.JaxRuntimeError` with the message kept). The same holds for
+wave ports: their modes come from the port faces' geometry, which stays as
+imported.
 
 ## What raises
 

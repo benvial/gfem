@@ -224,3 +224,74 @@ def test_moved_port_nodes_raise_port_geometry_error(line):
     # the port's own geometry is frozen in shape gradients: moving it raises
     with pytest.raises(jax.errors.JaxRuntimeError, match=r"PortGeometryError.*port1"):
         jax.grad(objective)(1e-6)
+
+
+# --- wave ports ---------------------------------------------------------------
+
+WAVE_LAYERS = (("lo", 0.5), ("hi", 0.5))
+WAVE_PORTS = {
+    "lossless": (gfem.Material(eps_r=4.0), (0.0, 0.0)),
+    "lossy": (gfem.Material(eps_r=4.0, tan_delta=0.05), (0.3e-3, 0.1e-3)),
+}
+
+
+@pytest.fixture(scope="module")
+def wave_mesh(tmp_path_factory):
+    path = tmp_path_factory.mktemp("wave") / "line.msh"
+    sm.write_msh22(
+        path,
+        sm.strip_line(4.0, 2.0, 1.0, (8, 2, 2), layers=WAVE_LAYERS, core=(1.0, 3.0)),
+    )
+    return gfem.Mesh.from_gmsh(path, length_unit="mm")
+
+
+def _wave_line(mesh, port):
+    lower, (d1, d2) = WAVE_PORTS[port]
+    return gfem.Model(
+        mesh,
+        materials={
+            "lo": lower,
+            "hi": gfem.Material(eps_r=2.0),
+            "core": gfem.Material(eps_r=3.0),
+        },
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+        ports=[
+            gfem.WavePort("p1", "port1", offset=d1),
+            gfem.WavePort("p2", "port2", offset=d2),
+        ],
+    )
+
+
+@pytest.mark.parametrize("port", ["lossless", "lossy"])
+def test_wave_port_shape_gradient_matches_fd(wave_mesh, port):
+    # the top plate moves; its nodes on the port faces are held, so the port
+    # modes stay those of the imported faces
+    line = _wave_line(wave_mesh, port)
+    morph = boundary_morph(line, "top")
+    problem = gfem.Driven(frequency=(12e9, 24e9))
+    options = gfem.SolverOptions(order=2, linear_solver="direct")
+
+    def objective(t):
+        s = gfem.solve(line.replace(mesh=morph(t)), problem, options=options).s.values
+        return jnp.sum(WEIGHTS * jnp.abs(s) ** 2) + jnp.sum(jnp.real(s[:, 1, 0]))
+
+    t = jnp.zeros(morph.n_params)
+    rng = np.random.default_rng(8)
+    assert_gradient_matches(objective, t, unit_directions(rng, t.shape, 2), step=STEP)
+
+
+def test_moved_wave_port_nodes_raise_port_geometry_error(wave_mesh):
+    line = _wave_line(wave_mesh, "lossless")
+    problem = gfem.Driven(frequency=12e9)
+    mesh = line.mesh
+    face = mesh.triangles[mesh.triangle_tags == mesh.region("port2").tag]
+    node = int(face[0, 0])
+
+    def objective(dy):
+        x = jnp.asarray(mesh.nodes).at[node, 1].add(dy)
+        moved = jax.tree_util.tree_unflatten(jax.tree_util.tree_structure(mesh), [x])
+        s = gfem.solve(line.replace(mesh=moved), problem).s.values
+        return jnp.sum(jnp.abs(s) ** 2)
+
+    with pytest.raises(jax.errors.JaxRuntimeError, match=r"PortGeometryError.*port2"):
+        jax.grad(objective)(1e-6)
