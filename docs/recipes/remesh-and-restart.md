@@ -7,6 +7,10 @@ imported mesh. Small and moderate moves keep the mesh valid, but a long
 optimization can travel further than one mesh allows. This recipe shows how to
 notice that, and how to remesh at the current geometry and carry on.
 
+The [shape tutorial](../tutorials/shape.ipynb) runs a whole gap-width
+optimization of a coplanar line on one mesh, with the step acceptance of
+section 2; [Shape gradients](shape-gradient.md) explains the gradients.
+
 gfem v0.1 does not remesh for you: gfem reads meshes, it does not make them.
 You regenerate the layout and its mesh yourself (here with gdsfactory and
 gsim), and restart the optimizer from where it stopped.

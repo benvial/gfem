@@ -59,11 +59,13 @@ within `retain_memory`.
 
 ## What raises
 
-The mesh node coordinates, port and boundary parameters (lumped `R`, `L`, `C`,
-`Impedance`, `Conductor` conductivity) and the frequencies are read but not
+Port and boundary parameters (lumped `R`, `L`, `C`, `Impedance`,
+`Conductor` conductivity) and the frequencies are read but not
 differentiable in this version: a perturbed one raises
 `gfem.NonDifferentiableError` while JAX traces the gradient. Thermal
-properties are not read: their gradient is an exact zero.
+properties are not read: their gradient is an exact zero. The mesh node
+coordinates differentiate as long as no port moves: see
+[Shape gradients](shape-gradient.md).
 
 ## Wave ports
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import ngsolve as ngs
 
-__all__ = ["degree", "ds", "dx"]
+__all__ = ["degree", "ds", "dx", "dx_derivatives"]
 
 
 def degree(order: int) -> int:
@@ -32,3 +32,17 @@ def ds(order: int, **kwargs) -> ngs.comp.DifferentialSymbol:
     """Surface integration on the pinned triangle rule of ``order``."""
     rule = ngs.IntegrationRule(ngs.ET.TRIG, degree(order))
     return ngs.ds(intrules={ngs.ET.TRIG: rule}, **kwargs)
+
+
+def dx_derivatives(order: int, **kwargs) -> ngs.comp.DifferentialSymbol:
+    """Volume integration of products of two first derivatives, exactly.
+
+    A product of two curls (or gradients) of order-p fields, times
+    element-wise constants, is a polynomial of degree 2(p - 1) on a
+    straight-sided element: the rule of that degree integrates it exactly,
+    so it gives the pinned rule's values to round-off, at a fraction of its
+    points. The shape-gradient kernel uses it for its curl and gradient
+    terms (the transport tensor of ``curl u . curl v`` is such a product).
+    """
+    rule = ngs.IntegrationRule(ngs.ET.TET, max(0, degree(order) - 2))
+    return ngs.dx(intrules={ngs.ET.TET: rule}, **kwargs)
