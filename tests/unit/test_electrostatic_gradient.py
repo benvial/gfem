@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 import scipy.constants
 import structured_meshes as sm
+from finite_differences import assert_gradient_matches, unit_directions
 
 import gfem
 
@@ -116,11 +117,8 @@ def test_gradient_through_derived_matrices_matches_central_differences(
     eps = jnp.asarray(rng.uniform(2.0, 6.0, len(mesh.elements("oxide"))))
     grad = jax.grad(objective)(eps)
     assert np.abs(np.asarray(grad)).max() > 0
-    h = 1e-4
-    for _ in range(2):
-        d = rng.standard_normal(eps.shape)
-        fd = (objective(eps + h * d) - objective(eps - h * d)) / (2 * h)
-        assert float(grad @ d) == pytest.approx(float(fd), rel=1e-6)
+    directions = unit_directions(rng, eps.shape, 2)
+    assert_gradient_matches(objective, eps, directions, step=1e-2, grad=grad)
 
 
 @pytest.mark.parametrize("solver", ["direct", "bddc_gmres"])
