@@ -146,7 +146,7 @@ def test_pair_weights_are_the_thetas_of_the_operator_pieces(line):
         order=1,
     )
     omega = 2 * math.pi * 13e9
-    weights = driven._weights(op, omega)
+    weights = op.weights(omega)
     thetas = {p.name: complex(p.theta(omega)) for p in op.pieces}
     # every material term the kernel reads, with its theta; no port piece
     k0 = op.wavenumber(omega)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ngsolve as ngs
 
+from gfem._boundaries import PEC
 from gfem._engine.mesh import EngineMesh
 from gfem.model import Model
 
@@ -60,6 +61,11 @@ def _bc_numbers(built: EngineMesh, names: tuple[str, ...]) -> list[int]:
     """1-based NGSolve boundary numbers of these surface names (exact names)."""
     wanted = set(names)
     return [j + 1 for j, n in enumerate(built.mesh.GetBoundaries()) if n in wanted]
+
+
+def pec_surfaces(model: Model) -> tuple[str, ...]:
+    """The `PEC` surfaces of the model, sorted: the Dirichlet surfaces of a space."""
+    return tuple(sorted({b.surface for b in model.boundaries if isinstance(b, PEC)}))
 
 
 def domain_key(model: Model) -> tuple:

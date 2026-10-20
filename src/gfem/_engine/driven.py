@@ -58,7 +58,6 @@ import scipy.constants
 
 from gfem._adjoint import adjoint_tolerance
 from gfem._boundaries import (
-    PEC,
     LumpedPort,
     WavePort,
     sheet_of,
@@ -66,7 +65,7 @@ from gfem._boundaries import (
 )
 from gfem._engine import terms
 from gfem._engine.cache import Entry, discretization
-from gfem._engine.domain import domain_key, em_region, hcurl_space
+from gfem._engine.domain import domain_key, em_region, hcurl_space, pec_surfaces
 from gfem._engine.fields import fe_space
 from gfem._engine.mesh import EngineMesh
 from gfem._engine.runtime import task_manager
@@ -129,6 +128,21 @@ class DrivenOperator:
             form += complex(piece.theta(omega)) * piece.integrand(u, v)
         return form
 
+    def weights(self, omega: complex) -> dict[str, complex]:
+        """θ(ω) of each piece but the ports', by piece name (`gfem._engine.terms`).
+
+        The `FieldPair.weights` of a backward pass, driven (real ω) or
+        eigenmode (the complex eigenvalue's ω). The sensitivity kernel looks
+        them up by name: the material terms and sheet factors are named
+        after the pieces, and so are the shape terms
+        (`operator_shape_terms`, which leaves the ports' pieces out too).
+        The ports' pieces are design-independent (a port's R, L, C, its
+        surface and a wave port's mode are fixed), so no pair carries them.
+        """
+        return {
+            p.name: complex(p.theta(omega)) for p in self.pieces if p.kind != "port"
+        }
+
     def wavenumber(self, omega: float) -> float:
         """k0 per mesh file unit."""
         return terms.wavenumber(omega, self.built.scale)
@@ -168,7 +182,7 @@ def driven_operator(model: Model, order: int) -> DrivenOperator:
     """
     disc = discretization(model.mesh)
     built = disc.built
-    pec = _pec(model)
+    pec = pec_surfaces(model)
     space = disc.space(
         (domain_key(model), "hcurl", order, pec),
         lambda: hcurl_space(model, built, order, dirichlet=pec),
@@ -789,7 +803,7 @@ class DrivenRule:
                         space=op.space,
                         left=-adjoint,
                         right=x,
-                        weights=_weights(op, omega),
+                        weights=op.weights(omega),
                         order=op.order,
                         domain=domain,
                     )
@@ -838,7 +852,7 @@ class DrivenRule:
                 if not g.any():
                     continue
                 outer = np.linalg.solve(matrices[i].T, g) @ coordinates[i].T
-                for term, theta in _weights(op, omega).items():
+                for term, theta in op.weights(omega).items():
                     accumulated[term] = accumulated.get(term, 0) + theta * outer
             pairs = []
             for term, g in accumulated.items():
@@ -1000,18 +1014,13 @@ def operator_shape_terms(model: Model, op: DrivenOperator) -> list[ShapeTerm]:
 
 def real_space(model: Model, op: DrivenOperator) -> ngs.FESpace:
     """A real H(curl) space with ``op``'s DOF numbering (for ``DiffShape``)."""
-    pec = _pec(model)
+    pec = pec_surfaces(model)
     return discretization(model.mesh).space(
         (domain_key(model), "hcurl", op.order, pec, "real"),
         lambda: hcurl_space(
             model, op.built, op.order, complex_valued=False, dirichlet=pec
         ),
     )
-
-
-def _pec(model: Model) -> tuple[str, ...]:
-    """The `PEC` surfaces of the model: Dirichlet surfaces of the space."""
-    return tuple(sorted({b.surface for b in model.boundaries if isinstance(b, PEC)}))
 
 
 def check_ports_held(model: Model) -> None:
@@ -1050,15 +1059,6 @@ def check_ports_held(model: Model) -> None:
 def _no_solve(*_: object) -> np.ndarray:
     """The placeholder full solve of `_Ports.system`."""
     raise NotImplementedError  # pragma: no cover - replaced before use
-
-
-def _weights(op: DrivenOperator, omega: float) -> dict[str, complex]:
-    """θ(ω) of each piece but the ports', by piece name (`gfem._engine.terms`).
-
-    The material terms of the sensitivity kernel and the shape terms are
-    named after the pieces; the ports' pieces are design-independent.
-    """
-    return {p.name: complex(p.theta(omega)) for p in op.pieces if p.kind != "port"}
 
 
 #: Singular values of a reduced cotangent matrix below this fraction of the

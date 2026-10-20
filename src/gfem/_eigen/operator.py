@@ -24,6 +24,9 @@ the refinement on the true ``T(k)`` gives the mode.
 ``T(k)`` is complex symmetric (``T^T = T``), so the two-sided Rayleigh
 functional ``x^T T(k) x = 0`` gives the eigenvalue of an approximate
 eigenvector ``x`` to second order in its error.
+
+The matrices are NumPy linear maps (`LinearMap`): `gfem._engine.eigen`
+assembles them from the NGSolve forms.
 """
 
 from __future__ import annotations
@@ -32,14 +35,17 @@ import dataclasses
 import math
 from collections.abc import Callable
 
-import ngsolve as ngs
 import numpy as np
 import scipy.constants as const
 
 from gfem._engine import terms
 from gfem._linalg import Handle
 
-__all__ = ["EigenOperator", "NonPolynomial", "Split", "assemble", "split"]
+__all__ = ["EigenOperator", "LinearMap", "NonPolynomial", "Split", "split"]
+
+#: A matrix of the H(curl) space as ``x -> A x`` on NumPy vectors over all its
+#: DOFs (`gfem._engine.eigen` builds them from the NGSolve forms).
+LinearMap = Callable[[np.ndarray], np.ndarray]
 
 #: Relative mismatch above which a θ is not a polynomial of degree <= 2.
 _POLYNOMIAL_RTOL = 1e-9
@@ -104,13 +110,13 @@ class NonPolynomial:
 
     Attributes:
         name: The piece's name.
-        matrix: ``A``, an NGSolve operator (matrix-free).
+        matrix: ``A``, a linear map (applied matrix-free).
         value: ``θ(k)`` for the wavenumber per file unit ``k`` (complex).
         derivative: ``dθ/dk``.
     """
 
     name: str
-    matrix: object
+    matrix: LinearMap
     value: Callable[[complex], complex]
     derivative: Callable[[complex], complex]
 
@@ -121,7 +127,7 @@ class NonPolynomial:
 
     @classmethod
     def from_piece(
-        cls, piece: terms.Piece, matrix: object, scale: float
+        cls, piece: terms.Piece, matrix: LinearMap, scale: float
     ) -> NonPolynomial:
         """The term of ``piece`` (θ in ω) in the wavenumber per file unit."""
         per_k = const.c / scale  # omega per unit k
@@ -136,36 +142,6 @@ class NonPolynomial:
         )
 
 
-def assemble(
-    space: ngs.FESpace,
-    items: list[tuple[complex, terms.Piece]],
-    *,
-    matrix_free: bool = False,
-):
-    """``Σ c_p a_p`` as an NGSolve operator.
-
-    Assembled, or applied element by element when ``matrix_free`` (no
-    matrix stored: the damping is mostly boundary terms, which an assembled
-    matrix would hold in a graph of the whole space).
-    """
-    u, v = space.TnT()
-    form = ngs.BilinearForm(space, symmetric=True, nonassemble=matrix_free)
-    for c, piece in items:
-        form += c * piece.integrand(u, v)
-    if not matrix_free:
-        form.Assemble()
-    return form.mat
-
-
-def matvec(matrix, x: np.ndarray) -> np.ndarray:
-    """An NGSolve matrix applied to a NumPy vector."""
-    a = matrix.CreateColVector()
-    a.FV().NumPy()[:] = x
-    b = matrix.CreateColVector()
-    b.data = matrix * a
-    return b.FV().NumPy().copy()
-
-
 @dataclasses.dataclass(eq=False)
 class EigenOperator:
     """``T(k) = K + k D + k^2 M + Σ θ_p(k) A_p`` on the free DOFs.
@@ -178,9 +154,9 @@ class EigenOperator:
         shift: ``sigma``, the wavenumber per file unit of the prepared
             operator: the target's, until `reshift`.
         prepare: ``k -> Handle`` of ``T(k)`` (``k`` may be complex).
-        damping: ``D`` (a matrix-free NGSolve operator), or ``None`` when
-            undamped.
-        mass: ``M``, an NGSolve matrix.
+        damping: ``D`` (a linear map, applied matrix-free), or ``None``
+            when undamped.
+        mass: ``M``, a linear map.
         free: Free-DOF mask.
         scale: Metres per mesh file unit.
         nonpolynomial: The nonpolynomial terms ``θ_p(k) A_p``.
@@ -189,8 +165,8 @@ class EigenOperator:
 
     shift: complex
     prepare: Callable[[complex], Handle]
-    damping: object | None
-    mass: object
+    damping: LinearMap | None
+    mass: LinearMap
     free: np.ndarray
     scale: float
     nonpolynomial: tuple[NonPolynomial, ...] = ()
@@ -201,6 +177,10 @@ class EigenOperator:
     @property
     def handle(self) -> Handle:
         """``T(shift)``, prepared on first use."""
+        return self.factorize()
+
+    def factorize(self) -> Handle:
+        """Prepare ``T(shift)`` now unless it is prepared, and return it."""
         if self._handle is None:
             self._handle = self.prepare(self.shift)
         return self._handle
@@ -221,9 +201,9 @@ class EigenOperator:
         """``T(sigma)^-1 b`` on the free DOFs."""
         return self.handle.solve(np.where(self.free, b, 0))
 
-    def _matvec(self, matrix, x: np.ndarray) -> np.ndarray:
+    def _matvec(self, matrix: LinearMap, x: np.ndarray) -> np.ndarray:
         """A matrix on the free DOFs (zero on the fixed rows)."""
-        return np.where(self.free, matvec(matrix, np.where(self.free, x, 0)), 0)
+        return np.where(self.free, matrix(np.where(self.free, x, 0)), 0)
 
     def _parts(
         self, x: np.ndarray
