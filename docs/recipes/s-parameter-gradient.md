@@ -65,6 +65,38 @@ differentiable in this version: a perturbed one raises
 `gfem.NonDifferentiableError` while JAX traces the gradient. Thermal
 properties are not read: their gradient is an exact zero.
 
+## Wave ports
+
+S differentiates through `WavePort`s, lossy ones included, as long as the
+design stays off the port faces. A wave port's mode comes from its cross-section
+(the materials of the elements beside the face), and gfem treats it as a
+constant of the solve, so a perturbed material whose region has an element on a
+wave port face raises `gfem.PortGeometryError` while JAX traces the gradient
+(a forward solve of the same model is fine). Give the elements next to each
+port a region of their own with a constant `gfem.Material`, and put the design
+further in:
+
+```python
+model = gfem.Model(
+    mesh,
+    materials={"lead": gfem.Material(eps_r=4.0), "core": gfem.MaterialField(eps_r=eps)},
+    boundaries=[gfem.PEC("ground"), gfem.PEC("signal")],
+    ports=[gfem.WavePort("p1", "port1"), gfem.WavePort("p2", "port2")],
+)
+```
+
+The port modes in `result.port_modes`, and the reference impedances `s.z_ref`
+(the ports' `Z_PV`), are then constants: their gradient is an exact zero.
+
+Cost: a lossless port reuses its own solution as the adjoint, as a lumped port
+does. A lossy port's mode is complex (conductor or dielectric loss in the
+cross-section), and its S row projects on the conjugated mode, which is not its
+excitation: each frequency with a lossy port in the objective takes one adjoint
+solve (all such rows in one multi-column call). An adaptive sweep solves those
+S functionals at each sample along with the excitations and adds them to its
+basis, so its frozen-basis gradient is exact at the samples; a lossy port adds
+one right-hand side per sample.
+
 ## Adaptive sweeps
 
 `Driven(sweep="adaptive")` differentiates too, with its reduced basis held

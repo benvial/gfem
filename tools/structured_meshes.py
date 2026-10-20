@@ -205,6 +205,7 @@ def strip_line(
     *,
     layers: tuple[tuple[str, float], ...] | None = None,
     split_ports: bool = False,
+    core: tuple[float, float] | None = None,
 ):
     """A parallel-plate line along x: plates at z = 0 and z = height.
 
@@ -213,7 +214,9 @@ def strip_line(
     "port2" (x = length) and "side" (y walls); with ``split_ports`` each
     port face is cut at y = width / 2 into "<port>a" (y below) and
     "<port>b". Layer interfaces are "<lower>__<upper>". ``n`` cells along
-    x, y and z (per layer).
+    x, y and z (per layer). With ``core = (x0, x1)`` the cells between x0
+    and x1 (grid planes) form one volume "core" across every layer; its
+    faces towards the layers are left out.
     """
     layers = (("dielectric", height),) if layers is None else layers
     tops = np.cumsum([t for _, t in layers])
@@ -228,6 +231,8 @@ def strip_line(
     eps = 1e-9 * max(length, width, tops[-1])
 
     def volume(c):
+        if core is not None and core[0] < c[0] < core[1]:
+            return "core"
         return layers[int(np.searchsorted(tops, c[2]))][0]
 
     def surface(c):
@@ -245,4 +250,10 @@ def strip_line(
                 return f"{lo}__{hi}"
         return "side"
 
-    return structured(edges, volume, surface)
+    def named(c):
+        # the core's faces towards the layers are interior: left out
+        if core is not None and min(abs(c[0] - x) for x in core) < eps:
+            return ""
+        return surface(c)
+
+    return structured(edges, volume, named)

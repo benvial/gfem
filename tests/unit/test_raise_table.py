@@ -142,6 +142,31 @@ EXPECTED |= {
     for kind in [("nodes",)] + [("material", "dielectric", p) for p in ALL_PROPERTIES]
 }
 
+# Wave ports (design region "core" away from the port faces): S
+# differentiates like the lumped-port line's; the port modes, and so z_ref
+# (Z_PV), are constants of the solve: the design never touches the port
+# faces, which is the condition for differentiating at all.
+WAVE_PORT_MODE_OUTPUTS = ("frequency", "gamma", "Z_PV", "residual", "solved")
+EXPECTED |= {
+    ("driven_wave", out, kind): (
+        RAISES
+        if kind == ("nodes",)
+        else GRADIENT
+        if out == "s.values" and kind[2] in EM_PROPERTIES
+        else ZERO
+    )
+    for out in (
+        "s.values",
+        "s.z_ref",
+        *(
+            f"port_modes.{p}.{leaf}"
+            for p in ("p1", "p2")
+            for leaf in WAVE_PORT_MODE_OUTPUTS
+        ),
+    )
+    for kind in [("nodes",)] + [("material", "core", p) for p in ALL_PROPERTIES]
+}
+
 # Eigenmode results are not differentiable yet (eigenvalue gradients come
 # later): like driven, every leaf raises for the inputs the forms read.
 EXPECTED |= {
@@ -229,7 +254,23 @@ def eigen_model(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def cases(model, driven_model, eigen_model):
+def wave_model(tmp_path_factory):
+    path = tmp_path_factory.mktemp("wave") / "line.msh"
+    sm.write_msh22(path, sm.strip_line(3.0, 2.0, 1.0, (3, 1, 1), core=(1.0, 2.0)))
+    mesh = gfem.Mesh.from_gmsh(path, length_unit="mm")
+    return gfem.Model(
+        mesh,
+        materials={
+            "dielectric": gfem.Material(eps_r=2.0),
+            "core": _field(mesh, "core"),
+        },
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+        ports=[gfem.WavePort("p1", "port1"), gfem.WavePort("p2", "port2")],
+    )
+
+
+@pytest.fixture(scope="module")
+def cases(model, driven_model, eigen_model, wave_model):
     mesh = gfem.Mesh.from_gmsh(DATA / "parallel_plate.msh", length_unit="um")
     port_model = gfem.Model(
         mesh,
@@ -242,6 +283,7 @@ def cases(model, driven_model, eigen_model):
         "port_mode": (port_model, gfem.PortMode("p1", 10e9)),
         "driven": (driven_model, gfem.Driven(frequency=5e9, keep_fields=True)),
         "driven_adaptive": (driven_model, ADAPTIVE),
+        "driven_wave": (wave_model, gfem.Driven(frequency=20e9)),
         "eigenmode": (eigen_model, gfem.Eigenmode(target=17e9)),
     }
 

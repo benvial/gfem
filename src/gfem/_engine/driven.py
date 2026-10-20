@@ -15,21 +15,30 @@ itself (volts per mesh file unit) is that 1 W field's peak phasor in the
 `gfem.Field` coefficient convention, so kept fields are the solution
 columns as they are.
 
-Gradients (`DrivenRule.backward`): with ``A x_j = i k0 b_j`` and ``b_i``
-parallel to the voltage vector ``l_i``, port i's solution is (a multiple
-of) the adjoint of its own voltage, ``A^-1 l_i = x_i / (i k0 b_i / l_i)``
-(A^T = A, no transpose, no conjugate). An S cotangent therefore needs no
-solve when every port it reads is excited: per frequency it folds into
-one pair ``(-sum_i W_ij A^-1 l_i, x_j)``. A kept-field cotangent, or an S
-row of a port that was not excited, takes one multi-column adjoint solve
-per frequency; that frequency's operator is prepared on first use at the
-adjoint tolerance and kept in the cache entry for later pullbacks.
+Gradients (`DrivenRule.backward`): with ``A x_j = b_j`` and port i's S
+functional ``f_i`` parallel to its excitation ``b_i`` (every lumped port; a
+wave port whose mode is real up to one phase), port i's solution is (a
+multiple of) the adjoint of its own S row, ``A^-1 f_i = c x_i`` (A^T = A,
+no transpose, no conjugate). An S cotangent therefore needs no solve when
+every port it reads is excited and parallel: per frequency it folds into
+one pair ``(-sum_i W_ij A^-1 f_i, x_j)``. A kept-field cotangent, an S row
+of a port that was not excited, or of a lossy wave port (its S functional
+projects on the conjugated mode), takes one multi-column adjoint solve per
+frequency with the system operator (wave-port modal corrections
+included); that frequency's operator is prepared on first use at the
+adjoint tolerance and kept in the cache entry for later pullbacks. Wave
+ports' modes are constants of the solve: a design may not touch a wave
+port face (`gfem.PortGeometryError`), so the excitations, the S
+functionals and the modal corrections have no design derivative.
 
 An adaptive sweep differentiates with its reduced basis V and sample set
 held fixed (`DrivenRule._backward_adaptive`): the cache entry keeps only V
 and the reduced model, the backward solves n x n reduced adjoints and folds
-them into at most n field pairs ``(V a, V b)`` per material term. Under a
-JAX transformation the sample set must be frozen (``Driven.samples``), so
+them into at most n field pairs ``(V a, V b)`` per material term. Each
+sample also solves the S functionals of the wave ports whose adjoint the
+solutions miss (`_Ports.adjoint_loads`) into V, so the frozen-basis
+gradient equals the full solve's at the samples. Under a JAX
+transformation the sample set must be frozen (``Driven.samples``), so
 every output shape is known before the solve.
 """
 
@@ -59,6 +68,7 @@ from gfem._engine.sensitivity import FieldPair
 from gfem._engine.wave_ports import WavePortCoupling, wave_port_couplings
 from gfem._linalg import KINDS, Handle, Operator, low_rank_update, prepare
 from gfem._sweep.adaptive import AffineSystem, AffineTerm, adaptive_sweep
+from gfem.errors import PortGeometryError
 from gfem.mesh import Mesh
 from gfem.model import Model
 from gfem.options import SolverOptions
@@ -166,11 +176,23 @@ class DrivenRule:
     form = "driven"
     #: Material properties the driven forms read.
     reads = frozenset({"eps_r", "mu_r", "tan_delta", "conductivity"})
-    #: Outputs whose cotangents the backward pass handles (``z_ref``, the
-    #: port resistances, is constant in every differentiable input). An
-    #: adaptive sweep's kept fields differentiate through their reduced
+    #: Outputs whose cotangents the backward pass handles. ``z_ref`` and the
+    #: wave ports' modes (``port_*``) are constant in every differentiable
+    #: input: a design may not touch a wave port face (`unsupported_input`).
+    #: An adaptive sweep's kept fields differentiate through their reduced
     #: coordinates; its basis ``e_basis`` is frozen, so not differentiable.
-    differentiable_outputs = frozenset({"s", "z_ref", "e_field", "e_coordinates"})
+    differentiable_outputs = frozenset(
+        {
+            "s",
+            "z_ref",
+            "e_field",
+            "e_coordinates",
+            "port_gamma",
+            "port_z_pv",
+            "port_residual",
+            "port_solved",
+        }
+    )
 
     def __init__(self, model: Model, problem: Driven, options: SolverOptions) -> None:
         """Check that the problem fits the model (see `gfem.Driven`).
@@ -230,6 +252,9 @@ class DrivenRule:
         self.offsets = tuple(
             (p.name, p.offset) for p in model.ports if isinstance(p, WavePort)
         )
+        #: Per wave port, the volume regions with an element on its face:
+        #: the port mode reads their materials.
+        self.port_regions = _port_regions(model)
         # The fields live on the mesh as given (traced or not).
         self._mesh = model.mesh
         self._excluded = model._domain.excluded  # noqa: SLF001
@@ -305,7 +330,7 @@ class DrivenRule:
         if keep:
             entry = Entry(
                 physics=self.physics,
-                handle=_Handles(),
+                handle=_Handles(ports),
                 fields={"solution": np.concatenate(solutions, axis=1)},
             )
         return outputs, entry
@@ -455,7 +480,9 @@ class DrivenRule:
                     handle.free()
                 return x
 
-            system = dataclasses.replace(ports.system, solve=solve)
+            system = dataclasses.replace(
+                ports.system, solve=solve, adjoint_loads=ports.adjoint_loads
+            )
             samples = self.problem.samples
             sweep = adaptive_sweep(
                 system,
@@ -493,24 +520,38 @@ class DrivenRule:
             outputs["e_coordinates"] = padded
         entry = None
         if keep:
+            omegas = 2 * np.pi * np.asarray(frequencies)
+            reduced = sweep.model
             entry = Entry(
                 physics=self.physics,
                 fields={
                     "basis": sweep.basis,
-                    "operators": np.stack(sweep.model.operators),
-                    # lumped ports only: wave-port gradients raise earlier
-                    "voltage": np.zeros((0, size))
-                    if ports.waves
-                    else sweep.model.outputs[0],
+                    "matrices": np.stack([reduced.matrix(w) for w in omegas]),
+                    "functionals": np.stack(
+                        [
+                            sum(
+                                np.asarray(t.coefficients(w)) @ r
+                                for r, t in zip(
+                                    reduced.outputs, system.outputs, strict=True
+                                )
+                            )
+                            for w in omegas
+                        ]
+                    ),
+                    "deembedding": ports.deembedding(),
                     "coordinates": sweep.coordinates,
                 },
             )
         return outputs, entry
 
     def _padded_size(self) -> int:
-        """Most basis vectors frozen samples give: 2 per sample and excited port."""
+        """Most basis vectors frozen samples give.
+
+        Two per sample and excited port, and two per sample and wave port
+        for its S functional's adjoint (`_Ports.adjoint_loads`).
+        """
         samples = self.problem.samples or ()
-        return 2 * len(samples) * len(self.excite)
+        return 2 * len(samples) * (len(self.excite) + len(self.wave_ports))
 
     def output_specs(self, model: Model) -> dict[str, jax.ShapeDtypeStruct]:
         """Shape and dtype of each forward output."""
@@ -573,14 +614,29 @@ class DrivenRule:
         return "read"
 
     def unsupported_input(self, kind: tuple) -> str | None:
-        """Why a read input cannot be differentiated here, or ``None``."""
-        del kind
-        if self.wave_ports:
-            return (
-                "gradients through wave ports are not available in this version "
-                "of gfem (wave port "
-                + ", ".join(repr(n) for n in self.wave_ports)
-                + "); use lumped ports to differentiate"
+        """Why a read input cannot be differentiated here, or ``None``.
+
+        A wave port's mode is a constant of the solve, so the design must
+        stay off its face: a perturbed material of a region with an element
+        on a wave port face raises.
+
+        Raises:
+            PortGeometryError: ``kind`` is the material of a region that
+                touches a wave port face.
+        """
+        if kind[0] != "material":
+            return None
+        region, prop = kind[1], kind[2]
+        touched = [p for p, regions in self.port_regions.items() if region in regions]
+        if touched:
+            raise PortGeometryError(
+                f"WavePort {touched[0]!r}: region {region!r} has elements on the "
+                f"port face, so gfem cannot differentiate with respect to "
+                f"model.materials[{region!r}].{prop}: the port mode reads that "
+                "material and is a constant of the solve. Keep the design away "
+                "from wave port faces (give the elements beside the port a "
+                "region of their own with a constant gfem.Material), or wrap "
+                "the value in jax.lax.stop_gradient."
             )
         return None
 
@@ -597,70 +653,84 @@ class DrivenRule:
     ) -> list[FieldPair]:
         """Fold the S and kept-field cotangents into one field pair per frequency.
 
-        At frequency n, with ``X`` the excited ports' solutions and ``W =
-        ct_s[n] / sqrt(2 R)`` (rows: ports), the pair is ``(-Lambda, X)``
-        with ``Lambda_j = sum_i W_ij A^-1 l_i + A^-1 g_j``, ``g_j`` the
-        cotangent of a kept field of port j: ``sum ct dy/dp = -sum_j
-        Lambda_j^T (dA/dp) x_j``. ``A^-1 l_i`` of an excited port is its
-        own solution scaled (no solve); the remaining loads (kept-field
-        cotangents, rows of ports that were not excited) take one
-        multi-column adjoint solve. ``z_ref`` contributes nothing.
+        At frequency n, with ``X`` the excited ports' solutions, ``f_i`` port
+        i's S functional (``S_ij = f_iᵀ x_j``, de-embedding aside) and ``W``
+        the S cotangent, the pair is ``(-Lambda, X)`` with ``Lambda_j =
+        sum_i W_ij A^-1 f_i + A^-1 g_j``, ``g_j`` the cotangent of a kept
+        field of port j and ``A`` the system operator (wave-port Robin terms
+        and modal corrections included, complex symmetric): ``sum ct dy/dp
+        = -sum_j Lambda_j^T (dA/dp) x_j`` (the excitations and the modal
+        corrections depend on the port modes only). When ``f_i`` is parallel
+        to port i's excitation (every lumped port, a wave port whose mode is
+        real up to a phase), ``A^-1 f_i`` is port i's own solution scaled
+        (no solve). The remaining loads (kept-field cotangents, rows of
+        ports that were not excited, lossy wave ports, whose S functional
+        projects on the conjugated mode) take one multi-column adjoint
+        solve. ``z_ref`` contributes nothing.
         """
         if self.adaptive:
             return self._backward_adaptive(model, entry, cotangents)
         solution = entry.fields["solution"]
-        resistance = np.array([_resistance(p) for p in model.ports])
-        names = model.port_names
-        columns = [names.index(n) for n in self.excite]
-        width = len(columns)
+        width = len(self.excite)
         ct_s = cotangents.get("s")
         ct_e = cotangents.get("e_field")
-        if entry.handle is None:
+        if not isinstance(entry.handle, _Handles):
             entry.handle = _Handles()
+        handles = entry.handle
         pairs = []
         with task_manager(self.options.threads):
-            op = self.operator(model)
+            ports = handles.ports or self._ports(model)
+            handles.ports = ports
+            op = ports.operator
             domain = em_region(model, op.built)
-            voltage = None
+            deembedding = ports.deembedding()
             for n, f in enumerate(self.problem.frequency):
                 omega = 2 * math.pi * f
-                k0 = op.wavenumber(omega)
                 x = solution[:, n * width : (n + 1) * width]
                 adjoint = np.zeros_like(x)
                 load = np.zeros_like(x)
+                undefined = np.zeros(width, bool)
                 if ct_s is not None:
-                    w = _row_weights(np.asarray(ct_s[n]), resistance)
-                    for m, i in enumerate(columns):  # reciprocity: no solve
-                        per_voltage = (
-                            1j * k0 * terms.excitation_per_voltage(resistance[i])
-                        )
-                        adjoint += np.outer(x[:, m] / per_voltage, w[i])
-                    undefined = ~np.isfinite(w)  # S rows of ports without R
-                    adjoint[:, undefined.any(axis=0)] = np.nan
-                    w[undefined] = 0
-                    rows = [
-                        i for i in range(len(names)) if i not in columns and w[i].any()
-                    ]
-                    if rows:
-                        if voltage is None:
-                            voltage = self._voltages(op)
-                        load += voltage[:, rows] @ w[rows]
+                    d = deembedding[n]
+                    ct = np.asarray(ct_s[n]) * d[:, None] * d[ports.columns][None, :]
+                    functional = ports.functional(omega)
+                    rhs = ports.system.rhs(omega)
+                    for i in map(int, np.flatnonzero((ct != 0).any(axis=1))):
+                        f_i = functional[:, i]
+                        if not np.isfinite(f_i).all():  # S row of a port without R
+                            undefined |= ct[i] != 0
+                            continue
+                        if i in ports.columns:
+                            m = ports.columns.index(i)
+                            scale = _parallel(f_i, rhs[:, m])
+                            if scale is not None:  # reciprocity: no solve
+                                adjoint += np.outer(scale * x[:, m], ct[i])
+                                continue
+                        load += np.outer(f_i, ct[i])
                 if ct_e is not None and n in self.kept:
                     k = self.kept.index(n)
                     load += np.asarray(ct_e)[:, k * width : (k + 1) * width]
                 if load.any():
-                    handle = entry.handle.get(
-                        n, lambda omega=omega: self._prepare(op, omega)
+                    handle = handles.get(
+                        n,
+                        lambda omega=omega: ports.prepare(
+                            omega,
+                            kind=self.kind,
+                            device=self.options.device,
+                            tolerance=adjoint_tolerance(self.options),
+                            width=width,
+                        ),
                     )
                     adjoint += handle.solve(
                         load, tolerance=adjoint_tolerance(self.options)
                     )
+                adjoint[:, undefined] = np.nan
                 pairs.append(
                     FieldPair(
                         space=op.space,
                         left=-adjoint,
                         right=x,
-                        weights=_weights(k0),
+                        weights=_weights(op.wavenumber(omega)),
                         order=op.order,
                         domain=domain,
                     )
@@ -673,19 +743,22 @@ class DrivenRule:
         """The frozen-basis backward of an adaptive sweep: no full-size solve.
 
         With the basis V and the sample set held fixed, the reduced solution
-        at ω solves ``A_r(ω) y = b_r(ω)``, ``A_r = Σ θ_k Vᵀ A_k V`` complex
-        symmetric. A cotangent ``g`` on ``y`` (from S through the reduced
-        port voltages, and from kept fields' coordinates) gives the reduced
-        adjoint ``λ = A_r^-1 g`` (n x n) and ``sum ct dy/dp = -Σ_t Σ_ab
-        G_t,ab a_t'(V_a, V_b)`` with ``G_t = Σ_ω θ_t(ω) Λ(ω) Y(ω)ᵀ``. Each
-        ``G_t`` (n x n) factors by SVD into at most n pairs ``(V a, V b)``,
-        so the element passes do not grow with the number of frequencies.
-        A cotangent on the basis itself is refused by the wrapper.
+        at ω solves ``A_r(ω) y = b_r(ω)``, ``A_r = Vᵀ A(ω) V`` complex
+        symmetric (wave-port Robin terms and modal corrections included).
+        A cotangent ``g`` on ``y`` (from S through the reduced S
+        functionals, the conjugated-mode projection for wave ports, and from
+        kept fields' coordinates) gives the reduced adjoint ``λ = A_r^-T g``
+        (n x n) and ``sum ct dy/dp = -Σ_t Σ_ab G_t,ab a_t'(V_a, V_b)`` with
+        ``G_t = Σ_ω θ_t(ω) Λ(ω) Y(ω)ᵀ``. Each ``G_t`` (n x n) factors by
+        SVD into at most n pairs ``(V a, V b)``, so the element passes do
+        not grow with the number of frequencies. A cotangent on the basis
+        itself is refused by the wrapper.
         """
         fields = entry.fields
-        basis, reduced = fields["basis"], fields["operators"]
-        voltage, coordinates = fields["voltage"], fields["coordinates"]
-        resistance = np.array([_resistance(p) for p in model.ports])
+        basis, matrices = fields["basis"], fields["matrices"]
+        functionals, coordinates = fields["functionals"], fields["coordinates"]
+        deembedding = fields["deembedding"]
+        columns = [self.port_names.index(p) for p in self.excite]
         n, n_exc = basis.shape[1], len(self.excite)
         ct_s = cotangents.get("s")
         ct_c = cotangents.get("e_coordinates")
@@ -697,17 +770,15 @@ class DrivenRule:
                 omega = 2 * math.pi * f
                 g = np.zeros((n, n_exc), complex)
                 if ct_s is not None:
-                    g += voltage.T @ _row_weights(np.asarray(ct_s[i]), resistance)
+                    d = deembedding[i]
+                    ct = np.asarray(ct_s[i]) * d[:, None] * d[columns][None, :]
+                    g += _fold(functionals[i].T, ct)
                 if ct_c is not None and i in self.kept:
                     k = self.kept.index(i)
                     g += np.asarray(ct_c)[k * n_exc : (k + 1) * n_exc, :n].T
                 if not g.any():
                     continue
-                matrix = sum(
-                    complex(piece.theta(omega)) * a
-                    for piece, a in zip(op.pieces, reduced, strict=True)
-                )
-                outer = np.linalg.solve(matrix, g) @ coordinates[i].T
+                outer = np.linalg.solve(matrices[i].T, g) @ coordinates[i].T
                 for term, theta in _weights(op.wavenumber(omega)).items():
                     accumulated[term] = accumulated.get(term, 0) + theta * outer
             pairs = []
@@ -724,28 +795,6 @@ class DrivenRule:
                     )
                 )
         return pairs
-
-    def _prepare(self, op: DrivenOperator, omega: float) -> Handle:
-        """The operator at ``omega``, prepared at the adjoint tolerance."""
-        return prepare(
-            Operator(op.form(omega), op.space.FreeDofs()),
-            symmetry="complex_symmetric",
-            kind=self.kind,
-            device=self.options.device,
-            tolerance=adjoint_tolerance(self.options),
-            width=len(self.excite),
-        )
-
-    @staticmethod
-    def _voltages(op: DrivenOperator) -> np.ndarray:
-        """Every port's voltage vector, ``(ndof, n_ports)``."""
-        return np.stack(
-            [
-                terms.port_vectors(op.space, op.built, op.order, data)[1]
-                for data in op.ports
-            ],
-            axis=1,
-        )
 
     def result(self, outputs: dict) -> DrivenResult:
         """The public result from the forward outputs."""
@@ -892,15 +941,44 @@ def _factor(g: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return u[:, :rank] * sigma[:rank], vh[:rank].T
 
 
-def _row_weights(ct: np.ndarray, resistance: np.ndarray) -> np.ndarray:
-    """``ct / sqrt(2 R)`` per S row; rows without a cotangent are exact zeros.
+#: A port's S functional counts as parallel to its excitation (so its
+#: adjoint is the port's own solution scaled) to this relative residual.
+PARALLEL_RTOL = 1e-10
 
-    A row of a port without a resistance is NaN (so is its S row); its
-    weights stay NaN only where its cotangent is nonzero.
+
+def _parallel(functional: np.ndarray, excitation: np.ndarray) -> complex | None:
+    """``c`` with ``functional = c excitation`` to `PARALLEL_RTOL`, else ``None``.
+
+    True for every lumped port and for a wave port whose mode is real up to
+    one phase (lossless); a lossy wave port's S functional projects on the
+    conjugated mode, which is not parallel to its excitation.
     """
-    with np.errstate(invalid="ignore"):
-        w = ct / np.sqrt(2 * resistance)[:, None]
-    return np.where(ct == 0, 0, w)
+    norm = np.vdot(excitation, excitation).real
+    if norm == 0:  # pragma: no cover - an excited port always has a load
+        return None
+    c = np.vdot(excitation, functional) / norm
+    residual = np.linalg.norm(functional - c * excitation)
+    if residual > PARALLEL_RTOL * np.linalg.norm(functional):
+        return None
+    return complex(c)
+
+
+def _fold(functional: np.ndarray, ct: np.ndarray) -> np.ndarray:
+    """``Σ_i functional_i ⊗ ct_i`` over the rows with a cotangent.
+
+    ``functional`` is ``(N, n_ports)``, ``ct`` ``(n_ports, n_excited)``. A
+    row without a cotangent is skipped (an exact zero, even where its
+    functional is undefined: an S row of a port without a resistance is
+    NaN); an undefined row with one gives NaN columns, so the gradient is
+    NaN like the value.
+    """
+    out = np.zeros((functional.shape[0], ct.shape[1]), complex)
+    for i in np.flatnonzero((ct != 0).any(axis=1)):
+        if np.isfinite(functional[:, i]).all():
+            out += np.outer(functional[:, i], ct[i])
+        else:
+            out[:, ct[i] != 0] = np.nan
+    return out
 
 
 @dataclasses.dataclass(eq=False)
@@ -965,6 +1043,50 @@ class _Ports:
             return handle
         return low_rank_update(handle, *self.update(omega))
 
+    def functional(self, omega: float) -> np.ndarray:
+        """``(ndof, n_ports)``: port i's outgoing wave is ``functional[:, i] @ x``.
+
+        A wave port's projects on its conjugated mode (`WavePortCoupling`).
+        """
+        return sum(
+            t.vectors @ np.asarray(t.coefficients(omega)).T for t in self.system.outputs
+        )
+
+    def adjoint_loads(self, omega: float) -> np.ndarray:
+        """``(ndof, q)``: the S functionals whose adjoints the solutions miss.
+
+        A wave port's S functional, unless the port is excited and its
+        functional parallel to its excitation (lossless: the adjoint is the
+        port's own solution). An adaptive sweep adds their solutions to its
+        basis at every sample (`gfem._sweep.adaptive`), so the frozen-basis
+        S gradient of a lossy wave port is exact at the samples.
+        """
+        functional = self.functional(omega)
+        rhs = None
+        loads = []
+        for c in self.waves:
+            f = functional[:, c.index]
+            if c.index in self.columns:
+                if rhs is None:
+                    rhs = self.system.rhs(omega)
+                if _parallel(f, rhs[:, self.columns.index(c.index)]) is not None:
+                    continue
+            loads.append(f)
+        if not loads:
+            return np.zeros((len(functional), 0), complex)
+        return np.stack(loads, axis=1)
+
+    def deembedding(self) -> np.ndarray:
+        """``(n_freq, n_ports)``: S_ij is scaled by ``d_i d_j`` (1 for lumped).
+
+        A wave port's ``exp(gamma offset)`` moves its reference plane.
+        """
+        n_ports = self.z_ref.shape[1]
+        d = np.ones((len(self.z_ref), n_ports), complex)
+        for c in self.waves:
+            d[:, c.index] = [c.deembedding(w) for w in c.omegas]
+        return d
+
     def scattering(self, waves: np.ndarray) -> np.ndarray:
         """S from the outgoing waves ``(n_freq, n_ports, n_excited)``.
 
@@ -973,19 +1095,26 @@ class _Ports:
         """
         s = np.array(waves, dtype=complex)
         s[:, self.columns, range(len(self.columns))] -= 1.0
-        if any(c.port.offset for c in self.waves):
-            for n, omega in enumerate(self.waves[0].omegas):
-                d = np.ones(s.shape[1], complex)
-                for c in self.waves:
-                    d[c.index] = c.deembedding(omega)
-                s[n] *= d[:, None] * d[self.columns][None, :]
-        return s
+        d = self.deembedding()
+        return s * d[:, :, None] * d[:, None, self.columns]
+
+    @property
+    def nbytes(self) -> int:
+        """Host memory held by the full-length port vectors, in bytes."""
+        terms_ = [*self.system.excitation, *self.system.outputs]
+        terms_ += list(self.system.corrections)
+        return sum(int(t.vectors.nbytes) for t in terms_)
 
 
 class _Handles:
-    """Prepared driven operators by frequency index, for adjoint solves."""
+    """Prepared driven operators by frequency index, for adjoint solves.
 
-    def __init__(self) -> None:
+    Also keeps the solve's port terms (`_Ports`), so a backward pass does
+    not re-run the wave ports' port mode sweeps.
+    """
+
+    def __init__(self, ports: _Ports | None = None) -> None:
+        self.ports = ports
         self._handles: dict[int, Handle] = {}
 
     def get(self, n: int, build: Callable[[], Handle]) -> Handle:
@@ -997,13 +1126,15 @@ class _Handles:
     @property
     def nbytes(self) -> int:
         """Host memory held, in bytes."""
-        return sum(int(h.nbytes) for h in self._handles.values())
+        held = sum(int(h.nbytes) for h in self._handles.values())
+        return held + (self.ports.nbytes if self.ports is not None else 0)
 
     def free(self) -> None:
-        """Release every handle."""
+        """Release every handle and the port terms."""
         for handle in self._handles.values():
             handle.free()
         self._handles = {}
+        self.ports = None
 
 
 def _resistance(port: LumpedPort | WavePort) -> float:
@@ -1012,6 +1143,23 @@ def _resistance(port: LumpedPort | WavePort) -> float:
         return math.nan
     r = port.rlc[0]
     return math.nan if r is None else r
+
+
+def _port_regions(model: Model) -> dict[str, tuple[str, ...]]:
+    """Per wave port, the solve-domain volume regions beside its face."""
+    mesh = model.mesh
+    active = model._domain.active  # noqa: SLF001
+    names = {r.tag: r.name for r in mesh.regions if r.dim == 3}
+    out = {}
+    for port in model.ports:
+        if not isinstance(port, WavePort):
+            continue
+        on = mesh.triangle_tags == mesh.region(port.surface).tag
+        nb = mesh.triangle_neighbours[on]
+        tets = nb[nb >= 0]
+        tags = np.unique(mesh.tetrahedron_tags[tets[active[tets]]])
+        out[port.name] = tuple(names[int(t)] for t in tags)
+    return out
 
 
 def _check_supported(model: Model) -> None:

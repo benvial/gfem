@@ -205,7 +205,11 @@ class PortModeField:
 
 @dataclasses.dataclass(frozen=True, eq=False)
 class PortModeResult:
-    """The mode of a wave port over frequency. Not differentiable.
+    """The mode of a wave port over frequency.
+
+    Not differentiable on its own (`gfem.PortMode`); on a `DrivenResult`
+    the modes are constants of the solve (a design may not touch a wave port
+    face), so their gradient is an exact zero.
 
     Fields follow e^{+iωt}; a mode propagates into the solve domain as
     ``exp(-gamma s)``.

@@ -24,6 +24,13 @@ consecutive samples fall below ``tolerance`` or the grid is used up; it
 stops with `gfem.SweepNotConvergedWarning` at ``max_samples``. Outputs at
 every grid frequency come from the reduced model.
 
+Adjoint loads (``AffineSystem.adjoint_loads``): output functionals whose
+adjoint ``A^-T g`` the solutions do not span (an output not parallel to
+any excitation). Each sample solves them with the excitations and adds
+their solutions to the basis, so at a sample the Galerkin adjoint is exact
+like the solution, and a gradient with the basis held fixed equals the
+full solve's there.
+
 Pure NumPy: the engine supplies the full solve and the piece products.
 Excitations and outputs are sums of blocks with frequency-dependent
 coefficient matrices, so a term that is affine in other coordinates (a
@@ -80,6 +87,9 @@ class AffineSystem:
             from the initial guess ``x0`` (``None`` for none).
         corrections: Low-rank operator terms ``U C(ω) Uᵀ``: ``vectors`` is
             ``U`` ``(N, p)``, ``coefficients`` ``ω -> (p, p)``.
+        adjoint_loads: ``ω -> (N, q)``: loads solved at each sample with the
+            excitations (``q`` may be 0), their solutions added to the basis
+            (see the module docstring); ``None`` for none.
     """
 
     thetas: Sequence[Callable[[float], complex]]
@@ -88,6 +98,7 @@ class AffineSystem:
     outputs: Sequence[AffineTerm]
     solve: Callable[[float, np.ndarray, np.ndarray | None], np.ndarray]
     corrections: Sequence[AffineTerm] = ()
+    adjoint_loads: Callable[[float], np.ndarray] | None = None
 
     def rhs(self, omega: float) -> np.ndarray:
         """The right-hand sides at ω, ``(N, n_excitations)``."""
@@ -268,11 +279,28 @@ def adaptive_sweep(
         guess = None
         if model.size:
             guess = model.basis @ model.coordinates(omega)
-        x = np.asarray(system.solve(omega, system.rhs(omega), guess))
+        rhs = system.rhs(omega)
+        width = rhs.shape[1]
+        loads = None
+        if system.adjoint_loads is not None:
+            loads = np.asarray(system.adjoint_loads(omega))
+        if loads is not None and loads.shape[1]:
+            # one solve: the loads are extra columns, from a zero guess
+            x0 = None
+            if guess is not None:
+                x0 = np.concatenate([guess, np.zeros(loads.shape, complex)], axis=1)
+            both = np.asarray(
+                system.solve(omega, np.concatenate([rhs, loads], axis=1), x0)
+            )
+            x, duals = both[:, :width], both[:, width:]
+        else:
+            x, duals = np.asarray(system.solve(omega, rhs, guess)), None
         error = math.inf
         if measure and guess is not None:
             error = _error(x, guess)
         model.extend(x)
+        if duals is not None:
+            model.extend(duals)
         snapshots.append(model.basis.T @ x)
         chosen.append(i)
         errors.append(error)
