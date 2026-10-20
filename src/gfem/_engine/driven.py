@@ -57,14 +57,21 @@ import numpy as np
 import scipy.constants
 
 from gfem._adjoint import adjoint_tolerance
-from gfem._boundaries import PEC, LumpedPort, WavePort, surfaces_of
+from gfem._boundaries import (
+    PEC,
+    Conductor,
+    Impedance,
+    LumpedPort,
+    WavePort,
+    surfaces_of,
+)
 from gfem._engine import terms
 from gfem._engine.cache import Entry, discretization
 from gfem._engine.domain import domain_key, em_region, hcurl_space
 from gfem._engine.fields import fe_space
 from gfem._engine.mesh import EngineMesh
 from gfem._engine.runtime import task_manager
-from gfem._engine.sensitivity import FieldPair, ShapeTerm
+from gfem._engine.sensitivity import FieldPair, ShapeTerm, is_sheet
 from gfem._engine.wave_ports import WavePortCoupling, wave_port_couplings
 from gfem._linalg import KINDS, Handle, Operator, low_rank_update, prepare
 from gfem._sweep.adaptive import AffineSystem, AffineTerm, adaptive_sweep
@@ -255,6 +262,9 @@ class DrivenRule:
         #: Per wave port, the volume regions with an element on its face:
         #: the port mode reads their materials.
         self.port_regions = _port_regions(model)
+        #: Per sheet field (index into ``model.boundaries``), the wave ports
+        #: whose face shares an edge with the sheet: the port mode reads it.
+        self.sheet_ports = _sheet_ports(model)
         # The fields live on the mesh as given (traced or not).
         self._mesh = model.mesh
         self._excluded = model._domain.excluded  # noqa: SLF001
@@ -672,10 +682,26 @@ class DrivenRule:
         stay off its face: a perturbed material of a region with an element
         on a wave port face raises.
 
+        A sheet field whose surface shares an edge with a wave port face
+        raises likewise: the port mode reads the sheet on that edge.
+
         Raises:
             PortGeometryError: ``kind`` is the material of a region that
-                touches a wave port face.
+                touches a wave port face, or the fill of a sheet beside one.
         """
+        if is_sheet(kind):
+            ports = self.sheet_ports.get(kind[1], ())
+            if ports:
+                raise PortGeometryError(
+                    f"WavePort {ports[0]!r}: the sheet field of model.boundaries"
+                    f"[{kind[1]}] shares an edge with the port face, so gfem cannot "
+                    "differentiate with respect to its fill: the port mode reads "
+                    "the sheet there and is a constant of the solve. Keep the "
+                    "design away from wave port faces (split the sheet so the part "
+                    "touching the port is a boundary of its own without fill), or "
+                    "wrap the fill in jax.lax.stop_gradient."
+                )
+            return None
         if kind[0] != "material":
             return None
         region, prop = kind[1], kind[2]
@@ -1231,6 +1257,30 @@ def _resistance(port: LumpedPort | WavePort) -> float:
         return math.nan
     r = port.rlc[0]
     return math.nan if r is None else r
+
+
+def _sheet_ports(model: Model) -> dict[int, tuple[str, ...]]:
+    """Per sheet-field boundary index, the wave ports sharing an edge with it."""
+    mesh = model.mesh
+    out = {}
+    for i, b in enumerate(model.boundaries):
+        if not isinstance(b, (Conductor, Impedance)) or b.fill is None:
+            continue
+        sheet = _edges(mesh.triangles[mesh.elements(b.surface)])
+        ports = tuple(
+            p.name
+            for p in model.ports
+            if isinstance(p, WavePort)
+            and sheet & _edges(mesh.triangles[mesh.elements(p.surface)])
+        )
+        if ports:
+            out[i] = ports
+    return out
+
+
+def _edges(triangles: np.ndarray) -> set[tuple[int, int]]:
+    pairs = np.sort(triangles[:, [[0, 1], [1, 2], [2, 0]]].reshape(-1, 2), axis=1)
+    return {(int(a), int(b)) for a, b in pairs}
 
 
 def _port_regions(model: Model) -> dict[str, tuple[str, ...]]:

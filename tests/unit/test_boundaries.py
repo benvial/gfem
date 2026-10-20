@@ -48,7 +48,7 @@ def test_impedance_needs_at_least_one_positive_element():
         gfem.Impedance("sheet", resistance=-50.0)
 
 
-def test_sheet_fill_slot_exists_but_takes_no_value_yet():
+def test_fill_takes_a_sheet_field_not_an_array():
     with pytest.raises(TypeError, match="SheetField"):
         gfem.Conductor("metal", conductivity=1e7, fill=np.ones(3))
     with pytest.raises(TypeError, match="SheetField"):

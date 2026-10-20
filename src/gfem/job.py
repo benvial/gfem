@@ -37,6 +37,7 @@ from gfem._checks import is_traced
 from gfem._materials import Material, MaterialField
 from gfem._port_section import PortSection
 from gfem._pytree import register_fields
+from gfem._sheet import SheetField
 from gfem.measurements import InterfaceParticipation
 from gfem.mesh import Mesh
 from gfem.model import EnclosedBy, Model
@@ -366,6 +367,7 @@ _codec.register(EnclosedBy, from_args=lambda a, _: EnclosedBy(tuple(a["surfaces"
 for _cls in (
     Material,
     MaterialField,
+    SheetField,
     PEC,
     PMC,
     Absorbing,

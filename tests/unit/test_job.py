@@ -179,6 +179,28 @@ def test_boundaries_ports_and_exclusions_round_trip(tmp_path):
     _assert_same_model(model, back.model)
 
 
+def test_sheet_fields_round_trip(tmp_path):
+    path = sm.write_msh22(
+        tmp_path / "two.msh", sm.plate(4.0, 3.0, (("a", 0.5), ("b", 0.5)), (2, 1, 1))
+    )
+    mesh = gfem.Mesh.from_gmsh(path, length_unit="mm")
+    fill = gfem.SheetField(
+        fill=jnp.linspace(0.0, 1.0, len(mesh.elements("a__b"))), surface="a__b"
+    )
+    model = gfem.Model(
+        mesh,
+        materials={"a": gfem.Material(), "b": gfem.Material(eps_r=2.0)},
+        boundaries=[gfem.Impedance("a__b", resistance=10.0, fill=fill)],
+    )
+    back = _round_trip(gfem.Job(model, PROBLEM), tmp_path)
+    (boundary,) = back.model.boundaries
+    assert (boundary.surface, boundary.resistance) == ("a__b", 10.0)
+    sheet = boundary.fill
+    assert isinstance(sheet, gfem.SheetField)
+    assert sheet.surface == "a__b"
+    np.testing.assert_array_equal(sheet.fill, fill.fill)
+
+
 def test_wave_ports_and_enclosed_by_round_trip(tmp_path):
     path = sm.write_msh22(tmp_path / "stack.msh", sm.plate(4.0, 3.0, LAYERS, (1, 1, 1)))
     mesh = gfem.Mesh.from_gmsh(path)

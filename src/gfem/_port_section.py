@@ -68,6 +68,9 @@ class PortSection:
             `Conductor` or `Impedance` and, for a conductor, the factor on
             its thickness (2 where the 3D surface has the solve domain on one
             side only, as in the driven problem; see `gfem.conventions`).
+        impedance_fill: ``(n,)`` the sheet field's fill on the face of the
+            3D surface along each impedance edge (1 for a boundary without
+            one), or ``None`` when no edge's boundary has a sheet field.
     """
 
     port: WavePort
@@ -92,6 +95,7 @@ class PortSection:
         default_factory=lambda: np.zeros(0, np.int64)
     )
     impedance_terms: tuple = ()
+    impedance_fill: np.ndarray | None = None
 
     @property
     def diameter(self) -> float:
@@ -183,7 +187,7 @@ def port_section(model: Model, port: WavePort) -> PortSection:
     local_tris[flip] = local_tris[flip][:, ::-1]
 
     eps_tt, eps_nn, nu_tt, nu_nn, sigma = _materials(model, port, tets, frame)
-    pec, absorbing, admittance, (imp_edges, imp_group, imp_terms) = _edges(
+    pec, absorbing, admittance, (imp_edges, imp_group, imp_terms, imp_fill) = _edges(
         model, port, tris, used, eps_tt=eps_tt, nu_tt=nu_tt
     )
     return PortSection(
@@ -205,6 +209,7 @@ def port_section(model: Model, port: WavePort) -> PortSection:
         impedance_edges=imp_edges,
         impedance_group=imp_group,
         impedance_terms=imp_terms,
+        impedance_fill=imp_fill,
     )
 
 
@@ -335,7 +340,8 @@ def _edges(model, port, tris, used, *, eps_tt, nu_tt):
     kinds = _edge_kinds(model, port)
     local = np.searchsorted(used, port_edges)
     pec, absorbing, admittance, seen = [], [], [], set()
-    imp_edges, imp_group, terms = [], [], []
+    imp_edges, imp_group, terms, fills = [], [], [], []
+    sheet_fill = _sheet_fill_by_edge(model)
     for k, surfaces in enumerate(_surfaces_on_edges(model, port, port_edges)):
         key = tuple(local[k])
         if not surfaces or key in seen:
@@ -359,6 +365,8 @@ def _edges(model, port, tris, used, *, eps_tt, nu_tt):
                 terms.append((item, factor))
             imp_edges.append(local[k])
             imp_group.append(terms.index((item, factor)))
+            on_sheet = sheet_fill.get(item.surface, {})  # ty: ignore[unresolved-attribute]
+            fills.append(on_sheet.get(tuple(port_edges[k]), 1.0))
             continue
         if "absorbing" in types:
             absorbing.append(local[k])
@@ -370,5 +378,25 @@ def _edges(model, port, tris, used, *, eps_tt, nu_tt):
         np.asarray(e, dtype=np.int64).reshape(-1, 2)
         for e in (pec, absorbing, imp_edges)
     ]
-    impedance = (pairs[2], np.asarray(imp_group, np.int64), tuple(terms))
+    fill = np.asarray(fills, float) if sheet_fill else None
+    impedance = (pairs[2], np.asarray(imp_group, np.int64), tuple(terms), fill)
     return pairs[0], pairs[1], np.asarray(admittance, float), impedance
+
+
+def _sheet_fill_by_edge(model: Model) -> dict[str, dict[tuple[int, int], float]]:
+    """Per sheet-field surface, the fill of a face beside each of its edges.
+
+    Edges are sorted global node pairs (as `_edge_keys` gives them).
+    """
+    mesh = model.mesh
+    out: dict[str, dict[tuple[int, int], float]] = {}
+    for b in model.boundaries:
+        if not isinstance(b, (Conductor, Impedance)) or b.fill is None:
+            continue
+        fill = np.asarray(b.fill.fill, float)
+        keys = _edge_keys(mesh.triangles[mesh.elements(b.surface)])
+        values = np.repeat(fill, 3)
+        out[b.surface] = {
+            (int(a), int(c)): float(w) for (a, c), w in zip(keys, values, strict=True)
+        }
+    return out

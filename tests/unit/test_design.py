@@ -159,15 +159,66 @@ def test_layer_grid_rejects_a_density_of_the_wrong_shape(stack):
         grid.to_elements(jnp.zeros(8))
 
 
-def test_layer_grid_on_a_surface_or_unknown_region_raises(stack):
+def test_layer_grid_on_an_unknown_region_or_bad_pitch_raises(stack):
     import gfem
 
     with pytest.raises(gfem.RegionNotFoundError):
         design.LayerGrid(stack, "desing", pitch=0.25 * MM)
-    with pytest.raises(NotImplementedError, match="volume"):
-        design.LayerGrid(stack, "substrate__design", pitch=0.25 * MM)
     with pytest.raises(ValueError, match="pitch"):
         design.LayerGrid(stack, "design", pitch=-1.0)
+
+
+# --- LayerGrid on a sheet (a horizontal surface) ----------------------------------
+
+
+def _face_centroids(mesh, surface):
+    nodes = np.asarray(mesh.nodes)
+    return nodes[mesh.triangles[mesh.elements(surface)]].mean(axis=1)
+
+
+def test_surface_grid_covers_the_sheet_and_maps_pixels_to_faces(stack):
+    sheet = "substrate__design"
+    grid = design.LayerGrid(stack, sheet, pitch=0.25 * MM)
+    assert grid.shape == (2, 4)
+    assert grid.n_faces == len(stack.elements(sheet))
+    assert grid.n_elements is None
+    X, Y = np.meshgrid(grid.x, grid.y)
+    rho = 0.2 + 0.4 * X / MM + 0.6 * Y / MM
+    values = np.asarray(grid.to_faces(jnp.asarray(rho)))
+    c = _face_centroids(stack, sheet)
+    inside = (
+        (c[:, 0] >= grid.x[0]) & (c[:, 0] <= grid.x[-1])
+        & (c[:, 1] >= grid.y[0]) & (c[:, 1] <= grid.y[-1])
+    )  # fmt: skip
+    assert inside.sum() > 20
+    np.testing.assert_allclose(
+        values[inside], 0.2 + 0.4 * c[inside, 0] / MM + 0.6 * c[inside, 1] / MM
+    )
+    check_grads(grid.to_faces, (jnp.asarray(rho),), order=2)
+    assert "faces" in repr(grid)
+
+
+def test_surface_and_volume_grids_name_each_others_map(stack):
+    faces = design.LayerGrid(stack, "substrate__design", pitch=0.25 * MM)
+    volume = design.LayerGrid(stack, "design", pitch=0.25 * MM)
+    with pytest.raises(ValueError, match="to_faces"):
+        faces.to_elements(jnp.zeros(faces.shape))
+    with pytest.raises(ValueError, match="to_elements"):
+        volume.to_faces(jnp.zeros(volume.shape))
+    with pytest.raises(ValueError, match=r"\(2, 4\)"):
+        faces.to_faces(jnp.zeros(8))
+
+
+def test_surface_grid_needs_a_horizontal_surface(stack):
+    with pytest.raises(ValueError, match=r"(?s)not horizontal.*\d+ of"):
+        design.LayerGrid(stack, "side", pitch=0.25 * MM)
+
+
+def test_surface_grid_filters_on_its_pixels(stack):
+    grid = design.LayerGrid(stack, "substrate__design", pitch=0.25 * MM)
+    blur = design.helmholtz_filter(grid, radius=0.5 * MM)
+    rho = jax.random.uniform(jax.random.key(2), grid.shape)
+    assert blur(rho).shape == grid.shape
 
 
 def test_layer_grid_gradients(stack):

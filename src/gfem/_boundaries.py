@@ -10,6 +10,7 @@ import numpy as np
 
 from gfem._checks import is_traced, optional_positive, static_float
 from gfem._pytree import register_fields
+from gfem._sheet import SheetField
 
 _FIXED = (
     "Boundary and port parameters are not differentiable in gfem v0.1; wrap the "
@@ -27,10 +28,12 @@ def _surface_name(value: Any, owner: str) -> str:
 
 
 def _check_fill(fill: Any, owner: str) -> None:
-    if fill is not None:
+    if fill is not None and not isinstance(fill, SheetField):
         raise TypeError(
-            f"{owner}: fill takes a gfem.SheetField, which this version of gfem "
-            "does not provide yet; leave fill=None for a uniform sheet."
+            f"{owner}: fill takes a gfem.SheetField (one fill value per face of "
+            f"the surface), got {type(fill).__name__}; build one with "
+            "gfem.SheetField(fill=values) or gfem.SheetField.interpolate(density), "
+            "or leave fill=None for the solid sheet."
         )
 
 
@@ -124,14 +127,15 @@ class Conductor:
         conductivity: Electrical conductivity of the metal, S/m, > 0.
         thickness: Metal thickness in m, or ``None`` for a thick conductor
             (skin effect only).
-        fill: Reserved for a sheet field scaling the sheet face by face;
-            ``None`` is the uniform sheet.
+        fill: A `SheetField` scaling the sheet's admittance face by face
+            (a sheet design, interior surfaces only), or ``None`` for the
+            solid sheet.
     """
 
     surface: str
     conductivity: float
     thickness: float | None = None
-    fill: Any = None
+    fill: SheetField | None = None
     _physics: ClassVar[str] = "em"
 
     def __post_init__(self) -> None:
@@ -160,15 +164,16 @@ class Impedance:
         resistance: Sheet resistance, ohm per square, or ``None``.
         inductance: Sheet inductance, H per square, or ``None``.
         capacitance: Sheet capacitance, F per square, or ``None``.
-        fill: Reserved for a sheet field scaling the sheet face by face;
-            ``None`` is the uniform sheet.
+        fill: A `SheetField` scaling the sheet's admittance face by face
+            (a sheet design, interior surfaces only), or ``None`` for the
+            solid sheet.
     """
 
     surface: str
     resistance: float | None = None
     inductance: float | None = None
     capacitance: float | None = None
-    fill: Any = None
+    fill: SheetField | None = None
     _physics: ClassVar[str] = "em"
 
     def __post_init__(self) -> None:
