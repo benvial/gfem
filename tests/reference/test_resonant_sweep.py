@@ -44,8 +44,8 @@ F_TOLERANCE, Q_TOLERANCE, S_TOLERANCE = 1e-5, 0.02, 1e-5
 
 
 @pytest.fixture(scope="module")
-def case():
-    return qr.case_dir()
+def case(reference_dir):
+    return qr.case_dir(reference_dir)
 
 
 @pytest.fixture(scope="module")

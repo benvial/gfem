@@ -365,15 +365,67 @@ def test_a_voltage_path_off_the_port_plane_raises(plate_mesh):
         gfem.solve(model, gfem.PortMode("p1", 1e9))
 
 
-def test_port_mode_is_not_differentiable(plate_mesh):
-    n = len(plate_mesh.elements("fill"))
+def _fill(mesh, **values):
+    n = len(mesh.elements("fill"))
+    return gfem.MaterialField(**{k: jnp.full(n, v) for k, v in values.items()})
 
+
+def test_port_mode_is_not_differentiable(plate_mesh):
     def objective(eps):
-        model = plate(plate_mesh, gfem.MaterialField(eps_r=jnp.full(n, eps)))
+        model = plate(plate_mesh, _fill(plate_mesh, eps_r=eps))
         return jnp.real(gfem.solve(model, gfem.PortMode("p1", 1e9)).gamma[0])
 
-    with pytest.raises(gfem.NonDifferentiableError, match="not differentiable"):
+    with pytest.raises(gfem.NonDifferentiableError, match="eps_r"):
         jax.grad(objective)(4.0)
+
+
+def test_port_mode_runs_under_jit_without_its_field(plate_mesh):
+    problem = gfem.PortMode("p1", [10e9, 40e9])
+    exact = gfem.solve(plate(plate_mesh), problem)
+
+    @jax.jit
+    def gamma(eps):
+        return gfem.solve(plate(plate_mesh, _fill(plate_mesh, eps_r=eps)), problem)
+
+    traced = gamma(4.0)
+    np.testing.assert_allclose(traced.gamma, exact.gamma, rtol=1e-10)
+    np.testing.assert_allclose(traced.Z_PV, exact.Z_PV, rtol=1e-10)
+    with pytest.raises(TypeError, match="e_field"):
+        traced.e_field.at([W / 2, D / 2, 0.0])
+
+
+def test_port_mode_gradient_of_an_unread_property_is_an_exact_zero(plate_mesh):
+    def objective(k):
+        model = plate(plate_mesh, _fill(plate_mesh, eps_r=4.0, thermal_conductivity=k))
+        return jnp.real(gfem.solve(model, gfem.PortMode("p1", 1e9)).gamma[0])
+
+    assert jax.grad(objective)(1.4) == 0.0
+
+
+def test_port_mode_stop_gradient_opts_a_read_input_out(plate_mesh):
+    def objective(eps):
+        fill = _fill(plate_mesh, eps_r=jax.lax.stop_gradient(eps))
+        mode = gfem.solve(plate(plate_mesh, fill), gfem.PortMode("p1", 1e9))
+        return jnp.real(mode.gamma[0]) / 1e3 + eps
+
+    assert jax.grad(objective)(4.0) == 1.0
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"linear_solver": "direct"},
+        {"linear_solver": "bddc_gmres"},
+        {"linear_solver": "direct", "device": "cuda"},
+    ],
+)
+def test_port_mode_rejects_solver_choices_it_does_not_use(plate_mesh, options):
+    with pytest.raises(ValueError, match="SuperLU on the CPU"):
+        gfem.solve(
+            plate(plate_mesh),
+            gfem.PortMode("p1", 1e9),
+            options=gfem.SolverOptions(**options),
+        )
 
 
 def test_solve_rejects_unknown_problems_and_options(plate_mesh):

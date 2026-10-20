@@ -41,11 +41,8 @@ PHYSICS_F, PHYSICS_Q = 1e-4, 1e-2
 
 
 @pytest.fixture(scope="module")
-def reference():
-    ref = os.environ.get("GFEM_REFERENCE_DIR")
-    if not ref:
-        pytest.skip("GFEM_REFERENCE_DIR not set (needs the eigenmode Palace runs)")
-    return Path(ref) / "eigenmode"
+def reference(reference_dir):
+    return reference_dir / "eigenmode"
 
 
 def _model(case: Path, absorbing_order: int | None = None) -> tuple[gfem.Model, dict]:

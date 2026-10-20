@@ -3,19 +3,42 @@
 from __future__ import annotations
 
 import importlib
-from typing import Any
-
-import jax
-from jax.core import Tracer
+from typing import TYPE_CHECKING, Any, overload
 
 from gfem._adjoint import solve_vjp
+from gfem._checks import is_traced
 from gfem.model import Model
 from gfem.options import SolverOptions
 from gfem.shape import _check_quality
 
+if TYPE_CHECKING:
+    from gfem.problems import Driven, Eigenmode, Electrostatic, PortMode
+    from gfem.results import (
+        DrivenResult,
+        EigenmodeResult,
+        ElectrostaticResult,
+        PortModeResult,
+    )
+
 __all__ = ["solve"]
 
 
+@overload
+def solve(
+    model: Model, problem: Electrostatic, *, options: SolverOptions | None = None
+) -> ElectrostaticResult: ...
+@overload
+def solve(
+    model: Model, problem: Driven, *, options: SolverOptions | None = None
+) -> DrivenResult: ...
+@overload
+def solve(
+    model: Model, problem: Eigenmode, *, options: SolverOptions | None = None
+) -> EigenmodeResult: ...
+@overload
+def solve(
+    model: Model, problem: PortMode, *, options: SolverOptions | None = None
+) -> PortModeResult: ...
 def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -> Any:
     """Solve one problem type on a model.
 
@@ -28,9 +51,9 @@ def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -
     ``eps_r`` values), an exact zero gradient if the problem never reads it
     (``conductivity`` in electrostatics), or raises
     `gfem.NonDifferentiableError` while JAX traces, if the problem reads it
-    but gfem cannot differentiate it (mesh node coordinates in this
-    version). `jax.lax.stop_gradient` on an input or an output is the
-    opt-out. Only reverse mode is supported.
+    but gfem cannot differentiate it (for example a problem value such as
+    a frequency, or a field-derived output). `jax.lax.stop_gradient` on an
+    input or an output is the opt-out. Only reverse mode is supported.
 
     Args:
         model: The device.
@@ -58,7 +81,7 @@ def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -
             f"options must be a gfem.SolverOptions, got {type(options).__name__}."
         )
     rule = _rule_class(problem)(model, problem, options)
-    if any(isinstance(leaf, Tracer) for leaf in jax.tree.leaves((model, problem))):
+    if is_traced((model, problem)):
         return rule.result(solve_vjp(rule, model, problem))
     # A moved mesh must still be valid on the solve domain.
     _check_quality(model.mesh, model._domain.active, stacklevel=3)  # noqa: SLF001

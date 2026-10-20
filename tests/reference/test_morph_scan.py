@@ -10,9 +10,7 @@ inverted element appears at 14 +/- 0.5 um, nothing inverts down to -15 um,
 and every planar surface keeps its nodes on its plane.
 """
 
-import os
 import warnings
-from pathlib import Path
 
 import jax
 import numpy as np
@@ -26,11 +24,8 @@ AMPLITUDES = np.round(np.arange(0.5, 15.01, 0.5), 2)
 
 
 @pytest.fixture(scope="module")
-def r8():
-    ref = os.environ.get("GFEM_REFERENCE_DIR")
-    if not ref:
-        pytest.skip("GFEM_REFERENCE_DIR not set (needs the driven/r8 reference mesh)")
-    mesh = gfem.Mesh.from_gmsh(Path(ref) / "driven" / "r8" / "palace.msh")
+def r8(reference_dir):
+    mesh = gfem.Mesh.from_gmsh(reference_dir / "driven" / "r8" / "palace.msh")
     return gfem.Model(
         mesh,
         materials={

@@ -43,7 +43,7 @@ cuda13 = [
   "nvmath-python[cu13]>=1.0,<1.1; (sys_platform == 'linux' and platform_machine == 'x86_64') or sys_platform == 'win32'",
 ]
 viz = ["pyvista"]
-xarray = ["xarray"]
+xarray = ["xarray>=2024.10"]
 
 [dependency-groups]
 dev = [{ include-group = "lint" }, { include-group = "test" }]
@@ -51,7 +51,7 @@ dev = [{ include-group = "lint" }, { include-group = "test" }]
 # and a headless notebook runner.
 docs = ["ipykernel>=6.29", "matplotlib>=3.9", "nbconvert>=7.16", "optax>=0.2.4"]
 lint = ["ruff>=0.14", "ty==0.0.85"]
-test = ["pytest>=8.3", "pytest-cov>=6.0"]
+test = ["pytest>=8.3", "pytest-cov>=6.0", "xarray>=2024.10"]
 
 [build-system]
 requires = ["uv_build>=0.13,<0.14"]

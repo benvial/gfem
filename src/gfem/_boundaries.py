@@ -8,7 +8,7 @@ from typing import Any, ClassVar, Literal
 import jax
 import numpy as np
 
-from gfem._checks import is_traced, optional_positive, static_float
+from gfem._checks import check_fixed, is_traced, optional_positive, static_float
 from gfem._pytree import register_fields
 from gfem._sheet import SheetField
 
@@ -234,8 +234,7 @@ def _direction(value: Any, owner: str) -> tuple[float, float, float]:
             f"{owner}: direction {value!r} is not an axis; use '+x', '-x', '+y', "
             "'-y', '+z', '-z' or a 3-vector."
         )
-    if is_traced(value):
-        raise ValueError(f"{owner}: direction must be fixed numbers, not traced.")
+    check_fixed(value, f"{owner}: direction must be fixed numbers")
     try:
         d = np.asarray(value, dtype=float)
     except (TypeError, ValueError):
@@ -398,8 +397,7 @@ class WavePort:
 
 
 def _path(value: Any, owner: str) -> tuple[tuple[float, float, float], ...]:
-    if is_traced(value):
-        raise ValueError(f"{owner}: voltage_path must be fixed numbers.")
+    check_fixed(value, f"{owner}: voltage_path must be fixed numbers")
     try:
         p = np.asarray(value, dtype=float)
     except (TypeError, ValueError):
@@ -416,6 +414,11 @@ for _cls in (LumpedPort, WavePort):
     jax.tree_util.register_static(_cls)
 
 Port = LumpedPort | WavePort
+
+
+def sheet_of(item: Boundary | Port) -> SheetField | None:
+    """The sheet field (``fill=``) a boundary carries, or ``None``."""
+    return item.fill if isinstance(item, (Conductor, Impedance)) else None
 
 
 def surfaces_of(item: Boundary | Port) -> tuple[str, ...]:

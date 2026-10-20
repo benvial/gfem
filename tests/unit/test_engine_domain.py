@@ -1,6 +1,5 @@
 """The engine solves electromagnetic problems on the model's domain only."""
 
-import os
 from pathlib import Path
 
 import ngsolve as ngs
@@ -70,34 +69,6 @@ def _active(mesh, model):
             & (mesh.tetrahedron_entities == entity)
         )
     return out
-
-
-def _driven_cases():
-    ref = os.environ.get("GFEM_REFERENCE_DIR")
-    if not ref:
-        return [pytest.param(None, None, id="no-reference-dir")]
-    expected = {"r8": 162_640, "r4": 338_338, "r8_box150": 333_910}
-    return [
-        pytest.param(Path(ref) / "driven" / c, n, id=c) for c, n in expected.items()
-    ]
-
-
-@pytest.mark.parametrize(("case", "ndof"), _driven_cases())
-def test_order2_free_dofs_match_the_cracked_palace_domain(case, ndof):
-    if case is None:
-        pytest.skip("GFEM_REFERENCE_DIR not set (point it at the reference data)")
-    mesh = gfem.Mesh.from_gmsh(case / "palace.msh")
-    model = gfem.Model(
-        mesh,
-        materials={
-            "sio2": gfem.Material(eps_r=4.1),
-            "sin": gfem.Material(eps_r=7.5, tan_delta=1e-3),
-            "air": gfem.Material(),
-        },
-        excluded=(gfem.enclosed_by("topmetal2_xy", "topmetal2_z"),),
-    )
-    space = hcurl_space(model, to_ngsolve(mesh), order=2)
-    assert sum(space.FreeDofs()) == ndof
 
 
 def test_solves_on_one_mesh_share_spaces_per_physics_domain():

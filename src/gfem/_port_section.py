@@ -18,6 +18,7 @@ from gfem._boundaries import (
     Conductor,
     Impedance,
     WavePort,
+    sheet_of,
     surfaces_of,
 )
 from gfem._materials import (
@@ -388,9 +389,10 @@ def _sheet_fill_by_edge(model: Model) -> dict[str, dict[tuple[int, int], float]]
     mesh = model.mesh
     out: dict[str, dict[tuple[int, int], float]] = {}
     for b in model.boundaries:
-        if not isinstance(b, (Conductor, Impedance)) or b.fill is None:
+        sheet = sheet_of(b)
+        if sheet is None:
             continue
-        fill = np.asarray(b.fill.fill, float)
+        fill = np.asarray(sheet.fill, float)
         keys = _edge_keys(mesh.triangles[mesh.elements(b.surface)])
         values = np.repeat(fill, 3)
         out[b.surface] = {

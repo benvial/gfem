@@ -5,6 +5,14 @@ from __future__ import annotations
 import dataclasses
 
 import jax
+import numpy as np
+
+
+def readonly(a: np.ndarray) -> np.ndarray:
+    """A read-only C-contiguous copy of ``a`` (a frozen value's array)."""
+    out = np.array(a, order="C")
+    out.flags.writeable = False
+    return out
 
 
 def register_fields[T](cls: type[T], children: tuple[str, ...]) -> type[T]:

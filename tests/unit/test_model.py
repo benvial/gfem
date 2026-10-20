@@ -6,7 +6,6 @@ shell is "metal_xy" + "metal_z". "air" sits on top; "air__sub" is their
 interface; "sub__None" and "air__None" are the exterior.
 """
 
-import os
 from pathlib import Path
 
 import jax
@@ -350,32 +349,3 @@ def test_a_model_built_inside_jax_grad_carries_the_gradient(mesh):
 def test_model_needs_a_mesh():
     with pytest.raises(TypeError, match=r"gfem\.Mesh"):
         gfem.Model("two_box.msh", materials={})  # ty: ignore[invalid-argument-type]
-
-
-# --- reference meshes ----------------------------------------------------------------
-
-
-def _driven_cases():
-    ref = os.environ.get("GFEM_REFERENCE_DIR")
-    if not ref:
-        return [pytest.param(None, id="no-reference-dir")]
-    return [
-        pytest.param(Path(ref) / "driven" / c, id=c) for c in ("r8", "r4", "r8_box150")
-    ]
-
-
-@pytest.mark.parametrize("case", _driven_cases())
-def test_enclosed_by_finds_the_gsim_conductors_inside_sio2(case):
-    if case is None:
-        pytest.skip("GFEM_REFERENCE_DIR not set (point it at the reference data)")
-    mesh = gfem.Mesh.from_gmsh(case / "palace.msh")
-    model = gfem.Model(
-        mesh,
-        materials={
-            "sio2": gfem.Material(eps_r=4.1),
-            "sin": gfem.Material(eps_r=7.5, tan_delta=1e-3),
-            "air": gfem.Material(),
-        },
-        excluded=(gfem.enclosed_by("topmetal2_xy", "topmetal2_z"),),
-    )
-    assert model.excluded_entities == (("sio2", 5), ("sio2", 6), ("sio2", 7))

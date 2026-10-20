@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import dataclasses
+import importlib
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -19,6 +20,8 @@ from gfem._field import Field, FieldMap, ReducedFields
 from gfem._pytree import register_fields
 
 if TYPE_CHECKING:
+    import xarray
+
     from gfem._engine.port_mode import PortModeSpace
     from gfem._port_section import PortSection
 
@@ -33,6 +36,34 @@ __all__ = [
     "ReducedFields",
     "SweepInfo",
 ]
+
+
+def _xarray(result: Any) -> Any:
+    """The ``xarray`` module for ``result.to_xarray()``, with the install remedy.
+
+    Raises:
+        TypeError: ``result`` holds JAX tracers.
+        ImportError: xarray is not installed.
+    """
+    owner = type(result).__name__
+    if is_traced(result):
+        raise TypeError(
+            f"{owner}.to_xarray needs concrete values and cannot run under "
+            "jax.jit, jax.grad or jax.vmap; export the result outside the "
+            "transformed function."
+        )
+    try:
+        return importlib.import_module("xarray")
+    except ImportError:
+        raise ImportError(
+            f'{owner}.to_xarray needs xarray: pip install "gfem[xarray]".'
+        ) from None
+
+
+def _variable(dims: tuple[str, ...], values: Any, units: str | None = None) -> tuple:
+    """An xarray variable ``(dims, values, attrs)`` of host values."""
+    attrs = {} if units is None else {"units": units}
+    return dims, np.asarray(values), attrs
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -113,6 +144,33 @@ class ElectrostaticResult:
                 f"{', '.join(repr(t) for t in self.terminals)}."
             ) from None
 
+    def to_xarray(self) -> xarray.Dataset:
+        """The capacitance matrix and region energies as an `xarray.Dataset`.
+
+        ``capacitance`` (F) has dimensions ``("terminal", "excitation")``,
+        both labelled by `terminals`; ``energy`` (J), when present, has
+        ``("region", "excitation")``. Needs the ``xarray`` extra: ``pip
+        install "gfem[xarray]"``.
+
+        Raises:
+            ImportError: xarray is not installed.
+            TypeError: The result holds JAX tracers.
+        """
+        xr = _xarray(self)
+        data = {
+            "capacitance": _variable(("terminal", "excitation"), self.capacitance, "F")
+        }
+        coords: dict[str, Any] = {
+            "terminal": list(self.terminals),
+            "excitation": list(self.terminals),
+        }
+        if self.energy:
+            data["energy"] = _variable(
+                ("region", "excitation"), list(self.energy.values()), "J"
+            )
+            coords["region"] = list(self.energy)
+        return xr.Dataset(data, coords=coords)
+
     def __repr__(self) -> str:
         try:
             c = np.asarray(self.capacitance) * 1e15
@@ -152,14 +210,60 @@ class PortModeField:
         self, space: PortModeSpace, basis: np.ndarray, coords: np.ndarray
     ) -> None:
         """Internal: built by `gfem.solve` (field ``i`` is ``basis @ coords[i]``)."""
-        self._space = space
-        self._basis = basis
-        self._coords = coords
-        self.normal = tuple(float(x) for x in space.section.frame[2])
+        self._parts: tuple[PortModeSpace, np.ndarray, np.ndarray] | None = (
+            space,
+            basis,
+            coords,
+        )
+        self._build: Callable[[], tuple] | None = None
+        self._port = space.section.port.name
+
+    @classmethod
+    def _deferred(
+        cls,
+        port: str,
+        build: Callable[[], tuple[PortModeSpace, np.ndarray, np.ndarray]],
+    ) -> PortModeField:
+        """Internal: a field built by ``build()`` on first use.
+
+        A port mode solve traced by JAX returns its arrays only; the field
+        is then solved again from concrete model values when it is read,
+        and ``build`` raises when the values are tracers.
+        """
+        field = object.__new__(cls)
+        field._parts = None
+        field._build = build
+        field._port = port
+        return field
+
+    def _data(self) -> tuple[PortModeSpace, np.ndarray, np.ndarray]:
+        if self._parts is None:
+            if self._build is None:  # pragma: no cover - set by the constructors
+                raise RuntimeError("PortModeField has no data.")
+            self._parts = self._build()
+            self._build = None
+        return self._parts
+
+    @property
+    def _space(self) -> PortModeSpace:
+        return self._data()[0]
+
+    @property
+    def _basis(self) -> np.ndarray:
+        return self._data()[1]
+
+    @property
+    def _coords(self) -> np.ndarray:
+        return self._data()[2]
 
     @property
     def _section(self) -> PortSection:
         return self._space.section
+
+    @property
+    def normal(self) -> tuple[float, ...]:
+        """Unit inward port normal, global frame."""
+        return tuple(float(x) for x in self._section.frame[2])
 
     def at(self, points: Any) -> jax.Array:
         """The field at points on the port, ``(n_freq, n_points, 3)`` complex.
@@ -197,10 +301,8 @@ class PortModeField:
         return local
 
     def __repr__(self) -> str:
-        n = len(self._coords)
-        return (
-            f"PortModeField(E, V/m, {n} frequencies, port {self._section.port.name!r})"
-        )
+        n = "not built" if self._parts is None else f"{len(self._coords)} frequencies"
+        return f"PortModeField(E, V/m, {n}, port {self._port!r})"
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -247,6 +349,32 @@ class PortModeResult:
         """Complex effective index ``gamma / (i k0)``: ``n' - i n''``."""
         k0 = 2 * math.pi * self.frequency / scipy.constants.c
         return self.gamma / (1j * k0)
+
+    def to_xarray(self) -> xarray.Dataset:
+        """The mode's per-frequency values as an `xarray.Dataset`.
+
+        ``gamma`` (1/m), ``n_eff``, ``Z_PV`` (ohm), ``residual`` and
+        ``solved`` over the dimension ``frequency`` (Hz); the attributes
+        ``port`` and ``mode`` name the mode. The field is not exported.
+        Needs the ``xarray`` extra: ``pip install "gfem[xarray]"``.
+
+        Raises:
+            ImportError: xarray is not installed.
+            TypeError: The result holds JAX tracers.
+        """
+        xr = _xarray(self)
+        f = ("frequency",)
+        return xr.Dataset(
+            {
+                "gamma": _variable(f, self.gamma, "1/m"),
+                "n_eff": _variable(f, self.n_eff),
+                "Z_PV": _variable(f, self.Z_PV, "ohm"),
+                "residual": _variable(f, self.residual),
+                "solved": _variable(f, self.solved),
+            },
+            coords={"frequency": _variable(f, self.frequency, "Hz")},
+            attrs={"port": self.port, "mode": self.mode},
+        )
 
     def __repr__(self) -> str:
         f = np.asarray(self.frequency)
@@ -414,6 +542,31 @@ class NetworkParameters:
             frequency=self.frequency,
             ports=self.ports,
             excited=self.ports,
+        )
+
+    def to_xarray(self) -> xarray.Dataset:
+        """S and the reference impedances as an `xarray.Dataset`.
+
+        ``s`` has dimensions ``("frequency", "port", "excited")`` (as
+        `values`) and ``z_ref`` (ohm) ``("frequency", "port")``; the
+        coordinates are the frequencies (Hz) and the port names. Needs the
+        ``xarray`` extra: ``pip install "gfem[xarray]"``.
+
+        Raises:
+            ImportError: xarray is not installed.
+            TypeError: The parameters hold JAX tracers.
+        """
+        xr = _xarray(self)
+        return xr.Dataset(
+            {
+                "s": _variable(("frequency", "port", "excited"), self.values),
+                "z_ref": _variable(("frequency", "port"), self.z_ref, "ohm"),
+            },
+            coords={
+                "frequency": _variable(("frequency",), self.frequency, "Hz"),
+                "port": list(self.ports),
+                "excited": list(self.excited),
+            },
         )
 
     def to_touchstone(self, path: str | Path, z0: float | None = None) -> Path:
@@ -877,6 +1030,51 @@ class EigenmodeResult:
                 "mode(s), numbered from 0."
             )
         return self.e_fields[mode]
+
+    def to_xarray(self) -> xarray.Dataset:
+        """The modes' scalar outputs as an `xarray.Dataset`.
+
+        ``omega`` (rad/s), ``frequency`` (Hz), ``q``, ``error`` and
+        ``cluster`` over the dimension ``mode`` (0 = nearest the target);
+        `q_port` and `participation` over ``("mode", "port")``, one port
+        axis for both (NaN where a port has no value), and
+        `bulk_participation` over ``("mode", "region")``. The fields and
+        materials are not exported. Needs the ``xarray`` extra: ``pip
+        install "gfem[xarray]"``.
+
+        Raises:
+            ImportError: xarray is not installed.
+            TypeError: The result holds JAX tracers.
+        """
+        xr = _xarray(self)
+        m = ("mode",)
+        data = {
+            "omega": _variable(m, self.omega, "rad/s"),
+            "frequency": _variable(m, self.frequency, "Hz"),
+            "q": _variable(m, self.q),
+            "error": _variable(m, self.error),
+            "cluster": _variable(m, self.cluster),
+        }
+        coords: dict[str, Any] = {"mode": np.arange(self.n_modes)}
+        ports = list(dict.fromkeys([*self.q_port, *self.participation]))
+        if ports:
+            coords["port"] = ports
+            for name, values in (
+                ("q_port", self.q_port),
+                ("participation", self.participation),
+            ):
+                table = np.full((self.n_modes, len(ports)), np.nan)
+                for k, port in enumerate(ports):
+                    if port in values:
+                        table[:, k] = np.asarray(values[port])
+                data[name] = _variable(("mode", "port"), table)
+        if self.bulk_participation:
+            coords["region"] = list(self.bulk_participation)
+            data["bulk_participation"] = _variable(
+                ("mode", "region"),
+                np.stack([np.asarray(v) for v in self.bulk_participation.values()], 1),
+            )
+        return xr.Dataset(data, coords=coords)
 
     def __repr__(self) -> str:
         try:

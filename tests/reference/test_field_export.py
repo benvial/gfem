@@ -7,9 +7,6 @@ other-terminal conductors, and stays within [0, 1] V up to the order-2
 discretization's overshoot.
 """
 
-import os
-from pathlib import Path
-
 import meshio
 import numpy as np
 import pytest
@@ -18,11 +15,8 @@ import gfem
 
 
 @pytest.fixture(scope="module")
-def cap():
-    ref = os.environ.get("GFEM_REFERENCE_DIR")
-    if not ref:
-        pytest.skip("GFEM_REFERENCE_DIR not set (needs the electrostatic/r1 mesh)")
-    mesh = gfem.Mesh.from_gmsh(Path(ref) / "electrostatic" / "r1" / "palace.msh")
+def cap(reference_dir):
+    mesh = gfem.Mesh.from_gmsh(reference_dir / "electrostatic" / "r1" / "palace.msh")
     model = gfem.Model(
         mesh,
         materials={"sio2": gfem.Material(eps_r=3.9), "air": gfem.Material()},

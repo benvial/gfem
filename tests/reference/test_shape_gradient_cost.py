@@ -43,15 +43,12 @@ WEIGHTS = jnp.array([[1.0, 0.5], [2.0, -1.0]])
 
 
 @pytest.fixture(scope="module")
-def r8():
-    ref = os.environ.get("GFEM_REFERENCE_DIR")
-    if not ref:
-        pytest.skip("GFEM_REFERENCE_DIR not set (needs the driven Palace runs)")
+def r8(reference_dir):
     path = Path(__file__).with_name("test_driven.py")
     spec = importlib.util.spec_from_file_location("_reference_driven", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module._model(Path(ref) / "driven" / "r8")
+    return module._model(reference_dir / "driven" / "r8")
 
 
 def _signal_wall(p):

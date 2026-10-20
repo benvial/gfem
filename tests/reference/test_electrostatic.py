@@ -11,7 +11,6 @@ than the 1e-4 asked here, on either linear solver.
 
 import csv
 import json
-import os
 from pathlib import Path
 
 import numpy as np
@@ -30,14 +29,8 @@ def _csv(path: Path) -> np.ndarray:
 
 
 @pytest.fixture(scope="module", params=CASES)
-def case(request):
-    ref = os.environ.get("GFEM_REFERENCE_DIR")
-    if not ref:
-        pytest.skip(
-            "GFEM_REFERENCE_DIR not set (needs the electrostatic/r1 and r05 "
-            "Palace reference runs)"
-        )
-    return Path(ref) / "electrostatic" / request.param
+def case(request, reference_dir):
+    return reference_dir / "electrostatic" / request.param
 
 
 def _model_and_problem(case: Path) -> tuple[gfem.Model, gfem.Electrostatic]:

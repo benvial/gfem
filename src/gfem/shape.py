@@ -13,20 +13,21 @@ from __future__ import annotations
 import warnings
 from collections.abc import Callable, Sequence
 from types import ModuleType
-from typing import Any
+from typing import Any, Literal, get_args
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as sp
-from jax.core import Tracer
 
 from gfem import _morph
 from gfem._boundaries import surfaces_of
+from gfem._checks import is_traced
+from gfem._pytree import readonly
 from gfem._sparse import Coo, coo, spd_solve
 from gfem.errors import MeshQualityError, MeshQualityWarning, RegionNotFoundError
 from gfem.mesh import LENGTH_UNITS, Mesh
-from gfem.model import Model
+from gfem.model import Model, check_surface
 
 __all__ = [
     "WARN_QUALITY_RATIO",
@@ -41,7 +42,8 @@ __all__ = [
 #: triggers a `MeshQualityWarning`.
 WARN_QUALITY_RATIO = 0.25
 
-_EXTENSIONS = ("elastic", "laplace")
+Extension = Literal["elastic", "laplace"]
+_EXTENSIONS = get_args(Extension)
 
 # Corners of a tet and their three edges, ordered so that each corner's
 # determinant is +6 V on a positively oriented tet.
@@ -220,7 +222,7 @@ class BoundaryMorph:
     points: np.ndarray
     normals: np.ndarray
     surface: str
-    extension: str
+    extension: Extension
     _treedef: Any
     _x0: np.ndarray
     _active: np.ndarray
@@ -237,7 +239,7 @@ class BoundaryMorph:
         mesh: Mesh,
         active: np.ndarray,
         surface: str,
-        extension: str,
+        extension: Extension,
         nodes: np.ndarray,
         normals: np.ndarray,
         free: sp.csr_array,
@@ -260,10 +262,10 @@ class BoundaryMorph:
             "_coupling": coo(coupling),
             "_free": coo(free.tocoo()),
             "_prescribed": coo(prescribed.tocoo()),
-            "_nodes": _readonly(nodes),
+            "_nodes": readonly(nodes),
             "n_params": len(nodes),
-            "points": _readonly(np.asarray(mesh.imported_nodes)[nodes]),
-            "normals": _readonly(normals),
+            "points": readonly(np.asarray(mesh.imported_nodes)[nodes]),
+            "normals": readonly(normals),
             "surface": surface,
             "extension": extension,
         }
@@ -305,7 +307,7 @@ class BoundaryMorph:
         u = self._free.matvec(z) + self._prescribed.matvec(t)
         nodes = jnp.asarray(self._x0) + u.reshape(self._x0.shape)
         mesh = jax.tree_util.tree_unflatten(self._treedef, [nodes])
-        if not isinstance(t, Tracer):
+        if not is_traced(t):
             _check_quality(mesh, self._active, stacklevel=2)
         return mesh
 
@@ -323,12 +325,6 @@ class BoundaryMorph:
 jax.tree_util.register_static(BoundaryMorph)
 
 
-def _readonly(a: np.ndarray) -> np.ndarray:
-    a = np.array(a)
-    a.flags.writeable = False
-    return a
-
-
 def boundary_morph(
     model: Model,
     moving: str,
@@ -336,7 +332,7 @@ def boundary_morph(
     where: Callable[[np.ndarray], np.ndarray] | None = None,
     grows: str | None = None,
     fixed: Sequence[str] = (),
-    extension: str = "elastic",
+    extension: Extension = "elastic",
 ) -> BoundaryMorph:
     """Move a named surface of the mesh by normal displacements of its nodes.
 
@@ -400,7 +396,9 @@ def boundary_morph(
         msg = f"fixed= takes a list or tuple of surface names, got {fixed!r}."
         raise TypeError(msg)
     for name in (moving, *fixed):
-        _check_surface(mesh, name)
+        check_surface(
+            mesh, name, "boundary_morph", " boundary_morph moves and holds surfaces."
+        )
     if moving in fixed:
         msg = f"Surface {moving!r} is both moving and fixed=; remove it from fixed."
         raise ValueError(msg)
@@ -454,18 +452,6 @@ def boundary_morph(
         free=free,
         stiffness=stiffness,
     )
-
-
-def _check_surface(mesh: Mesh, name: str) -> None:
-    if not isinstance(name, str):
-        msg = f"Surface names are strings, got {name!r}."
-        raise TypeError(msg)
-    if name in mesh.surfaces:
-        return
-    if name in mesh.volumes:
-        msg = f"{name!r} is a volume; boundary_morph moves and holds surfaces."
-        raise ValueError(msg)
-    raise RegionNotFoundError(name, mesh.surfaces, kind="surface")
 
 
 def _select(

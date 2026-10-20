@@ -44,7 +44,7 @@ import pytest
 import gfem
 
 THREADS = 4
-#: The ticket's parity tolerances (relative), on Re f and Q.
+#: Parity tolerances against Palace (relative), on Re f and Q.
 PARITY_F, PARITY_Q = 1e-5, 1e-3
 #: Palace's run on the imported mesh (``Model.RefineCrackElements`` false:
 #: no local bisection next to the PEC sheet; eigen and linear tolerances
@@ -68,11 +68,8 @@ GOLDEN = {
 
 
 @pytest.fixture(scope="module")
-def reference():
-    ref = os.environ.get("GFEM_REFERENCE_DIR")
-    if not ref:
-        pytest.skip("GFEM_REFERENCE_DIR not set (needs the eigenmode Palace runs)")
-    return Path(ref) / "eigenmode"
+def reference(reference_dir):
+    return reference_dir / "eigenmode"
 
 
 def _model(case: Path) -> tuple[gfem.Model, dict]:

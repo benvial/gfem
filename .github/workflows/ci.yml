@@ -56,9 +56,7 @@ jobs:
     - name: Install
       run: uv sync --locked
     - name: Verification tier
-      # Exit code 5 means no tests were collected, which holds until the
-      # first verification test lands.
-      run: uv run pytest -m verification || test $? -eq 5
+      run: uv run pytest -m verification
 
   tutorials:
     name: tutorial notebooks (ubuntu, py3.12)

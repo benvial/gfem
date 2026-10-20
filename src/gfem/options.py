@@ -11,6 +11,8 @@ __all__ = ["SolverOptions"]
 
 LinearSolver = Literal["auto", "bddc_gmres", "direct"]
 _LINEAR_SOLVERS = ("auto", "bddc_gmres", "direct")
+#: ``"cpu"``, ``"cuda"``, or ``"cuda:N"`` for the N-th GPU (hence ``| str``).
+Device = Literal["cpu", "cuda"] | str  # noqa: PYI051 - names the choices
 _DEVICE = re.compile(r"cpu|cuda(:\d+)?")
 
 
@@ -82,7 +84,7 @@ class SolverOptions:
     order: int = 2
     linear_solver: LinearSolver = "auto"
     tolerance: float = 1e-6
-    device: str = "cpu"
+    device: Device = "cpu"
     threads: int | None = None
     adaptive_tolerance: float = 1e-3
     adaptive_max_samples: int = 20

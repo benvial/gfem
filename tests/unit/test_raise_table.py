@@ -74,10 +74,15 @@ EXPECTED |= {
     for region in ("oxide", "nitride")
     for kind in [("nodes",)] + [("material", "oxide", p) for p in ALL_PROPERTIES]
 }
-# The port mode problem is not differentiable: every result leaf raises.
+EM_PROPERTIES = ("eps_r", "mu_r", "tan_delta", "conductivity")
+# The port mode problem is not differentiable: every input it reads raises
+# (whichever result leaf is used), and the thermal properties it never reads
+# get exact zeros.
 PORT_MODE_OUTPUTS = ("frequency", "gamma", "Z_PV", "residual", "solved")
 EXPECTED |= {
-    ("port_mode", out, kind): RAISES
+    ("port_mode", out, kind): (
+        ZERO if kind[0] == "material" and kind[2] not in EM_PROPERTIES else RAISES
+    )
     for out in PORT_MODE_OUTPUTS
     for kind in [("nodes",)] + [("material", "fill", p) for p in ALL_PROPERTIES]
 }
@@ -87,7 +92,6 @@ EXPECTED |= {
 # zeros for the thermal properties. z_ref (the port resistances) and the
 # kept fields' angular frequency are constants; the kept fields' mesh is the
 # input mesh passed through (identity in the nodes, constant otherwise).
-EM_PROPERTIES = ("eps_r", "mu_r", "tan_delta", "conductivity")
 _DRIVEN_DEPENDENT = (
     "s.values",
     *(f"e_fields.{k}.coefficients" for k in (0, 1)),

@@ -6,7 +6,7 @@ thickness and permittivity, a voltage path) is a measurement: a function
 called on a result that carries its fields, after the solve, also on a
 result reloaded with `gfem.load_result`.
 
-- `Field.at` (`probe`): a field's value at points.
+- `Field.at`: a field's value at points.
 - `interface_participation`: the electric energy of a mode in a thin
   dielectric layer on a surface, and its share of ``1 / Q``.
 - `characteristic_impedance`: the power-voltage impedance of a port mode
@@ -24,17 +24,16 @@ from __future__ import annotations
 
 import dataclasses
 import functools
-import importlib
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import scipy.constants as const
-from jax.core import Tracer
 
-from gfem._adjoint.measure import measure
+from gfem import _probe
+from gfem._checks import check_fixed, is_traced
 from gfem._materials import Material
 from gfem._pytree import register_fields
 from gfem.conventions import MODE_ENERGY
@@ -49,147 +48,14 @@ __all__ = [
     "InterfaceParticipation",
     "characteristic_impedance",
     "interface_participation",
-    "probe",
 ]
-
-_NODES_REASON = (
-    "moving the mesh nodes moves the elements a measurement integrates or "
-    "evaluates on, and this version has no shape gradient for measurements"
-)
-_COMPONENTS = {"h1": 1, "l2": 1, "hcurl": 3, "hdiv": 3}
-
-
-def _engine() -> Any:
-    return importlib.import_module("gfem._engine.probe")
-
-
-def _traced(*values: Any) -> bool:
-    return any(isinstance(v, Tracer) for v in values)
-
-
-def _layout(field: Field) -> Any:
-    return _engine().Layout(
-        support=tuple(field.support),
-        excluded=tuple(field._excluded),  # noqa: SLF001
-        space=field.space,
-        order=field.order,
-    )
-
-
-class _PointKernel:
-    """Field values at points: ``Phi c`` and its transpose."""
-
-    name = "a field probe"
-
-    def __init__(
-        self,
-        topology: Any,
-        layout: Any,
-        shape: tuple[int, ...],
-        dtype: Any,
-        located: Any = None,
-    ) -> None:
-        self.topology = topology
-        self.layout = layout
-        self.located = located
-        self.output_specs = {"values": jax.ShapeDtypeStruct(shape, dtype)}
-
-    def role(self, name: str) -> str:
-        del name
-        return "read"
-
-    def unsupported(self, name: str) -> str | None:
-        if name == "nodes":
-            return _NODES_REASON
-        if name == "points":
-            return "probe positions are fixed numbers, not differentiable inputs"
-        return None
-
-    def describe(self, name: str) -> str:
-        return {
-            "nodes": "the mesh node coordinates (field.mesh.nodes)",
-            "points": "the probe points",
-        }.get(name, f"the field {name}")
-
-    def _probe(self, values: dict[str, np.ndarray]) -> Any:
-        engine = _engine()
-        mesh = Mesh(values["nodes"], self.topology)
-        located = self.located
-        if located is None:
-            located = engine.locate(mesh, self.layout, values["points"])
-        return engine.probe(mesh, self.layout, located)
-
-    def forward(self, values: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-        return {"values": self._probe(values).values(values["coefficients"])}
-
-    def backward(
-        self,
-        values: dict[str, np.ndarray],
-        cotangents: dict[str, np.ndarray],
-        wanted: tuple[str, ...],
-    ) -> dict[str, np.ndarray]:
-        assert wanted == ("coefficients",)  # noqa: S101 - the only supported input
-        p = self._probe(values)
-        ct = cotangents["values"]
-        g = p.transpose(ct.reshape(-1, p.n_points, ct.shape[-1]))
-        return {"coefficients": g.reshape(values["coefficients"].shape)}
-
-
-def evaluate(
-    field_coefficients: jax.Array,
-    mesh: Mesh,
-    layout: Any,
-    located: Any,
-) -> jax.Array:
-    """``(m, n_points, components)`` values of ``(m, ndof)`` coefficients.
-
-    The points are fixed (gfem tetrahedra and barycentric coordinates); a
-    JAX function of the coefficients and the node coordinates.
-    """
-    c = jnp.asarray(field_coefficients)
-    shape = (c.shape[0], len(located.tetrahedra), _COMPONENTS[layout.space])
-    kernel = _PointKernel(mesh._topology, layout, shape, c.dtype, located)  # noqa: SLF001
-    return measure(kernel, {"coefficients": c, "nodes": mesh.nodes})["values"]
-
-
-def probe(field: Field, points: Any) -> jax.Array:
-    """The values of ``field`` at ``points`` (see `gfem.Field.at`)."""
-    single = np.ndim(points) == 1
-    p = points if isinstance(points, Tracer) else np.asarray(points, float)
-    if p.shape[-1:] != (3,) or p.ndim not in (1, 2):
-        raise ValueError(
-            f"points must be one 3-vector or an (n, 3) array in m, got shape "
-            f"{np.shape(points)}."
-        )
-    p = p.reshape(-1, 3)
-    layout = _layout(field)
-    mesh = field.mesh
-    c = field.coefficients
-    n_comp = _COMPONENTS[field.space]
-    located = None
-    if not _traced(mesh.nodes, p):
-        located = _engine().locate(mesh, layout, np.asarray(p))
-    kernel = _PointKernel(
-        mesh._topology,  # noqa: SLF001
-        layout,
-        (p.shape[0], n_comp),
-        c.dtype,
-        located,
-    )
-    inputs = {"coefficients": c, "nodes": mesh.nodes}
-    if located is None:
-        inputs["points"] = p
-    values = measure(kernel, inputs)["values"]
-    if n_comp == 1:
-        values = values[:, 0]
-    return values[0] if single else values
-
 
 # --- interface participation -------------------------------------------------------
 
 #: The thin-layer models of `interface_participation` (Wenner et al., Appl.
 #: Phys. Lett. 99, 113513 (2011); Palace's ``Dielectric`` types).
-INTERFACE_KINDS = ("default", "MA", "MS", "SA")
+InterfaceKind = Literal["default", "MA", "MS", "SA"]
+INTERFACE_KINDS = get_args(InterfaceKind)
 #: A medium is vacuum when its fastest light speed is within this of c
 #: (Palace's test).
 _VACUUM = 1.0 - 1e-6
@@ -244,7 +110,7 @@ def interface_participation(
     thickness: Any,
     eps_r: Any,
     *,
-    kind: str = "default",
+    kind: InterfaceKind = "default",
     tan_delta: Any = None,
 ) -> InterfaceParticipation:
     """Electric energy participation of a thin dielectric layer on a surface.
@@ -357,7 +223,7 @@ class _SurfaceGeometry:
                     "a surface region."
                 )
             triangles.append(mesh.elements(name))
-        engine = _engine()
+        engine = _probe.engine()
         tri = np.concatenate(triangles)
         sides = mesh.triangle_neighbours[tri]
         inside = engine.in_support(mesh, layout)
@@ -386,7 +252,7 @@ _MAX_GEOMETRIES = 8
 
 def _surface_geometry(field: Field, surfaces: tuple[str, ...]) -> _SurfaceGeometry:
     mesh = field.mesh
-    layout = _layout(field)
+    layout = _probe.layout(field)
     key = (id(mesh._topology), surfaces, layout)  # noqa: SLF001
     found = _GEOMETRIES.get(key)
     if found is not None and found.topology is mesh._topology:  # noqa: SLF001
@@ -401,7 +267,7 @@ def _surface_geometry(field: Field, surfaces: tuple[str, ...]) -> _SurfaceGeomet
 @functools.partial(jax.jit, static_argnames=("geometry", "kind"))
 def _layer_energy(
     geometry: _SurfaceGeometry,
-    kind: str,
+    kind: InterfaceKind,
     *,
     coefficients: jax.Array,
     nodes: jax.Array,
@@ -413,7 +279,7 @@ def _layer_energy(
     g = geometry
     mesh = Mesh(nodes, g.topology)
     m, n_t, n_q = coefficients.shape[0], len(g.triangles), g.n_q
-    values = evaluate(coefficients, mesh, g.layout, g.located)
+    values = _probe.evaluate(coefficients, mesh, g.layout, g.located)
     e = jnp.zeros((m, n_t, 2, n_q, 3), dtype=values.dtype)
     start = 0
     for s, k in enumerate(g.pairs):
@@ -447,7 +313,7 @@ def _layer_energy(
 
 
 def _positive(value: Any, name: str, *, strict: bool) -> None:
-    if isinstance(value, Tracer):
+    if is_traced(value):
         return
     x = np.asarray(value)
     if x.shape != () or not np.isrealobj(x) or not np.isfinite(x):
@@ -537,6 +403,7 @@ def characteristic_impedance(mode: PortModeResult, voltage_path: Any) -> jax.Arr
         TypeError: ``mode`` is not a `gfem.PortModeResult`.
         ValueError: The path is malformed or leaves the port plane, or
             ``mode`` carries no field (a driven result without kept fields).
+        NonDifferentiableError: ``voltage_path`` is traced by JAX.
     """
     from gfem._sweep.port_mode import path_voltage
     from gfem.results import PortModeResult
@@ -546,8 +413,7 @@ def characteristic_impedance(mode: PortModeResult, voltage_path: Any) -> jax.Arr
             "characteristic_impedance needs a gfem.PortModeResult, got "
             f"{type(mode).__name__}."
         )
-    if _traced(voltage_path):
-        raise ValueError("voltage_path must be fixed numbers, not JAX tracers.")
+    check_fixed(voltage_path, "voltage_path must be fixed numbers")
     path = np.asarray(voltage_path, dtype=float)
     if path.ndim != 2 or path.shape[1] != 3 or len(path) < 2:
         raise ValueError(

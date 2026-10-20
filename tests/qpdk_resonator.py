@@ -14,7 +14,6 @@ eigenmodes of the same discrete operator.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import numpy as np
@@ -29,12 +28,9 @@ THREADS = 4
 OPTIONS = {"order": 1, "threads": THREADS, "linear_solver": "direct"}
 
 
-def case_dir() -> Path:
-    """The case directory under ``GFEM_REFERENCE_DIR`` (skips without it)."""
-    ref = os.environ.get("GFEM_REFERENCE_DIR")
-    if not ref:
-        pytest.skip(f"GFEM_REFERENCE_DIR not set (needs the {CASE} reference case)")
-    case = Path(ref) / CASE
+def case_dir(reference_dir: Path) -> Path:
+    """The case directory under the reference data (skips when not built)."""
+    case = reference_dir / CASE
     if not (case / "config.json").exists():
         pytest.skip(f"{case} has no config.json (build the {CASE} reference case)")
     return case

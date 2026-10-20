@@ -1,7 +1,5 @@
 """The engine builds its NGSolve mesh from a `gfem.Mesh`, keeping names and numbers."""
 
-import json
-import os
 from pathlib import Path
 
 import ngsolve as ngs
@@ -73,29 +71,6 @@ def test_element_order_maps_engine_elements_to_mesh_elements(two_box):
     tris = two_box.triangles[built.triangle_order]
     for i, el in enumerate(built.mesh.Elements(ngs.BND)):
         assert sorted(v.nr for v in el.vertices) == sorted(tris[i])
-
-
-def _reference_cases():
-    ref = os.environ.get("GFEM_REFERENCE_DIR")
-    if not ref:
-        return [pytest.param(None, id="no-reference-dir")]
-    cases = sorted(Path(ref).glob("*/*/palace.msh"))
-    return [pytest.param(p.parent, id=str(p.parent.relative_to(ref))) for p in cases]
-
-
-@pytest.mark.parametrize("case", _reference_cases())
-def test_reference_mesh_topology_matches_gmsh_metadata(case):
-    if case is None:
-        pytest.skip("GFEM_REFERENCE_DIR not set (point it at the reference data)")
-    meta = json.loads((case / "metadata.json").read_text())["mesh"]
-    built = to_ngsolve(gfem.Mesh.from_gmsh(case / "palace.msh"))
-    assert built.mesh.ne == meta["tetrahedra"]
-    assert built.mesh.nedge == meta["topology"]["edges"]
-    assert built.mesh.nface == meta["topology"]["triangular_faces"]
-    dofs = meta["field_dofs"]
-    if dofs["estimated_field_dofs"] is not None:  # uncracked Nedelec count
-        fes = ngs.HCurl(built.mesh, order=dofs["field_order"], type1=True)
-        assert fes.ndof == dofs["estimated_field_dofs"]
 
 
 def test_exterior_triangles_facing_into_the_mesh_are_flipped(tmp_path):
