@@ -31,6 +31,10 @@ __all__ = ["MAX_SHIFTS", "Refined", "refine"]
 
 #: Refactorizations allowed per refined mode.
 MAX_SHIFTS = 3
+#: A seed this close to an eigenpair (backward error) has a Ritz value
+#: accurate enough to refactorize at; a rougher one is refined on the
+#: current shift, which pulls it to the mode nearest that shift.
+TRUSTED = 1e-6
 
 
 @dataclasses.dataclass(frozen=True)
@@ -64,7 +68,8 @@ def refine(
     """Refine the pair ``(k, x)`` to backward error ``tolerance``.
 
     ``reshift``: refactorize at ``k`` before the first correction step (the
-    current shift is nearer another mode than this one).
+    current shift is nearer another mode than this one), if the seed's
+    backward error is within `TRUSTED`.
 
     Returns the best pair seen (``converged`` False if it misses the
     tolerance after ``max_iterations`` steps).
@@ -82,7 +87,8 @@ def refine(
         if error <= tolerance or step == max_iterations:
             break
         stalled = len(history) >= 3 and history[-1] > 0.5 * history[-3]
-        if (reshift and step == 0) or (stalled and shifts < MAX_SHIFTS):
+        trusted = reshift and step == 0 and error <= TRUSTED
+        if trusted or (stalled and shifts < MAX_SHIFTS):
             op.reshift(k)
             shifts += 1
             history.clear()

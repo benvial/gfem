@@ -7,10 +7,11 @@ model is built from each case's Palace ``config.json`` as gsim would build
 it. ``eigenmode/r20`` is order 2 (one mode near 7.78 GHz), ``r5_p1`` order 1
 (three modes).
 
-- Palace reports no mode near the 7.78 GHz target: its first modes are at
-  16.67 GHz (r20) and 16.11 GHz (r5_p1). gfem finds the quarter-wave mode
-  Palace missed, at 7.683 GHz (r20) and 7.254 GHz (r5_p1), so each case
-  solves for one more mode than Palace's ``N``, and Palace's modes are
+- The quarter-wave mode near the 7.78 GHz target (7.683 GHz on r20,
+  7.254 GHz on r5_p1) is missing from Palace's gsim runs: Palace's SLEPc
+  search returns only modes with Re f >= Target. The parity runs set the
+  target to 7 GHz and ask for one more mode; gfem solves for one more mode
+  than ``config.json``'s ``N`` at its target, and Palace's modes are
   matched by frequency.
 - Parity against Palace on the mesh gfem reads, both codes at eigen
   tolerance 1e-10 (``output/palace_nobisect_tol1e-10``; gfem's default).
