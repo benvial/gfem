@@ -11,15 +11,20 @@ first-kind Nédélec x H1 elements of the same order, it solves
 
 (``B`` holds the whole second row and column), where ``eps`` includes
 ``-i conductivity / (omega eps0)`` and an absorbing edge adds
-``i k0 Y (E_T, V_T)`` to both diagonal blocks. Both matrices are affine in
-k0: each is a sum of fixed matrices times 1, -k0^2 or i k0, assembled once.
-Coordinates are in the mesh file's unit, so ``k0`` is per local unit.
+``i k0 Y (E_T, V_T)`` to both diagonal blocks. A `Conductor` or `Impedance`
+edge adds its admittance the same way, as the driven problem's face term
+(`gfem._engine.terms`): ``i k0 eta0 / Z_s(omega)`` for a conductor, ``i k0
+eta0 / R``, ``mu0 scale / L`` and ``-k0^2 C / (eps0 scale)`` for an
+impedance. Both matrices are affine: each is a sum of fixed matrices times
+1, -k0^2, i k0 or a conductor's own scalar, assembled once. Coordinates are
+in the mesh file's unit, so ``k0`` is per local unit.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import functools
+from collections.abc import Callable
 
 import netgen.meshing as ngm
 import ngsolve as ngs
@@ -27,7 +32,9 @@ import numpy as np
 import scipy.constants
 import scipy.sparse as sp
 
+from gfem._boundaries import Conductor
 from gfem._engine import quadrature
+from gfem._engine.terms import surface_impedance
 from gfem._port_section import PortSection
 
 Z0 = scipy.constants.mu_0 * scipy.constants.c  # vacuum wave impedance, ohm
@@ -38,16 +45,22 @@ class Pencil:
     """``A(k0) = sum theta_j(k0) A_j`` and ``B(k0)`` likewise, on free DOFs.
 
     Attributes:
-        a: Matrices multiplying 1, -k0^2 and i k0 (in that order).
+        a: Matrices multiplying 1, -k0^2, i k0, then each of ``extra``.
         b: Likewise for ``B``.
+        extra: The further scalars of k0 (one per conductor edge group).
     """
 
-    a: tuple[sp.csr_matrix, sp.csr_matrix, sp.csr_matrix]
-    b: tuple[sp.csr_matrix, sp.csr_matrix, sp.csr_matrix]
+    a: tuple[sp.csr_matrix, ...]
+    b: tuple[sp.csr_matrix, ...]
+    extra: tuple[Callable[[float], complex], ...] = ()
+
+    def theta(self, k0: float) -> tuple[complex, ...]:
+        """The scalar of each matrix at wavenumber ``k0`` (per local unit)."""
+        return (1.0, -(k0**2), 1j * k0, *(f(k0) for f in self.extra))
 
     def at(self, k0: float) -> tuple[sp.csr_matrix, sp.csr_matrix]:
         """``A`` and ``B`` at wavenumber ``k0`` (per local length unit)."""
-        theta = (1.0, -(k0**2), 1j * k0)
+        theta = self.theta(k0)
         a = sum(t * m for t, m in zip(theta, self.a, strict=True))
         b = sum(t * m for t, m in zip(theta, self.b, strict=True))
         return sp.csr_matrix(a), sp.csr_matrix(b)
@@ -99,19 +112,60 @@ class PortModeSpace:
         has_abc = len(self.section.absorbing_edges) > 0
         abc_t = c["Y"] * et.Trace() * vt.Trace() * ds_abc if has_abc else None
         abc_n = c["Y"] * en.Trace() * vn.Trace() * ds_abc if has_abc else None
-        forms_a = (
+        forms_a = [
             [c["nu_nn"] * ngs.curl(et) * ngs.curl(vt) * dx],
             [(c["eps_tt"] * et) * vt * dx],
             [sigma_scale * c["sigma"] * et * vt * dx, abc_t],
-        )
-        forms_b = (
+        ]
+        forms_b = [
             [(c["nu_tt"] * wt) * wv * dx],
             [c["eps_nn"] * en * vn * dx],
             [sigma_scale * c["sigma"] * en * vn * dx, abc_n],
-        )
+        ]
+        extra = []
+        for g, (item, factor) in enumerate(self.section.impedance_terms):
+            ds = ngs.ds(
+                f"impedance{g}", intrules={ngs.SEGM: ngs.IntegrationRule(ngs.SEGM, q)}
+            )
+            edge_t = et.Trace() * vt.Trace() * ds
+            edge_n = en.Trace() * vn.Trace() * ds
+            if isinstance(item, Conductor):
+                forms_a.append([edge_t])
+                forms_b.append([edge_n])
+                extra.append(self._conductor_theta(item, factor))
+                continue
+            for slot, weight in self._impedance_weights(item):
+                forms_a[slot].append(weight * edge_t)
+                forms_b[slot].append(weight * edge_n)
         a = tuple(self._matrix(f) for f in forms_a)
         b = tuple(self._matrix(f) for f in forms_b)
-        return Pencil(a=a, b=b)  # ty: ignore[invalid-argument-type]
+        return Pencil(a=a, b=b, extra=tuple(extra))
+
+    def _conductor_theta(
+        self, item: Conductor, factor: float
+    ) -> Callable[[float], complex]:
+        """``i k0 eta0 / Z_s(omega)`` of a conductor edge group."""
+        scale = self.section.scale
+        h = None if item.thickness is None else factor * item.thickness
+        sigma = item.conductivity
+
+        def theta(k0: float) -> complex:
+            omega = k0 * scipy.constants.c / scale
+            return 1j * k0 * Z0 / surface_impedance(sigma, h, omega)
+
+        return theta
+
+    def _impedance_weights(self, item) -> list[tuple[int, float]]:
+        """(pencil slot, weight) of an `Impedance` edge's R, L and C."""
+        scale = self.section.scale
+        out = []
+        if item.resistance is not None:
+            out.append((2, Z0 / item.resistance))
+        if item.inductance is not None:
+            out.append((0, scipy.constants.mu_0 * scale / item.inductance))
+        if item.capacitance is not None:
+            out.append((1, item.capacitance / (scipy.constants.epsilon_0 * scale)))
+        return out
 
     def _matrix(self, integrands) -> sp.csr_matrix:
         n = self.space.ndof
@@ -158,6 +212,31 @@ class PortModeSpace:
         g = self._matrix([(nu * ngs.grad(en)) * vt * self._dx()])
         t = self._matrix([(nu * et) * vt * self._dx()])
         return g, t
+
+    @functools.cached_property
+    def coupling_forms(self) -> tuple[sp.csr_matrix, sp.csr_matrix]:
+        """The matrices that couple a mode to the 3D field on the port face.
+
+        ``M_G[i, j] = int (mu_tt^-1 grad psi_j) . phi_i`` and ``M_T[i, j] =
+        int (mu_tt^-1 phi_j) . phi_i``: rows over every Nédélec DOF ``phi_i``
+        (the trace of the 3D field, Dirichlet DOFs included), columns over the
+        free DOFs (the mode). ``mu_tt`` is the in-plane relative permeability.
+        """
+        (et, en), (vt, _vn) = self.space.TnT()
+        muinv = _rotate(self._coef["nu_tt"])
+        dx = self._dx()
+        out = []
+        for integrand in ((muinv * ngs.grad(en)) * vt * dx, (muinv * et) * vt * dx):
+            form = ngs.BilinearForm(self.space)
+            form += integrand
+            form.Assemble()
+            rows, cols, vals = form.mat.COO()
+            n = self.space.ndof
+            m = sp.csr_matrix(
+                (np.array(vals), (np.array(rows), np.array(cols))), shape=(n, n)
+            )
+            out.append(m[: self.n_t][:, self.free].tocsr())
+        return out[0], out[1]
 
     @functools.cached_property
     def gauge_forms(self) -> tuple[np.ndarray, np.ndarray]:
@@ -257,6 +336,12 @@ class PortModeSpace:
         )
 
 
+def _rotate(nu_tt: ngs.CoefficientFunction) -> ngs.CoefficientFunction:
+    """``mu_tt^-1 = R nu_tt R^T`` from ``nu_tt = R^T mu_tt^-1 R`` (``R a = a x n``)."""
+    r = ngs.CF((0.0, 1.0, -1.0, 0.0), dims=(2, 2))
+    return r * nu_tt * r.trans
+
+
 def _build_mesh(section: PortSection) -> ngs.Mesh:
     m = ngm.Mesh(dim=2)  # ty: ignore[unresolved-attribute]
     pts = np.zeros((len(section.points), 3))
@@ -273,6 +358,16 @@ def _build_mesh(section: PortSection) -> ngs.Mesh:
         m.SetBCName(g + 1, f"absorbing{g}")
         for edge in edges:
             m.Add(ngm.Element1D([int(edge[0]) + 1, int(edge[1]) + 1], index=g + 2))  # ty: ignore[unresolved-attribute]
+    first = len(groups) + 1
+    for g in range(len(section.impedance_terms)):
+        m.SetBCName(first + g, f"impedance{g}")
+        mask = section.impedance_group == g
+        for edge in section.impedance_edges[mask]:
+            m.Add(
+                ngm.Element1D(  # ty: ignore[unresolved-attribute]
+                    [int(edge[0]) + 1, int(edge[1]) + 1], index=first + g + 1
+                )
+            )
     return ngs.Mesh(m)
 
 

@@ -21,6 +21,7 @@ from gfem._boundaries import (
     surfaces_of,
 )
 from gfem._materials import Material, MaterialField
+from gfem.conventions import EXTERIOR_THICKNESS_FACTOR
 from gfem.errors import PortGeometryError
 from gfem.mesh import LENGTH_UNITS
 from gfem.model import Model
@@ -57,6 +58,16 @@ class PortSection:
         absorbing_edges: ``(n, 2)`` node pairs on absorbing boundaries.
         absorbing_admittance: Relative wave admittance ``sqrt(eps / mu)`` of
             the medium beside each absorbing edge, ``(n,)``.
+        faces: The mesh triangle (gfem index) of each of ``triangles``, or
+            ``None`` (sections saved before it was recorded).
+        impedance_edges: ``(n, 2)`` node pairs on `Conductor` or `Impedance`
+            surfaces.
+        impedance_group: ``(n,)`` index of each such edge's term in
+            ``impedance_terms``.
+        impedance_terms: ``(boundary, thickness factor)`` per group: the
+            `Conductor` or `Impedance` and, for a conductor, the factor on
+            its thickness (2 where the 3D surface has the solve domain on one
+            side only, as in the driven problem; see `gfem.conventions`).
     """
 
     port: WavePort
@@ -73,6 +84,14 @@ class PortSection:
     pec_edges: np.ndarray
     absorbing_edges: np.ndarray
     absorbing_admittance: np.ndarray
+    faces: np.ndarray | None = None
+    impedance_edges: np.ndarray = dataclasses.field(
+        default_factory=lambda: np.zeros((0, 2), np.int64)
+    )
+    impedance_group: np.ndarray = dataclasses.field(
+        default_factory=lambda: np.zeros(0, np.int64)
+    )
+    impedance_terms: tuple = ()
 
     @property
     def diameter(self) -> float:
@@ -112,8 +131,6 @@ def port_section(model: Model, port: WavePort) -> PortSection:
 
     Raises:
         PortGeometryError: The port surface is not planar.
-        NotImplementedError: A `Conductor` or `Impedance` surface meets the
-            port along an edge (the remedy is ``WavePort(pec_edges=...)``).
         ValueError: An anisotropic material beside the port has no principal
             axis along the port normal.
     """
@@ -166,7 +183,7 @@ def port_section(model: Model, port: WavePort) -> PortSection:
     local_tris[flip] = local_tris[flip][:, ::-1]
 
     eps_tt, eps_nn, nu_tt, nu_nn, sigma = _materials(model, port, tets, frame)
-    pec, absorbing, admittance = _edges(
+    pec, absorbing, admittance, (imp_edges, imp_group, imp_terms) = _edges(
         model, port, tris, used, eps_tt=eps_tt, nu_tt=nu_tt
     )
     return PortSection(
@@ -184,6 +201,10 @@ def port_section(model: Model, port: WavePort) -> PortSection:
         pec_edges=pec,
         absorbing_edges=absorbing,
         absorbing_admittance=admittance,
+        faces=sel,
+        impedance_edges=imp_edges,
+        impedance_group=imp_group,
+        impedance_terms=imp_terms,
     )
 
 
@@ -256,15 +277,18 @@ def _edge_keys(tris: np.ndarray) -> np.ndarray:
     return np.sort(tris[:, [[0, 1], [1, 2], [2, 0]]].reshape(-1, 2), axis=1)
 
 
-def _edge_kinds(model: Model, port: WavePort) -> dict[str, str]:
-    """What each named surface is to the port mode problem's edges."""
-    kinds: dict[str, str] = {}
+def _edge_kinds(model: Model, port: WavePort) -> dict[str, object]:
+    """What each named surface is to the port mode problem's edges.
+
+    ``"pec"``, ``"absorbing"``, or the `Conductor` / `Impedance` itself.
+    """
+    kinds: dict[str, object] = {}
     for item in (*model.boundaries, *model.ports):
         for s in surfaces_of(item):
             if isinstance(item, PEC) or (isinstance(item, WavePort) and item != port):
                 kinds[s] = "pec"
             elif isinstance(item, (Conductor, Impedance)):
-                kinds[s] = type(item).__name__
+                kinds[s] = item
             elif isinstance(item, Absorbing):
                 kinds[s] = "absorbing"
     for s in port.pec_edges:
@@ -274,8 +298,12 @@ def _edge_kinds(model: Model, port: WavePort) -> dict[str, str]:
 
 def _surfaces_on_edges(
     model: Model, port: WavePort, port_edges: np.ndarray
-) -> list[set[str]]:
-    """Names of the other surfaces bordering the domain along each port edge."""
+) -> list[dict[str, bool]]:
+    """The other surfaces bordering the domain along each port edge.
+
+    Per edge, surface name -> whether a face of it on the edge has the mesh
+    on one side only.
+    """
     mesh = model.mesh
     nb = mesh.triangle_neighbours
     touches = ((nb >= 0) & model._domain.active[np.maximum(nb, 0)]).any(axis=1)  # noqa: SLF001
@@ -283,48 +311,64 @@ def _surfaces_on_edges(
     names = {r.tag: r.name for r in mesh.regions if r.dim == 2}
     o_edges = _edge_keys(mesh.triangles[other])
     o_tags = np.repeat(mesh.triangle_tags[other], 3)
+    o_one = np.repeat((nb[other] < 0).any(axis=1), 3)
     _, ids = np.unique(
         np.concatenate([port_edges, o_edges]), axis=0, return_inverse=True
     )
     ids = ids.ravel()
     p_ids, o_ids = ids[: len(port_edges)], ids[len(port_edges) :]
     on = np.isin(o_ids, p_ids)
-    found: dict[int, set[str]] = {}
-    for eid, t in zip(o_ids[on], o_tags[on], strict=True):
-        found.setdefault(int(eid), set()).add(names[int(t)])
-    return [found.get(int(e), set()) for e in p_ids]
+    found: dict[int, dict[str, bool]] = {}
+    for eid, t, one in zip(o_ids[on], o_tags[on], o_one[on], strict=True):
+        seen = found.setdefault(int(eid), {})
+        seen[names[int(t)]] = seen.get(names[int(t)], False) or bool(one)
+    return [found.get(int(e), {}) for e in p_ids]
 
 
 def _edges(model, port, tris, used, *, eps_tt, nu_tt):
-    """Perfect-conductor and absorbing edges of the cross-section."""
+    """Perfect-conductor, absorbing and impedance edges of the cross-section.
+
+    An edge on several surfaces takes the first of: perfect conductor,
+    `Conductor` / `Impedance`, absorbing.
+    """
     port_edges = _edge_keys(tris)
     kinds = _edge_kinds(model, port)
     local = np.searchsorted(used, port_edges)
     pec, absorbing, admittance, seen = [], [], [], set()
+    imp_edges, imp_group, terms = [], [], []
     for k, surfaces in enumerate(_surfaces_on_edges(model, port, port_edges)):
         key = tuple(local[k])
         if not surfaces or key in seen:
             continue
         seen.add(key)
-        types = {kinds.get(s) for s in surfaces}
+        types = [kinds.get(s) for s in sorted(surfaces)]
         if "pec" in types:
             pec.append(local[k])
             continue
-        for bad in ("Conductor", "Impedance"):
-            if bad in types:
-                surface = next(s for s in sorted(surfaces) if kinds.get(s) == bad)
-                raise NotImplementedError(
-                    f"WavePort {port.name!r}: surface {surface!r} meets the port "
-                    f"along an edge and carries a {bad}, which the port mode "
-                    "problem does not model yet. Treat it as a perfect conductor in "
-                    f"the port mode problem with WavePort(..., pec_edges="
-                    f"({surface!r},))."
-                )
+        sheets = [
+            (kinds[s], one)
+            for s, one in sorted(surfaces.items())
+            if isinstance(kinds.get(s), (Conductor, Impedance))
+        ]
+        if sheets:
+            item, one_sided = sheets[0]
+            factor = 1.0
+            if isinstance(item, Conductor) and item.thickness is not None and one_sided:
+                factor = EXTERIOR_THICKNESS_FACTOR
+            if (item, factor) not in terms:
+                terms.append((item, factor))
+            imp_edges.append(local[k])
+            imp_group.append(terms.index((item, factor)))
+            continue
         if "absorbing" in types:
             absorbing.append(local[k])
             t = k // 3
             eps = np.trace(eps_tt[t]).real / 2
             mu = 2 / np.trace(nu_tt[t]).real
             admittance.append(np.sqrt(eps / mu))
-    pairs = [np.asarray(e, dtype=np.int64).reshape(-1, 2) for e in (pec, absorbing)]
-    return pairs[0], pairs[1], np.asarray(admittance, float)
+    pairs = [
+        np.asarray(e, dtype=np.int64).reshape(-1, 2)
+        for e in (pec, absorbing, imp_edges)
+    ]
+    impedance = (pairs[2], np.asarray(imp_group, np.int64), tuple(terms))
+    return pairs[0], pairs[1], np.asarray(admittance, float), impedance

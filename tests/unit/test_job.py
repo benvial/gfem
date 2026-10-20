@@ -316,12 +316,17 @@ def test_load_result_needs_a_result(tmp_path):
         gfem.load_result(tmp_path)
 
 
-def test_port_mode_result_round_trips_with_its_field(tmp_path):
+@pytest.mark.parametrize(
+    "walls",
+    [gfem.PEC("walls"), gfem.Conductor("walls", conductivity=5.8e7, thickness=1e-6)],
+    ids=["pec", "conductor"],
+)
+def test_port_mode_result_round_trips_with_its_field(tmp_path, walls):
     mesh = gfem.Mesh.from_gmsh(DATA / "waveguide.msh", length_unit="mm")
     model = gfem.Model(
         mesh,
         materials={"air": gfem.Material()},
-        boundaries=[gfem.PEC("walls")],
+        boundaries=[walls],
         ports=[gfem.WavePort("p1", "port1")],
     )
     problem = gfem.PortMode("p1", [8e9, 10e9])

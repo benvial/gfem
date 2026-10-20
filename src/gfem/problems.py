@@ -238,9 +238,16 @@ class Driven:
     incident power while every other port is terminated in its own
     impedance, and the electric field solves the time-harmonic Maxwell
     equations (e^{+iωt}) in the electromagnetic solve domain. The result is
-    the scattering matrix (power waves, each port's reference impedance its
-    resistance; see `gfem.NetworkParameters`) and, on request, the electric
-    fields (see `gfem.conventions` for their amplitude).
+    the scattering matrix (power waves, each lumped port's reference
+    impedance its resistance; see `gfem.NetworkParameters`) and, on request,
+    the electric fields (see `gfem.conventions` for their amplitude).
+
+    A `WavePort` is fed by its port mode: before the 3D solve, a port mode
+    sweep (`gfem.PortMode`) tabulates each wave port's mode over the
+    frequencies, to ``SolverOptions.port_mode_tolerance``; the port face
+    carries Palace's boundary term (the mode's real wavenumber), S is the
+    field's projection on the mode, and ``WavePort(offset=...)`` de-embeds
+    it. The modes are on the result (``DrivenResult.port_modes``).
 
     Args:
         frequency: One frequency or a 1D sequence of them, Hz.
