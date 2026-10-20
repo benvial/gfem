@@ -127,7 +127,8 @@ total time-averaged energy of a lossless mode, electric plus magnetic, as
 Palace's ``E_elec``). Each mode field is scaled to ``E_elec`` =
 `MODE_ENERGY` and phased so that ``∫ D · E dV`` (no conjugate) is real
 and positive, which makes a lossless mode's field real; the remaining sign
-puts the largest coefficient's real part positive. Participation ratios
+puts the largest coefficient's real part positive (among coefficients equal
+to the largest within a relative 1e-12, the lowest index). Participation ratios
 and coupling Q are ratios to ``E_elec`` and do not depend on this scale.
 """
 

@@ -14,6 +14,7 @@ import cmath
 import math
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 import scipy.constants as const
@@ -122,6 +123,30 @@ def test_mode_field_stores_one_joule_of_electric_energy(mesh):
     np.testing.assert_allclose(result.bulk_participation["dielectric"], [1.0])
     with pytest.raises(IndexError, match="1 mode"):
         result.e_field(1)
+
+
+def _jittered(mesh, seed, rel=1e-13):
+    """``mesh`` with every node coordinate moved by ``rel`` (relative)."""
+    nodes = np.array(mesh.imported_nodes)
+    nodes *= 1 + rel * np.random.default_rng(seed).uniform(-1, 1, nodes.shape)
+    return jax.tree.unflatten(jax.tree.structure(mesh), [jnp.asarray(nodes)])
+
+
+def test_mode_sign_ties_break_on_the_lowest_dof_index(mesh):
+    # E_z = A cos(pi x / L) on the symmetric line: the largest coefficients
+    # sit at both ends with opposite signs and equal magnitudes up to
+    # rounding, so a rounding-level node move must not flip the mode's sign.
+    def mode(m):
+        return gfem.solve(_line(m), gfem.Eigenmode(target=8e9)).e_field(0)
+
+    near_port1 = np.array([[L / 10 * 1e-3, W / 2 * 1e-3, H / 2 * 1e-3]])
+    for m in (mesh, *(_jittered(mesh, seed) for seed in range(6))):
+        field = mode(m)
+        x = np.asarray(field.coefficients)
+        magnitude = np.abs(x)
+        first = np.flatnonzero(magnitude >= (1 - 1e-12) * magnitude.max())[0]
+        assert x[first].real > 0
+        assert np.asarray(field.at(near_port1))[0, 2].real > 0
 
 
 def test_loss_tangent_divides_the_eigenvalue_exactly(mesh):
