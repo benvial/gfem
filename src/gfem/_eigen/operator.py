@@ -12,11 +12,14 @@ second-order absorbing boundary) makes the problem nonlinear: it stays a
 separate term ``θ_p(k) A_p`` of ``A(k)``, applied with its exact θ and
 dθ/dk.
 
-The seed problem freezes each nonpolynomial factor at the shift ``sigma``:
-``θ_p(k) ≈ θ_p(sigma) (k / sigma)^s`` with the piece's ``seed_power`` s,
-which adds it to ``K``, ``D`` or ``M``. The seed's ``T(sigma)`` is then the
-true ``T(sigma)``, so the one prepared operator serves both the
-shift-invert Arnoldi of the seed and the refinement of its pairs.
+The seed problem freezes each nonpolynomial factor at the shift ``sigma``
+to first order, ``θ_p(k) ≈ θ_p(sigma) + θ_p'(sigma) (k - sigma)``, which
+adds it to ``K`` and ``D``. The seed's ``T(sigma)`` is then the true
+``T(sigma)``, so the one prepared operator serves both the shift-invert
+Arnoldi of the seed and the refinement of its pairs. A seed can be far
+from its root when a nonpolynomial term is large (18 % for a
+second-order absorbing wall in the near field of an open line end): only
+the refinement on the true ``T(k)`` gives the mode.
 
 ``T(k)`` is complex symmetric (``T^T = T``), so the two-sided Rayleigh
 functional ``x^T T(k) x = 0`` gives the eigenvalue of an approximate
@@ -104,14 +107,17 @@ class NonPolynomial:
         matrix: ``A``, an NGSolve operator (matrix-free).
         value: ``θ(k)`` for the wavenumber per file unit ``k`` (complex).
         derivative: ``dθ/dk``.
-        seed_power: The power of ``k`` the frozen seed keeps exact.
     """
 
     name: str
     matrix: object
     value: Callable[[complex], complex]
     derivative: Callable[[complex], complex]
-    seed_power: int
+
+    def linear(self, k: complex) -> tuple[complex, complex]:
+        """``(c0, c1)`` with ``θ(z) ≈ c0 + c1 z`` to first order around ``k``."""
+        slope = self.derivative(k)
+        return self.value(k) - k * slope, slope
 
     @classmethod
     def from_piece(
@@ -127,7 +133,6 @@ class NonPolynomial:
             matrix,
             lambda k: complex(piece.theta(k * per_k)),
             lambda k: complex(d_theta(k * per_k)) * per_k,
-            piece.seed_power,
         )
 
 
@@ -254,55 +259,53 @@ class EigenOperator:
     @property
     def seed_damped(self) -> bool:
         """Whether the seed problem has a damping term (``D`` or a frozen one)."""
-        return self.damping is not None or any(
-            t.seed_power == 1 for t in self.nonpolynomial
-        )
-
-    def _frozen(self, power: int, x: np.ndarray) -> np.ndarray:
-        """``Σ θ_p(sigma) / sigma^power A_p x`` over the terms frozen at ``power``."""
-        s = self.shift
-        out = np.zeros(len(self.free), dtype=complex)
-        for t in self.nonpolynomial:
-            if t.seed_power == power:
-                out = out + t.value(s) / s**power * self._matvec(t.matrix, x)
-        return out
+        return self.damping is not None or bool(self.nonpolynomial)
 
     def seed_damping(self, x: np.ndarray) -> np.ndarray:
-        """The seed's damping (``D`` and the terms frozen at power 1) on ``x``."""
-        d = self._frozen(1, x)
+        """The seed's damping on ``x``: ``D`` plus each ``θ_p'(sigma) A_p``.
+
+        (The seed's ``K`` adds ``θ_p(sigma) - sigma θ_p'(sigma)`` per term,
+        which only enters through ``T(sigma)``.)
+        """
+        s = self.shift
+        d = np.zeros(len(self.free), dtype=complex)
         if self.damping is not None:
-            d = d + self._matvec(self.damping, x)
+            d = self._matvec(self.damping, x)
+        for t in self.nonpolynomial:
+            d = d + t.derivative(s) * self._matvec(t.matrix, x)
         return d
 
     def seed_mass(self, x: np.ndarray) -> np.ndarray:
-        """The seed's mass (``M`` and the terms frozen at power 2) on ``x``."""
-        return self._matvec(self.mass, x) + self._frozen(2, x)
+        """The seed's mass on ``x`` (``M``: the seed freezes no term into it)."""
+        return self._matvec(self.mass, x)
 
     # --- the Rayleigh functional and the backward error -----------------------------
 
     def rayleigh(self, x: np.ndarray, k: complex) -> complex:
         """The root of ``x^T T(k) x = 0`` nearest ``k``.
 
-        A quadratic's root in closed form. With nonpolynomial terms, the
-        root of the quadratic with each term frozen at ``k`` (as in the
-        seed) nearest ``k`` starts Newton on the scalar function, whose
-        derivative ``x^T T'(k) x`` takes each term's ``dθ/dk``.
+        A quadratic's root in closed form. With nonpolynomial terms, a
+        Newton iteration that keeps the quadratic exact: each step takes the
+        root nearest the current ``k`` of the quadratic with every term
+        linearized around ``k`` (`NonPolynomial.linear`), so it stays on the
+        branch of the start and converges quadratically.
         """
         kx, dx, mx, ax = self._parts(x)
         a, b, c = x @ kx, x @ dx, x @ mx
         if not self.nonpolynomial:
             return _nearest_root((a, b, c), k)
         pairs = [(t, x @ y) for t, y in zip(self.nonpolynomial, ax, strict=True)]
-        frozen = [a, b, c]
-        for t, n in pairs:
-            frozen[t.seed_power] += t.value(k) / k**t.seed_power * n
-        k = _nearest_root(frozen, k)
+        k = complex(k)
         for _ in range(_NEWTON_STEPS):
-            f = a + b * k + c * k * k + sum(t.value(k) * n for t, n in pairs)
-            df = b + 2 * c * k + sum(t.derivative(k) * n for t, n in pairs)
-            step = f / df
-            k -= step
-            if abs(step) <= _NEWTON_RTOL * abs(k):
+            linear = [a, b, c]
+            for t, n in pairs:
+                c0, c1 = t.linear(k)
+                linear[0] += c0 * n
+                linear[1] += c1 * n
+            new = _nearest_root(linear, k)
+            done = abs(new - k) <= _NEWTON_RTOL * abs(new)
+            k = new
+            if done:
                 break
         return k
 

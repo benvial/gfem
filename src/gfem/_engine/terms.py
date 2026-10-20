@@ -32,9 +32,8 @@ at most 2 in ω (``"polynomial"``); a conductor's θ (through Z_s, which
 grows as the square root of ω) and the second-order absorbing term's (a
 pole at ω = 0) are not (``"nonpolynomial"``). A nonpolynomial piece also
 supplies dθ/dω, and both are analytic in ω, so they hold at the complex
-frequencies of an eigenmode problem. Its ``seed_power`` p says how an
-eigenmode seed freezes it at a shift ω_s: θ(ω) ≈ θ(ω_s) (ω / ω_s)^p,
-which keeps an explicit i ω (p = 1) exact.
+frequencies of an eigenmode problem (an eigenmode seed linearizes θ
+around its shift with both).
 """
 
 from __future__ import annotations
@@ -107,8 +106,6 @@ class Piece:
             2 in ω) or ``"nonpolynomial"``.
         d_theta: dθ/dω of a nonpolynomial piece (``None`` for a polynomial
             one).
-        seed_power: The power of ω an eigenmode seed keeps exact when it
-            freezes a nonpolynomial piece (0, 1 or 2).
 
     Raises:
         ValueError: ``theta`` does not give one scalar: the term is not
@@ -121,7 +118,6 @@ class Piece:
     integrand: Callable[[Any, Any], Any]
     frequency_class: Literal["polynomial", "nonpolynomial"] = "polynomial"
     d_theta: Callable[[complex], complex] | None = None
-    seed_power: int = 0
 
     def __post_init__(self) -> None:
         """Check that θ is a scalar function of ω."""
@@ -134,13 +130,8 @@ class Piece:
             )
         if self.frequency_class not in ("polynomial", "nonpolynomial"):
             raise ValueError(f"Unknown frequency class {self.frequency_class!r}.")
-        if self.frequency_class == "nonpolynomial" and (
-            self.d_theta is None or self.seed_power not in (0, 1, 2)
-        ):
-            raise ValueError(
-                f"The nonpolynomial term {self.name!r} needs d_theta and a "
-                "seed_power of 0, 1 or 2."
-            )
+        if self.frequency_class == "nonpolynomial" and self.d_theta is None:
+            raise ValueError(f"The nonpolynomial term {self.name!r} needs d_theta.")
 
 
 def _constant(omega: complex) -> complex:  # noqa: ARG001
@@ -345,7 +336,6 @@ def pieces(
                     ),
                     frequency_class="nonpolynomial",
                     d_theta=lambda w: -1 / (2j * k(w) * w),
-                    seed_power=0,
                 )
             )
 
@@ -461,7 +451,6 @@ def _conductor(
                 integrand,
                 frequency_class="nonpolynomial",
                 d_theta=d_theta,
-                seed_power=1,
             )
         )
     return out

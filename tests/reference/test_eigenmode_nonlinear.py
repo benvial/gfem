@@ -15,9 +15,9 @@ with the case's order.
   mesh: ``Re f`` and Q agree to 1e-5 and 1e-3 relative.
 - Physics (``eigenmode/ihp_hw_box150``): the driven ``r8_box150`` air box
   (150 um margins, 300 um above and below) with second-order absorbing
-  walls. gfem's textbook second-order term and Palace's opposite sign
-  agree there to 1e-4 in ``Re f`` and 1 % in Q, and so do gfem's second
-  and first orders.
+  walls. gfem's textbook second-order term agrees with Palace's second
+  order (the opposite sign) to 1e-4 in ``Re f`` and 1 % in Q, and with
+  gfem's own first order to 1 % in Q.
 - Wall time within 1.5x Palace's.
 """
 
@@ -36,7 +36,7 @@ import gfem
 THREADS = 4
 #: Same-mesh parity (relative, on Re f and Q).
 PARITY_F, PARITY_Q = 1e-5, 1e-3
-#: The converged box: absorbing forms and codes agree (relative).
+#: The physics tolerances of the large box (relative).
 PHYSICS_F, PHYSICS_Q = 1e-4, 1e-2
 
 
