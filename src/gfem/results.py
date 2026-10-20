@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DrivenResult",
+    "EigenmodeResult",
     "ElectrostaticResult",
     "Field",
     "NetworkParameters",
@@ -579,15 +580,21 @@ class SweepInfo:
         tolerance: ``SolverOptions.adaptive_tolerance`` of an adaptive
             sweep, ``None`` for a uniform one.
         basis_size: The number of reduced basis vectors (0 for uniform).
+
+    Under `jax.grad`, `jax.jit` or `jax.vmap` an adaptive sweep needs
+    frozen samples (``Driven(samples=...)``), and ``sample_errors``,
+    ``converged`` and ``basis_size`` are ``None``: they are only known
+    after the solve, and this record is static. Solve outside the
+    transformation to read them.
     """
 
     kind: str
     solved: tuple[bool, ...]
     sampled_frequencies: tuple[float, ...]
-    sample_errors: tuple[float, ...]
-    converged: bool
+    sample_errors: tuple[float, ...] | None
+    converged: bool | None
     tolerance: float | None = None
-    basis_size: int = 0
+    basis_size: int | None = 0
 
     def __post_init__(self) -> None:
         """Normalize to plain Python values (hashable, JSON-friendly)."""
@@ -598,9 +605,12 @@ class SweepInfo:
             "sampled_frequencies",
             tuple(float(f) for f in self.sampled_frequencies),
         )
-        set_(self, "sample_errors", tuple(float(e) for e in self.sample_errors))
-        set_(self, "converged", bool(self.converged))
-        set_(self, "basis_size", int(self.basis_size))
+        if self.sample_errors is not None:
+            set_(self, "sample_errors", tuple(float(e) for e in self.sample_errors))
+        if self.converged is not None:
+            set_(self, "converged", bool(self.converged))
+        if self.basis_size is not None:
+            set_(self, "basis_size", int(self.basis_size))
         if self.tolerance is not None:
             set_(self, "tolerance", float(self.tolerance))
 
@@ -619,11 +629,15 @@ class SweepInfo:
     def __repr__(self) -> str:
         if self.kind == "uniform":
             return f"SweepInfo(uniform, {len(self.solved)} frequencies solved)"
+        head = (
+            f"SweepInfo(adaptive, {len(self.sampled_frequencies)} of "
+            f"{len(self.solved)} frequencies solved"
+        )
+        if self.converged is None:
+            return f"{head}, traced: no diagnostics)"
         state = "converged" if self.converged else "NOT converged"
         return (
-            f"SweepInfo(adaptive, {len(self.sampled_frequencies)} of "
-            f"{len(self.solved)} frequencies solved, basis {self.basis_size}, "
-            f"{state} at tolerance {self.tolerance:g})"
+            f"{head}, basis {self.basis_size}, {state} at tolerance {self.tolerance:g})"
         )
 
 
@@ -649,7 +663,8 @@ class DrivenResult:
             the result holds the reduced basis and one short coordinate
             vector per field, and a field's coefficients are formed when it
             is read. Their accuracy is the sweep's field error, about
-            ``SolverOptions.adaptive_tolerance`` or better.
+            ``SolverOptions.adaptive_tolerance`` or better. Gradients of an
+            adaptive sweep hold its basis fixed (see ``Driven.samples``).
         kept: ``(frequency in Hz, excited port)`` of each of `e_fields`
             (static labels), frequency-major.
         sweep: How the frequencies were solved (`SweepInfo`).
@@ -752,3 +767,104 @@ class DrivenResult:
 
 
 register_fields(DrivenResult, ("s", "e_fields", "port_modes"))
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class EigenmodeResult:
+    """The result of an `Eigenmode` problem: ``n_modes`` modes, nearest first.
+
+    Every array has one entry per mode, in order of increasing distance of
+    the mode's frequency from ``Eigenmode.target``.
+
+    Attributes:
+        omega: Complex angular frequencies, rad/s, ``(n_modes,)``. Under
+            e^{+iωt} a decaying mode has ``Im omega > 0``.
+        error: Backward error of each mode,
+            ``|T(omega) x| / ((|K| + |omega| |C| + |omega|^2 |M|) |x|)`` for
+            the discrete operator ``T(omega) = K + i omega C - omega^2 M``
+            (Palace's ``Error (Bkwd.)``); at most
+            ``SolverOptions.eigen_tolerance``.
+        q_port: Coupling Q of each lumped port with a resistance R, by port
+            name: ``Re omega / kappa`` with the port's coupling rate
+            ``kappa = R |I|^2 / (2 E)``, ``I = V / R`` the current through R
+            for the port voltage V of the mode and ``E`` the mode's electric
+            energy (Palace's ``port-Q.csv``). V is the port's mean voltage
+            over its elements, as in a driven problem; when the elements of
+            a multi-element port see different voltages, R dissipates more
+            than ``|V|^2 / (2 R)``, and ``1 / Q`` exceeds the sum of the
+            ``1 / q_port`` and the dielectric losses.
+        participation: Inductive energy participation ratio of each lumped
+            port with an inductance L, by port name: ``L |I|^2 / (2 E)``
+            with ``I = V / (i Re(omega) L)`` (Palace's ``port-EPR.csv``),
+            the junction participation of a transmon. Its sign is that of
+            ``Re V``: the field's phase makes a lossless mode real, so the
+            sign is the junction's polarity along its port direction (Palace
+            signs by ``Re I``, which is zero for a real field).
+        bulk_participation: Electric energy participation of each volume
+            region of the solve domain, by region name: the fraction of the
+            mode's electric energy ``E`` stored in it (Palace's
+            ``domain-E.csv`` ratios). Times the region's ``tan_delta``, it
+            is the region's contribution to ``1 / Q``.
+        e_fields: The mode fields, one `Field` per mode (read them with
+            `e_field`): peak phasors in V/m, quantity ``"E"``, on H(curl)
+            of the solve order over the solve domain, each with its mode's
+            complex ``omega``. Each mode stores 1 J of electric energy,
+            ``E = 1/2 Re(integral of D* . E dV)`` plus the lumped
+            capacitors' ``C |V|^2 / 2`` (the total time-averaged energy of
+            a lossless mode), and its phase makes ``integral of D . E dV``
+            real and positive.
+    """
+
+    omega: jax.Array
+    error: jax.Array
+    q_port: dict[str, jax.Array] = dataclasses.field(default_factory=dict)
+    participation: dict[str, jax.Array] = dataclasses.field(default_factory=dict)
+    bulk_participation: dict[str, jax.Array] = dataclasses.field(default_factory=dict)
+    e_fields: tuple[Field, ...] = ()
+
+    def __post_init__(self) -> None:
+        """Hold the fields as a tuple."""
+        object.__setattr__(self, "e_fields", tuple(self.e_fields))
+
+    @property
+    def frequency(self) -> jax.Array:
+        """Mode frequencies ``Re omega / (2 pi)``, Hz."""
+        return jnp.real(self.omega) / (2 * math.pi)
+
+    @property
+    def q(self) -> jax.Array:
+        """Quality factors ``|omega| / (2 |Im omega|)``; ``inf`` for a lossless mode."""
+        return jnp.abs(self.omega) / (2 * jnp.abs(jnp.imag(self.omega)))
+
+    @property
+    def n_modes(self) -> int:
+        """The number of modes."""
+        return int(np.shape(self.omega)[0])
+
+    def e_field(self, mode: int) -> Field:
+        """The electric field of mode ``mode`` (0 = nearest the target).
+
+        Raises:
+            IndexError: No such mode.
+        """
+        if not -self.n_modes <= mode < self.n_modes:
+            raise IndexError(
+                f"Mode {mode} does not exist: this result has {self.n_modes} "
+                "mode(s), numbered from 0."
+            )
+        return self.e_fields[mode]
+
+    def __repr__(self) -> str:
+        try:
+            f = np.asarray(self.frequency) / 1e9
+            q = np.asarray(self.q)
+        except (TypeError, jax.errors.TracerArrayConversionError):
+            return f"EigenmodeResult({self.n_modes} modes)"
+        rows = ", ".join(f"{a:.6g} GHz (Q {b:.4g})" for a, b in zip(f, q, strict=True))
+        return f"EigenmodeResult([{rows}])"
+
+
+register_fields(
+    EigenmodeResult,
+    ("omega", "error", "q_port", "participation", "bulk_participation", "e_fields"),
+)

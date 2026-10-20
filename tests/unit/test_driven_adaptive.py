@@ -170,14 +170,14 @@ def test_bddc_gmres_samples_match_direct(line, adaptive):
     np.testing.assert_allclose(result.s.values, adaptive.s.values, atol=1e-5)
 
 
-def test_adaptive_sweeps_are_not_traceable_yet(line):
+def test_a_greedy_sweep_cannot_be_traced(line):
     problem = gfem.Driven(frequency=GRID, sweep="adaptive")
 
     @jax.jit
     def s(model):
         return gfem.solve(model, problem, options=OPTIONS).s.values
 
-    with pytest.raises(NotImplementedError, match="adaptive"):
+    with pytest.raises(NotImplementedError, match="samples="):
         s(line)
 
     field = gfem.MaterialField.uniform("dielectric", gfem.Material(eps_r=EPS))
@@ -187,8 +187,79 @@ def test_adaptive_sweeps_are_not_traceable_yet(line):
         result = gfem.solve(m, problem, options=OPTIONS)
         return jax.numpy.abs(result.s["p2", "p1"][0])
 
-    with pytest.raises(NotImplementedError, match="gradients"):
+    with pytest.raises(NotImplementedError, match="frozen sample set"):
         jax.grad(s21)(model)
+
+
+def _eps_model(line, eps):
+    return line.with_material("dielectric", gfem.MaterialField(eps_r=eps))
+
+
+FROZEN = gfem.Driven(
+    frequency=GRID,
+    sweep="adaptive",
+    samples=[GRID[0], GRID[-1], GRID[30]],
+    keep_fields=[GRID[3], GRID[30]],
+)
+
+
+def test_frozen_samples_trace_and_match_the_eager_solve(line):
+    eager = gfem.solve(line, FROZEN, options=OPTIONS)
+    n = len(line.mesh.tetrahedra)
+
+    @jax.jit
+    def solve(eps):
+        result = gfem.solve(_eps_model(line, eps), FROZEN, options=OPTIONS)
+        return result.s.values, result.e_fields.basis, result.e_fields.coordinates
+
+    s, basis, coordinates = solve(jax.numpy.full(n, EPS * (1 - 1e-3j)))
+    np.testing.assert_allclose(s, eager.s.values, rtol=1e-10, atol=1e-12)
+    # late basis vectors are ill-conditioned in the design: compare fields
+    assert basis.shape == eager.e_fields.basis.shape
+    fields = np.asarray(basis @ coordinates.T)
+    expected = np.asarray(eager.e_fields.basis @ eager.e_fields.coordinates.T)
+    np.testing.assert_allclose(fields, expected, atol=1e-9 * abs(expected).max())
+
+
+def test_frozen_samples_pad_the_basis_to_a_size_known_before_the_solve(line):
+    # two excited ports, real and imaginary parts, three samples
+    result = gfem.solve(line, FROZEN, options=OPTIONS)
+    assert result.e_fields.basis.shape[1] == 2 * 2 * 3
+    size = result.sweep.basis_size
+    assert size <= 12
+    assert not np.asarray(result.e_fields.basis)[:, size:].any()
+
+
+def test_a_traced_sweep_reports_its_frozen_samples_but_no_diagnostics(line):
+    seen = {}
+
+    def objective(eps):
+        result = gfem.solve(_eps_model(line, eps), FROZEN, options=OPTIONS)
+        seen["sweep"] = result.sweep
+        return jax.numpy.sum(jax.numpy.abs(result.s.values) ** 2)
+
+    n = len(line.mesh.tetrahedra)
+    jax.grad(objective)(jax.numpy.full(n, EPS))
+    info = seen["sweep"]
+    assert info.kind == "adaptive"
+    assert info.sampled_frequencies == FROZEN.samples
+    assert sum(info.solved) == 3
+    assert info.tolerance == OPTIONS.adaptive_tolerance
+    assert info.sample_errors is None
+    assert info.converged is None
+    assert info.basis_size is None
+    assert "no diagnostics" in repr(info)
+
+
+def test_the_frozen_basis_itself_is_not_differentiable(line):
+    n = len(line.mesh.tetrahedra)
+
+    def basis_sum(eps):
+        result = gfem.solve(_eps_model(line, eps), FROZEN, options=OPTIONS)
+        return jax.numpy.sum(result.e_fields.basis)
+
+    with pytest.raises(gfem.NonDifferentiableError, match="e_basis"):
+        jax.grad(basis_sum)(jax.numpy.full(n, EPS))
 
 
 def test_adaptive_job_and_result_round_trip(line, tmp_path):

@@ -9,6 +9,7 @@ problem's type.
 from __future__ import annotations
 
 import dataclasses
+import math
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar
 
@@ -17,7 +18,7 @@ import numpy as np
 
 from gfem._checks import is_traced
 
-__all__ = ["Driven", "Electrostatic", "PortMode"]
+__all__ = ["Driven", "Eigenmode", "Electrostatic", "PortMode"]
 
 
 def _surfaces(value: Any, what: str) -> tuple[str, ...]:
@@ -268,7 +269,11 @@ class Driven:
             ``frequency``. Freezing the samples of a first sweep
             (``samples=result.sweep.sampled_frequencies``) keeps the reduced
             model's sample set fixed while the model changes, e.g. across
-            optimizer iterations.
+            optimizer iterations, so the objective is smooth in the design.
+            Under `jax.grad`, `jax.jit` or `jax.vmap` an adaptive sweep
+            needs frozen samples. Its gradients hold the reduced basis
+            fixed: equal to the full solve's at the sample frequencies,
+            accurate to the sweep's field error between them.
         keep_fields: Which electric fields the result keeps, one per kept
             frequency and excited port: ``False`` (the default) none,
             ``True`` all, or a frequency or list of frequencies of
@@ -390,3 +395,69 @@ def _on_grid(
 
 
 jax.tree_util.register_static(Driven)
+
+
+@dataclasses.dataclass(frozen=True, init=False)
+class Eigenmode:
+    """The resonant modes of a model nearest a target frequency.
+
+    Finds the source-free solutions of the time-harmonic Maxwell equations
+    (e^{+iωt}) in the electromagnetic solve domain: complex angular
+    frequencies ``omega`` (``Im omega > 0`` for a decaying mode) and their
+    electric fields. Losses (``tan_delta``, ``conductivity``), resistive
+    lumped ports and `Impedance` boundaries, and first-order `Absorbing`
+    boundaries make the modes decay; each mode's Q is
+    ``|omega| / (2 Im omega)``. The `n_modes` modes whose frequency
+    ``Re omega / 2 pi`` is nearest ``target`` are returned, nearest first.
+
+    Lumped ports are terminations here: nothing is excited. A port with a
+    resistance gets a coupling Q, a port with an inductance a participation
+    ratio (see `gfem.EigenmodeResult`).
+
+    Args:
+        target: The frequency to search around, Hz.
+        n_modes: How many modes.
+
+    Raises:
+        ValueError: ``target`` is not a finite positive number, or
+            ``n_modes`` is not an integer >= 1.
+
+    `gfem.solve` raises `gfem.EigenmodeConvergenceError` when fewer than
+    ``n_modes`` modes converge (never a partial result), and
+    NotImplementedError for a `WavePort`, a `Conductor` or a second-order
+    `Absorbing` boundary, whose frequency dependence this version cannot
+    solve for.
+
+    Example:
+        ``gfem.Eigenmode(target=5e9, n_modes=2)``
+    """
+
+    target: float
+    n_modes: int
+    _rule: ClassVar[str] = "gfem._eigen.rule:EigenmodeRule"
+
+    def __init__(self, target: float, n_modes: int = 1) -> None:
+        """Validate and normalize (see the class docstring)."""
+        if is_traced(target):
+            raise ValueError("Eigenmode.target must be a fixed number, not traced.")
+        try:
+            value = float(target)
+        except (TypeError, ValueError):
+            value = math.nan
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(
+                f"Eigenmode.target must be a finite frequency > 0 Hz, got {target!r}."
+            )
+        if (
+            isinstance(n_modes, bool)
+            or not isinstance(n_modes, (int, np.integer))
+            or n_modes < 1
+        ):
+            raise ValueError(
+                f"Eigenmode.n_modes must be an integer >= 1, got {n_modes!r}."
+            )
+        object.__setattr__(self, "target", value)
+        object.__setattr__(self, "n_modes", int(n_modes))
+
+
+jax.tree_util.register_static(Eigenmode)

@@ -64,10 +64,13 @@ class SolverOptions:
             ``None`` is half of the physical memory, 0 always recomputes.
         adjoint_tolerance: Relative residual of adjoint solves; ``None`` is
             ``tolerance``.
+        eigen_tolerance: Backward error accepted for an eigenmode (Palace's
+            ``Eigenmode.Tol``), shared by the Arnoldi iteration and the
+            refinement; distinct from ``tolerance``, the residual of each
+            linear solve.
         cluster_rtol: Relative distance under which eigenfrequencies form a
             degenerate cluster.
-        max_refine_iterations: Most iterations of the nonlinear eigenvalue
-            refinement.
+        max_refine_iterations: Most iterations of the eigenmode refinement.
     """
 
     order: int = 2
@@ -81,6 +84,7 @@ class SolverOptions:
     port_mode_tolerance: float = 1e-6
     retain_memory: int | None = None
     adjoint_tolerance: float | None = None
+    eigen_tolerance: float = 1e-6
     cluster_rtol: float = 1e-6
     max_refine_iterations: int = 50
 
@@ -93,7 +97,12 @@ class SolverOptions:
                 f"{', '.join(repr(s) for s in _LINEAR_SOLVERS)}, got "
                 f"{self.linear_solver!r}."
             )
-        for name in ("tolerance", "adaptive_tolerance", "port_mode_tolerance"):
+        for name in (
+            "tolerance",
+            "adaptive_tolerance",
+            "port_mode_tolerance",
+            "eigen_tolerance",
+        ):
             set_(self, name, _tol(getattr(self, name), name))
         if self.adjoint_tolerance is not None:
             set_(
