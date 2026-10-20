@@ -120,13 +120,15 @@ def _cells() -> list[Cell]:
             # Wave ports: every port x input on the direct solver; on BDDC +
             # GMRES the lossy ports (the adjoint solve through the port
             # operator's Woodbury update, the adjoint loads' extra columns at
-            # the samples), whose conductivity cells take the permittivity's
-            # code path.
+            # the samples) in the permittivity, whose conductivity cells take
+            # the same code path, and in the nodes on the uniform sweep (the
+            # adaptive backward is the solver's only through those solves).
+            bddc = {"eps_r"} | ({"nodes"} if sweep == "uniform" else set())
             cells += [
                 Cell("driven_wave", name, solver, sweep, port)
                 for port in ("lossless", "lossy")
                 for name in ("eps_r", "conductivity", "nodes")
-                if solver == "direct" or (port == "lossy" and name != "conductivity")
+                if solver == "direct" or (port == "lossy" and name in bddc)
             ]
         cells += [
             Cell("eigenmode", name, solver)
