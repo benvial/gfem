@@ -218,3 +218,29 @@ def test_the_s21_gradient_does_not_depend_on_which_ports_are_excited(
     full = s21(gfem.Driven(frequency=FREQUENCIES))
     adjoint = s21(gfem.Driven(frequency=FREQUENCIES, excite="p1"))
     np.testing.assert_allclose(adjoint, full, rtol=1e-8, atol=1e-10 * abs(full).max())
+
+
+@pytest.mark.parametrize(("port", "solves"), [("lossless", 0), ("lossy", 2)])
+def test_only_lossy_wave_ports_take_an_adjoint_solve(mesh, port, solves, monkeypatch):
+    from gfem._engine import driven
+
+    values, _ = _design(mesh, seed=5)
+    objective = _s_objective(
+        _line(mesh, port),
+        values,
+        "eps_r",
+        _options("direct"),
+        gfem.Driven(frequency=FREQUENCIES),
+        [0, 1],
+    )
+    value, pullback = jax.vjp(objective, values["eps_r"])
+    prepared = []
+    original = driven.prepare
+
+    def counting(*args, **kwargs):
+        prepared.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(driven, "prepare", counting)
+    pullback(jnp.ones_like(value))
+    assert len(prepared) == solves  # one operator per frequency
