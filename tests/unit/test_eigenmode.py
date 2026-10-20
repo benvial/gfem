@@ -230,22 +230,18 @@ def test_inductor_participation_matches_the_loaded_line(mesh):
 # --- unsupported terms and failures ----------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("extra", "match"),
-    [
-        ({"boundaries": [gfem.Conductor("side", 5.8e7)]}, "Conductor.*'side'"),
-        ({"boundaries": [gfem.Absorbing("side", order=2)]}, "second-order"),
-        ({"ports": [gfem.WavePort("o1", "port1")]}, "wave port 'o1'.*LumpedPort"),
-    ],
-)
-def test_nonlinear_terms_raise_with_a_remedy(mesh, extra, match):
+def test_wave_port_raises_from_solve_with_a_remedy(mesh):
+    # the model itself stays valid (a driven problem can use the wave port);
+    # only the eigenmode solve refuses it
     model = gfem.Model(
         mesh,
         materials={"dielectric": gfem.Material(eps_r=EPS)},
-        boundaries=[gfem.PEC("bottom"), gfem.PEC("top"), *extra.get("boundaries", [])],
-        ports=extra.get("ports", []),
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+        ports=[gfem.WavePort("o1", "port1")],
     )
-    with pytest.raises(NotImplementedError, match=match):
+    with pytest.raises(
+        NotImplementedError, match=r"(?s)wave port 'o1'.*LumpedPort.*gfem\.Driven"
+    ):
         gfem.solve(model, gfem.Eigenmode(target=8e9))
 
 

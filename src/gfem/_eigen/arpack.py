@@ -14,6 +14,9 @@ whose shift-invert step needs one solve with ``T(sigma)``: for
 ``(A - sigma B)^-1 B [y1; y2]``, ``a = -T(sigma)^-1 (M y2 + (D + sigma M)
 y1)`` and ``b = y1 + sigma a``. The 2n system is never factorized.
 
+``K``, ``D`` and ``M`` are the seed's: a nonlinear problem's nonpolynomial
+terms frozen at the shift (`EigenOperator.seed_damping`, `seed_mass`).
+
 Every Arnoldi vector (each half of a companion vector) goes through the
 divergence-free projection, and the start vector is a fixed, projected
 vector, so a solve is deterministic.
@@ -26,7 +29,7 @@ from collections.abc import Callable
 import numpy as np
 import scipy.sparse.linalg as spla
 
-from gfem._eigen.operator import EigenOperator, matvec
+from gfem._eigen.operator import EigenOperator
 
 __all__ = ["shift_invert"]
 
@@ -66,10 +69,9 @@ def shift_invert(
     n = len(free)
     s = op.shift
 
-    def mass(y):
-        return np.where(free, matvec(op.mass, np.where(free, y, 0)), 0)
-
-    if op.damping is None:
+    mass = op.seed_mass
+    damped = op.seed_damped
+    if not damped:
         size = n
 
         def apply(y):
@@ -81,7 +83,7 @@ def shift_invert(
 
         def apply(y):
             y1, y2 = y[:n], y[n:]
-            d1 = np.where(free, matvec(op.damping, y1), 0)
+            d1 = op.seed_damping(y1)
             a = -op.solve(mass(y2) + d1 + s * mass(y1))
             return np.concatenate([project(a), project(y1 + s * a)])
 
@@ -98,5 +100,5 @@ def shift_invert(
         theta, vectors = err.eigenvalues, err.eigenvectors
     keep = np.abs(theta) > 0
     theta, vectors = theta[keep], vectors[:n, keep]
-    k = np.sqrt(s * s + 1 / theta) if op.damping is None else s + 1 / theta
+    k = s + 1 / theta if damped else np.sqrt(s * s + 1 / theta)
     return k, vectors
