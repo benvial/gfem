@@ -39,7 +39,7 @@ PROPERTIES: tuple[_Property, ...] = (
     _Property(
         "mu_r", "1", "em", 1.0, strict=True, may_be_complex=True, may_be_tensor=True
     ),
-    _Property("tan_delta", "1", "em", 0.0, strict=False),
+    _Property("tan_delta", "1", "em", 0.0, strict=False, may_be_tensor=True),
     _Property("conductivity", "S/m", "em", 0.0, strict=False),
     _Property("thermal_conductivity", "W/(m K)", "thermal", None, strict=True),
     _Property("density", "kg/m^3", "thermal", None, strict=True),
@@ -113,11 +113,15 @@ class Material:
         eps_r: Relative permittivity, one value or three principal values
             along `axes` (symmetric anisotropy).
         mu_r: Relative permeability, one value or three principal values.
-        tan_delta: Dielectric loss tangent, >= 0.
+        tan_delta: Dielectric loss tangent, >= 0: one value, or three
+            principal values along `axes` (an anisotropic crystal such as
+            sapphire). Each principal value of the permittivity is then
+            ``eps_r[k] (1 - i tan_delta[k])``.
         conductivity: The electrical conductivity in S/m, >= 0 (not the
             thermal conductivity, which is `thermal_conductivity`).
         axes: Three orthonormal vectors, the principal directions of an
-            anisotropic `eps_r` / `mu_r`. ``None``: the coordinate axes.
+            anisotropic `eps_r` / `mu_r` / `tan_delta`. ``None``: the
+            coordinate axes.
         thermal_conductivity: Reserved for thermal problems, W/(m K).
             ``None`` means not given.
         density: Reserved for thermal problems, kg/m^3.
@@ -134,7 +138,7 @@ class Material:
 
     eps_r: float | tuple[float, float, float] = 1.0
     mu_r: float | tuple[float, float, float] = 1.0
-    tan_delta: float = 0.0
+    tan_delta: float | tuple[float, float, float] = 0.0
     conductivity: float = 0.0
     axes: tuple[tuple[float, float, float], ...] | None = None
     thermal_conductivity: float | None = None
@@ -160,11 +164,34 @@ class Material:
 
     @property
     def isotropic(self) -> bool:
-        """Whether `eps_r` and `mu_r` are single numbers."""
-        return not isinstance(self.eps_r, tuple) and not isinstance(self.mu_r, tuple)
+        """Whether `eps_r`, `mu_r` and `tan_delta` are single numbers."""
+        return not any(
+            isinstance(v, tuple) for v in (self.eps_r, self.mu_r, self.tan_delta)
+        )
 
 
 jax.tree_util.register_static(Material)
+
+
+def principal_tensor(
+    values: complex | tuple | np.ndarray,
+    axes: tuple[tuple[float, float, float], ...] | None,
+) -> np.ndarray:
+    """``sum_k values[k] a_k a_k^T``: a 3x3 tensor in the global frame.
+
+    ``values`` is one value (a multiple of the identity) or three principal
+    values along the rows ``a_k`` of ``axes`` (``None``: the coordinate axes).
+    """
+    v = np.broadcast_to(np.asarray(values), (3,))
+    a = np.eye(3) if axes is None else np.asarray(axes, dtype=float)
+    return np.einsum("k,ki,kj->ij", v, a, a)
+
+
+def lossy_permittivity(material: Material) -> np.ndarray:
+    """``eps_r (1 - i tan_delta)`` per principal axis, as a 3x3 complex tensor."""
+    eps = np.broadcast_to(np.asarray(material.eps_r, dtype=float), (3,))
+    tan = np.broadcast_to(np.asarray(material.tan_delta, dtype=float), (3,))
+    return principal_tensor(eps * (1 - 1j * tan), material.axes)
 
 
 def _axes(axes: Any, owner: str) -> tuple[tuple[float, float, float], ...]:
@@ -174,7 +201,7 @@ def _axes(axes: Any, owner: str) -> tuple[tuple[float, float, float], ...]:
     if a.shape != (3, 3) or not np.allclose(a @ a.T, np.eye(3), atol=1e-9):
         raise ValueError(
             f"{owner}: axes must be three orthonormal 3-vectors (the principal "
-            f"directions of eps_r / mu_r), got {axes!r}."
+            f"directions of eps_r / mu_r / tan_delta), got {axes!r}."
         )
     return tuple(tuple(float(x) for x in row) for row in a)  # ty: ignore[invalid-return-type]
 
@@ -331,7 +358,8 @@ class MaterialField:
             if not m.isotropic:
                 raise ValueError(
                     "MaterialField supports isotropic materials only; "
-                    f"{m.name or 'a material'} has tensor eps_r or mu_r."
+                    f"{m.name or 'a material'} has per-axis eps_r, mu_r or "
+                    "tan_delta."
                 )
         rho = jnp.asarray(density, dtype=jnp.float64)
         w = _SCHEMES[scheme](rho, penalty)
@@ -360,7 +388,8 @@ class MaterialField:
         if not material.isotropic:
             raise ValueError(
                 "MaterialField supports isotropic materials only; "
-                f"{material.name or 'this material'} has tensor eps_r or mu_r."
+                f"{material.name or 'this material'} has per-axis eps_r, mu_r or "
+                "tan_delta."
             )
         props = {
             n: jnp.asarray(getattr(material, n), dtype=jnp.float64)

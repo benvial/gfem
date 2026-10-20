@@ -6,12 +6,10 @@ interface. The three thin-layer losses of Wenner et al. live there:
 metal-air on the sheet's vacuum face, metal-substrate on its sapphire face,
 substrate-air on the gaps.
 
-- Palace's reference runs configure no ``Dielectric`` postprocessing, so
-  there is no Palace interface participation to compare with: the parity
-  test runs only when a rerun adds it (``config.json`` with
-  ``Boundaries.Postprocessing.Dielectric`` and ``surface-Q.csv``), and
-  skips otherwise. Palace bisects elements next to the sheet (see
-  ``test_eigenmode.py``), so that comparison is loose.
+- Parity with Palace's run on the imported mesh at eigen tolerance 1e-10
+  (``output/palace_nobisect_tol1e-10``, config ``config_nobisect_tol.json``
+  with ``Boundaries.Postprocessing.Dielectric``; see ``test_eigenmode.py``);
+  skipped when that run (or its ``surface-Q.csv``) is missing.
 - Independent check: each participation is recomputed from `Field.at`
   probes (point location, not the face kernel's element choice) at a
   6-point degree-4 rule on every triangle, each point moved a fraction
@@ -39,13 +37,18 @@ THREADS = 4
 T, EPS_LAYER, TAN_DELTA = 3e-9, 10.0, 2e-3
 SHEET, GAPS = "SUPERCONDUCTOR_pec", "sapphire__vacuum"
 SHIFTS = (1e-2, 1e-3)
+#: Palace's run on the imported mesh with interface postprocessing.
+SAME_MESH = "palace_nobisect_tol1e-10"
+SAME_MESH_CONFIG = "config_nobisect_tol.json"
+#: Relative parity of each participation with Palace's ``p_surf``.
+PARITY = 0.05
 CASES = {"MA": SHEET, "MS": SHEET, "SA": GAPS, "default": GAPS}
 #: gfem on r20, per mode (7.68 GHz, 16.67 GHz): participation per kind.
 GOLDEN: dict[str, list[float]] = {
-    "MA": [1.0434512966e-06, 7.4625409097e-07],
-    "MS": [1.2694871726e-04, 8.7165238507e-05],
-    "SA": [4.1317468072e-04, 1.7625909603e-04],
-    "default": [4.2066371975e-04, 1.7862941926e-04],
+    "MA": [1.0434512931e-06, 7.4625384967e-07],
+    "MS": [1.2694871352e-04, 8.7165195157e-05],
+    "SA": [4.1317468452e-04, 1.7625906585e-04],
+    "default": [4.2066372360e-04, 1.7862938686e-04],
 }
 
 # Strang-Fix 6-point rule, exact to degree 4: barycentrics and weights (sum 1)
@@ -71,6 +74,10 @@ def case():
     return Path(ref) / "eigenmode" / "r20"
 
 
+def _per_axis(value: float | list[float]) -> float | tuple[float, ...]:
+    return tuple(value) if isinstance(value, list) else float(value)
+
+
 def _model(case: Path) -> tuple[gfem.Model, dict]:
     config = json.loads((case / "config.json").read_text())
     mesh = gfem.Mesh.from_gmsh(case / "palace.msh", length_unit="um")
@@ -80,7 +87,7 @@ def _model(case: Path) -> tuple[gfem.Model, dict]:
         material = gfem.Material(
             eps_r=m["Permittivity"],
             mu_r=m.get("Permeability", 1.0),
-            tan_delta=float(np.mean(m.get("LossTan", 0.0))),
+            tan_delta=_per_axis(m.get("LossTan", 0.0)),
             axes=m.get("MaterialAxes"),
         )
         for tag in m["Attributes"]:
@@ -217,20 +224,20 @@ def test_interface_participation_golden_baseline(measured):
 
 
 def test_interface_participation_parity_with_palace(solved, case):
-    model, config, modes, _ = solved
-    dielectric = config["Boundaries"].get("Postprocessing", {}).get("Dielectric")
-    table = case / "output" / "palace" / "surface-Q.csv"
-    if not dielectric or not table.exists():
+    model, _, modes, _ = solved
+    out = case / "output" / SAME_MESH
+    table = out / "surface-Q.csv"
+    if not table.exists():
         pytest.skip(
-            "the Palace run has no Dielectric postprocessing (no surface-Q.csv); "
-            "rerun Palace with one to compare"
+            f"no Palace run with Dielectric postprocessing in {out} (no "
+            "surface-Q.csv); rerun Palace with one to compare"
         )
+    config = json.loads((case / SAME_MESH_CONFIG).read_text())
+    dielectric = config["Boundaries"]["Postprocessing"]["Dielectric"]
     names = {r.tag: r.name for r in model.mesh.regions if r.dim == 2}
     rows = np.loadtxt(table, delimiter=",", skiprows=1, ndmin=2)
     header = table.read_text().splitlines()[0].split(",")
-    eig = np.loadtxt(
-        case / "output" / "palace" / "eig.csv", delimiter=",", skiprows=1, ndmin=2
-    )
+    eig = np.loadtxt(out / "eig.csv", delimiter=",", skiprows=1, ndmin=2)
     f_palace = eig[:, 1] * 1e9  # Re f, GHz
     f_gfem = np.asarray(modes.frequency)
     for d in dielectric:
@@ -252,4 +259,6 @@ def test_interface_participation_parity_with_palace(solved, case):
             j = int(np.argmin(np.abs(f_gfem - f)))
             if abs(f_gfem[j] - f) > 1e-3 * f:
                 continue
-            assert math.isclose(float(p.participation[j]), row[column], rel_tol=0.05)
+            assert math.isclose(
+                float(p.participation[j]), row[column], rel_tol=PARITY
+            ), (d["Type"], f, float(p.participation[j]), row[column])

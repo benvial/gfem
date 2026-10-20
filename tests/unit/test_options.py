@@ -22,7 +22,8 @@ def test_defaults():
     assert o.port_mode_tolerance == 1e-6
     assert o.retain_memory is None  # half of the physical memory, at solve time
     assert o.adjoint_tolerance is None  # the forward tolerance
-    assert o.eigen_tolerance == 1e-6  # Palace's Eigenmode.Tol, apart from tolerance
+    # Palace's backward error (Eigenmode.Tol), tight enough to bound f and Q
+    assert o.eigen_tolerance == 1e-10
     assert o.cluster_rtol == 1e-6
     assert o.max_refine_iterations == 50
 
