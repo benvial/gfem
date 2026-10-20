@@ -535,7 +535,8 @@ def characteristic_impedance(mode: PortModeResult, voltage_path: Any) -> jax.Arr
 
     Raises:
         TypeError: ``mode`` is not a `gfem.PortModeResult`.
-        ValueError: The path is malformed or leaves the port plane.
+        ValueError: The path is malformed or leaves the port plane, or
+            ``mode`` carries no field (a driven result without kept fields).
     """
     from gfem._sweep.port_mode import path_voltage
     from gfem.results import PortModeResult
@@ -556,5 +557,11 @@ def characteristic_impedance(mode: PortModeResult, voltage_path: Any) -> jax.Arr
     if not np.isfinite(path).all():
         raise ValueError("voltage_path must hold finite numbers.")
     field = mode.e_field
+    if field is None:
+        raise ValueError(
+            f"The port mode of {mode.port!r} carries no field: a driven result "
+            "keeps its wave ports' mode fields only with Driven(keep_fields=...). "
+            "Solve with keep_fields, or solve gfem.PortMode for the port."
+        )
     volts = path_voltage(field._space, field._basis, field._coords, path)  # noqa: SLF001
     return jnp.asarray(np.abs(volts) ** 2 / 2.0)

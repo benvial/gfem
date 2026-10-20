@@ -256,10 +256,50 @@ def test_a_cutoff_inside_the_band_raises_with_its_estimate(guide_mesh):
         gfem.solve(guide(guide_mesh), gfem.PortMode("p1", np.linspace(5e9, 10e9, 41)))
 
 
-def test_conductor_on_a_port_edge_asks_for_pec_edges(guide_mesh):
-    walls = gfem.Conductor("walls", conductivity=5.8e7)
-    with pytest.raises(NotImplementedError, match=r"pec_edges=\('walls',\)"):
-        gfem.solve(guide(guide_mesh, walls), gfem.PortMode("p1", 10e9))
+def test_conductor_walls_give_te10_its_conductor_loss(guide_mesh):
+    # Pozar (3.96): alpha_c = R_s (2 b pi^2 + a^3 k^2) / (a^3 b beta k eta0)
+    sigma, f = 5.8e7, 10e9
+    walls = gfem.Conductor("walls", conductivity=sigma)
+    result = gfem.solve(guide(guide_mesh, walls), gfem.PortMode("p1", f))
+    k = 2 * np.pi * f / C0
+    beta = np.sqrt(k**2 - (np.pi / A) ** 2)
+    rs = np.sqrt(2 * np.pi * f * 4e-7 * np.pi / (2 * sigma))
+    alpha = rs * (2 * B * np.pi**2 + A**3 * k**2) / (A**3 * B * beta * k * ETA0)
+    gamma = complex(np.asarray(result.gamma)[0])
+    assert gamma.real == pytest.approx(alpha, rel=2e-3)
+    assert gamma.imag == pytest.approx(beta, rel=1e-4)
+
+
+def test_conductor_plates_follow_the_lossy_line_model(plate_mesh):
+    # TEM on a lossy line: gamma^2 = (i w L' + Z') i w C' with Z' = 2 Z_s / W
+    sigma, eps, f = 1e6, 4.0, (50e9, 100e9)
+    model = gfem.Model(
+        plate_mesh,
+        materials={"fill": gfem.Material(eps_r=eps)},
+        boundaries=[gfem.Conductor("plates", conductivity=sigma)],
+        ports=[gfem.WavePort("p1", "port1"), gfem.WavePort("p2", "port2")],
+    )
+    result = gfem.solve(model, gfem.PortMode("p1", f))
+    w = 2 * np.pi * np.array(f)
+    k = w * np.sqrt(eps) / C0
+    zs = (1 + 1j) * np.sqrt(w * 4e-7 * np.pi / (2 * sigma))
+    gamma = np.sqrt(-(k**2) + 2j * w * eps * EPS0 * zs / D)
+    np.testing.assert_allclose(np.asarray(result.gamma), gamma, rtol=1e-4)
+
+
+def test_impedance_plates_follow_the_lossy_line_model(plate_mesh):
+    rs, eps, f = 2.0, 4.0, (50e9, 100e9)
+    model = gfem.Model(
+        plate_mesh,
+        materials={"fill": gfem.Material(eps_r=eps)},
+        boundaries=[gfem.Impedance("plates", resistance=rs)],
+        ports=[gfem.WavePort("p1", "port1"), gfem.WavePort("p2", "port2")],
+    )
+    result = gfem.solve(model, gfem.PortMode("p1", f))
+    w = 2 * np.pi * np.array(f)
+    k = w * np.sqrt(eps) / C0
+    gamma = np.sqrt(-(k**2) + 2j * w * eps * EPS0 * rs / D)
+    np.testing.assert_allclose(np.asarray(result.gamma), gamma, rtol=1e-4)
 
 
 def test_pec_edges_make_conductor_walls_perfect_in_the_port_problem(guide_mesh):

@@ -253,7 +253,13 @@ def test_the_backward_keeps_and_needs_no_full_size_solver(line, monkeypatch):
     value, pullback = jax.vjp(objective, eps)
     entry = ENTRIES.get(max(ENTRIES._entries))
     assert entry.handle is None
-    assert sorted(entry.fields) == ["basis", "coordinates", "operators", "voltage"]
+    assert sorted(entry.fields) == [
+        "basis",
+        "coordinates",
+        "deembedding",
+        "functionals",
+        "matrices",
+    ]
 
     def refuse(*_, **__):
         raise AssertionError("the frozen-basis backward prepared a full solver")

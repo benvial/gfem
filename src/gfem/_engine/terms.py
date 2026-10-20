@@ -23,9 +23,14 @@ with k0 = ω scale / c, the wavenumber per file unit, and the pieces
   ∫ E_t · v_t times eta0 / R_s, mu0 scale / L_s, C_s / (eps0 scale), its R,
   L and C per square.
 
-Each θ is a closed-form scalar function of ω and each a_k is assembled
-without ω, so an adaptive sweep can project the pieces once. A term that
-cannot be written this way is not a `Piece`: constructing one raises.
+- a wave port, θ = i beta(ω) per file unit (the real part of its mode's
+  propagation constant, tabulated on the output grid by the port mode
+  sweep, see `Tabulated`): ∫ mu_r^-1 E_t · v_t on the port surface.
+
+Each θ is a closed-form scalar function of ω, or a table over the output
+grid filled before the solve, and each a_k is assembled without ω, so an
+adaptive sweep can project the pieces once. A term that cannot be written
+this way is not a `Piece`: constructing one raises.
 
 Each piece declares its frequency class. Most θ are polynomials of degree
 at most 2 in ω (``"polynomial"``); a conductor's θ (through Z_s, which
@@ -67,6 +72,7 @@ __all__ = [
     "LumpedElement",
     "LumpedPortData",
     "Piece",
+    "Tabulated",
     "absorbing_faces",
     "excitation_per_voltage",
     "face_owner",
@@ -75,6 +81,7 @@ __all__ = [
     "port_vectors",
     "surface_impedance",
     "surface_impedance_slope",
+    "wave_port_piece",
     "wavenumber",
 ]
 
@@ -92,6 +99,33 @@ _SMALL = 1e-4
 def wavenumber(omega: float, scale: float) -> float:
     """k0 in radians per mesh file unit."""
     return omega * scale / const.c
+
+
+class Tabulated:
+    """A θ(ω) known on a grid of angular frequencies only.
+
+    A pre-stage (the port mode sweep) fills it for every output frequency
+    before the solve; the sweep never asks for another frequency.
+    """
+
+    def __init__(self, omegas: np.ndarray, values: np.ndarray) -> None:
+        """``values[i]`` is θ at ``omegas[i]`` (rad/s)."""
+        self.omegas = np.asarray(omegas, float)
+        self.values = np.asarray(values)
+
+    def __call__(self, omega: float) -> complex:
+        """θ at a grid ω (matched to 1e-12 relative).
+
+        Raises:
+            ValueError: ``omega`` is not on the grid.
+        """
+        k = int(np.argmin(np.abs(self.omegas - omega)))
+        if abs(self.omegas[k] - omega) > 1e-12 * abs(omega):
+            raise ValueError(
+                f"A tabulated driven term has no value at {omega / (2 * math.pi):g} "
+                "Hz: it is known on the output grid only."
+            )
+        return complex(self.values[k])
 
 
 @dataclasses.dataclass(frozen=True)
@@ -121,6 +155,13 @@ class Piece:
 
     def __post_init__(self) -> None:
         """Check that θ is a scalar function of ω."""
+        if isinstance(self.theta, Tabulated):
+            if self.theta.values.ndim != 1 or not np.isfinite(self.theta.values).all():
+                raise ValueError(
+                    f"The driven term {self.name!r} is not tabulated as one finite "
+                    "scalar per frequency."
+                )
+            return
         value = np.asarray(self.theta(_PROBE))
         if value.ndim != 0 or not np.isfinite(value):
             raise ValueError(
@@ -499,6 +540,40 @@ def _impedance(built: EngineMesh, order: int, b: Impedance) -> list[Piece]:
     form = _tangential(built, (b.surface,), order)
     sheet = (form, b.resistance, b.inductance, b.capacitance)
     return _rlc(f"impedance {b.surface}", built.scale, [sheet])
+
+
+def wave_port_piece(
+    model: Model,
+    built: EngineMesh,
+    order: int,
+    *,
+    port: str,
+    surface: str,
+    theta: Tabulated,
+) -> Piece:
+    """The Robin term of a wave port: θ ∫ mu_r^-1 E_t · v_t on its surface.
+
+    ``mu_r`` is that of the solve-domain element behind each face.
+
+    Raises:
+        NotImplementedError: An anisotropic ``mu_r`` touches the port.
+    """
+    mesh = model.mesh
+    owner = face_owner(model)
+    on = mesh.triangle_tags == mesh.region(surface).tag
+    mu = element_tensors(model, "mu_r")
+    if mu.ndim == 3:
+        if np.ptp(mu[owner[on]] - mu[owner[on]][:, :1, :1] * np.eye(3)) > 0:
+            raise NotImplementedError(
+                f"WavePort {port!r}: an anisotropic mu_r touches the port; driven "
+                "wave ports support isotropic permeability only."
+            )
+        mu = mu[:, 0, 0]
+    values = np.zeros(len(owner), np.result_type(mu, float))
+    values[on] = 1.0 / mu[owner[on]]
+    form = _tangential(built, (surface,), order)
+    coef = surface_p0(built, values)
+    return Piece(f"waveport {port}", theta, lambda u, v: form(u, v, coef))
 
 
 def excitation_per_voltage(resistance: float) -> float:

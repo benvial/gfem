@@ -8,7 +8,7 @@ import structured_meshes as sm
 import gfem
 from gfem._engine import quadrature
 from gfem._engine.mesh import to_ngsolve
-from gfem._linalg import Operator, factorize, prepare
+from gfem._linalg import Operator, factorize, low_rank_update, prepare
 
 
 @pytest.fixture(scope="module")
@@ -276,3 +276,70 @@ def test_direct_factorizes_a_scipy_spd_matrix():
     assert type(handle._inverse).__name__.startswith("SparseCholesky")
     with pytest.raises(ValueError, match="square"):
         factorize(sp.eye(3, 4))
+
+
+# --- low-rank updates -------------------------------------------------------------
+
+
+def _update(space, rng, p=2):
+    free = np.array(list(space.FreeDofs()))
+    U = rng.standard_normal((space.ndof, p)) + 1j * rng.standard_normal((space.ndof, p))
+    U[~free] = 0  # an update lives on the free DOFs
+    C = rng.standard_normal((p, p)) + 1j * rng.standard_normal((p, p))
+    return U, C, free
+
+
+@pytest.mark.parametrize("kind", ["direct", "bddc_gmres"])
+def test_a_low_rank_update_solves_the_updated_operator(built, kind):
+    op, space = _laplace(built, complex_valued=True, shift=1 - 2j)
+    rng = np.random.default_rng(9)
+    U, C, free = _update(space, rng)
+    C = C + C.T  # complex symmetric, as a wave port's correction
+    base = prepare(op, symmetry="complex_symmetric", kind=kind, tolerance=1e-10)
+    handle = low_rank_update(base, U, C)
+    B = rng.standard_normal((space.ndof, 3)) + 0j
+    X = handle.solve(B)
+    # Krylov iterations count the right-hand sides, not the update's columns
+    assert len(handle.iterations) == (3 if kind == "bddc_gmres" else 0)
+    A = _dense(base, space.ndof) + U @ C @ U.T
+    np.testing.assert_allclose(handle.apply(X), A @ X, atol=1e-10 * np.abs(A @ X).max())
+    np.testing.assert_allclose((A @ X)[free], B[free], atol=1e-8 * np.abs(B).max())
+    np.testing.assert_array_equal(X[~free], 0)
+    np.testing.assert_allclose(
+        handle.solve(B, transpose=True), X, atol=1e-8 * np.abs(X).max()
+    )
+    np.testing.assert_allclose(handle.solve(B[:, 0]), X[:, 0], rtol=1e-8)
+    assert handle.kind == kind
+    assert handle.ndof == base.ndof
+    assert handle.nbytes >= base.nbytes
+    if kind == "bddc_gmres":
+        x0 = handle.solve(B[:, :2], x0=X[:, :2])
+        np.testing.assert_allclose(x0, X[:, :2], atol=1e-8 * np.abs(X).max())
+    handle.free()
+    with pytest.raises(RuntimeError, match="freed"):
+        handle.solve(B)
+
+
+def test_a_low_rank_update_transposes_its_coefficients(built):
+    op, space = _laplace(built, complex_valued=True, shift=1 - 2j)
+    rng = np.random.default_rng(10)
+    U, C, free = _update(space, rng, p=3)  # C not symmetric
+    handle = low_rank_update(
+        prepare(op, symmetry="complex_symmetric", kind="direct"), U, C
+    )
+    A = _dense(handle, space.ndof)  # apply includes the update
+    b = rng.standard_normal(space.ndof) + 1j * rng.standard_normal(space.ndof)
+    x = handle.solve(b, transpose=True)
+    np.testing.assert_allclose((A.T @ x)[free], b[free], atol=1e-9 * np.abs(b).max())
+    x = handle.solve(b)
+    np.testing.assert_allclose((A @ x)[free], b[free], atol=1e-9 * np.abs(b).max())
+
+
+def test_a_zero_update_is_the_operator_itself(built):
+    op, space = _laplace(built, complex_valued=True, shift=1 - 2j)
+    base = prepare(op, symmetry="complex_symmetric", kind="direct")
+    rng = np.random.default_rng(11)
+    U, _, _ = _update(space, rng)
+    b = rng.standard_normal(space.ndof) + 0j
+    x = low_rank_update(base, U, np.zeros((2, 2))).solve(b)
+    np.testing.assert_allclose(x, base.solve(b), atol=1e-12 * np.abs(x).max())
