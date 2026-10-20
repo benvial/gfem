@@ -62,6 +62,39 @@ def conductor_modes(mesh):
     return [gfem.solve(model, gfem.Eigenmode(target=f), options=TIGHT) for f in TARGETS]
 
 
+@pytest.mark.parametrize("thickness", [None, 2e-6, 1e-8])
+def test_nonpolynomial_terms_supply_their_analytic_derivative(mesh, thickness):
+    # dtheta/domega against central differences along the real and the
+    # imaginary axis at a complex frequency: equal only for an analytic theta
+    from gfem._engine.driven import driven_operator
+
+    model = gfem.Model(
+        mesh,
+        materials={"dielectric": gfem.Material(eps_r=EPS)},
+        boundaries=[
+            gfem.PEC("bottom"),
+            gfem.Conductor("top", SIGMA, thickness),
+            gfem.Absorbing("port1", order=2),
+        ],
+    )
+    pieces = [
+        p
+        for p in driven_operator(model, 1).pieces
+        if p.frequency_class == "nonpolynomial"
+    ]
+    names = sorted(p.name for p in pieces)
+    assert names[0] == "absorbing order 2"
+    assert names[1].startswith("conductor top")
+    omega = 2 * math.pi * F1 * (1 + 0.05j)
+    h = 1e-5 * abs(omega)
+    for p in pieces:
+        along_real = (p.theta(omega + h) - p.theta(omega - h)) / (2 * h)
+        along_imag = (p.theta(omega + 1j * h) - p.theta(omega - 1j * h)) / (2j * h)
+        exact = p.d_theta(omega)
+        assert abs(along_real - exact) <= 1e-8 * abs(exact)
+        assert abs(along_imag - exact) <= 1e-8 * abs(exact)
+
+
 def test_conductor_plate_gives_the_transmission_line_q(conductor_modes):
     for result in conductor_modes:
         omega = complex(result.omega[0])

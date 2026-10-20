@@ -283,17 +283,20 @@ class EigenOperator:
     def rayleigh(self, x: np.ndarray, k: complex) -> complex:
         """The root of ``x^T T(k) x = 0`` nearest ``k``.
 
-        A quadratic's root in closed form; with nonpolynomial terms, Newton
-        from ``k`` on the scalar function, whose derivative ``x^T T'(k) x``
-        takes each term's ``dθ/dk``.
+        A quadratic's root in closed form. With nonpolynomial terms, the
+        root of the quadratic with each term frozen at ``k`` (as in the
+        seed) nearest ``k`` starts Newton on the scalar function, whose
+        derivative ``x^T T'(k) x`` takes each term's ``dθ/dk``.
         """
         kx, dx, mx, ax = self._parts(x)
         a, b, c = x @ kx, x @ dx, x @ mx
         if not self.nonpolynomial:
-            roots = np.roots([c, b, a]) if c != 0 else np.array([-a / b])
-            return complex(roots[np.argmin(np.abs(roots - k))])
+            return _nearest_root((a, b, c), k)
         pairs = [(t, x @ y) for t, y in zip(self.nonpolynomial, ax, strict=True)]
-        k = complex(k)
+        frozen = [a, b, c]
+        for t, n in pairs:
+            frozen[t.seed_power] += t.value(k) / k**t.seed_power * n
+        k = _nearest_root(frozen, k)
         for _ in range(_NEWTON_STEPS):
             f = a + b * k + c * k * k + sum(t.value(k) * n for t, n in pairs)
             df = b + 2 * c * k + sum(t.derivative(k) * n for t, n in pairs)
@@ -336,6 +339,13 @@ class EigenOperator:
         )
         den *= np.linalg.norm(x)
         return float(r / den) if den > 0 else math.inf
+
+
+def _nearest_root(coefficients, k: complex) -> complex:
+    """The root of ``c0 + c1 z + c2 z^2`` nearest ``k``."""
+    a, b, c = coefficients
+    roots = np.roots([c, b, a]) if c != 0 else np.array([-a / b])
+    return complex(roots[np.argmin(np.abs(roots - k))])
 
 
 def _norm2(op, start: np.ndarray) -> float:
