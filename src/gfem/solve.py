@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import importlib
-from typing import Any
+from typing import TYPE_CHECKING, Any, overload
 
 from gfem._adjoint import solve_vjp
 from gfem._checks import is_traced
@@ -11,9 +11,34 @@ from gfem.model import Model
 from gfem.options import SolverOptions
 from gfem.shape import _check_quality
 
+if TYPE_CHECKING:
+    from gfem.problems import Driven, Eigenmode, Electrostatic, PortMode
+    from gfem.results import (
+        DrivenResult,
+        EigenmodeResult,
+        ElectrostaticResult,
+        PortModeResult,
+    )
+
 __all__ = ["solve"]
 
 
+@overload
+def solve(
+    model: Model, problem: Electrostatic, *, options: SolverOptions | None = None
+) -> ElectrostaticResult: ...
+@overload
+def solve(
+    model: Model, problem: Driven, *, options: SolverOptions | None = None
+) -> DrivenResult: ...
+@overload
+def solve(
+    model: Model, problem: Eigenmode, *, options: SolverOptions | None = None
+) -> EigenmodeResult: ...
+@overload
+def solve(
+    model: Model, problem: PortMode, *, options: SolverOptions | None = None
+) -> PortModeResult: ...
 def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -> Any:
     """Solve one problem type on a model.
 
