@@ -89,7 +89,15 @@ from gfem.results import (
     SweepInfo,
 )
 
-__all__ = ["DEFAULT_SOLVER", "DrivenOperator", "DrivenRule", "driven_operator"]
+__all__ = [
+    "DEFAULT_SOLVER",
+    "DrivenOperator",
+    "DrivenRule",
+    "check_ports_held",
+    "driven_operator",
+    "operator_shape_terms",
+    "real_space",
+]
 
 #: The linear solver for ``linear_solver="auto"``: GMRES + BDDC.
 DEFAULT_SOLVER = "bddc_gmres"
@@ -636,45 +644,16 @@ class DrivenRule:
     def shape_terms(self, model: Model) -> list[ShapeTerm]:
         """The operator's pieces as node-coordinate (shape) terms.
 
-        Every piece but the ports': a port's terms, excitation and voltage
-        read only its own surface, which shape gradients hold in place.
+        See `operator_shape_terms`.
 
         Raises:
             PortGeometryError: A node of a port surface has moved.
         """
-        _check_ports_held(model)
-        op = self.operator(model)
-        out = []
-        for piece in op.pieces:
-            if piece.kind == "port":
-                continue
-            if piece.kind == "surface":
-                term = ShapeTerm(
-                    piece.name,
-                    "surface",
-                    integrand=piece.integrand,
-                    space=self.real_space(model),
-                )
-            else:
-                term = ShapeTerm(
-                    piece.name,
-                    piece.kind,
-                    coefficient=piece.coefficient,
-                    region=piece.region,
-                )
-            out.append(term)
-        return out
+        return operator_shape_terms(model, self.operator(model))
 
     def real_space(self, model: Model) -> ngs.FESpace:
         """A real H(curl) space with the solve's DOF numbering (for ``DiffShape``)."""
-        op = self.operator(model)
-        pec = _pec(model)
-        return discretization(model.mesh).space(
-            (domain_key(model), "hcurl", op.order, pec, "real"),
-            lambda: hcurl_space(
-                model, op.built, op.order, complex_valued=False, dirichlet=pec
-            ),
-        )
+        return real_space(model, self.operator(model))
 
     def unsupported_input(self, kind: tuple) -> str | None:
         """Why a read input cannot be differentiated here, or ``None``.
@@ -986,12 +965,56 @@ class DrivenRule:
         )
 
 
+def operator_shape_terms(model: Model, op: DrivenOperator) -> list[ShapeTerm]:
+    """The pieces of ``model``'s driven operator as node-coordinate (shape) terms.
+
+    Every piece but the ports': a port's terms, excitation and voltage
+    read only its own surface, which shape gradients hold in place. The
+    eigenmode rule's operator is the same pieces, so it shares these.
+
+    Raises:
+        PortGeometryError: A node of a port surface has moved.
+    """
+    check_ports_held(model)
+    out = []
+    for piece in op.pieces:
+        if piece.kind == "port":
+            continue
+        if piece.kind == "surface":
+            term = ShapeTerm(
+                piece.name,
+                "surface",
+                integrand=piece.integrand,
+                space=real_space(model, op),
+            )
+        else:
+            term = ShapeTerm(
+                piece.name,
+                piece.kind,
+                coefficient=piece.coefficient,
+                region=piece.region,
+            )
+        out.append(term)
+    return out
+
+
+def real_space(model: Model, op: DrivenOperator) -> ngs.FESpace:
+    """A real H(curl) space with ``op``'s DOF numbering (for ``DiffShape``)."""
+    pec = _pec(model)
+    return discretization(model.mesh).space(
+        (domain_key(model), "hcurl", op.order, pec, "real"),
+        lambda: hcurl_space(
+            model, op.built, op.order, complex_valued=False, dirichlet=pec
+        ),
+    )
+
+
 def _pec(model: Model) -> tuple[str, ...]:
     """The `PEC` surfaces of the model: Dirichlet surfaces of the space."""
     return tuple(sorted({b.surface for b in model.boundaries if isinstance(b, PEC)}))
 
 
-def _check_ports_held(model: Model) -> None:
+def check_ports_held(model: Model) -> None:
     """Raise unless every port surface's nodes sit at their imported positions.
 
     Shape gradients treat each port's geometry (its terms, excitation and

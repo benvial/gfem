@@ -17,11 +17,8 @@ import numpy as np
 import pytest
 import scipy.constants
 import structured_meshes as sm
-from finite_differences import (
-    assert_gradient_matches,
-    assert_taylor_second_order,
-    unit_directions,
-)
+from finite_differences import assert_gradient_matches, unit_directions
+from gradient_cases import STACK_PROBLEM, stack, stack_fields, tight
 
 import gfem
 
@@ -198,65 +195,27 @@ def test_coax_capacitance_and_energy_agree_on_both_solvers(tmp_path):
 
 
 # --- gradients w.r.t. the permittivity -------------------------------------------
-
-SOLVERS = ["direct", "bddc_gmres"]
-STEP = 1e-2  # fourth-order differences, see tests/finite_differences.py
-
-
-def _gradient_case(tmp_path, solver):
-    """J(eps) = <W, C(eps)> on a two-terminal stack with random P0 fields."""
-    layers = (("oxide", 0.5), ("nitride", 0.25))
-    path = sm.write_msh22(
-        tmp_path / "grad.msh", sm.plate(40.0, 30.0, layers, (3, 2, 2))
-    )
-    mesh = gfem.Mesh.from_gmsh(path)
-    model = gfem.Model(
-        mesh, materials={"oxide": gfem.Material(), "nitride": gfem.Material()}
-    )
-    problem = gfem.Electrostatic(
-        terminals={"top": "top", "mid": "oxide__nitride"}, ground="bottom"
-    )
-    options = gfem.SolverOptions(order=2, linear_solver=solver, tolerance=1e-12)
-    weights = np.array([[1.0, 0.3], [-0.7, 2.0]])  # not symmetric on purpose
-    n_ox = len(mesh.elements("oxide"))
-
-    def objective(eps):
-        m = model.replace(
-            materials={
-                "oxide": gfem.MaterialField(eps_r=eps[:n_ox]),
-                "nitride": gfem.MaterialField(eps_r=eps[n_ox:]),
-            }
-        )
-        c = gfem.solve(m, problem, options=options).capacitance
-        return jnp.sum(weights * c) / (EPS0 * UM)  # O(1) values
-
-    rng = np.random.default_rng(42)
-    eps = jnp.asarray(rng.uniform(2.0, 9.0, len(mesh.tetrahedra)))
-    return objective, eps, rng
-
-
-@pytest.mark.parametrize("solver", SOLVERS)
-def test_capacitance_gradient_matches_central_differences(tmp_path, solver):
-    objective, eps, rng = _gradient_case(tmp_path, solver)
-    directions = unit_directions(rng, eps.shape, 3)
-    assert_gradient_matches(objective, eps, directions, step=STEP)
-
-
-@pytest.mark.parametrize("solver", SOLVERS)
-def test_capacitance_taylor_remainder_is_second_order(tmp_path, solver):
-    objective, eps, rng = _gradient_case(tmp_path, solver)
-    d = rng.standard_normal(eps.shape)
-    assert_taylor_second_order(objective, eps, d, [1e-2, 1e-3, 1e-4])
+# The verification matrix cells (eps x solver, FD and Taylor) are in
+# test_gradient_matrix.py.
 
 
 def test_complex_permittivity_gradient_is_the_real_part_derivative(tmp_path):
     # Electrostatics reads Re(eps_r): the cotangent of a complex leaf is
     # dJ/dRe(eps) (JAX's convention: dJ/dx - i dJ/dy, and dJ/dy = 0).
-    objective, eps, rng = _gradient_case(tmp_path, "direct")
+    model = stack(tmp_path)
+    options = tight("direct")
+    weights = np.array([[1.0, 0.3], [-0.7, 2.0]])
+
+    def objective(eps):
+        c = gfem.solve(stack_fields(model, eps), STACK_PROBLEM, options=options)
+        return jnp.sum(weights * c.capacitance) / (EPS0 * UM)
+
+    rng = np.random.default_rng(42)
+    eps = jnp.asarray(rng.uniform(2.0, 9.0, len(model.mesh.tetrahedra)))
     lossy = eps * (1 - 0.05j)
     grad = jax.grad(objective)(lossy)
     assert grad.dtype == jnp.complex128
     assert not np.asarray(grad.imag).any()
     assert_gradient_matches(
-        objective, lossy, unit_directions(rng, eps.shape, 1), step=STEP, grad=grad
+        objective, lossy, unit_directions(rng, eps.shape, 1), step=1e-2, grad=grad
     )

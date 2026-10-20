@@ -60,10 +60,11 @@ anything computed from the mode fields (`e_field`, `bulk_participation`,
 `participation`, `q_port`, `error`, `gfem.interface_participation`,
 `field.at`) raises `gfem.NonDifferentiableError` while JAX traces the
 gradient; wrap such a value in `jax.lax.stop_gradient` to use it without its
-derivative. The mesh node coordinates, `Eigenmode.target` and boundary and
-port parameters are not differentiable either; the fill of a
-`gfem.SheetField` on a `Conductor` or `Impedance` is (see
-[Design a patterned metal sheet](sheet-design.md)).
+derivative. `Eigenmode.target` and boundary and port parameters are not
+differentiable either. The fill of a `gfem.SheetField` on a `Conductor` or
+`Impedance` is (see [Design a patterned metal sheet](sheet-design.md)), and
+so are the mesh node coordinates, with every port surface held where it was
+imported (see [Shape gradients](shape-gradient.md)).
 
 ## Degenerate modes
 

@@ -7,8 +7,16 @@ reference impedance); or `gfem.NonDifferentiableError` at trace time.
 Never a silent zero for an input the physics reads. The cells are
 generated from the pytrees, so a new leaf without an expected outcome
 fails here.
+
+Then the pairs outside v0.1's differentiable set that are not cells of a
+result leaf by an input leaf (`OUT_OF_SCOPE`): each raises a named error,
+at trace time where the cause is static, on the host in the backward pass
+where it depends on the data. Together with the gradient verification
+matrix (tests/verification/test_gradient_matrix.py) this is the gate for
+v0.1's gradients (``pytest -m verification -k gradient_matrix``).
 """
 
+import dataclasses
 from pathlib import Path
 
 import jax
@@ -22,7 +30,7 @@ from gfem._adjoint import solve_vjp
 from gfem._adjoint.solve_vjp import input_kind
 from gfem._engine.electrostatic import ElectrostaticRule
 
-DATA = Path(__file__).parent / "data"
+DATA = Path(__file__).parents[1] / "unit" / "data"
 GRADIENT, ZERO, RAISES = "gradient", "zero", "raises"
 
 ALL_PROPERTIES = {
@@ -185,23 +193,30 @@ EXPECTED |= {
 }
 
 # Eigenmode: the eigenvalues (omega, also as each mode field's omega)
-# differentiate with respect to every electromagnetic property; quantities of
-# the mode fields (backward error, port Q, participations, the fields) raise
-# for the inputs the forms read. The cluster labels are integers, the mode
-# fields' mesh is the input mesh passed through: exact zeros. Node
-# coordinates raise for every leaf (no shape gradients yet).
+# differentiate with respect to every electromagnetic property and the node
+# coordinates; quantities of the mode fields (backward error, port Q,
+# participations, the fields) raise for the inputs the forms read. The
+# cluster labels are integers: exact zeros. The mode fields' mesh is the
+# input mesh passed through (identity in the nodes, constant otherwise).
 _EIGEN_DEPENDENT = ("omega", "e_fields.0.omega")
 _EIGEN_CONSTANT = ("cluster", "e_fields.0.mesh.nodes")
+
+
+def _eigen_outcome(out, kind):
+    if kind == ("nodes",):
+        if out == "cluster":
+            return ZERO
+        dependent = (*_EIGEN_DEPENDENT, "e_fields.0.mesh.nodes")
+        return GRADIENT if out in dependent else RAISES
+    if (kind[0] == "material" and kind[2] not in EM_PROPERTIES) or (
+        out in _EIGEN_CONSTANT
+    ):
+        return ZERO
+    return GRADIENT if out in _EIGEN_DEPENDENT else RAISES
+
+
 EXPECTED |= {
-    ("eigenmode", out, kind): (
-        RAISES
-        if kind == ("nodes",)
-        else ZERO
-        if kind[2] not in EM_PROPERTIES or out in _EIGEN_CONSTANT
-        else GRADIENT
-        if out in _EIGEN_DEPENDENT
-        else RAISES
-    )
+    ("eigenmode", out, kind): _eigen_outcome(out, kind)
     for out in (
         "omega",
         "error",
@@ -214,11 +229,10 @@ EXPECTED |= {
     for kind in [("nodes",)] + [("material", "dielectric", p) for p in ALL_PROPERTIES]
 }
 # The result carries the model's materials as solved (for measurements): each
-# leaf is its input passed through (identity); node coordinates still raise
-# at trace time in the solve.
+# leaf is its input passed through (identity), a constant in the nodes.
 EXPECTED |= {
     ("eigenmode", f"materials.dielectric.{out}", kind): (
-        RAISES if kind == ("nodes",) else GRADIENT if kind[2] == out else ZERO
+        ZERO if kind == ("nodes",) else GRADIENT if kind[2] == out else ZERO
     )
     for out in ALL_PROPERTIES
     for kind in [("nodes",)] + [("material", "dielectric", p) for p in ALL_PROPERTIES]
@@ -234,15 +248,7 @@ EXPECTED |= {
     for kind in [("nodes",), FILL]
 }
 EXPECTED |= {
-    ("eigenmode_sheet", out, kind): (
-        RAISES
-        if kind == ("nodes",)
-        else ZERO
-        if out in _EIGEN_CONSTANT
-        else GRADIENT
-        if out in _EIGEN_DEPENDENT
-        else RAISES
-    )
+    ("eigenmode_sheet", out, kind): _eigen_outcome(out, kind)
     for out in (
         "omega",
         "error",
@@ -460,17 +466,213 @@ def test_raise_table(cases):
             assert np.abs(grad).max() > 0, cell
 
 
-def test_unsupported_input_error_names_the_input_and_the_opt_out(eigen_model):
-    objective, x = _objective(
-        eigen_model,
-        gfem.Eigenmode(target=17e9),
-        (jax.tree_util.GetAttrKey("omega"),),
-        0,
-    )
+class _RuleWithoutShapeTerms(ElectrostaticRule):
+    """The electrostatic rule as an operator family without shape terms."""
+
+    form = "electrostatic without shape terms"
+
+
+def test_unsupported_input_error_names_the_input_and_the_opt_out(model):
+    # every v0.1 rule differentiates every input its physics reads: a rule
+    # of a form the kernel has no node terms for stands in for a future one
+    problem = PROBLEMS["electrostatic"]
+    rule = _RuleWithoutShapeTerms(model, problem, gfem.SolverOptions())
+
+    def objective(nodes):
+        mesh = jax.tree_util.tree_unflatten(
+            jax.tree_util.tree_structure(model.mesh), [nodes]
+        )
+        return solve_vjp(rule, model.replace(mesh=mesh), problem)["capacitance"][0, 0]
+
     with pytest.raises(
         gfem.NonDifferentiableError, match=r"mesh\.nodes.*stop_gradient"
     ):
-        jax.make_jaxpr(jax.grad(objective))(x)
+        jax.make_jaxpr(jax.grad(objective))(jnp.asarray(model.mesh.nodes))
+
+
+# --- out of scope: pairs v0.1 does not differentiate, not leaf x leaf cells ------
+
+
+def _out_electrostatic_sheet(request):
+    # a partly filled sheet is not an electrostatic object (raised by any
+    # solve, so under every transformation too)
+    mesh = request.getfixturevalue("sheet_mesh")
+    model = _sheet_model(mesh, [])
+    problem = gfem.Electrostatic(terminals={"top": "plate2"}, ground="plate1")
+    jax.grad(lambda m: gfem.solve(m, problem).capacitance[0, 0])(model)
+
+
+def _sheet_fill_objective(model, problem):
+    sheet = model.boundaries[2]
+
+    def objective(fill):
+        filled = dataclasses.replace(sheet, fill=gfem.SheetField(fill=fill))
+        boundaries = [*model.boundaries[:2], filled]
+        s = gfem.solve(model.replace(boundaries=boundaries), problem).s.values
+        return jnp.sum(jnp.abs(s) ** 2)
+
+    return objective, sheet.fill.fill
+
+
+def _out_sheet_beside_a_wave_port(request):
+    # the port mode reads the sheet on the port face's edge: a constant of
+    # the solve, so the fill may not move there (raised while tracing)
+    mesh = request.getfixturevalue("sheet_mesh")
+    waves = [gfem.WavePort("p1", "port1"), gfem.WavePort("p2", "port2")]
+    objective, fill = _sheet_fill_objective(
+        _sheet_model(mesh, waves), gfem.Driven(frequency=20e9)
+    )
+    jax.make_jaxpr(jax.grad(objective))(fill)
+
+
+def _out_material_on_a_wave_port_face(request):
+    # likewise for a material of a region with elements on a port face
+    model = request.getfixturevalue("wave_model")
+    problem = gfem.Driven(frequency=20e9)
+    n = len(model.mesh.elements("dielectric"))
+
+    def objective(eps):
+        m = model.with_material("dielectric", gfem.MaterialField(eps_r=eps))
+        m = m.replace(mesh=jax.lax.stop_gradient(m.mesh))
+        return jnp.sum(jnp.abs(gfem.solve(m, problem).s.values) ** 2)
+
+    jax.make_jaxpr(jax.grad(objective))(jnp.full(n, 2.0))
+
+
+def _moved_port_objective(model, value):
+    """``value(result)`` with one node of port1 moved by ``dx`` along x."""
+    mesh = model.mesh
+    node = int(mesh.triangles[mesh.triangle_tags == mesh.region("port1").tag][0, 0])
+
+    def objective(dx):
+        x = jnp.asarray(mesh.nodes).at[node, 0].add(dx)
+        moved = jax.tree_util.tree_unflatten(jax.tree_util.tree_structure(mesh), [x])
+        return value(model.replace(mesh=moved))
+
+    return objective
+
+
+def _out_driven_port_nodes_moved(request):
+    # shape gradients hold every port's geometry: raised on the host
+    model = request.getfixturevalue("driven_model")
+    problem = gfem.Driven(frequency=5e9)
+    objective = _moved_port_objective(
+        model, lambda m: jnp.sum(jnp.abs(gfem.solve(m, problem).s.values) ** 2)
+    )
+    jax.grad(objective)(1e-6)
+
+
+def _out_eigenmode_port_nodes_moved(request):
+    model = request.getfixturevalue("eigen_model")
+    problem = gfem.Eigenmode(target=17e9)
+    objective = _moved_port_objective(
+        model, lambda m: jnp.real(gfem.solve(m, problem).omega[0]) * 1e-9
+    )
+    jax.grad(objective)(1e-6)
+
+
+def _out_greedy_adaptive_sweep(request):
+    # the sample set must be frozen (Driven(samples=...)) under a transform
+    model = request.getfixturevalue("driven_model")
+    problem = gfem.Driven(frequency=(4e9, 5e9, 6e9), sweep="adaptive")
+    eps = model.materials["dielectric"].eps_r
+
+    def objective(e):
+        m = model.with_material("dielectric", gfem.MaterialField(eps_r=e))
+        return jnp.sum(jnp.abs(gfem.solve(m, problem).s.values) ** 2)
+
+    jax.make_jaxpr(jax.grad(objective))(eps)
+
+
+def _out_forward_mode(request):
+    # reverse mode only: jax.jvp of a solve is JAX's own TypeError
+    model = request.getfixturevalue("model")
+    problem = PROBLEMS["electrostatic"]
+    eps = model.materials["oxide"].eps_r
+
+    def objective(e):
+        m = model.with_material("oxide", gfem.MaterialField(eps_r=e))
+        return gfem.solve(m, problem).capacitance[0, 0]
+
+    jax.jvp(objective, (eps,), (jnp.ones_like(eps),))
+
+
+def _out_probe_in_the_node_coordinates(request):
+    # measurements read fields on the mesh: no node gradients through them
+    model = request.getfixturevalue("driven_model")
+    problem = gfem.Driven(frequency=5e9, keep_fields=True)
+    points = np.array([[2.0, 1.0, 0.5]]) * 1e-3
+
+    def objective(nodes):
+        mesh = jax.tree_util.tree_unflatten(
+            jax.tree_util.tree_structure(model.mesh), [nodes]
+        )
+        frozen = model.replace(mesh=jax.lax.stop_gradient(mesh))
+        field = gfem.solve(frozen, problem).e_field(5e9, "p1")
+        field = dataclasses.replace(field, mesh=mesh)
+        return jnp.sum(jnp.abs(field.at(points)) ** 2)
+
+    jax.make_jaxpr(jax.grad(objective))(jnp.asarray(model.mesh.nodes))
+
+
+# (row, raising call, error, message): DegenerateModeError on one mode of a
+# degenerate eigenmode cluster is in tests/verification/test_gradient_matrix.py.
+HOST = jax.errors.JaxRuntimeError  # a gfem error raised in the backward pass
+OUT_OF_SCOPE = [
+    (
+        "electrostatic x sheet fill",
+        _out_electrostatic_sheet,
+        NotImplementedError,
+        "sheet field",
+    ),
+    (
+        "driven x fill of a sheet beside a wave port",
+        _out_sheet_beside_a_wave_port,
+        gfem.PortGeometryError,
+        "shares an edge with the port face",
+    ),
+    (
+        "driven x material on a wave port face",
+        _out_material_on_a_wave_port_face,
+        gfem.PortGeometryError,
+        "has elements on the port face",
+    ),
+    (
+        "driven x nodes of a port surface",
+        _out_driven_port_nodes_moved,
+        HOST,
+        r"PortGeometryError.*port1",
+    ),
+    (
+        "eigenmode x nodes of a port surface",
+        _out_eigenmode_port_nodes_moved,
+        HOST,
+        r"PortGeometryError.*port1",
+    ),
+    (
+        "greedy adaptive sweep under a transformation",
+        _out_greedy_adaptive_sweep,
+        NotImplementedError,
+        "samples=",
+    ),
+    ("forward mode", _out_forward_mode, TypeError, "jvp"),
+    (
+        "probe x node coordinates",
+        _out_probe_in_the_node_coordinates,
+        gfem.NonDifferentiableError,
+        r"mesh node coordinates.*stop_gradient",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("call", "error", "match"),
+    [row[1:] for row in OUT_OF_SCOPE],
+    ids=[row[0] for row in OUT_OF_SCOPE],
+)
+def test_out_of_scope_pairs_raise_named_errors(request, call, error, match):
+    with pytest.raises(error, match=match):
+        call(request)
 
 
 def test_energy_error_names_the_output_and_the_opt_out(model):

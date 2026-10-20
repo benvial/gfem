@@ -317,7 +317,7 @@ class ShapeTerm:
 
 
 #: Operator families whose rules provide `ShapeTerm` lists (``shape_terms``).
-SHAPE_FORMS = frozenset({"electrostatic", "driven"})
+SHAPE_FORMS = frozenset({"electrostatic", "driven", "eigenmode"})
 #: Operator families whose pairs carry the sheet pieces' weights (by name).
 SHEET_FORMS = frozenset({"driven", "eigenmode"})
 

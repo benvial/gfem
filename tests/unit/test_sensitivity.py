@@ -74,7 +74,8 @@ def test_unsupported_inputs_are_named():
     assert unsupported("electrostatic", KIND) is None
     assert unsupported("electrostatic", ("nodes",)) is None
     assert unsupported("driven", ("nodes",)) is None
-    assert "shape" in unsupported("eigenmode", ("nodes",))
+    assert unsupported("eigenmode", ("nodes",)) is None
+    assert "shape" in unsupported("port_mode", ("nodes",))
     assert "conductivity" in unsupported(
         "electrostatic", ("material", "oxide", "conductivity")
     )

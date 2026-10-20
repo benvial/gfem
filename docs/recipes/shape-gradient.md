@@ -2,8 +2,9 @@
 
 `gfem.solve` differentiates its results with respect to the mesh node
 coordinates, `model.mesh.nodes` (metres, shape `(n_nodes, 3)`), for
-electrostatic and driven problems (uniform sweeps, and adaptive sweeps with
-frozen samples). A shape design is a JAX function from a few parameters to
+electrostatic, driven (uniform sweeps, and adaptive sweeps with frozen
+samples) and eigenmode problems (the eigenfrequencies, as for material
+gradients). A shape design is a JAX function from a few parameters to
 moved node coordinates, usually through `gfem.shape.boundary_morph`:
 
 ```python
@@ -58,8 +59,8 @@ imported.
 
 ## What raises
 
-- Eigenmode results with respect to the node coordinates
-  (`gfem.NonDifferentiableError` while JAX traces).
+- Eigenmode quantities of the mode fields (anything but `omega`, as for
+  material gradients: `gfem.NonDifferentiableError` while JAX traces).
 - Measurements on result fields (`Field.at`, `gfem.interface_participation`)
   with respect to the node coordinates: the field's mesh is the solve's
   mesh. To differentiate through the field values only (the measurement's
