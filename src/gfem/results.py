@@ -821,6 +821,14 @@ class EigenmodeResult:
             volume region (`Material` or `MaterialField`). Measurements
             that need the media around a surface read them
             (`gfem.interface_participation`).
+        cluster: Integer label per mode, ``(n_modes,)``: modes with the same
+            label form a degenerate cluster, frequencies within
+            ``SolverOptions.cluster_rtol`` of each other. A cluster's modes
+            are an arbitrary basis of its eigenspace, so only objectives
+            symmetric in them (sum, mean) are differentiable; a gradient
+            through one member raises `gfem.DegenerateModeError`. Labels
+            count from 0 in mode order; a simple mode has a label of its
+            own.
     """
 
     omega: jax.Array
@@ -830,11 +838,15 @@ class EigenmodeResult:
     bulk_participation: dict[str, jax.Array] = dataclasses.field(default_factory=dict)
     e_fields: tuple[Field, ...] = ()
     materials: dict[str, Any] = dataclasses.field(default_factory=dict)
+    cluster: jax.Array | None = None
 
     def __post_init__(self) -> None:
-        """Hold the fields as a tuple and the materials as a dict."""
+        """Hold fields and materials as tuple and dict; label simple modes."""
         object.__setattr__(self, "e_fields", tuple(self.e_fields))
         object.__setattr__(self, "materials", dict(self.materials))
+        if self.cluster is None:  # every mode simple (results of older files)
+            n = int(np.shape(self.omega)[0])
+            object.__setattr__(self, "cluster", jnp.arange(n))
 
     @property
     def frequency(self) -> jax.Array:
@@ -884,5 +896,6 @@ register_fields(
         "bulk_participation",
         "e_fields",
         "materials",
+        "cluster",
     ),
 )

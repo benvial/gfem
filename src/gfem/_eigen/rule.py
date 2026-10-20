@@ -13,6 +13,15 @@ residual inverse iteration that refines every seed on the true ``T(k)``
 (`gfem._eigen.refine`). A `WavePort` raises: its propagation constant
 would have to be solved at the complex eigenfrequency.
 
+Gradients (``omega``, so frequency and Q) need no solve: a simple mode's
+``dk/dp = -x^T (dT/dp) x / x^T T'(k) x``, ``T'(k) = D + 2 k M + Σ θ_p'(k)
+A_p``, at the refined pair. The modes of a degenerate cluster (frequencies
+within ``SolverOptions.cluster_rtol``) are an arbitrary basis of their
+eigenspace: only an objective symmetric in them differentiates, through the
+basis-invariant ``d Σ k = -tr((X^T T' X)^-1 X^T (dT/dp) X)``. A
+differentiated solve refines one guard mode beyond ``n_modes``, so a
+cluster cut by the request is detected.
+
 Post-processing follows Palace: electric energy ``E = 1/2 Re ∫ D* . E`` per
 volume region plus ``C |V|^2 / 2`` per capacitive lumped port; a port's
 voltage is its driven voltage functional. Each mode is scaled to ``E =
@@ -21,6 +30,7 @@ voltage is its driven voltage functional. Each mode is scaled to ``E =
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import jax
@@ -37,14 +47,14 @@ from gfem._eigen.refine import Refined, refine
 from gfem._engine import terms
 from gfem._engine.cache import Entry, discretization
 from gfem._engine.coefficients import coefficient, element_tensors
-from gfem._engine.domain import domain_key, h1_space, hcurl_space
-from gfem._engine.driven import driven_operator
+from gfem._engine.domain import domain_key, em_region, h1_space, hcurl_space
+from gfem._engine.driven import DrivenOperator, driven_operator
 from gfem._engine.fields import fe_space
 from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair
 from gfem._linalg import KINDS, Operator, prepare
 from gfem.conventions import MODE_ENERGY
-from gfem.errors import EigenmodeConvergenceError
+from gfem.errors import DegenerateModeError, EigenmodeConvergenceError
 from gfem.mesh import Mesh
 from gfem.model import Model
 from gfem.options import SolverOptions
@@ -74,6 +84,10 @@ _ATTEMPTS = 3
 #: so converging them further only spends shift solves (most of them on the
 #: cluster of near-static relaxation modes the frozen surface terms leave).
 _SEED_TOLERANCE = 1e-3
+#: Cotangents on the members of a cluster that agree to this (relative to
+#: the largest) make an objective symmetric in the cluster to first order
+#: (a smooth symmetric function's cotangents differ by O(gap)).
+_SYMMETRIC_RTOL = 1e-3
 
 
 class EigenmodeRule:
@@ -84,8 +98,9 @@ class EigenmodeRule:
     form = "eigenmode"
     #: Material properties the eigenmode forms read.
     reads = frozenset({"eps_r", "mu_r", "tan_delta", "conductivity"})
-    #: Outputs whose cotangents the backward pass handles: none yet.
-    differentiable_outputs = frozenset()
+    #: Outputs whose cotangents the backward pass handles: the eigenvalues
+    #: (``cluster`` holds integer labels: its cotangent is always zero).
+    differentiable_outputs = frozenset({"omega", "cluster"})
 
     def __init__(
         self, model: Model, problem: Eigenmode, options: SolverOptions
@@ -127,60 +142,29 @@ class EigenmodeRule:
 
         Args:
             model: The model, with concrete leaves.
-            keep: Ignored: eigenmode results are not differentiable yet.
+            keep: Keep what the backward pass needs (the modes, their
+                ``x^T T' x`` per cluster and whether a cluster reaches the
+                guard mode, refined beyond ``n_modes`` for this).
 
         Returns:
             ``{"omega": (n,) complex rad/s, "error": (n,), "q_port":
             (n_resistive, n), "participation": (n_inductive, n), "bulk":
-            (n_regions, n), "e_field": (ndof, n) complex}``, modes nearest
-            the target first, and ``None``.
+            (n_regions, n), "e_field": (ndof, n) complex, "cluster": (n,)
+            int}``, modes nearest the target first, and the kept `Entry`
+            (``None`` unless ``keep``).
 
         Raises:
             EigenmodeConvergenceError: Fewer than ``n_modes`` modes
                 converged.
         """
-        del keep
         opts = self.options
         order = opts.order
         n_modes = self.problem.n_modes
         with task_manager(opts.threads):
             op = driven_operator(model, order)
-            built, space = op.built, op.space
-            scale = built.scale
-            omega_t = 2 * math.pi * self.problem.target
-            sigma = terms.wavenumber(omega_t, scale)
-            classes = split(op.pieces, scale, sigma)
-            powers = classes.powers
-            free = np.array(list(space.FreeDofs()), dtype=bool)  # ty: ignore[invalid-argument-type]
-
-            def shifted(k: complex):
-                return prepare(
-                    Operator(op.form(k * const.c / scale), space.FreeDofs()),
-                    symmetry="complex_symmetric",
-                    kind=self.kind,
-                    device=opts.device,
-                    tolerance=min(opts.tolerance, _INNER * opts.eigen_tolerance),
-                    width=1,
-                )
-
-            eop = EigenOperator(
-                shift=sigma,
-                prepare=shifted,
-                damping=(
-                    assemble(space, powers[1], matrix_free=True) if powers[1] else None
-                ),
-                mass=assemble(space, powers[2]),
-                free=free,
-                scale=scale,
-                nonpolynomial=tuple(
-                    NonPolynomial.from_piece(
-                        piece,
-                        assemble(space, [(1.0, piece)], matrix_free=True),
-                        scale,
-                    )
-                    for piece in classes.nonpolynomial
-                ),
-            )
+            built = op.built
+            sigma = terms.wavenumber(2 * math.pi * self.problem.target, built.scale)
+            eop = self.operator(op, sigma)
             projector = None
             try:
                 eop.handle  # noqa: B018 - factorize before the projector's setup
@@ -192,9 +176,12 @@ class EigenmodeRule:
                 seed_tolerance = opts.eigen_tolerance
                 if eop.nonpolynomial:
                     seed_tolerance = max(seed_tolerance, _SEED_TOLERANCE)
+                guard = None
                 for _ in range(_ATTEMPTS):
                     k, vectors = shift_invert(eop, projector, nev, tol=seed_tolerance)
-                    modes, failed = self._select(eop, k, vectors, sigma)
+                    modes, failed, guard = self._select(
+                        eop, k, vectors, sigma, guard=keep
+                    )
                     if len(modes) == n_modes or failed:
                         break
                     nev *= 2  # too few candidates near the target: look wider
@@ -207,12 +194,97 @@ class EigenmodeRule:
                         Refined(m.k.real, m.x, m.error, m.iterations, m.converged)
                         for m in modes
                     ]
+                    if guard is not None:
+                        guard = dataclasses.replace(guard, k=guard.k.real)
                 outputs = self._postprocess(model, op, projector, modes)
+                ks = [m.k for m in modes]
+                outputs["cluster"] = clusters(ks, opts.cluster_rtol)
+                entry = None
+                if keep:
+                    entry = self._entry(eop, ks, outputs, guard)
             finally:
                 eop.free_handle()
                 if projector is not None:
                     projector.free()
-        return outputs, None
+        return outputs, entry
+
+    def operator(self, op: DrivenOperator, sigma: float) -> EigenOperator:
+        """The eigen operator ``T(k)`` of the driven operator, shifted at ``sigma``.
+
+        Nothing is factorized until the handle is first used.
+        """
+        opts = self.options
+        space, scale = op.space, op.built.scale
+        classes = split(op.pieces, scale, sigma)
+        powers = classes.powers
+        free = np.array(list(space.FreeDofs()), dtype=bool)  # ty: ignore[invalid-argument-type]
+
+        def shifted(k: complex):
+            return prepare(
+                Operator(op.form(k * const.c / scale), space.FreeDofs()),
+                symmetry="complex_symmetric",
+                kind=self.kind,
+                device=opts.device,
+                tolerance=min(opts.tolerance, _INNER * opts.eigen_tolerance),
+                width=1,
+            )
+
+        return EigenOperator(
+            shift=sigma,
+            prepare=shifted,
+            damping=(
+                assemble(space, powers[1], matrix_free=True) if powers[1] else None
+            ),
+            mass=assemble(space, powers[2]),
+            free=free,
+            scale=scale,
+            nonpolynomial=tuple(
+                NonPolynomial.from_piece(
+                    piece,
+                    assemble(space, [(1.0, piece)], matrix_free=True),
+                    scale,
+                )
+                for piece in classes.nonpolynomial
+            ),
+        )
+
+    def _entry(
+        self,
+        op: EigenOperator,
+        ks: list[complex],
+        outputs: dict[str, object],
+        guard: Refined | None,
+    ) -> Entry:
+        """What the backward pass needs: no handle, the modes and their T'.
+
+        ``gram`` is block diagonal by cluster: ``x_i^T T'(k_c) x_j`` for
+        modes i, j of cluster c, with ``k_c`` the cluster's mean.
+        ``incomplete`` flags the modes of a cluster the guard mode belongs
+        to.
+        """
+        x = np.asarray(outputs["e_field"])
+        labels = np.asarray(outputs["cluster"])
+        k = np.array(ks, dtype=complex)
+        gram = np.zeros((len(k), len(k)), dtype=complex)
+        incomplete = np.zeros(len(k), dtype=bool)
+        rtol = self.options.cluster_rtol
+        for label in np.unique(labels):
+            members = np.flatnonzero(labels == label)
+            mean = k[members].mean()
+            tx = np.stack([op.derivative(mean, x[:, j]) for j in members], axis=1)
+            gram[np.ix_(members, members)] = x[:, members].T @ tx
+            if guard is not None and any(_close(guard.k, k[j], rtol) for j in members):
+                incomplete[members] = True
+        return Entry(
+            self.physics,
+            fields={
+                "x": x,
+                "k": k,
+                "cluster": labels,
+                "gram": gram,
+                "incomplete": incomplete,
+            },
+        )
 
     def _projector(self, model: Model, built, order: int) -> DivFreeProjector:
         disc = discretization(model.mesh)
@@ -233,17 +305,26 @@ class EigenmodeRule:
         return DivFreeProjector(real, h1, eps, order, diameter)
 
     def _select(
-        self, op: EigenOperator, k: np.ndarray, vectors: np.ndarray, sigma: float
-    ) -> tuple[list[Refined], list[Refined]]:
+        self,
+        op: EigenOperator,
+        k: np.ndarray,
+        vectors: np.ndarray,
+        sigma: float,
+        *,
+        guard: bool = False,
+    ) -> tuple[list[Refined], list[Refined], Refined | None]:
         """Refine the seeds nearest ``sigma`` until ``n_modes`` distinct ones.
 
         Seeds (and refined pairs) with ``Re k`` near zero or negative are the
         curl-curl null space, relaxation modes or mirror images, not
-        resonances: they are dropped.
+        resonances: they are dropped. With ``guard``, the remaining seeds
+        are refined (without refactorizing) until one more distinct mode
+        converges: the guard mode.
 
         Returns:
             The accepted modes, nearest ``sigma`` first (at most
-            ``n_modes``), and the seeds that did not converge.
+            ``n_modes``), the seeds that did not converge, and the guard
+            mode (``None`` without ``guard`` or when no seed gave one).
         """
         n_modes = self.problem.n_modes
         tolerance = self.options.eigen_tolerance
@@ -251,26 +332,33 @@ class EigenmodeRule:
         seeds.sort(key=lambda j: abs(k[j].real - sigma))
         accepted: list[Refined] = []
         failed: list[Refined] = []
+        extra = None
         for j in seeds:
+            full = len(accepted) == n_modes
+            if full and not guard:
+                break
             mode = refine(
                 op,
                 complex(k[j]),
                 vectors[:, j],
                 tolerance=tolerance,
                 max_iterations=self.options.max_refine_iterations,
+                reshift=not full,
             )
             if mode.k.real <= _STATIC * sigma:
                 continue
             if not mode.converged:
-                failed.append(mode)
+                if not full:
+                    failed.append(mode)
                 continue
             if any(_same(mode, other, tolerance) for other in accepted):
                 continue
-            accepted.append(mode)
-            if len(accepted) == n_modes:
+            if full:
+                extra = mode
                 break
+            accepted.append(mode)
         accepted.sort(key=lambda m: abs(m.k.real - sigma))
-        return accepted, failed
+        return accepted, failed, extra
 
     def _convergence_message(
         self, op: EigenOperator, accepted: list[Refined], failed: list[Refined]
@@ -388,6 +476,7 @@ class EigenmodeRule:
             ),
             "bulk": jax.ShapeDtypeStruct((len(self.regions), n), jnp.float64),
             "e_field": jax.ShapeDtypeStruct((space.ndof, n), jnp.complex128),
+            "cluster": jax.ShapeDtypeStruct((n,), jnp.int64),
         }
 
     def role(self, kind: tuple) -> str:
@@ -400,16 +489,101 @@ class EigenmodeRule:
         """The error message for a cotangent on output ``name``."""
         return (
             f"gfem cannot differentiate the eigenmode output {name!r} in this "
-            "version. Wrap it in jax.lax.stop_gradient to use its value without "
-            "its derivative."
+            "version: only the eigenfrequencies (omega, so frequency and q) "
+            "are differentiable, not quantities of the mode fields (the "
+            "fields themselves, participations, port Q, interface "
+            "participation, probes). Wrap it in jax.lax.stop_gradient to use "
+            "its value without its derivative."
         )
 
     def backward(
         self, model: Model, entry: Entry, cotangents: dict[str, np.ndarray]
     ) -> list[FieldPair]:
-        """Not available: eigenmode gradients raise at trace time."""
-        del model, entry, cotangents
-        raise NotImplementedError("Eigenmode gradients are not available yet.")
+        """Fold the ``omega`` cotangents into one field pair per cluster.
+
+        With ``ω = k c / scale``, cluster c's modes ``X`` and ``G = X^T
+        T'(k_c) X``: ``ct_c d(Σ ω)/dp = -(c / scale) ct_c tr(G^-1 X^T (dT/dp)
+        X)``, the pair ``(-(c / scale) ct_c X, X G^-1)`` weighted with the
+        pieces' θ at ``k_c``. A simple mode is a cluster of one (``G =
+        x^T T' x``). No solve.
+
+        Raises:
+            DegenerateModeError: The cotangents on a cluster's modes differ
+                (an objective not symmetric in them), or a cluster with a
+                nonzero cotangent extends beyond the ``n_modes`` modes.
+        """
+        ct = cotangents.get("omega")
+        if ct is None or not np.any(ct):
+            return []
+        fields = entry.fields
+        x, k, labels = fields["x"], fields["k"], fields["cluster"]
+        gram, incomplete = fields["gram"], fields["incomplete"]
+        ct = np.asarray(ct, dtype=complex)
+        pairs = []
+        with task_manager(self.options.threads):
+            op = driven_operator(model, self.options.order)
+            domain = em_region(model, op.built)
+            per_k = const.c / op.built.scale
+            for label in np.unique(labels):
+                members = np.flatnonzero(labels == label)
+                c = ct[members]
+                if not c.any():
+                    continue
+                spread = np.abs(c - c.mean()).max()
+                symmetric = spread <= _SYMMETRIC_RTOL * np.abs(c).max()
+                if incomplete[members].any() or not symmetric:
+                    raise DegenerateModeError(
+                        self._degenerate_message(k, members, c, incomplete, per_k)
+                    )
+                g = gram[np.ix_(members, members)]
+                pairs.append(
+                    FieldPair(
+                        space=op.space,
+                        left=-per_k * c.mean() * x[:, members],
+                        right=x[:, members] @ np.linalg.inv(g),
+                        weights=_weights(op, k[members].mean() * per_k),
+                        order=op.order,
+                        domain=domain,
+                    )
+                )
+        return pairs
+
+    def _degenerate_message(
+        self,
+        k: np.ndarray,
+        members: np.ndarray,
+        ct: np.ndarray,
+        incomplete: np.ndarray,
+        per_k: float,
+    ) -> str:
+        ghz = k[members] * per_k / (2 * math.pi * 1e9)
+        gap = np.ptp(np.abs(k[members])) / np.abs(k[members]).max()
+        modes = ", ".join(
+            f"{int(j)} ({f.real:.9g} GHz)" for j, f in zip(members, ghz, strict=True)
+        )
+        if incomplete[members].any():
+            reason = (
+                "the cluster extends beyond the "
+                f"{self.problem.n_modes} mode(s) asked for (Eigenmode.n_modes), so "
+                "no objective of these modes is symmetric in the whole cluster"
+            )
+        else:
+            reason = (
+                "the objective is not symmetric in them (cotangents "
+                + ", ".join(f"{complex(v):.4g}" for v in ct)
+                + ")"
+            )
+        return (
+            f"DegenerateModeError: mode(s) {modes} belong to a degenerate cluster "
+            f"(relative gap {gap:.2g}, SolverOptions.cluster_rtol = "
+            f"{self.options.cluster_rtol:g}): the modes of a cluster are an "
+            "arbitrary basis of their eigenspace, so one mode's frequency is not "
+            f"differentiable, and {reason}. Remedies: differentiate a function "
+            "symmetric in the cluster's modes (their sum or mean, a smooth "
+            "aggregate such as log-sum-exp instead of max), with n_modes "
+            "covering the whole cluster; break the symmetry of the design; or "
+            "use a gfem.Driven sweep as a surrogate."
+        )
 
     def result(self, outputs: dict) -> EigenmodeResult:
         """The public result from the forward outputs."""
@@ -445,7 +619,38 @@ class EigenmodeRule:
             },
             e_fields=tuple(fields),
             materials=self._materials,
+            cluster=jnp.asarray(outputs["cluster"]),
         )
+
+
+def _weights(op: DrivenOperator, omega: complex) -> dict[str, complex]:
+    """θ of every driven piece by name at the complex angular frequency ``omega``.
+
+    The sensitivity kernel reads the weights of the material-dependent terms
+    (``curl_curl``, ``mass``, ``conductivity``, the absorbing terms).
+    """
+    return {piece.name: complex(piece.theta(omega)) for piece in op.pieces}
+
+
+def _close(a: complex, b: complex, rtol: float) -> bool:
+    return abs(a - b) <= rtol * max(abs(a), abs(b))
+
+
+def clusters(ks: list[complex], rtol: float) -> np.ndarray:
+    """A label per eigenvalue: chains of eigenvalues within ``rtol`` share one.
+
+    Labels count from 0 in order of first appearance.
+    """
+    labels = list(range(len(ks)))
+    for i in range(len(ks)):
+        for j in range(i):
+            if _close(ks[i], ks[j], rtol) and labels[i] != labels[j]:
+                old, new = labels[i], labels[j]
+                labels = [new if v == old else v for v in labels]
+    renumber: dict[int, int] = {}
+    for v in labels:
+        renumber.setdefault(v, len(renumber))
+    return np.array([renumber[v] for v in labels], dtype=np.int64)
 
 
 def _same(a: Refined, b: Refined, tolerance: float) -> bool:
