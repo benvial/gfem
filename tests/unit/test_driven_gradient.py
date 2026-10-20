@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import structured_meshes as sm
+from finite_differences import assert_gradient_matches, unit_directions
 
 import gfem
 from gfem._engine import driven, sensitivity, terms
@@ -65,19 +66,19 @@ def _objective(line, values, name, problem=None):
     return objective
 
 
+# fourth-order differences, see tests/finite_differences.py
+STEPS = {"eps_r": 1e-2, "mu_r": 1e-2, "tan_delta": 1e-3, "conductivity": 5e-2}
+
+
 @pytest.mark.parametrize("name", ["eps_r", "mu_r", "tan_delta", "conductivity"])
 def test_gradient_of_each_property_matches_central_differences(line, name):
     values, rng = _values(line)
     objective = _objective(line, values, name)
     p = values[name]
-    grad = jax.grad(objective)(p)
-    h = 1e-5
-    d = rng.standard_normal(p.shape)
-    fd = (objective(p + h * d) - objective(p - h * d)) / (2 * h)
-    assert float(jnp.real(grad) @ d) == pytest.approx(float(fd), rel=1e-6)
-    if jnp.iscomplexobj(p):  # JAX's cotangent: dJ/dx - i dJ/dy
-        fd = (objective(p + 1j * h * d) - objective(p - 1j * h * d)) / (2 * h)
-        assert float(-grad.imag @ d) == pytest.approx(float(fd), rel=1e-6)
+    (d,) = unit_directions(rng, p.shape, 1)
+    # a complex eps_r is checked along both axes (cotangent dJ/dx - i dJ/dy)
+    directions = [d, 1j * d] if jnp.iscomplexobj(p) else [d]
+    assert_gradient_matches(objective, p, directions, step=STEPS[name])
 
 
 def test_gradient_beside_a_per_axis_lossy_crystal(tmp_path):

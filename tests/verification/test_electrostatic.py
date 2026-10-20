@@ -17,6 +17,11 @@ import numpy as np
 import pytest
 import scipy.constants
 import structured_meshes as sm
+from finite_differences import (
+    assert_gradient_matches,
+    assert_taylor_second_order,
+    unit_directions,
+)
 
 import gfem
 
@@ -195,6 +200,7 @@ def test_coax_capacitance_and_energy_agree_on_both_solvers(tmp_path):
 # --- gradients w.r.t. the permittivity -------------------------------------------
 
 SOLVERS = ["direct", "bddc_gmres"]
+STEP = 1e-2  # fourth-order differences, see tests/finite_differences.py
 
 
 def _gradient_case(tmp_path, solver):
@@ -232,24 +238,15 @@ def _gradient_case(tmp_path, solver):
 @pytest.mark.parametrize("solver", SOLVERS)
 def test_capacitance_gradient_matches_central_differences(tmp_path, solver):
     objective, eps, rng = _gradient_case(tmp_path, solver)
-    grad = jax.grad(objective)(eps)
-    h = 1e-4
-    for _ in range(3):
-        d = rng.standard_normal(eps.shape)
-        d /= np.linalg.norm(d)
-        fd = (objective(eps + h * d) - objective(eps - h * d)) / (2 * h)
-        assert float(grad @ d) == pytest.approx(float(fd), rel=1e-6)
+    directions = unit_directions(rng, eps.shape, 3)
+    assert_gradient_matches(objective, eps, directions, step=STEP)
 
 
 @pytest.mark.parametrize("solver", SOLVERS)
 def test_capacitance_taylor_remainder_is_second_order(tmp_path, solver):
     objective, eps, rng = _gradient_case(tmp_path, solver)
-    j0, grad = jax.value_and_grad(objective)(eps)
     d = rng.standard_normal(eps.shape)
-    hs = np.array([1e-2, 1e-3, 1e-4])
-    remainders = [abs(float(objective(eps + h * d) - j0 - h * (grad @ d))) for h in hs]
-    slopes = np.diff(np.log(remainders)) / np.diff(np.log(hs))
-    assert slopes == pytest.approx([2.0, 2.0], abs=0.1)
+    assert_taylor_second_order(objective, eps, d, [1e-2, 1e-3, 1e-4])
 
 
 def test_complex_permittivity_gradient_is_the_real_part_derivative(tmp_path):
@@ -260,7 +257,6 @@ def test_complex_permittivity_gradient_is_the_real_part_derivative(tmp_path):
     grad = jax.grad(objective)(lossy)
     assert grad.dtype == jnp.complex128
     assert not np.asarray(grad.imag).any()
-    d = rng.standard_normal(eps.shape)
-    h = 1e-4
-    fd = (objective(lossy + h * d) - objective(lossy - h * d)) / (2 * h)
-    assert float(grad.real @ d) == pytest.approx(float(fd), rel=1e-6)
+    assert_gradient_matches(
+        objective, lossy, unit_directions(rng, eps.shape, 1), step=STEP, grad=grad
+    )
