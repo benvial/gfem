@@ -188,7 +188,7 @@ class PortMode:
     mode: int | None
     _rule: ClassVar[str] = "gfem._sweep.port_mode:PortModeRule"
 
-    def __init__(self, port: str, frequency: Any, mode: int | None = None) -> None:
+    def __init__(self, port: str, frequency: Any, *, mode: int | None = None) -> None:
         """Validate and normalize (see the class docstring)."""
         if not isinstance(port, str):
             raise TypeError(
@@ -450,7 +450,7 @@ class Eigenmode:
     n_modes: int
     _rule: ClassVar[str] = "gfem._eigen.rule:EigenmodeRule"
 
-    def __init__(self, target: float, n_modes: int = 1) -> None:
+    def __init__(self, target: float, *, n_modes: int = 1) -> None:
         """Validate and normalize (see the class docstring)."""
         check_fixed(target, "Eigenmode.target must be a fixed number")
         try:
