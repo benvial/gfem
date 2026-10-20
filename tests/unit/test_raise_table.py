@@ -220,6 +220,43 @@ EXPECTED |= {
     for kind in [("nodes",)] + [("material", "dielectric", p) for p in ALL_PROPERTIES]
 }
 
+# Sheet fields: the fill of a sheet on the glued line (model.boundaries[2],
+# static materials). Driven S and eigenfrequencies differentiate with respect
+# to it like a material; the port mode is not differentiable at all.
+FILL = ("boundary", 2, "fill", "fill")
+EXPECTED |= {
+    ("driven_sheet", out, kind): GRADIENT if out == "s.values" else ZERO
+    for out in ("s.values", "s.z_ref")
+    for kind in [("nodes",), FILL]
+}
+EXPECTED |= {
+    ("eigenmode_sheet", out, kind): (
+        RAISES
+        if kind == ("nodes",)
+        else ZERO
+        if out in _EIGEN_CONSTANT
+        else GRADIENT
+        if out in _EIGEN_DEPENDENT
+        else RAISES
+    )
+    for out in (
+        "omega",
+        "error",
+        "q_port.p1",
+        "q_port.p2",
+        "bulk_participation.lower",
+        "bulk_participation.upper",
+        "cluster",
+        *(f"e_fields.0.{leaf}" for leaf in ("coefficients", "mesh.nodes", "omega")),
+    )
+    for kind in [("nodes",), FILL]
+}
+EXPECTED |= {
+    ("port_mode_sheet", out, kind): RAISES
+    for out in PORT_MODE_OUTPUTS
+    for kind in [("nodes",), FILL]
+}
+
 
 def _field(mesh, region, **overrides):
     # values vary per element, so the terminal potentials depend on them
@@ -292,7 +329,52 @@ def wave_model(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def cases(model, driven_model, eigen_model, wave_model):
+def sheet_mesh(tmp_path_factory):
+    path = tmp_path_factory.mktemp("sheet") / "sheet.msh"
+    sm.write_msh22(path, sm.sheet_line(4.0, 2.0, 1.0, (4, 1, 1)))
+    return gfem.Mesh.from_gmsh(path, length_unit="mm")
+
+
+def _sheet_model(mesh, ports):
+    n = len(mesh.elements("sheet"))
+    fill = gfem.SheetField(fill=np.linspace(0.2, 0.9, n))
+    return gfem.Model(
+        mesh,
+        materials={"lower": gfem.Material(eps_r=2.0), "upper": gfem.Material()},
+        boundaries=[
+            gfem.PEC("plate1"),
+            gfem.PEC("plate2"),
+            gfem.Conductor("sheet", 100.0, 1e-6, fill=fill),
+        ],
+        ports=ports,
+    )
+
+
+@pytest.fixture(scope="module")
+def sheet_cases(sheet_mesh):
+    lumped = [
+        gfem.LumpedPort("p1", "port1", "+y", impedance=1000.0),
+        gfem.LumpedPort("p2", "port2", "+y", impedance=1000.0),
+    ]
+    waves = [gfem.WavePort("p1", "port1"), gfem.WavePort("p2", "port2")]
+    return {
+        "driven_sheet": (
+            _sheet_model(sheet_mesh, lumped),
+            gfem.Driven(frequency=20e9),
+        ),
+        "eigenmode_sheet": (
+            _sheet_model(sheet_mesh, lumped),
+            gfem.Eigenmode(target=30e9),
+        ),
+        "port_mode_sheet": (
+            _sheet_model(sheet_mesh, waves),
+            gfem.PortMode("p1", 20e9),
+        ),
+    }
+
+
+@pytest.fixture(scope="module")
+def cases(model, driven_model, eigen_model, wave_model, sheet_cases):
     mesh = gfem.Mesh.from_gmsh(DATA / "parallel_plate.msh", length_unit="um")
     port_model = gfem.Model(
         mesh,
@@ -307,6 +389,7 @@ def cases(model, driven_model, eigen_model, wave_model):
         "driven_adaptive": (driven_model, ADAPTIVE),
         "driven_wave": (wave_model, gfem.Driven(frequency=20e9)),
         "eigenmode": (eigen_model, gfem.Eigenmode(target=17e9)),
+        **sheet_cases,
     }
 
 

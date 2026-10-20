@@ -123,12 +123,13 @@ class PortModeSpace:
             [sigma_scale * c["sigma"] * en * vn * dx, abc_n],
         ]
         extra = []
+        fill = _edge_fill(self.mesh, self.section)
         for g, (item, factor) in enumerate(self.section.impedance_terms):
             ds = ngs.ds(
                 f"impedance{g}", intrules={ngs.SEGM: ngs.IntegrationRule(ngs.SEGM, q)}
             )
-            edge_t = et.Trace() * vt.Trace() * ds
-            edge_n = en.Trace() * vn.Trace() * ds
+            edge_t = fill * et.Trace() * vt.Trace() * ds
+            edge_n = fill * en.Trace() * vn.Trace() * ds
             if isinstance(item, Conductor):
                 forms_a.append([edge_t])
                 forms_b.append([edge_n])
@@ -369,6 +370,27 @@ def _build_mesh(section: PortSection) -> ngs.Mesh:
                 )
             )
     return ngs.Mesh(m)
+
+
+def _edge_fill(mesh: ngs.Mesh, section: PortSection) -> ngs.CoefficientFunction:
+    """The sheet fields' fill per impedance edge (1 without a sheet field)."""
+    if section.impedance_fill is None or (section.impedance_fill == 1.0).all():
+        return ngs.CF(1.0)
+    fill = {
+        (int(min(a, b)), int(max(a, b))): float(w)
+        for (a, b), w in zip(
+            section.impedance_edges, section.impedance_fill, strict=True
+        )
+    }
+    space = ngs.SurfaceL2(mesh, order=0)
+    gf = ngs.GridFunction(space)
+    values = gf.vec.FV().NumPy()
+    values[:] = 1.0
+    for el in mesh.Elements(ngs.BND):
+        a, b = sorted(v.nr for v in el.vertices)
+        if (a, b) in fill:
+            values[space.GetDofNrs(el)[0]] = fill[a, b]
+    return gf
 
 
 def _admittance_groups(section: PortSection) -> list[tuple[float, np.ndarray]]:

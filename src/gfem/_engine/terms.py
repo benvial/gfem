@@ -22,7 +22,9 @@ with k0 = ω scale / c, the wavenumber per file unit, and the pieces
   doubled on mesh-exterior faces, see `gfem.conventions`);
 - an impedance boundary or a lumped port element, θ = i k0, 1, -k0²:
   ∫ E_t · v_t times eta0 / R_s, mu0 scale / L_s, C_s / (eps0 scale), its R,
-  L and C per square.
+  L and C per square. A `gfem.SheetField` on a conductor or an impedance
+  boundary multiplies its pieces' coefficients face by face by the fill
+  (`sheet_fill`, `sheet_factors`): the design enters the form, never θ.
 
 - a wave port, θ = i beta(ω) per file unit (the real part of its mode's
   propagation constant, tabulated on the output grid by the port mode
@@ -65,6 +67,7 @@ from gfem._engine.coefficients import (
 )
 from gfem._engine.domain import boundary_region
 from gfem._engine.mesh import EngineMesh
+from gfem._sheet import check_fill
 from gfem.conventions import EXTERIOR_THICKNESS_FACTOR
 from gfem.errors import PortGeometryError
 from gfem.model import Model
@@ -81,6 +84,8 @@ __all__ = [
     "lumped_ports",
     "pieces",
     "port_vectors",
+    "sheet_factors",
+    "sheet_fill",
     "surface_impedance",
     "surface_impedance_slope",
     "wave_port_piece",
@@ -432,7 +437,7 @@ def pieces(
         if isinstance(b, Conductor):
             out.extend(_conductor(model, built, order, b))
         elif isinstance(b, Impedance):
-            out.extend(_impedance(built, order, b))
+            out.extend(_impedance(model, built, order, b))
 
     for data in ports:
         out.extend(_port(built, order, data))
@@ -508,6 +513,7 @@ def _conductor(
     if b.thickness is None:
         groups = [(1.0, on)]
     groups = [(m, mask) for m, mask in groups if mask.any()]
+    fill = sheet_fill(model, b)
     out = []
     for factor, mask in groups:
         h = None if b.thickness is None else factor * b.thickness
@@ -522,10 +528,11 @@ def _conductor(
             slope = surface_impedance_slope(sigma, h, w)
             return theta(w, h) * (1 - slope) / w
 
-        if len(groups) == 1:
+        if len(groups) == 1 and fill is None:
             integrand = form
         else:
-            coefficient = surface_p0(built, mask.astype(float))
+            weight = mask.astype(float) if fill is None else mask * fill
+            coefficient = surface_p0(built, weight)
             integrand = lambda u, v, c=coefficient: form(u, v, c)  # noqa: E731
         name = f"conductor {b.surface}" + ("" if factor == 1.0 else " (one-sided)")
         out.append(
@@ -548,19 +555,16 @@ def _rlc(
 ) -> list[Piece]:
     """Pieces of per-square R, L and C in parallel on surfaces.
 
-    ``sheets`` holds ``(form, R_s, L_s, C_s)``, ``None`` where absent: the
-    admittance i k0 eta0 / R_s + mu0 scale / L_s - k0^2 C_s / (eps0 scale)
-    in the equation's units, one piece per kind. A ``"trace"`` piece has
-    one sheet.
+    ``sheets`` holds ``(form, R_s, L_s, C_s)``, ``None`` where absent, and
+    optionally a face-wise fill coefficient last: the admittance i k0 eta0
+    / R_s + mu0 scale / L_s - k0^2 C_s / (eps0 scale) in the equation's
+    units (times the fill), one piece per kind. A ``"trace"`` piece has one
+    sheet.
     """
     weights: dict[str, list] = {"R": [], "L": [], "C": []}
-    for form, rs, ls, cs in sheets:
-        if rs is not None:
-            weights["R"].append((form, ETA0 / rs))
-        if ls is not None:
-            weights["L"].append((form, const.mu_0 * scale / ls))
-        if cs is not None:
-            weights["C"].append((form, cs / (const.epsilon_0 * scale)))
+    for form, rs, ls, cs, *fill in sheets:
+        for element, c in _rlc_weights(rs, ls, cs, scale).items():
+            weights[element].append((form, c * fill[0] if fill else c))
     thetas = {
         "R": lambda w: 1j * wavenumber(w, scale),
         "L": _constant,
@@ -582,6 +586,52 @@ def _rlc(
     return out
 
 
+def _rlc_weights(
+    rs: float | None, ls: float | None, cs: float | None, scale: float
+) -> dict[str, float]:
+    """The R, L and C pieces' coefficients of per-square R_s, L_s and C_s."""
+    out = {}
+    if rs is not None:
+        out["R"] = ETA0 / rs
+    if ls is not None:
+        out["L"] = const.mu_0 * scale / ls
+    if cs is not None:
+        out["C"] = cs / (const.epsilon_0 * scale)
+    return out
+
+
+def sheet_factors(boundary: Conductor | Impedance, scale: float) -> dict[str, float]:
+    """``dc / dfill`` of each piece of a sheet boundary, by piece name.
+
+    A sheet field multiplies the coefficient of every piece of its boundary
+    by the fill, face by face (the piece of an interior `Conductor` reads
+    coefficient 1, an `Impedance`'s its R, L or C weight).
+    """
+    if isinstance(boundary, Conductor):
+        return {f"conductor {boundary.surface}": 1.0}
+    label = f"impedance {boundary.surface}"
+    weights = _rlc_weights(
+        boundary.resistance, boundary.inductance, boundary.capacitance, scale
+    )
+    return {f"{label} {element}": c for element, c in weights.items()}
+
+
+def sheet_fill(model: Model, boundary: Conductor | Impedance) -> np.ndarray | None:
+    """The fill of a sheet boundary per gfem triangle (0 off it), or ``None``.
+
+    Raises:
+        ValueError: A fill value is negative or not finite.
+    """
+    if boundary.fill is None:
+        return None
+    values = np.asarray(boundary.fill.fill, dtype=float)
+    check_fill(values)
+    mesh = model.mesh
+    out = np.zeros(len(mesh.triangles))
+    out[mesh.elements(boundary.surface)] = values
+    return out
+
+
 def _port(built: EngineMesh, order: int, data: LumpedPortData) -> list[Piece]:
     sheets = [
         (_tangential(built, (e.surface,), order), *data.per_square(e))
@@ -590,9 +640,14 @@ def _port(built: EngineMesh, order: int, data: LumpedPortData) -> list[Piece]:
     return _rlc(f"port {data.port.name}", built.scale, sheets, "port")
 
 
-def _impedance(built: EngineMesh, order: int, b: Impedance) -> list[Piece]:
+def _impedance(
+    model: Model, built: EngineMesh, order: int, b: Impedance
+) -> list[Piece]:
     form = _tangential(built, (b.surface,), order)
-    sheet = (form, b.resistance, b.inductance, b.capacitance)
+    sheet: tuple = (form, b.resistance, b.inductance, b.capacitance)
+    fill = sheet_fill(model, b)
+    if fill is not None:
+        sheet = (*sheet, surface_p0(built, fill))
     return _rlc(f"impedance {b.surface}", built.scale, [sheet], "trace")
 
 

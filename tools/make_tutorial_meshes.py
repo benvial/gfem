@@ -7,6 +7,12 @@ Usage: python tools/make_tutorial_meshes.py docs/tutorials/data
 surfaces "bottom" / "top" (the plates, z = 0 / 1), "port1" (x = 0), "port2"
 (x = 40) and "side" (y walls).
 
+``sheet_line.msh`` (mm): a parallel-plate line along x, 40 mm long, plates
+"plate1" / "plate2" at y = 0 / 6 (the TEM field is along y), 2 mm high, glued
+from the volumes "lower" and "upper" at z = 1; the interior surface "sheet"
+between them spans the design length 10 < x < 30. Surfaces "port1" (x = 0),
+"port2" (x = 40) and "side" (z walls).
+
 ``cpw.msh`` (um): a conductor-backed coplanar line along x, 1500 um long.
 Substrate 0 < z < 100 (volume "substrate"), metal 100 < z < 105 (volumes
 "signal_metal", |y| < 25, and "ground_metal", |y| > 55, to be excluded),
@@ -55,6 +61,11 @@ def line():
         return ""  # the design / feed interfaces carry no boundary
 
     return sm.structured(edges, volume, surface)
+
+
+def sheet_line():
+    """The sheet line mesh as `structured_meshes.structured` returns it."""
+    return sm.sheet_line(LENGTH, WIDTH, 2.0, (40, 6, 1), span=DESIGN)
 
 
 CPW_LENGTH = 1500.0
@@ -114,3 +125,4 @@ if __name__ == "__main__":
     out.mkdir(parents=True, exist_ok=True)
     print(sm.write_msh22(out / "line.msh", line()))
     print(sm.write_msh22(out / "cpw.msh", cpw()))
+    print(sm.write_msh22(out / "sheet_line.msh", sheet_line()))

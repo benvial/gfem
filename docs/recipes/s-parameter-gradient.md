@@ -65,7 +65,9 @@ differentiable in this version: a perturbed one raises
 `gfem.NonDifferentiableError` while JAX traces the gradient. Thermal
 properties are not read: their gradient is an exact zero. The mesh node
 coordinates differentiate as long as no port moves: see
-[Shape gradients](shape-gradient.md).
+[Shape gradients](shape-gradient.md). The fill of a `gfem.SheetField` on a
+`Conductor` or `Impedance` differentiates: see
+[Design a patterned metal sheet](sheet-design.md).
 
 ## Wave ports
 

@@ -45,6 +45,7 @@ from gfem.model import (  # noqa: E402
     Material,
     MaterialField,
     Model,
+    SheetField,
     WavePort,
     enclosed_by,
 )
@@ -100,6 +101,7 @@ __all__ = [
     "PortModeTrackingWarning",
     "Region",
     "RegionNotFoundError",
+    "SheetField",
     "SolverOptions",
     "SweepInfo",
     "SweepNotConvergedWarning",

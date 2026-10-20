@@ -47,14 +47,22 @@ curl and gradient terms (products of first derivatives, degree 2p - 2), on
 the exact rule of that degree, which gives the same values with fewer
 points.
 
+A **sheet field** (`gfem.SheetField`, a fill per face of a `Conductor` or
+`Impedance` surface) multiplies the coefficient of each of its boundary's
+pieces face by face, ``c_p,f = fill_f c_p``, so ``dA / dfill_f = sum_p
+theta_p c_p B_f`` with ``B_f`` the face's tangential trace form. Its
+**face pass** integrates ``sum_p theta_p c_p left_t . right_t`` per
+triangle of the surface (surface P0, the pinned rule) and returns one value
+per face, with no owner tetrahedron: the fill is a property of the face.
+
 Adding a problem type means adding table rows (and, for a new operator
-term, an entry of `TERMS`), not a code path. Later passes plug in beside
-these: a face pass for sheet fields, and load pairs ``int lambda psi`` for
-problem-leaf sources.
+term, an entry of `TERMS`), not a code path. A later pass plugs in beside
+these: load pairs ``int lambda psi`` for problem-leaf sources.
 
 Design inputs are named by kind tuples, the same ones `gfem._adjoint` uses:
-``("material", region, property)`` is a `MaterialField` leaf and
-``("nodes",)`` the mesh node coordinates.
+``("material", region, property)`` is a `MaterialField` leaf,
+``("boundary", index, "fill", "fill")`` the fill of the sheet field of
+``model.boundaries[index]`` and ``("nodes",)`` the mesh node coordinates.
 """
 
 from __future__ import annotations
@@ -66,6 +74,7 @@ from typing import Any, Literal
 import ngsolve as ngs
 import numpy as np
 
+from gfem._boundaries import Conductor, Impedance
 from gfem._engine import quadrature, terms
 from gfem._engine.cache import discretization
 from gfem._engine.coefficients import element_values
@@ -75,11 +84,13 @@ from gfem.model import Model
 __all__ = [
     "FORM_TERMS",
     "SHAPE_FORMS",
+    "SHEET_FORMS",
     "TERMS",
     "Coefficient",
     "FieldPair",
     "ShapeTerm",
     "Term",
+    "is_sheet",
     "sensitivity",
     "unsupported",
 ]
@@ -307,10 +318,23 @@ class ShapeTerm:
 
 #: Operator families whose rules provide `ShapeTerm` lists (``shape_terms``).
 SHAPE_FORMS = frozenset({"electrostatic", "driven"})
+#: Operator families whose pairs carry the sheet pieces' weights (by name).
+SHEET_FORMS = frozenset({"driven", "eigenmode"})
+
+
+def is_sheet(kind: tuple) -> bool:
+    """Whether input ``kind`` is the fill of a boundary's sheet field."""
+    return kind[0] == "boundary" and tuple(kind[2:]) == ("fill", "fill")
 
 
 def unsupported(form: str, kind: tuple) -> str | None:
     """Why the kernel cannot differentiate ``form`` by input ``kind``, or None."""
+    if is_sheet(kind):
+        return (
+            None
+            if form in SHEET_FORMS
+            else f"the {form} forms of this version do not read sheet fields"
+        )
     if kind[0] == "material":
         if (form, kind[2]) in FORM_TERMS:
             return None
@@ -405,6 +429,41 @@ def _element_pass(model: Model, pairs: list[FieldPair], term: str) -> np.ndarray
     on = np.isin(mesh.triangle_tags, tags) & (owner >= 0)
     np.add.at(out, owner[on], per_face[on])
     return out * built.scale**definition.length_power
+
+
+def _sheet_pass(model: Model, pairs: list[FieldPair], index: int) -> np.ndarray:
+    """``sum_pairs sum_p theta_p c_p int_f left_t . right_t`` per face of a sheet.
+
+    ``p`` runs over the pieces of ``model.boundaries[index]``, ``c_p`` their
+    coefficient per unit fill (`gfem._engine.terms.sheet_factors`). The
+    terms are in the driven equation's units (length power 0).
+    """
+    boundary = model.boundaries[index]
+    if not isinstance(boundary, (Conductor, Impedance)):  # pragma: no cover
+        msg = f"model.boundaries[{index}] carries no sheet field."
+        raise TypeError(msg)
+    built = discretization(model.mesh).built
+    factors = terms.sheet_factors(boundary, built.scale)
+    faces = model.mesh.elements(boundary.surface)
+    weighted = []
+    for pair in pairs:
+        weight = sum(pair.weights.get(name, 0.0) * c for name, c in factors.items())
+        if weight != 0:
+            weighted.append((complex(weight), pair))
+    if not weighted:
+        return np.zeros(len(faces), dtype=complex)
+    region = boundary_region(built, (boundary.surface,))
+    p0 = ngs.SurfaceL2(built.mesh, order=0, complex=True)
+    q = p0.TestFunction()
+    form = ngs.LinearForm(p0)
+    trace = Term(_tangential, length_power=0)
+    for weight, pair in weighted:
+        ds = quadrature.ds(pair.order, definedon=region)
+        form += weight * _pair_integrand(trace, pair) * q * ds
+    form.Assemble()
+    per_face = np.zeros(len(model.mesh.triangles), dtype=complex)
+    per_face[built.triangle_order] = form.vec.FV().NumPy()
+    return per_face[faces]
 
 
 def _transport(term: ShapeTerm, u: Any, v: Any) -> Any:
@@ -598,8 +657,8 @@ def sensitivity(
     Args:
         model: The design state (concrete leaves) the pairs were solved on.
         pairs: The rule's field pairs, cotangents folded in.
-        wants: Input kinds, ``("material", region, property)`` or
-            ``("nodes",)``.
+        wants: Input kinds, ``("material", region, property)``,
+            ``("boundary", index, "fill", "fill")`` or ``("nodes",)``.
         form: The operator family, the first key of `FORM_TERMS`.
         shape: Returns the operator's `ShapeTerm` list; called only when the
             node coordinates are wanted.
@@ -608,8 +667,9 @@ def sensitivity(
         Per wanted material kind, one value per tetrahedron of the region
         (mesh order): the real cotangent, or for a complex dependence the
         complex one (``sum ct * dy/dp`` when holomorphic, see
-        `Coefficient`). For ``("nodes",)``, ``(n_nodes, 3)``, real, per
-        metre.
+        `Coefficient`). Per sheet fill, one complex value per face of
+        the surface (``mesh.elements(surface)`` order), ``sum ct * dy/dfill``.
+        For ``("nodes",)``, ``(n_nodes, 3)``, real, per metre.
 
     Raises:
         NotImplementedError: A wanted kind is not supported (see
@@ -620,6 +680,9 @@ def sensitivity(
         if reason is not None:
             raise NotImplementedError(reason)
     out: dict[Hashable, np.ndarray] = {}
+    for kind in wants:
+        if is_sheet(kind):  # ty: ignore[invalid-argument-type]
+            out[kind] = _sheet_pass(model, pairs, kind[1])  # ty: ignore[not-subscriptable]
     if ("nodes",) in wants:
         if shape is None:  # pragma: no cover - rule bug
             msg = f"The {form} rule gives no shape terms."
