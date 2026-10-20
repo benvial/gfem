@@ -70,7 +70,7 @@ markers = [
   "benchmark: wall-time and memory regression runs (tests/benchmark, deselected by default)",
   "cuda: needs an NVIDIA GPU and the cuda12 or cuda13 extra (tests/cuda, deselected by default)",
 ]
-pythonpath = ["tools"]
+pythonpath = ["tools", "tests"]
 testpaths = ["tests"]
 
 [tool.ruff]

@@ -14,6 +14,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import structured_meshes as sm
+from finite_differences import (
+    assert_gradient_matches,
+    assert_taylor_second_order,
+    unit_directions,
+)
 
 import gfem
 
@@ -84,31 +89,12 @@ def _s_objective(line, values, name, options, problem=None):
     return objective
 
 
-def _check_fd(objective, p, rng, h, *, rel=1e-6, reference=None):
-    """grad(objective) . d against central differences of ``reference``."""
-    reference = reference or objective
-    grad = jax.grad(objective)(p)
-    for _ in range(3):
-        d = rng.standard_normal(p.shape)
-        d /= np.linalg.norm(d)
-        fd = (reference(p + h * d) - reference(p - h * d)) / (2 * h)
-        assert float(jnp.real(grad) @ d) == pytest.approx(float(fd), rel=rel)
-
-
-def _check_taylor(objective, p, rng, hs):
-    j0, grad = jax.value_and_grad(objective)(p)
-    d = rng.standard_normal(p.shape)
-    d /= np.linalg.norm(d)
-    remainders = [
-        abs(float(objective(p + h * d) - j0 - h * (jnp.real(grad) @ d))) for h in hs
-    ]
-    slopes = np.diff(np.log(remainders)) / np.diff(np.log(hs))
-    assert slopes == pytest.approx([2.0] * (len(hs) - 1), abs=0.1)
-
-
 # --- the verification matrix: driven x {eps, sigma} x solver x uniform sweep -----
 
-STEPS = {"eps_r": 1e-4, "conductivity": 1e-3}
+# Fourth-order differences (see tests/finite_differences.py): the steps keep
+# both truncation and round-off ~100x below the 1e-6 gate, also along a
+# direction nearly orthogonal to the gradient.
+STEPS = {"eps_r": 1e-2, "conductivity": 5e-2}
 TAYLOR = {"eps_r": [1e-1, 1e-2, 1e-3], "conductivity": [1.0, 1e-1, 1e-2]}
 
 
@@ -117,7 +103,9 @@ TAYLOR = {"eps_r": [1e-1, 1e-2, 1e-3], "conductivity": [1.0, 1e-1, 1e-2]}
 def test_s_gradient_matches_central_differences(line, solver, name):
     values, rng = _design(line)
     objective = _s_objective(line, values, name, _options(solver))
-    _check_fd(objective, values[name], rng, STEPS[name])
+    p = values[name]
+    directions = unit_directions(rng, p.shape, 3)
+    assert_gradient_matches(objective, p, directions, step=STEPS[name])
 
 
 @pytest.mark.parametrize("solver", SOLVERS)
@@ -125,7 +113,9 @@ def test_s_gradient_matches_central_differences(line, solver, name):
 def test_s_taylor_remainder_is_second_order(line, solver, name):
     values, rng = _design(line, seed=1)
     objective = _s_objective(line, values, name, _options(solver))
-    _check_taylor(objective, values[name], rng, TAYLOR[name])
+    p = values[name]
+    (d,) = unit_directions(rng, p.shape, 1)
+    assert_taylor_second_order(objective, p, d, TAYLOR[name])
 
 
 def test_complex_permittivity_gradient_has_both_parts(line):
@@ -134,14 +124,8 @@ def test_complex_permittivity_gradient_has_both_parts(line):
     values, rng = _design(line, seed=2)
     objective = _s_objective(line, values, "eps_r", _options("direct"))
     eps = values["eps_r"]
-    grad = jax.grad(objective)(eps)
-    d = rng.standard_normal(eps.shape)
-    d /= np.linalg.norm(d)
-    h = 1e-4
-    along_real = (objective(eps + h * d) - objective(eps - h * d)) / (2 * h)
-    along_imag = (objective(eps + 1j * h * d) - objective(eps - 1j * h * d)) / (2 * h)
-    assert float(grad.real @ d) == pytest.approx(float(along_real), rel=1e-6)
-    assert float(-grad.imag @ d) == pytest.approx(float(along_imag), rel=1e-6)
+    (d,) = unit_directions(rng, eps.shape, 1)
+    assert_gradient_matches(objective, eps, [d, 1j * d], step=STEPS["eps_r"])
 
 
 # --- consistency: reciprocity vs an explicit adjoint solve -----------------------
@@ -193,4 +177,8 @@ def test_field_functional_gradient_matches_central_differences(line, solver, nam
     values, rng = _design(line, seed=4)
     objective = _field_objective(line, values, name, _options(solver))
     reference = _field_objective(line, values, name, _options("direct"))
-    _check_fd(objective, values[name], rng, STEPS[name], reference=reference)
+    p = values[name]
+    directions = unit_directions(rng, p.shape, 3)
+    assert_gradient_matches(
+        objective, p, directions, step=STEPS[name], reference=reference
+    )
