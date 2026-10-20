@@ -15,12 +15,15 @@ would have to be solved at the complex eigenfrequency.
 
 Gradients (``omega``, so frequency and Q) need no solve: a simple mode's
 ``dk/dp = -x^T (dT/dp) x / x^T T'(k) x``, ``T'(k) = D + 2 k M + Σ θ_p'(k)
-A_p``, at the refined pair. The modes of a degenerate cluster (frequencies
-within ``SolverOptions.cluster_rtol``) are an arbitrary basis of their
-eigenspace: only an objective symmetric in them differentiates, through the
-basis-invariant ``d Σ k = -tr((X^T T' X)^-1 X^T (dT/dp) X)``. A
-differentiated solve refines one guard mode beyond ``n_modes``, so a
-cluster cut by the request is detected.
+A_p``, at the refined pair; ``dT/dp`` is a material, sheet-fill or
+node-coordinate derivative of the driven operator's pieces (the shape
+terms are the driven rule's, port surfaces held). The modes of a
+degenerate cluster (frequencies within ``SolverOptions.cluster_rtol``) are
+an arbitrary basis of their eigenspace: only an objective symmetric in them
+differentiates, through the basis-invariant
+``d Σ k = -tr((X^T T' X)^-1 X^T (dT/dp) X)``. A differentiated solve
+refines one guard mode beyond ``n_modes``, so a cluster cut by the request
+is detected.
 
 Post-processing follows Palace: electric energy ``E = 1/2 Re ∫ D* . E`` per
 volume region plus ``C |V|^2 / 2`` per capacitive lumped port; a port's
@@ -48,10 +51,14 @@ from gfem._engine import terms
 from gfem._engine.cache import Entry, discretization
 from gfem._engine.coefficients import coefficient, element_tensors
 from gfem._engine.domain import domain_key, em_region, h1_space, hcurl_space
-from gfem._engine.driven import DrivenOperator, driven_operator
+from gfem._engine.driven import (
+    DrivenOperator,
+    driven_operator,
+    operator_shape_terms,
+)
 from gfem._engine.fields import fe_space
 from gfem._engine.runtime import task_manager
-from gfem._engine.sensitivity import FieldPair
+from gfem._engine.sensitivity import FieldPair, ShapeTerm
 from gfem._linalg import KINDS, Operator, prepare
 from gfem.conventions import MODE_ENERGY
 from gfem.errors import DegenerateModeError, EigenmodeConvergenceError
@@ -530,7 +537,7 @@ class EigenmodeRule:
         ct = np.asarray(ct, dtype=complex)
         pairs = []
         with task_manager(self.options.threads):
-            op = driven_operator(model, self.options.order)
+            op = self.driven(model)
             domain = em_region(model, op.built)
             per_k = const.c / op.built.scale
             for label in np.unique(labels):
@@ -556,6 +563,32 @@ class EigenmodeRule:
                     )
                 )
         return pairs
+
+    def driven(self, model: Model) -> DrivenOperator:
+        """The model's driven operator (the pieces of ``T(k)``) at its nodes.
+
+        The last model's operator is kept, so that a backward pass and its
+        shape terms build it once.
+        """
+        last = getattr(self, "_last_driven", None)
+        if last is not None and last[0] is model:
+            return last[1]
+        op = driven_operator(model, self.options.order)
+        self._last_driven = (model, op)
+        return op
+
+    def shape_terms(self, model: Model) -> list[ShapeTerm]:
+        """The pieces of ``T(k)`` as node-coordinate (shape) terms.
+
+        The driven operator's (`gfem._engine.driven.operator_shape_terms`):
+        a mode's ``dk/dX = -x^T (dT/dX) x / x^T T'(k) x`` contracts the same
+        pieces, weighted with their θ at the mode, as the material terms.
+        Port pieces are left out: shape gradients hold every port surface.
+
+        Raises:
+            PortGeometryError: A node of a port surface has moved.
+        """
+        return operator_shape_terms(model, self.driven(model))
 
     def _degenerate_message(
         self,

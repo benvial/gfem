@@ -1,30 +1,19 @@
 """Shape gradients: objectives differentiated with respect to node positions.
 
-Every design moves a surface by `gfem.shape.boundary_morph`, so the chain
-is t -> node coordinates (the morph's linear map, differentiated by JAX)
--> the solve (`gfem.solve`'s node-coordinate cotangent from the transport
-tensors and the surface ``DiffShape`` terms). Checked against fourth-order
-central differences along random unit directions in t, and by the Taylor
-remainder.
-
-- Electrostatics: a dielectric interface of a two-layer capacitor moves
-  (capacitance and a potential functional).
-- Driven: the interface of a two-layer line between lumped ports moves,
-  with a conductor top plate, second-order absorbing side walls and a
-  lossy, conducting layer (uniform sweep, direct and BDDC, and an
-  adaptive sweep with frozen samples).
+The node-coordinate cells of the verification matrix (electrostatic,
+driven on lumped and wave ports, uniform and adaptive, eigenmode; both
+solvers) are in test_gradient_matrix.py, on the designs of
+`gradient_cases`. Here: shape gradients under jit and vmap, of a kept-field
+functional, of a raw node displacement (no morph), and the raise when a
+port's nodes move.
 """
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-import structured_meshes as sm
-from finite_differences import (
-    assert_gradient_matches,
-    assert_taylor_second_order,
-    unit_directions,
-)
+from finite_differences import assert_gradient_matches, unit_directions
+from gradient_cases import WEIGHTS, capacitor, shape_line, wave_line, wave_mesh
 
 import gfem
 from gfem.shape import boundary_morph
@@ -33,58 +22,23 @@ STEP = 2e-6  # metres along a unit direction in t (layers are 0.5 mm)
 
 
 @pytest.fixture(scope="module")
-def capacitor(tmp_path_factory):
-    path = tmp_path_factory.mktemp("plate") / "plate.msh"
-    layers = (("oxide", 0.5), ("nitride", 0.5))
-    sm.write_msh22(path, sm.plate(2.0, 2.0, layers, (3, 3, 2)))
-    mesh = gfem.Mesh.from_gmsh(path, length_unit="mm")
-    return gfem.Model(
-        mesh,
-        materials={
-            "oxide": gfem.Material(eps_r=3.9),
-            "nitride": gfem.Material(eps_r=(7.5, 6.0, 5.0)),
-        },
-    )
+def capacitor_model(tmp_path_factory):
+    return capacitor(tmp_path_factory.mktemp("plate"))
 
 
 ELECTROSTATIC = gfem.Electrostatic(terminals={"top": "top"}, ground="bottom")
 
 
-def _capacitor_objective(capacitor, solver, *, potential=False):
-    morph = boundary_morph(capacitor, "oxide__nitride", grows="oxide")
-    options = gfem.SolverOptions(order=2, linear_solver=solver, tolerance=1e-12)
-    weights = np.random.default_rng(4).uniform(0.5, 1.5, 200)
+def test_shape_gradient_under_jit_and_vmap(capacitor_model):
+    morph = boundary_morph(capacitor_model, "oxide__nitride", grows="oxide")
+    options = gfem.SolverOptions(order=2, linear_solver="direct")
 
     def objective(t):
-        model = capacitor.replace(mesh=morph(t))
-        result = gfem.solve(model, ELECTROSTATIC, options=options)
-        value = result.capacitance[0, 0] * 1e12  # pF
-        if potential:
-            phi = result.potential["top"].coefficients
-            value = value + jnp.sum(weights[: phi.shape[0]] * phi[:200])
-        return value
+        model = capacitor_model.replace(mesh=morph(t))
+        return (
+            gfem.solve(model, ELECTROSTATIC, options=options).capacitance[0, 0] * 1e12
+        )
 
-    return objective, morph
-
-
-@pytest.mark.parametrize("potential", [False, True], ids=["capacitance", "potential"])
-@pytest.mark.parametrize("solver", ["direct", "bddc_gmres"])
-def test_electrostatic_shape_gradient_matches_fd(capacitor, solver, potential):
-    objective, morph = _capacitor_objective(capacitor, solver, potential=potential)
-    t = jnp.zeros(morph.n_params)
-    rng = np.random.default_rng(0)
-    assert_gradient_matches(objective, t, unit_directions(rng, t.shape, 3), step=STEP)
-
-
-def test_electrostatic_shape_gradient_taylor(capacitor):
-    objective, morph = _capacitor_objective(capacitor, "bddc_gmres")
-    t = jnp.full(morph.n_params, 1e-5)
-    (d,) = unit_directions(np.random.default_rng(1), t.shape, 1)
-    assert_taylor_second_order(objective, t, d, [4e-5, 2e-5, 1e-5, 5e-6])
-
-
-def test_shape_gradient_under_jit_and_vmap(capacitor):
-    objective, morph = _capacitor_objective(capacitor, "direct")
     rng = np.random.default_rng(6)
     batch = jnp.asarray(rng.uniform(-1e-5, 1e-5, (2, morph.n_params)))
     loop = np.stack([np.asarray(jax.grad(objective)(t)) for t in batch])
@@ -94,59 +48,12 @@ def test_shape_gradient_under_jit_and_vmap(capacitor):
     np.testing.assert_allclose(jax.vmap(jax.grad(objective))(batch), loop, rtol=1e-9)
 
 
-LAYERS = (("sub", 0.5), ("cover", 0.5))
-
-
 @pytest.fixture(scope="module")
 def line(tmp_path_factory):
-    path = tmp_path_factory.mktemp("line") / "line.msh"
-    sm.write_msh22(path, sm.strip_line(4.0, 2.0, 1.0, (4, 2, 1), layers=LAYERS))
-    mesh = gfem.Mesh.from_gmsh(path, length_unit="mm")
-    n = len(mesh.elements("sub"))
-    eps = np.random.default_rng(3).uniform(2.0, 6.0, n) * (1 - 0.02j)
-    return gfem.Model(
-        mesh,
-        materials={
-            "sub": gfem.MaterialField(eps_r=eps, conductivity=np.full(n, 0.5)),
-            "cover": gfem.Material(eps_r=(2.0, 2.5, 3.0), mu_r=1.3),
-        },
-        boundaries=[
-            gfem.PEC("bottom"),
-            gfem.Conductor("top", conductivity=5e7, thickness=2e-6),
-            gfem.Absorbing("side", order=2),
-        ],
-        ports=[
-            gfem.LumpedPort("p1", "port1", "+z"),
-            gfem.LumpedPort("p2", "port2", "+z"),
-        ],
-    )
+    return shape_line(tmp_path_factory.mktemp("line"))
 
 
 GRID = tuple(float(f) for f in np.linspace(10e9, 30e9, 11))
-WEIGHTS = np.array([[1.0, 0.4], [-0.6, 1.5]])
-
-
-def _line_objective(line, problem, solver, rows=None):
-    morph = boundary_morph(line, "sub__cover", grows="sub")
-    options = gfem.SolverOptions(order=2, linear_solver=solver, tolerance=1e-12)
-
-    def objective(t):
-        model = line.replace(mesh=morph(t))
-        s = gfem.solve(model, problem, options=options).s.values
-        if rows is not None:
-            s = s[jnp.asarray(rows)]
-        return jnp.sum(WEIGHTS * jnp.abs(s) ** 2) + jnp.sum(jnp.real(s[:, 1, 0]))
-
-    return objective, morph
-
-
-@pytest.mark.parametrize("solver", ["direct", "bddc_gmres"])
-def test_driven_shape_gradient_matches_fd(line, solver):
-    problem = gfem.Driven(frequency=(GRID[2], GRID[8]))
-    objective, morph = _line_objective(line, problem, solver)
-    t = jnp.zeros(morph.n_params)
-    rng = np.random.default_rng(0)
-    assert_gradient_matches(objective, t, unit_directions(rng, t.shape, 3), step=STEP)
 
 
 def test_driven_kept_field_shape_gradient_matches_fd(line):
@@ -164,26 +71,6 @@ def test_driven_kept_field_shape_gradient_matches_fd(line):
     t = jnp.zeros(morph.n_params)
     rng = np.random.default_rng(3)
     assert_gradient_matches(objective, t, unit_directions(rng, t.shape, 2), step=STEP)
-
-
-def test_driven_adaptive_shape_gradient_matches_fd(line):
-    samples = (GRID[0], GRID[10], GRID[5])
-    problem = gfem.Driven(frequency=GRID, sweep="adaptive", samples=samples)
-    # at the samples the full solution lies in the frozen basis, so the
-    # frozen-basis gradient is the full-order one there
-    rows = [GRID.index(f) for f in samples]
-    objective, morph = _line_objective(line, problem, "direct", rows)
-    t = jnp.zeros(morph.n_params)
-    rng = np.random.default_rng(1)
-    assert_gradient_matches(objective, t, unit_directions(rng, t.shape, 3), step=STEP)
-
-
-def test_driven_shape_gradient_taylor(line):
-    problem = gfem.Driven(frequency=(GRID[2], GRID[8]))
-    objective, morph = _line_objective(line, problem, "bddc_gmres")
-    t = jnp.full(morph.n_params, 1e-5)
-    (d,) = unit_directions(np.random.default_rng(2), t.shape, 1)
-    assert_taylor_second_order(objective, t, d, [4e-5, 2e-5, 1e-5, 5e-6])
 
 
 def test_node_gradient_of_a_raw_displacement_matches_fd(line):
@@ -226,62 +113,8 @@ def test_moved_port_nodes_raise_port_geometry_error(line):
         jax.grad(objective)(1e-6)
 
 
-# --- wave ports ---------------------------------------------------------------
-
-WAVE_LAYERS = (("lo", 0.5), ("hi", 0.5))
-WAVE_PORTS = {
-    "lossless": (gfem.Material(eps_r=4.0), (0.0, 0.0)),
-    "lossy": (gfem.Material(eps_r=4.0, tan_delta=0.05), (0.3e-3, 0.1e-3)),
-}
-
-
-@pytest.fixture(scope="module")
-def wave_mesh(tmp_path_factory):
-    path = tmp_path_factory.mktemp("wave") / "line.msh"
-    sm.write_msh22(
-        path,
-        sm.strip_line(4.0, 2.0, 1.0, (8, 2, 2), layers=WAVE_LAYERS, core=(1.0, 3.0)),
-    )
-    return gfem.Mesh.from_gmsh(path, length_unit="mm")
-
-
-def _wave_line(mesh, port):
-    lower, (d1, d2) = WAVE_PORTS[port]
-    return gfem.Model(
-        mesh,
-        materials={
-            "lo": lower,
-            "hi": gfem.Material(eps_r=2.0),
-            "core": gfem.Material(eps_r=3.0),
-        },
-        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
-        ports=[
-            gfem.WavePort("p1", "port1", offset=d1),
-            gfem.WavePort("p2", "port2", offset=d2),
-        ],
-    )
-
-
-@pytest.mark.parametrize("port", ["lossless", "lossy"])
-def test_wave_port_shape_gradient_matches_fd(wave_mesh, port):
-    # the top plate moves; its nodes on the port faces are held, so the port
-    # modes stay those of the imported faces
-    line = _wave_line(wave_mesh, port)
-    morph = boundary_morph(line, "top")
-    problem = gfem.Driven(frequency=(12e9, 24e9))
-    options = gfem.SolverOptions(order=2, linear_solver="direct")
-
-    def objective(t):
-        s = gfem.solve(line.replace(mesh=morph(t)), problem, options=options).s.values
-        return jnp.sum(WEIGHTS * jnp.abs(s) ** 2) + jnp.sum(jnp.real(s[:, 1, 0]))
-
-    t = jnp.zeros(morph.n_params)
-    rng = np.random.default_rng(8)
-    assert_gradient_matches(objective, t, unit_directions(rng, t.shape, 2), step=STEP)
-
-
-def test_moved_wave_port_nodes_raise_port_geometry_error(wave_mesh):
-    line = _wave_line(wave_mesh, "lossless")
+def test_moved_wave_port_nodes_raise_port_geometry_error(tmp_path):
+    line = wave_line(wave_mesh(tmp_path), "lossless")
     problem = gfem.Driven(frequency=12e9)
     mesh = line.mesh
     face = mesh.triangles[mesh.triangle_tags == mesh.region("port2").tag]
