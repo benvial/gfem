@@ -38,7 +38,7 @@ from __future__ import annotations
 import dataclasses
 import math
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 import ngsolve as ngs
 import numpy as np
@@ -122,6 +122,13 @@ class Piece:
         name: What the piece is (``"mass"``, ``"port p1 R"``, ...).
         theta: θ(ω), a complex scalar for an angular frequency in rad/s.
         integrand: ``(trial, test) -> integrals`` of the form, with no ω.
+        kind: How the form depends on the node coordinates, for shape
+            gradients: ``"curl"`` (``∫ (C curl u) · curl v``), ``"value"``
+            (``∫ (C u) · v``), ``"surface"`` (a surface form), or ``"port"``
+            (a port's term, which reads only the port's own geometry: shape
+            gradients hold port nodes in place).
+        coefficient: ``C`` of a ``"curl"`` or ``"value"`` piece, the
+            element-wise coefficient its integrand reads.
 
     Raises:
         ValueError: ``theta`` does not give one scalar: the term is not
@@ -131,6 +138,8 @@ class Piece:
     name: str
     theta: Callable[[float], complex]
     integrand: Callable[[Any, Any], Any]
+    kind: Literal["curl", "value", "surface", "port"] = "surface"
+    coefficient: Any = None
 
     def __post_init__(self) -> None:
         """Check that θ is a scalar function of ω."""
@@ -298,15 +307,27 @@ def pieces(
             "curl_curl",
             _constant,
             lambda u, v: (nu * ngs.curl(u)) * ngs.curl(v) * dx,
+            kind="curl",
+            coefficient=nu,
         ),
-        Piece("mass", lambda w: -(k(w) ** 2), lambda u, v: (eps_cf * u) * v * dx),
+        Piece(
+            "mass",
+            lambda w: -(k(w) ** 2),
+            lambda u, v: (eps_cf * u) * v * dx,
+            kind="value",
+            coefficient=eps_cf,
+        ),
     ]
     sigma = np.where(active, element_values(model, "conductivity").real, 0.0)
     if sigma.any():
         sigma_cf = coefficient(built, ETA0 * scale * sigma)
         out.append(
             Piece(
-                "conductivity", lambda w: 1j * k(w), lambda u, v: sigma_cf * u * v * dx
+                "conductivity",
+                lambda w: 1j * k(w),
+                lambda u, v: sigma_cf * u * v * dx,
+                kind="value",
+                coefficient=sigma_cf,
             )
         )
 
@@ -436,7 +457,9 @@ def _conductor(
     return out
 
 
-def _rlc(label: str, scale: float, sheets: list) -> list[Piece]:
+def _rlc(
+    label: str, scale: float, sheets: list, kind: Literal["surface", "port"]
+) -> list[Piece]:
     """Pieces of per-square R, L and C in parallel on surfaces.
 
     ``sheets`` holds ``(form, R_s, L_s, C_s)``, ``None`` where absent: the
@@ -457,13 +480,14 @@ def _rlc(label: str, scale: float, sheets: list) -> list[Piece]:
         "C": lambda w: -(wavenumber(w, scale) ** 2),
     }
     out = []
-    for kind, items in weights.items():
+    for element, items in weights.items():
         if items:
 
             def integrand(u, v, items=items):
                 return sum(form(u, v, c) for form, c in items)
 
-            out.append(Piece(f"{label} {kind}", thetas[kind], integrand))
+            name = f"{label} {element}"
+            out.append(Piece(name, thetas[element], integrand, kind=kind))
     return out
 
 
@@ -472,13 +496,13 @@ def _port(built: EngineMesh, order: int, data: LumpedPortData) -> list[Piece]:
         (_tangential(built, (e.surface,), order), *data.per_square(e))
         for e in data.elements
     ]
-    return _rlc(f"port {data.port.name}", built.scale, sheets)
+    return _rlc(f"port {data.port.name}", built.scale, sheets, "port")
 
 
 def _impedance(built: EngineMesh, order: int, b: Impedance) -> list[Piece]:
     form = _tangential(built, (b.surface,), order)
     sheet = (form, b.resistance, b.inductance, b.capacitance)
-    return _rlc(f"impedance {b.surface}", built.scale, [sheet])
+    return _rlc(f"impedance {b.surface}", built.scale, [sheet], "surface")
 
 
 def wave_port_piece(
@@ -512,7 +536,7 @@ def wave_port_piece(
     values[on] = 1.0 / mu[owner[on]]
     form = _tangential(built, (surface,), order)
     coef = surface_p0(built, values)
-    return Piece(f"waveport {port}", theta, lambda u, v: form(u, v, coef))
+    return Piece(f"waveport {port}", theta, lambda u, v: form(u, v, coef), kind="port")
 
 
 def excitation_per_voltage(resistance: float) -> float:

@@ -111,14 +111,21 @@ def test_pair_weights_are_the_thetas_of_the_operator_pieces(line):
         order=1,
     )
     omega = 2 * math.pi * 13e9
-    weights = driven._weights(op.wavenumber(omega))
+    weights = driven._weights(op, omega)
     thetas = {p.name: complex(p.theta(omega)) for p in op.pieces}
-    for name, theta in thetas.items():
-        if name in sensitivity.TERMS:
-            assert weights[name] == pytest.approx(theta, rel=1e-15)
-    assert set(weights) <= set(sensitivity.TERMS)
-    assert {"curl_curl", "mass", "conductivity", "absorbing"} <= set(thetas)
-    assert "absorbing order 2" in thetas
+    # every material term the kernel reads, with its theta; no port piece
+    k0 = op.wavenumber(omega)
+    expected = {
+        "curl_curl": 1.0,
+        "mass": -(k0**2),
+        "conductivity": 1j * k0,
+        "absorbing": 1j * k0,
+        "absorbing order 2": 1 / (2j * k0),
+    }
+    assert set(expected) <= set(sensitivity.TERMS)
+    for name, theta in expected.items():
+        assert weights[name] == pytest.approx(theta, rel=1e-15)
+    assert set(weights) == {n for n in thetas if not n.startswith("port ")}
 
 
 def test_excitation_is_the_voltage_vector_times_the_reciprocity_factor(line):

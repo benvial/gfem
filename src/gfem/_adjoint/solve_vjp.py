@@ -39,11 +39,13 @@ A rule provides: ``form`` (its operator family in the property-to-form-term
 table), ``differentiable_outputs``, ``output_specs(model)`` (name ->
 ``jax.ShapeDtypeStruct``), ``role(kind)`` (``"read"`` or ``"unread"``),
 ``forward(model, *, keep)``, ``backward(model, entry, cotangents)``,
-``options`` and ``problem``, and optionally ``unsupported_input(kind)``
+``options`` and ``problem``, optionally ``unsupported_input(kind)``
 (a reason, or ``None``) for read inputs the rule itself cannot
-differentiate. Host calls get the model and a shallow copy of
-the rule whose ``problem`` holds the call's concrete values, so a rule reads
-problem values from ``self.problem`` and never sees a tracer there.
+differentiate, and, for node-coordinate gradients, ``shape_terms(model)``
+(its operator as a list of `gfem._engine.sensitivity.ShapeTerm`). Host
+calls get the model and a shallow copy of the rule whose ``problem`` holds
+the call's concrete values, so a rule reads problem values from
+``self.problem`` and never sees a tracer there.
 """
 
 from __future__ import annotations
@@ -286,7 +288,15 @@ def _host_backward(
     try:
         cotangents = {n: np.asarray(c) for n, c in zip(live_names, cts, strict=True)}
         pairs = rule.backward(model, entry, cotangents)
-        grads = sensitivity(model, pairs, {kinds[i] for i in wanted}, form=rule.form)
+        grads = sensitivity(
+            model,
+            pairs,
+            {kinds[i] for i in wanted},
+            form=rule.form,
+            shape=functools.partial(rule.shape_terms, model)
+            if hasattr(rule, "shape_terms")
+            else None,
+        )
     finally:
         if fresh is not None:
             fresh.free()

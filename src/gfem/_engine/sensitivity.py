@@ -18,10 +18,32 @@ tetrahedron behind each face) is integrated per triangle in a face-wise
 (surface P0) pass, and each face's integral is added to its owning
 tetrahedron, so its coefficient rows read like a volume term's.
 
+**Node coordinates** (shape gradients) are a third pass over the same
+pairs, against the rule's `ShapeTerm` list, the operator's pieces with
+their coefficients. Under a node displacement ``W`` (a real P1 vector
+field, one test function per node and axis) a volume term changes by
+``int T(u, v) : grad W``, with hand-written **transport tensors** ``T`` on
+the complex fields themselves (gradients and H(curl) values transform
+covariantly, curls contravariantly; element-wise constant coefficients
+travel with their elements):
+
+- value, ``int (C u) . v``: ``T = (C u . v) I - u (x) C^T v - v (x) C u``;
+- curl, ``int (C curl u) . curl v``: ``T = C^T cv (x) cu + C cu (x) cv -
+  (C cu . cv) I``;
+- gradient (H1), ``int (C grad u) . grad v``: the value tensor of the
+  gradients.
+
+Surface terms are few and small; NGSolve's ``DiffShape`` differentiates
+them, on the real Lagrangian ``Re(theta a(l, r))`` written with real
+fields only (``DiffShape`` mistreats an H(curl) field multiplied by a
+complex number before its dot product). Every form is integrated on the
+pinned rule of degree 2p, exact for these terms and their shape
+derivatives on straight-sided elements.
+
 Adding a problem type means adding table rows (and, for a new operator
 term, an entry of `TERMS`), not a code path. Later passes plug in beside
-these: a face pass for sheet fields, transport tensors for node
-coordinates, and load pairs ``int lambda psi`` for problem-leaf sources.
+these: a face pass for sheet fields, and load pairs ``int lambda psi`` for
+problem-leaf sources.
 
 Design inputs are named by kind tuples, the same ones `gfem._adjoint` uses:
 ``("material", region, property)`` is a `MaterialField` leaf and
@@ -31,8 +53,8 @@ Design inputs are named by kind tuples, the same ones `gfem._adjoint` uses:
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable, Hashable, Mapping
-from typing import Any
+from collections.abc import Callable, Hashable, Mapping, Sequence
+from typing import Any, Literal
 
 import ngsolve as ngs
 import numpy as np
@@ -45,9 +67,11 @@ from gfem.model import Model
 
 __all__ = [
     "FORM_TERMS",
+    "SHAPE_FORMS",
     "TERMS",
     "Coefficient",
     "FieldPair",
+    "ShapeTerm",
     "Term",
     "sensitivity",
     "unsupported",
@@ -229,6 +253,40 @@ class FieldPair:
     domain: ngs.Region
 
 
+@dataclasses.dataclass(frozen=True, eq=False)
+class ShapeTerm:
+    """One operator term ``a_t(u, v)`` as the node-coordinate pass reads it.
+
+    Attributes:
+        name: The term's key in the pairs' `FieldPair.weights`.
+        kind: ``"gradient"`` (``int (C grad u) . grad v``, H1), ``"value"``
+            (``int (C u) . v``, H(curl)), ``"curl"`` (``int (C curl u) .
+            curl v``) or ``"surface"`` (any surface form, differentiated by
+            ``DiffShape``).
+        coefficient: For a volume kind, ``C``: an element-wise constant
+            NGSolve coefficient, scalar or 3 x 3, real or complex, the same
+            the forward form reads.
+        integrand: For ``"surface"``: ``(u, v) -> integrals`` of the form
+            with its coefficient and pinned quadrature (real coefficients),
+            for real fields ``u`` and ``v``.
+        space: For ``"surface"``: a real space with the pairs' DOF numbering.
+        length_power: The integral on the mesh in file units times
+            ``scale ** length_power`` is the term in the units the pairs'
+            weights expect (as `Term.length_power`).
+    """
+
+    name: str
+    kind: Literal["gradient", "value", "curl", "surface"]
+    coefficient: Any = None
+    integrand: Callable[[Any, Any], Any] | None = None
+    space: ngs.FESpace | None = None
+    length_power: int = 0
+
+
+#: Operator families whose rules provide `ShapeTerm` lists (``shape_terms``).
+SHAPE_FORMS = frozenset({"electrostatic", "driven"})
+
+
 def unsupported(form: str, kind: tuple) -> str | None:
     """Why the kernel cannot differentiate ``form`` by input ``kind``, or None."""
     if kind[0] == "material":
@@ -236,9 +294,11 @@ def unsupported(form: str, kind: tuple) -> str | None:
             return None
         return f"the {form} forms of this version do not differentiate {kind[2]}"
     if kind[0] == "nodes":
+        if form in SHAPE_FORMS:
+            return None
         return (
-            "gradients with respect to mesh node coordinates (shape "
-            "gradients) are not available in this version of gfem"
+            f"gradients of {form} results with respect to mesh node coordinates "
+            "(shape gradients) are not available in this version of gfem"
         )
     return "this version of gfem has no gradient for this input"
 
@@ -325,21 +385,134 @@ def _element_pass(model: Model, pairs: list[FieldPair], term: str) -> np.ndarray
     return out * built.scale**definition.length_power
 
 
+def _transport(term: ShapeTerm, u: Any, v: Any) -> Any:
+    """The transport tensor of ``term`` for fields ``u``, ``v`` (module doc)."""
+    c = term.coefficient
+    tensor = len(c.dims) == 2
+    identity = ngs.Id(3)
+    if term.kind == "curl":
+        cu, cv = ngs.curl(u), ngs.curl(v)
+        if tensor:
+            ccu, ctcv = c * cu, c.trans * cv
+            return (
+                ngs.OuterProduct(ctcv, cu)
+                + ngs.OuterProduct(ccu, cv)
+                - (ccu * cv) * identity
+            )
+        return c * (
+            ngs.OuterProduct(cv, cu) + ngs.OuterProduct(cu, cv) - (cu * cv) * identity
+        )
+    if term.kind == "gradient":
+        u, v = ngs.grad(u), ngs.grad(v)
+    if tensor:
+        cu, ctv = c * u, c.trans * v
+        return (cu * v) * identity - ngs.OuterProduct(u, ctv) - ngs.OuterProduct(v, cu)
+    return c * ((u * v) * identity - ngs.OuterProduct(u, v) - ngs.OuterProduct(v, u))
+
+
+def _volume_shape(term: ShapeTerm, pair: FieldPair, theta: complex, gw: Any) -> Any:
+    """``int Re(theta sum_k T(left_k, right_k)) : grad W`` for one pair."""
+    total = None
+    for a, lefts in _parts(pair.space, pair.left):
+        for b, rights in _parts(pair.space, pair.right):
+            weight = complex(theta * a * b)
+            factor: complex | float = weight.real if weight.imag == 0 else weight
+            for u, v in zip(lefts, rights, strict=True):
+                part = factor * _transport(term, u, v)
+                total = part if total is None else total + part
+    if total is None:  # pragma: no cover - a pair has at least one column
+        return None
+    if total.is_complex:
+        total = total.real
+    integrand = ngs.InnerProduct(gw, total)
+    return integrand * quadrature.dx(pair.order, definedon=pair.domain)
+
+
+def _real_fields(space: ngs.FESpace, vectors: np.ndarray) -> list[tuple[complex, list]]:
+    """``vectors`` as ``[(factor, real fields on space)]``."""
+    if not np.iscomplexobj(vectors):
+        return [(1.0, _gridfunctions(space, vectors))]
+    return [
+        (1.0, _gridfunctions(space, np.ascontiguousarray(vectors.real))),
+        (1j, _gridfunctions(space, np.ascontiguousarray(vectors.imag))),
+    ]
+
+
+def _surface_shape(term: ShapeTerm, pair: FieldPair, theta: complex, w: Any) -> Any:
+    """``DiffShape`` of ``Re(theta sum_k a(left_k, right_k))``, real fields only."""
+    if term.space is None or term.integrand is None:  # pragma: no cover - rule bug
+        msg = f"The surface shape term {term.name!r} has no space or integrand."
+        raise ValueError(msg)
+    lagrangian = None
+    for a, lefts in _real_fields(term.space, pair.left):
+        for b, rights in _real_fields(term.space, pair.right):
+            weight = complex(theta * a * b).real
+            if weight == 0:
+                continue
+            for u, v in zip(lefts, rights, strict=True):
+                part = weight * term.integrand(u, v)
+                lagrangian = part if lagrangian is None else lagrangian + part
+    return None if lagrangian is None else lagrangian.DiffShape(w)
+
+
+def _node_pass(
+    model: Model, pairs: list[FieldPair], shape_terms: Sequence[ShapeTerm]
+) -> np.ndarray:
+    """``sum_pairs sum_t theta_t d a_t(left, right) / dX``, (n_nodes, 3), per m."""
+    built = discretization(model.mesh).built
+    n_nodes = len(model.mesh.imported_nodes)
+    space = ngs.VectorH1(built.mesh, order=1)
+    w = space.TestFunction()
+    gw = ngs.grad(w)
+    forms: dict[int, ngs.LinearForm] = {}
+    for term in shape_terms:
+        for pair in pairs:
+            theta = pair.weights.get(term.name)
+            if theta is None or theta == 0:
+                continue
+            if term.kind == "surface":
+                part = _surface_shape(term, pair, theta, w)
+            else:
+                part = _volume_shape(term, pair, theta, gw)
+            if part is None:
+                continue
+            if term.length_power not in forms:
+                forms[term.length_power] = ngs.LinearForm(space)
+            forms[term.length_power] += part
+    out = np.zeros((n_nodes, 3))
+    for power, form in forms.items():
+        form.Assemble()
+        values = form.vec.FV().NumPy().reshape(3, -1).T
+        out += values[:n_nodes] * built.scale**power
+    # per metre: the engine mesh is in file units of `scale` metres
+    return out / built.scale
+
+
 def sensitivity(
-    model: Model, pairs: list[FieldPair], wants: set[Hashable], *, form: str
+    model: Model,
+    pairs: list[FieldPair],
+    wants: set[Hashable],
+    *,
+    form: str,
+    shape: Callable[[], Sequence[ShapeTerm]] | None = None,
 ) -> dict[Hashable, np.ndarray]:
     """The cotangent of every wanted design input, from the rule's pairs.
 
     Args:
         model: The design state (concrete leaves) the pairs were solved on.
         pairs: The rule's field pairs, cotangents folded in.
-        wants: Input kinds, ``("material", region, property)``.
+        wants: Input kinds, ``("material", region, property)`` or
+            ``("nodes",)``.
         form: The operator family, the first key of `FORM_TERMS`.
+        shape: Returns the operator's `ShapeTerm` list; called only when the
+            node coordinates are wanted.
 
     Returns:
-        Per wanted kind, one value per tetrahedron of the region (mesh
-        order): the real cotangent, or for a complex dependence the complex
-        one (``sum ct * dy/dp`` when holomorphic, see `Coefficient`).
+        Per wanted material kind, one value per tetrahedron of the region
+        (mesh order): the real cotangent, or for a complex dependence the
+        complex one (``sum ct * dy/dp`` when holomorphic, see
+        `Coefficient`). For ``("nodes",)``, ``(n_nodes, 3)``, real, per
+        metre.
 
     Raises:
         NotImplementedError: A wanted kind is not supported (see
@@ -349,6 +522,22 @@ def sensitivity(
         reason = unsupported(form, kind)  # ty: ignore[invalid-argument-type]
         if reason is not None:
             raise NotImplementedError(reason)
+    out: dict[Hashable, np.ndarray] = {}
+    if ("nodes",) in wants:
+        if shape is None:  # pragma: no cover - rule bug
+            msg = f"The {form} rule gives no shape terms."
+            raise NotImplementedError(msg)
+        out["nodes",] = _node_pass(model, pairs, shape())
+    materials = {k for k in wants if k[0] == "material"}  # ty: ignore[not-subscriptable]
+    if materials:
+        out |= _material_sensitivity(model, pairs, materials, form)
+    return out
+
+
+def _material_sensitivity(
+    model: Model, pairs: list[FieldPair], wants: set[Hashable], form: str
+) -> dict[Hashable, np.ndarray]:
+    """The material part of `sensitivity`."""
     integrals: dict[str, np.ndarray] = {}
     cache: dict[str, np.ndarray] = {}
 

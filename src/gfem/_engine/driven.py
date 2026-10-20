@@ -48,17 +48,18 @@ import numpy as np
 import scipy.constants
 
 from gfem._adjoint import adjoint_tolerance
-from gfem._boundaries import PEC, LumpedPort, WavePort
+from gfem._boundaries import PEC, LumpedPort, WavePort, surfaces_of
 from gfem._engine import terms
 from gfem._engine.cache import Entry, discretization
 from gfem._engine.domain import domain_key, em_region, hcurl_space
 from gfem._engine.fields import fe_space
 from gfem._engine.mesh import EngineMesh
 from gfem._engine.runtime import task_manager
-from gfem._engine.sensitivity import FieldPair
+from gfem._engine.sensitivity import FieldPair, ShapeTerm
 from gfem._engine.wave_ports import WavePortCoupling, wave_port_couplings
 from gfem._linalg import KINDS, Handle, Operator, prepare
 from gfem._sweep.adaptive import AffineSystem, AffineTerm, adaptive_sweep
+from gfem.errors import PortGeometryError
 from gfem.mesh import Mesh
 from gfem.model import Model
 from gfem.options import SolverOptions
@@ -144,7 +145,7 @@ def driven_operator(model: Model, order: int) -> DrivenOperator:
     """
     disc = discretization(model.mesh)
     built = disc.built
-    pec = tuple(sorted({b.surface for b in model.boundaries if isinstance(b, PEC)}))
+    pec = _pec(model)
     space = disc.space(
         (domain_key(model), "hcurl", order, pec),
         lambda: hcurl_space(model, built, order, dirichlet=pec),
@@ -575,6 +576,37 @@ class DrivenRule:
             return "read" if kind[2] in self.reads else "unread"
         return "read"
 
+    def shape_terms(self, model: Model) -> list[ShapeTerm]:
+        """The operator's pieces as node-coordinate (shape) terms.
+
+        Every piece but the ports': a port's terms, excitation and voltage
+        read only its own surface, which shape gradients hold in place.
+
+        Raises:
+            PortGeometryError: A node of a port surface has moved.
+        """
+        _check_ports_held(model)
+        op = self.operator(model)
+        pec = _pec(model)
+        real = discretization(model.mesh).space(
+            (domain_key(model), "hcurl", op.order, pec, "real"),
+            lambda: hcurl_space(
+                model, op.built, op.order, complex_valued=False, dirichlet=pec
+            ),
+        )
+        out = []
+        for piece in op.pieces:
+            if piece.kind == "port":
+                continue
+            if piece.kind == "surface":
+                term = ShapeTerm(
+                    piece.name, "surface", integrand=piece.integrand, space=real
+                )
+            else:
+                term = ShapeTerm(piece.name, piece.kind, coefficient=piece.coefficient)
+            out.append(term)
+        return out
+
     def unsupported_input(self, kind: tuple) -> str | None:
         """Why a read input cannot be differentiated here, or ``None``."""
         del kind
@@ -663,7 +695,7 @@ class DrivenRule:
                         space=op.space,
                         left=-adjoint,
                         right=x,
-                        weights=_weights(k0),
+                        weights=_weights(op, omega),
                         order=op.order,
                         domain=domain,
                     )
@@ -711,7 +743,7 @@ class DrivenRule:
                     for piece, a in zip(op.pieces, reduced, strict=True)
                 )
                 outer = np.linalg.solve(matrix, g) @ coordinates[i].T
-                for term, theta in _weights(op.wavenumber(omega)).items():
+                for term, theta in _weights(op, omega).items():
                     accumulated[term] = accumulated.get(term, 0) + theta * outer
             pairs = []
             for term, g in accumulated.items():
@@ -860,20 +892,56 @@ class DrivenRule:
         )
 
 
+def _pec(model: Model) -> tuple[str, ...]:
+    """The `PEC` surfaces of the model: Dirichlet surfaces of the space."""
+    return tuple(sorted({b.surface for b in model.boundaries if isinstance(b, PEC)}))
+
+
+def _check_ports_held(model: Model) -> None:
+    """Raise unless every port surface's nodes sit at their imported positions.
+
+    Shape gradients treat each port's geometry (its terms, excitation and
+    voltage) as frozen: exact for every displacement that holds the ports.
+
+    Raises:
+        PortGeometryError: A node of a port surface has moved.
+    """
+    mesh = model.mesh
+    nodes = np.asarray(mesh.nodes)
+    moved = np.any(nodes != mesh.imported_nodes, axis=1)
+    if not moved.any():
+        return
+    for port in model.ports:
+        for surface in surfaces_of(port):
+            on = mesh.triangles[mesh.triangle_tags == mesh.region(surface).tag]
+            off = np.unique(on)[moved[np.unique(on)]]
+            if len(off):
+                distance = np.linalg.norm(
+                    nodes[off] - mesh.imported_nodes[off], axis=1
+                ).max()
+                raise PortGeometryError(
+                    f"{type(port).__name__} {port.name!r}: {len(off)} node(s) of its "
+                    f"surface {surface!r} moved (up to {distance:.3g} m), so gfem "
+                    "cannot differentiate the solve with respect to the node "
+                    "coordinates: shape gradients hold every port's geometry fixed. "
+                    "Keep the displacement zero on port surfaces: "
+                    "gfem.shape.boundary_morph holds the model's ports (and "
+                    "fixed= surfaces) for you."
+                )
+
+
 def _no_solve(*_: object) -> np.ndarray:
     """The placeholder full solve of `_Ports.system`."""
     raise NotImplementedError  # pragma: no cover - replaced before use
 
 
-def _weights(k0: float) -> dict[str, complex]:
-    """θ(ω) of each material-dependent piece (see `gfem._engine.terms`)."""
-    return {
-        "curl_curl": 1.0,
-        "mass": -(k0**2),
-        "conductivity": 1j * k0,
-        "absorbing": 1j * k0,
-        "absorbing order 2": 1 / (2j * k0),
-    }
+def _weights(op: DrivenOperator, omega: float) -> dict[str, complex]:
+    """θ(ω) of each piece but the ports', by piece name (`gfem._engine.terms`).
+
+    The material terms of the sensitivity kernel and the shape terms are
+    named after the pieces; the ports' pieces are design-independent.
+    """
+    return {p.name: complex(p.theta(omega)) for p in op.pieces if p.kind != "port"}
 
 
 #: Singular values of a reduced cotangent matrix below this fraction of the

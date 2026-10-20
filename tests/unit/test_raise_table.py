@@ -38,7 +38,7 @@ ALL_PROPERTIES = {
 # (problem name, result leaf, input kind) -> outcome. Input kinds name the
 # model leaf: ("nodes",) or ("material", <region>, <property>).
 EXPECTED = {
-    ("electrostatic", "capacitance", ("nodes",)): RAISES,
+    ("electrostatic", "capacitance", ("nodes",)): GRADIENT,
     ("electrostatic", "capacitance", ("material", "oxide", "eps_r")): GRADIENT,
     ("electrostatic", "capacitance", ("material", "oxide", "mu_r")): ZERO,
     ("electrostatic", "capacitance", ("material", "oxide", "tan_delta")): ZERO,
@@ -52,7 +52,7 @@ EXPECTED = {
     ("electrostatic", "capacitance", ("material", "oxide", "specific_heat")): ZERO,
 }
 # Terminal potentials: their coefficients differentiate like the capacitance;
-# their mesh is the input mesh passed through (node gradients raise in solve).
+# their mesh is the input mesh passed through (identity in the nodes).
 EXPECTED |= {
     ("electrostatic", f"potential.{t}.{leaf}", kind): (
         EXPECTED[("electrostatic", "capacitance", kind)]
@@ -83,18 +83,24 @@ EXPECTED |= {
 }
 
 # Driven: S and the kept field coefficients differentiate with respect to
-# every electromagnetic property and are exact zeros for the thermal ones.
-# z_ref (the port resistances), the kept fields' mesh (the input mesh passed
-# through) and their angular frequency are constants of the materials. Node
-# coordinates raise for every leaf (no shape gradients yet).
+# every electromagnetic property and the node coordinates, and are exact
+# zeros for the thermal properties. z_ref (the port resistances) and the
+# kept fields' angular frequency are constants; the kept fields' mesh is the
+# input mesh passed through (identity in the nodes, constant otherwise).
 EM_PROPERTIES = ("eps_r", "mu_r", "tan_delta", "conductivity")
 _DRIVEN_DEPENDENT = (
     "s.values",
     *(f"e_fields.{k}.coefficients" for k in (0, 1)),
 )
+_NODE_DEPENDENT = (
+    *_DRIVEN_DEPENDENT,
+    *(f"e_fields.{k}.mesh.nodes" for k in (0, 1)),
+    "e_fields.coordinates",
+    "e_fields.mesh.nodes",
+)
 EXPECTED |= {
     ("driven", out, kind): (
-        RAISES
+        (GRADIENT if out in _NODE_DEPENDENT else ZERO)
         if kind == ("nodes",)
         else GRADIENT
         if out in _DRIVEN_DEPENDENT and kind[2] in EM_PROPERTIES
@@ -121,7 +127,13 @@ ADAPTIVE = gfem.Driven(
 )
 EXPECTED |= {
     ("driven_adaptive", out, kind): (
-        RAISES
+        (
+            RAISES
+            if out == "e_fields.basis"
+            else GRADIENT
+            if out in _NODE_DEPENDENT
+            else ZERO
+        )
         if kind == ("nodes",)
         else ZERO
         if kind[2] not in EM_PROPERTIES
@@ -297,8 +309,9 @@ def test_raise_table(cases):
         cell = f"{name} {out_name} x {kind}"
         if expected == RAISES:
             # raised while tracing, before any host work
-            with pytest.raises(gfem.NonDifferentiableError):
+            with pytest.raises(gfem.NonDifferentiableError):  # noqa: PT012
                 jax.make_jaxpr(jax.grad(objective))(x)
+                pytest.fail(f"{cell}: no NonDifferentiableError")
             continue
         grad = np.asarray(jax.grad(objective)(x))
         assert np.isfinite(grad).all(), cell
@@ -308,9 +321,12 @@ def test_raise_table(cases):
             assert np.abs(grad).max() > 0, cell
 
 
-def test_unsupported_input_error_names_the_input_and_the_opt_out(model):
+def test_unsupported_input_error_names_the_input_and_the_opt_out(eigen_model):
     objective, x = _objective(
-        model, PROBLEMS["electrostatic"], (jax.tree_util.GetAttrKey("capacitance"),), 0
+        eigen_model,
+        gfem.Eigenmode(target=17e9),
+        (jax.tree_util.GetAttrKey("omega"),),
+        0,
     )
     with pytest.raises(
         gfem.NonDifferentiableError, match=r"mesh\.nodes.*stop_gradient"
