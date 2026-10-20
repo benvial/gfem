@@ -36,9 +36,10 @@ gradient) against the derivative of the operator with respect to every node:
 
 - volume terms (the curl-curl, mass and conductivity terms, the
   electrostatic `eps grad . grad`) through closed-form transport tensors on
-  the fields, element by element, on the solve's own quadrature rule;
+  the fields, element by element, integrated exactly;
 - surface terms (absorbing boundaries, `Conductor`, `Impedance`) through
-  NGSolve's shape derivative.
+  the same kind of closed form on their faces (checked against NGSolve's
+  own shape derivative).
 
 Per excited port and frequency this costs well under a tenth of a forward
 linear solve; under an adaptive sweep it costs one such pass per reduced
