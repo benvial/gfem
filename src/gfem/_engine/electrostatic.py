@@ -168,6 +168,7 @@ class ElectrostaticRule:
             symmetry="hermitian",
             kind=self.kind,
             device=self.options.device,
+            threads=self.options.threads,
             tolerance=tolerance,
             width=len(self.problem.terminals),
         )

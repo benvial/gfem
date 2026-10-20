@@ -309,6 +309,7 @@ class DrivenRule:
                     omega,
                     kind=self.kind,
                     device=self.options.device,
+                    threads=self.options.threads,
                     tolerance=self.options.tolerance,
                     width=width,
                 )
@@ -478,6 +479,7 @@ class DrivenRule:
                     omega,
                     kind=self.kind,
                     device=options.device,
+                    threads=options.threads,
                     tolerance=options.tolerance,
                     width=len(self.excite),
                 )
@@ -769,6 +771,7 @@ class DrivenRule:
                             omega,
                             kind=self.kind,
                             device=self.options.device,
+                            threads=self.options.threads,
                             tolerance=adjoint_tolerance(self.options),
                             width=width,
                         ),
@@ -1116,6 +1119,7 @@ class _Ports:
         device: str,
         tolerance: float,
         width: int,
+        threads: int | None = None,
     ) -> Handle:
         """A handle of the system operator ``A(ω) + W(ω)`` (see `_Ports`)."""
         op = self.operator
@@ -1126,6 +1130,7 @@ class _Ports:
             device=device,
             tolerance=tolerance,
             width=width,
+            threads=threads,
         )
         if not self.waves:
             return handle

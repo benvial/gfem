@@ -282,3 +282,48 @@ def test_electrostatic_solve_on_the_gpu_matches_the_cpu(tmp_path):
     np.testing.assert_allclose(run("cuda"), run("cpu"), rtol=1e-10)
     (solver,) = FakeDirectSolver.instances
     assert solver.b.shape[1] == 2  # one column per terminal
+
+
+def _wheel(tmp_path, layout):
+    lib = tmp_path / "nvidia" / layout / "lib"
+    lib.mkdir(parents=True)
+    path = lib / "libcudss_mtlayer_gomp.so.0"
+    path.write_bytes(b"")
+    return str(path)
+
+
+@pytest.mark.usefixtures("gpu")
+@pytest.mark.parametrize("layout", ["cu12", "cu13"])
+def test_threading_layer_is_found_in_either_wheel_layout(
+    built, monkeypatch, tmp_path, layout
+):
+    expected = _wheel(tmp_path, layout)
+    monkeypatch.setattr(cudss, "_nvidia_roots", lambda: [tmp_path / "nvidia"])
+    op, _ = _symmetric(built)
+    prepare(op, symmetry="complex_symmetric", kind="direct", device="cuda")
+    (solver,) = FakeDirectSolver.instances
+    assert solver.options.multithreading_lib == expected
+
+
+@pytest.mark.usefixtures("gpu")
+def test_missing_threading_layer_falls_back_to_single_thread(
+    built, monkeypatch, tmp_path, recwarn
+):
+    (tmp_path / "nvidia" / "cu13" / "lib").mkdir(parents=True)
+    monkeypatch.setattr(cudss, "_nvidia_roots", lambda: [tmp_path / "nvidia"])
+    op, space = _symmetric(built)
+    handle = prepare(op, symmetry="complex_symmetric", kind="direct", device="cuda")
+    (solver,) = FakeDirectSolver.instances
+    assert solver.options.multithreading_lib is None
+    assert handle.solve(_rhs(space.ndof, 1)).shape == (space.ndof, 1)
+    assert not recwarn.list
+
+
+@pytest.mark.usefixtures("gpu")
+def test_one_thread_asks_for_no_threading_layer(built, monkeypatch, tmp_path):
+    _wheel(tmp_path, "cu13")
+    monkeypatch.setattr(cudss, "_nvidia_roots", lambda: [tmp_path / "nvidia"])
+    op, _ = _symmetric(built)
+    prepare(op, symmetry="complex_symmetric", kind="direct", device="cuda", threads=1)
+    (solver,) = FakeDirectSolver.instances
+    assert solver.options.multithreading_lib is None

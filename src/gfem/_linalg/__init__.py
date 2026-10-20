@@ -124,6 +124,7 @@ def prepare(
     tolerance: float = 1e-6,
     maxiter: int = MAXITER,
     width: int = 1,
+    threads: int | None = None,
 ) -> Handle:
     """Assemble ``operator`` and set up the ``kind`` backend.
 
@@ -140,6 +141,10 @@ def prepare(
         width: Right-hand-side columns the GPU solver solves at once (the
             usual block width: terminals, ports); wider blocks go in chunks,
             narrower ones are zero-padded. CPU backends ignore it.
+        threads: ``SolverOptions.threads``. ``1`` keeps the GPU solver's
+            host-side planning on one thread; otherwise it is multithreaded
+            when the cuDSS threading library is installed. CPU backends
+            ignore it.
 
     Raises:
         NotImplementedError: The backend is not available, or the GPU
@@ -161,7 +166,7 @@ def prepare(
         from gfem._linalg.cudss import CudssHandle
 
         return CudssHandle.from_operator(
-            operator, symmetry, device_id=device_id, width=width
+            operator, symmetry, device_id=device_id, width=width, threads=threads
         )
     if kind == "direct":
         from gfem._linalg.direct import DirectHandle
