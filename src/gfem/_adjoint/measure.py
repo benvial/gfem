@@ -33,9 +33,9 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax.core import Tracer
 from jax.custom_derivatives import SymbolicZero
 
+from gfem._checks import is_traced
 from gfem.errors import NonDifferentiableError
 
 __all__ = ["measure", "measure_vjp"]
@@ -47,7 +47,7 @@ def measure(kernel: Any, inputs: Mapping[str, Any]) -> dict[str, jax.Array]:
     With no JAX tracer among the inputs the kernel runs at once, so host
     errors reach the caller as they are.
     """
-    if any(isinstance(v, Tracer) for v in inputs.values()):
+    if is_traced(dict(inputs)):
         return measure_vjp(kernel, inputs)
     values = {k: np.asarray(v) for k, v in inputs.items()}
     outputs = kernel.forward(values)
