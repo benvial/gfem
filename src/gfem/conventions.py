@@ -55,7 +55,12 @@ real, power waves and pseudo-waves coincide.
   NaN, and it cannot be excited.
 - A `WavePort`'s S is normalized to unit modal power; its ``z_ref`` is the
   power-voltage impedance ``Z_PV`` along its ``voltage_path`` (NaN without
-  one).
+  one). As in Palace, a wave port's S is the projection of the field on
+  the conjugated port mode, with the mode's magnetic field taken at the
+  real part of its wavenumber, and the mode scaled so that this projection
+  of the mode itself carries 1 W; for a lossless mode this is the modal
+  power wave. ``WavePort(offset=d)`` refers S to a plane ``d`` inside the
+  domain: ``S_ij`` times ``exp(gamma_i d_i) exp(gamma_j d_j)``.
 - ``NetworkParameters.y()``, ``.z()`` and ``.renormalize(z_new)`` use the
   power-wave formulas; ``to_touchstone`` labels a file with ``z_ref`` only
   when it is one real value, and otherwise needs ``z0=`` to renormalize
