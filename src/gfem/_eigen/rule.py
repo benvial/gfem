@@ -49,7 +49,6 @@ from gfem._engine.cache import Entry, discretization
 from gfem._engine.coefficients import coefficient, element_tensors
 from gfem._engine.domain import domain_key, em_region, h1_space, hcurl_space
 from gfem._engine.driven import DrivenOperator, driven_operator
-from gfem._engine.driven import _weights as piece_weights
 from gfem._engine.fields import fe_space
 from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair
@@ -542,7 +541,7 @@ class EigenmodeRule:
                         space=op.space,
                         left=-per_k * c.mean() * x[:, members],
                         right=x[:, members] @ np.linalg.inv(g),
-                        weights=piece_weights(k[members].mean()),
+                        weights=_weights(op, k[members].mean() * per_k),
                         order=op.order,
                         domain=domain,
                     )
@@ -622,6 +621,15 @@ class EigenmodeRule:
             materials=self._materials,
             cluster=jnp.asarray(outputs["cluster"]),
         )
+
+
+def _weights(op: DrivenOperator, omega: complex) -> dict[str, complex]:
+    """θ of every driven piece by name at the complex angular frequency ``omega``.
+
+    The sensitivity kernel reads the weights of the material-dependent terms
+    (``curl_curl``, ``mass``, ``conductivity``, the absorbing terms).
+    """
+    return {piece.name: complex(piece.theta(omega)) for piece in op.pieces}
 
 
 def _close(a: complex, b: complex, rtol: float) -> bool:
