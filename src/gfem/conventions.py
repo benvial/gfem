@@ -56,8 +56,8 @@ real, power waves and pseudo-waves coincide.
 - A `WavePort`'s S is normalized to unit modal power; its ``z_ref`` is the
   power-voltage impedance ``Z_PV`` along its ``voltage_path`` (NaN without
   one). As in Palace, a wave port's S is the projection of the field on
-  the conjugated port mode, with the mode's magnetic field taken at the
-  real part of its wavenumber, and the mode scaled so that this projection
+  the conjugated port mode, with the mode's magnetic field taken at its
+  complex wavenumber (Palace v0.18.1), and the mode scaled so that this projection
   of the mode itself carries 1 W; for a lossless mode this is the modal
   power wave. ``WavePort(offset=d)`` refers S to a plane ``d`` inside the
   domain: ``S_ij`` times ``exp(gamma_i d_i) exp(gamma_j d_j)``.

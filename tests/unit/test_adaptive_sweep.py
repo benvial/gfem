@@ -20,7 +20,7 @@ N = 60
 GRID = np.linspace(1.0, 3.0, 201)
 
 
-def _system(seed=0, damping=0.02):
+def _system(seed=0, damping=0.02, correction=False):
     rng = np.random.default_rng(seed)
     q, _ = np.linalg.qr(rng.standard_normal((N, N)))
     eigenvalues = np.concatenate([[1.4, 2.9, 4.8, 7.3], rng.uniform(40, 90, N - 4)])
@@ -31,8 +31,22 @@ def _system(seed=0, damping=0.02):
     pieces = (k, m, c)
     thetas = (lambda _: 1.0, lambda w: -(w**2), lambda w: 1j * w)
 
+    # a low-rank term U C(ω) Uᵀ with a tabulated-looking coefficient, like a
+    # wave port's modal correction (rank two, complex symmetric)
+    u = rng.standard_normal((N, 3))
+    p_vec = rng.standard_normal((3, 2)) + 1j * rng.standard_normal((3, 2))
+
+    def coefficient(w):
+        d = np.diag([1.0 / (1 + 1j * w), -0.5j * w])
+        return p_vec @ d @ p_vec.T
+
+    corrections = (AffineTerm(u, coefficient),) if correction else ()
+
     def matrix(w):
-        return sum(t(w) * p for t, p in zip(thetas, pieces, strict=True))
+        a = sum(t(w) * p for t, p in zip(thetas, pieces, strict=True))
+        for term in corrections:
+            a = a + term.vectors @ term.coefficients(w) @ term.vectors.T
+        return a
 
     calls = []
 
@@ -46,6 +60,7 @@ def _system(seed=0, damping=0.02):
         excitation=(AffineTerm(b, lambda w: 1j * w * np.eye(2)),),
         outputs=(AffineTerm(b, lambda _: np.eye(2)),),
         solve=solve,
+        corrections=corrections,
     )
 
     def exact(w):
@@ -96,6 +111,33 @@ def test_reduced_outputs_match_full_solves_over_the_grid():
         x, _ = exact(GRID[i])
         field = sweep.basis @ sweep.coordinates[i]
         np.testing.assert_allclose(field, x, atol=1e-11 * np.abs(x).max())
+
+
+def test_a_low_rank_operator_term_is_projected_with_its_coefficient():
+    system, exact, _ = _system(correction=True)
+    sweep = _sweep(system)
+    assert sweep.converged
+    worst = max(
+        np.abs(sweep.outputs[i] - exact(w)[1]).max() / np.abs(exact(w)[1]).max()
+        for i, w in enumerate(GRID)
+    )
+    assert worst < 1e-8
+    for i in sweep.samples:
+        x, _ = exact(GRID[i])
+        field = sweep.basis @ sweep.coordinates[i]
+        np.testing.assert_allclose(field, x, atol=1e-11 * np.abs(x).max())
+    # the reduced model's operator is V^T (A + U C U^T) V
+    w = GRID[17]
+    v = sweep.basis
+    full = v.T @ (
+        sum(t(w) * system.apply(k, v) for k, t in enumerate(system.thetas))
+        + system.corrections[0].vectors
+        @ system.corrections[0].coefficients(w)
+        @ (system.corrections[0].vectors.T @ v)
+    )
+    np.testing.assert_allclose(
+        sweep.model.matrix(w), full, atol=1e-12 * np.abs(full).max()
+    )
 
 
 def test_each_new_sample_starts_from_the_reduced_prediction():

@@ -2,11 +2,14 @@
 
 The system is affine in frequency,
 
-    A(ω) = Σ_k θ_k(ω) A_k,    B(ω) = Σ_j E_j φ_j(ω),    y(ω) = Σ_j ψ_j(ω) L_jᵀ x,
+    A(ω) = Σ_k θ_k(ω) A_k + Σ_c U_c C_c(ω) U_cᵀ,
+    B(ω) = Σ_j E_j φ_j(ω),    y(ω) = Σ_j ψ_j(ω) L_jᵀ x,
 
 with every A_k frequency-independent and complex symmetric (A_kᵀ = A_k),
-E_j and L_j blocks of full-length vectors and θ_k, φ_j, ψ_j scalars or
-small matrices of ω. One column of B per excitation.
+U_c, E_j and L_j blocks of full-length vectors and θ_k, C_c, φ_j, ψ_j
+scalars or small matrices of ω. The low-rank terms U_c C_c Uᵀ_c (a wave
+port's modal correction) are never assembled: the reduced model keeps
+Vᵀ U_c. One column of B per excitation.
 
 The sweep solves the full system at a few grid frequencies (all excitations
 in one call) and projects it on a real orthonormal basis V of the real and
@@ -72,9 +75,11 @@ class AffineSystem:
         apply: ``(k, X) -> A_k X`` for a real ``(N, m)`` block ``X``.
         excitation: The right-hand side terms (one column per excitation).
         outputs: The output terms.
-        solve: ``(ω, B, x0) -> X``: the full solve at ω for the right-hand
-            sides ``B`` ``(N, n_excitations)``, from the initial guess
-            ``x0`` (``None`` for none).
+        solve: ``(ω, B, x0) -> X``: the full solve at ω (low-rank terms
+            included) for the right-hand sides ``B`` ``(N, n_excitations)``,
+            from the initial guess ``x0`` (``None`` for none).
+        corrections: Low-rank operator terms ``U C(ω) Uᵀ``: ``vectors`` is
+            ``U`` ``(N, p)``, ``coefficients`` ``ω -> (p, p)``.
     """
 
     thetas: Sequence[Callable[[float], complex]]
@@ -82,6 +87,7 @@ class AffineSystem:
     excitation: Sequence[AffineTerm]
     outputs: Sequence[AffineTerm]
     solve: Callable[[float, np.ndarray, np.ndarray | None], np.ndarray]
+    corrections: Sequence[AffineTerm] = ()
 
     def rhs(self, omega: float) -> np.ndarray:
         """The right-hand sides at ω, ``(N, n_excitations)``."""
@@ -105,6 +111,10 @@ class ReducedModel:
         self.excitation = [np.zeros((0, t.vectors.shape[1])) for t in system.excitation]
         #: L_jᵀ V per output term.
         self.outputs = [np.zeros((t.vectors.shape[1], 0)) for t in system.outputs]
+        #: Vᵀ U_c per low-rank operator term.
+        self.corrections = [
+            np.zeros((0, t.vectors.shape[1])) for t in system.corrections
+        ]
 
     @property
     def size(self) -> int:
@@ -154,16 +164,28 @@ class ReducedModel:
             np.hstack([r, t.vectors.T @ new])
             for r, t in zip(self.outputs, self.system.outputs, strict=True)
         ]
+        self.corrections = [
+            np.vstack([r, new.T @ t.vectors])
+            for r, t in zip(self.corrections, self.system.corrections, strict=True)
+        ]
         self.basis = basis
         return new.shape[1]
 
-    def coordinates(self, omega: float) -> np.ndarray:
-        """Reduced solution at ω, ``(n, n_excitations)``: V y is the field."""
+    def matrix(self, omega: float) -> np.ndarray:
+        """The reduced operator ``Vᵀ A(ω) V``, ``(n, n)``, low-rank terms included."""
         system = self.system
         matrix = sum(
             complex(theta(omega)) * a
             for theta, a in zip(system.thetas, self.operators, strict=True)
         )
+        for r, t in zip(self.corrections, system.corrections, strict=True):
+            matrix = matrix + r @ np.asarray(t.coefficients(omega)) @ r.T
+        return np.asarray(matrix)
+
+    def coordinates(self, omega: float) -> np.ndarray:
+        """Reduced solution at ω, ``(n, n_excitations)``: V y is the field."""
+        system = self.system
+        matrix = self.matrix(omega)
         rhs = sum(
             r @ np.asarray(t.coefficients(omega))
             for r, t in zip(self.excitation, system.excitation, strict=True)

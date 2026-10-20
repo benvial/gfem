@@ -57,7 +57,7 @@ from gfem._engine.mesh import EngineMesh
 from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair, ShapeTerm
 from gfem._engine.wave_ports import WavePortCoupling, wave_port_couplings
-from gfem._linalg import KINDS, Handle, Operator, prepare
+from gfem._linalg import KINDS, Handle, Operator, low_rank_update, prepare
 from gfem._sweep.adaptive import AffineSystem, AffineTerm, adaptive_sweep
 from gfem.errors import PortGeometryError
 from gfem.mesh import Mesh
@@ -268,15 +268,12 @@ class DrivenRule:
         solutions: list[np.ndarray] = []
         with task_manager(self.options.threads):
             ports = self._ports(model)
-            op = ports.operator
-            free = op.space.FreeDofs()
             s = np.zeros((len(frequencies), len(self.port_names), width), complex)
             previous = None
             for n, f in enumerate(frequencies):
                 omega = 2 * math.pi * f
-                handle = prepare(
-                    Operator(op.form(omega), free),
-                    symmetry="complex_symmetric",
+                handle = ports.prepare(
+                    omega,
                     kind=self.kind,
                     device=self.options.device,
                     tolerance=self.options.tolerance,
@@ -390,6 +387,9 @@ class DrivenRule:
             excitation=excitation,
             outputs=outputs,
             solve=_no_solve,  # the caller solves
+            corrections=[
+                AffineTerm(c.vectors, c.correction_coefficients) for c in couplings
+            ],
         )
         return _Ports(op, system, couplings, columns, z_ref)
 
@@ -437,15 +437,12 @@ class DrivenRule:
         z_scale = float(extent) / scipy.constants.c
         with task_manager(options.threads):
             ports = self._ports(model)
-            op = ports.operator
-            free = op.space.FreeDofs()
 
             def solve(
                 omega: float, rhs: np.ndarray, x0: np.ndarray | None
             ) -> np.ndarray:
-                handle = prepare(
-                    Operator(op.form(omega), free),
-                    symmetry="complex_symmetric",
+                handle = ports.prepare(
+                    omega,
                     kind=self.kind,
                     device=options.device,
                     tolerance=options.tolerance,
@@ -978,10 +975,17 @@ def _row_weights(ct: np.ndarray, resistance: np.ndarray) -> np.ndarray:
 class _Ports:
     """Every port's terms in one driven solve.
 
+    The system operator is ``A(ω) + W(ω)``: the pieces (wave-port Robin
+    terms included) and the wave ports' rank-two modal corrections ``W``
+    (`gfem._engine.wave_ports`), which are never assembled: `prepare` gives
+    a handle of ``A + W`` (Woodbury), for forward and adjoint solves alike
+    (``A + W`` is complex symmetric). ``W`` depends on the port modes only.
+
     Attributes:
         operator: The driven operator, wave-port Robin pieces included.
         system: Excitations (one column per excited port) and S functionals
-            (one row per port) as affine terms; ``solve`` is a placeholder.
+            (one row per port) as affine terms, ``W`` as low-rank terms
+            (``corrections``); ``solve`` is a placeholder.
         waves: The wave ports' couplings.
         columns: The excited ports' indices.
         z_ref: ``(n_freq, n_ports)`` reference impedances, ohm.
@@ -992,6 +996,42 @@ class _Ports:
     waves: list[WavePortCoupling]
     columns: list[int]
     z_ref: np.ndarray
+
+    def update(self, omega: float) -> tuple[np.ndarray, np.ndarray]:
+        """``W(ω) = U C Uᵀ``: ``U`` ``(ndof, 2 n_wave)``, ``C`` block diagonal.
+
+        Two columns per wave port, the mode's n x H with and without ``grad
+        E_n`` (see `WavePortCoupling.correction`).
+        """
+        columns, diagonal = [], []
+        for c in self.waves:
+            p, d = c.correction(omega)
+            columns.append(c.vectors @ p)
+            diagonal.append(d)
+        return np.concatenate(columns, axis=1), np.diag(np.concatenate(diagonal))
+
+    def prepare(
+        self,
+        omega: float,
+        *,
+        kind: str,
+        device: str,
+        tolerance: float,
+        width: int,
+    ) -> Handle:
+        """A handle of the system operator ``A(ω) + W(ω)`` (see `_Ports`)."""
+        op = self.operator
+        handle = prepare(
+            Operator(op.form(omega), op.space.FreeDofs()),
+            symmetry="complex_symmetric",
+            kind=kind,
+            device=device,
+            tolerance=tolerance,
+            width=width,
+        )
+        if not self.waves:
+            return handle
+        return low_rank_update(handle, *self.update(omega))
 
     def scattering(self, waves: np.ndarray) -> np.ndarray:
         """S from the outgoing waves ``(n_freq, n_ports, n_excited)``.

@@ -202,3 +202,37 @@ def test_characteristic_impedance_needs_kept_port_mode_fields(plate_mesh, plate_
     )
     z = np.asarray(gfem.characteristic_impedance(kept.port_modes["p1"], path))
     np.testing.assert_allclose(z, z_tem(), rtol=1e-8)
+
+
+# --- hybrid modes: the modal correction -------------------------------------------
+
+HYBRID_F = (9e9, 16e9)
+HYBRID_LENGTH = 2e-3  # m, the fixture's length
+
+
+@pytest.fixture(scope="module")
+def hybrid_guide():
+    # WR-90 with an eps_r = 6 block along its whole length: the port mode is
+    # hybrid (E_n != 0), so the guide is matched only by a port that imposes
+    # the mode's full n x H, grad E_n included.
+    mesh = gfem.Mesh.from_gmsh(DATA / "hybrid_waveguide.msh", length_unit="mm")
+    return gfem.Model(
+        mesh,
+        materials={"block": gfem.Material(eps_r=6.0), "air": gfem.Material()},
+        boundaries=[gfem.PEC("walls")],
+        ports=[gfem.WavePort("p1", "port1"), gfem.WavePort("p2", "port2")],
+    )
+
+
+def test_a_uniform_guide_matches_its_hybrid_mode(hybrid_guide):
+    # without the modal correction S11 is 0.03-0.4 here (Robin term only)
+    options = gfem.SolverOptions(order=3, linear_solver="direct")
+    problem = gfem.Driven(HYBRID_F)
+    result = gfem.solve(hybrid_guide, problem, options=options)
+    s = np.asarray(result.s.values)
+    gamma = np.asarray(result.port_modes["p1"].gamma)
+    assert np.abs(gamma.real).max() < 1e-9 * np.abs(gamma).max()  # lossless
+    assert np.abs(s[:, 0, 0]).max() < 1e-4
+    assert np.abs(s[:, 1, 1]).max() < 1e-4
+    np.testing.assert_allclose(s[:, 1, 0], np.exp(-gamma * HYBRID_LENGTH), atol=1e-4)
+    np.testing.assert_allclose(s[:, 0, 1], s[:, 1, 0], atol=1e-8)

@@ -393,19 +393,11 @@ def test_adaptive_sweep_time_against_palace(reference, name):
 
 #: driven/r8_wp grid rows checked by uniform solves: 1, 9.94, 50.0 and 100 GHz.
 WP_ROWS = (0, 27, 148, 299)
-#: Palace v0.18.1 (the baseline) adds a rank-two modal correction per wave
-#: port to the Robin term (``W_full - W_scalar``: the mode's full n x H
-#: including grad E_n), which gfem's port boundary (decision: Palace's Robin
-#: term, exact modal port on the roadmap) does not have. With it (a Woodbury
-#: experiment) max |dS| is 5e-7 at 1, 50 and 100 GHz; without it 1e-5, 7.9e-4
-#: and 1.5e-3.
-MODAL_CORRECTION = pytest.mark.xfail(
-    strict=True,
-    reason="Palace v0.18.1 adds a modal correction gfem's wave port lacks",
-)
+#: Palace v0.18.1's port boundary (the baseline): the Robin term plus a
+#: rank-two modal correction per wave port. Without the correction max |dS|
+#: was 1e-5, 7.9e-4 and 1.5e-3 at 1, 50 and 100 GHz.
 
 
-@MODAL_CORRECTION
 def test_wave_port_parity_s_matches_palace(reference):
     case = reference / "r8_wp"
     model = _model(case)
@@ -428,7 +420,6 @@ def test_wave_port_parity_s_matches_palace(reference):
     np.testing.assert_allclose(s, np.swapaxes(s, 1, 2), atol=1e-6)
 
 
-@MODAL_CORRECTION
 def test_wave_port_adaptive_parity_s_matches_palace_over_the_grid(reference):
     _, frequency, palace, result, wall, rss = _adaptive(reference, "r8_wp")
     _report("r8_wp", result, wall, rss)
@@ -479,18 +470,16 @@ def test_wave_port_low_frequency_backward_errors(reference):
         for k, f in enumerate(frequency):
             omega = 2 * math.pi * f
             b = ports.system.rhs(omega)
-            handle = prepare(
-                Operator(op.form(omega), op.space.FreeDofs()),
-                symmetry="complex_symmetric",
-                kind="direct",
-                width=b.shape[1],
+            handle = ports.prepare(
+                omega, kind="direct", device="cpu", tolerance=1e-6, width=b.shape[1]
             )
             x = handle.solve(b)
             handle.free()
+            u, c = ports.update(omega)
             parts = [
                 complex(piece.theta(omega)) * op.apply(j, x)
                 for j, piece in enumerate(op.pieces)
-            ]
+            ] + [u @ (c @ (u.T @ x))]  # the modal correction
             r = (sum(parts) - b)[free]
             scale = sum(np.linalg.norm(p[free]) for p in parts) + np.linalg.norm(
                 b[free]
