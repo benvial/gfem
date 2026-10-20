@@ -1,9 +1,16 @@
+import ast
 import os
 import subprocess
 import sys
 from importlib.metadata import version
+from pathlib import Path
 
 import pytest
+
+import gfem
+
+#: The only packages that may import NGSolve.
+ENGINE_PACKAGES = ("_engine", "_linalg")
 
 
 def _run_fresh(code: str, jax_enable_x64: str | None = None) -> str:
@@ -43,3 +50,26 @@ def test_version_comes_from_installed_metadata():
     import gfem
 
     assert gfem.__version__ == version("gfem")
+
+
+def _imports(path: Path) -> set[str]:
+    """The top-level package of every import statement in ``path``."""
+    out = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            out |= {alias.name.split(".")[0] for alias in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            out.add(node.module.split(".")[0])
+    return out
+
+
+def test_ngsolve_is_imported_only_by_the_engine():
+    root = Path(gfem.__file__).parent
+    modules = [
+        p
+        for p in root.rglob("*.py")
+        if p.relative_to(root).parts[0] not in ENGINE_PACKAGES
+    ]
+    assert any(p.parent.name == "_eigen" for p in modules)
+    offenders = [str(p.relative_to(root)) for p in modules if "ngsolve" in _imports(p)]
+    assert offenders == []

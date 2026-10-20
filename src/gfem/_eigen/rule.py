@@ -11,7 +11,9 @@ target serves the shift-invert Arnoldi of the seed (`gfem._eigen.arpack`,
 with the divergence-free projection), the Rayleigh functional and the
 residual inverse iteration that refines every seed on the true ``T(k)``
 (`gfem._eigen.refine`). A `WavePort` raises: its propagation constant
-would have to be solved at the complex eigenfrequency.
+would have to be solved at the complex eigenfrequency. Everything that
+touches NGSolve (the assembly of ``T(k)``, the divergence-free projection,
+the energy per element) is in `gfem._engine.eigen`.
 
 Gradients (``omega``, so frequency and Q) need no solve: a simple mode's
 ``dk/dp = -x^T (dT/dp) x / x^T T'(k) x``, ``T'(k) = D + 2 k M + Σ θ_p'(k)
@@ -38,28 +40,31 @@ import math
 
 import jax
 import jax.numpy as jnp
-import ngsolve as ngs
 import numpy as np
 import scipy.constants as const
 
-from gfem._boundaries import PEC, LumpedPort, WavePort
+from gfem._boundaries import LumpedPort, WavePort
 from gfem._eigen.arpack import shift_invert
-from gfem._eigen.divfree import DivFreeProjector
-from gfem._eigen.operator import EigenOperator, NonPolynomial, assemble, split
+from gfem._eigen.operator import EigenOperator
 from gfem._eigen.refine import Refined, refine
 from gfem._engine import terms
-from gfem._engine.cache import Entry, discretization
-from gfem._engine.coefficients import coefficient, element_tensors
-from gfem._engine.domain import domain_key, em_region, h1_space, hcurl_space
+from gfem._engine.cache import Entry
+from gfem._engine.domain import em_region
 from gfem._engine.driven import (
     DrivenOperator,
     driven_operator,
     operator_shape_terms,
 )
+from gfem._engine.eigen import (
+    DivFreeProjector,
+    eigen_operator,
+    element_energy,
+    projector,
+)
 from gfem._engine.fields import fe_space
 from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair, ShapeTerm
-from gfem._linalg import KINDS, Operator, prepare
+from gfem._linalg import KINDS
 from gfem.conventions import MODE_ENERGY
 from gfem.errors import DegenerateModeError, EigenmodeConvergenceError
 from gfem.mesh import Mesh
@@ -178,10 +183,10 @@ class EigenmodeRule:
             built = op.built
             sigma = terms.wavenumber(2 * math.pi * self.problem.target, built.scale)
             eop = self.operator(op, sigma)
-            projector = None
+            divfree = None
             try:
-                eop.handle  # noqa: B018 - factorize before the projector's setup
-                projector = self._projector(model, built, order)
+                eop.factorize()  # before the projector's setup
+                divfree = projector(model, op)
                 # the companion problem also holds each mode's mirror image
                 # -conj(k), as near the shift as the mode's Re k is
                 nev = max(2 * n_modes, n_modes + 2)
@@ -191,7 +196,7 @@ class EigenmodeRule:
                     seed_tolerance = max(seed_tolerance, _SEED_TOLERANCE)
                 guard = None
                 for _ in range(_ATTEMPTS):
-                    k, vectors = shift_invert(eop, projector, nev, tol=seed_tolerance)
+                    k, vectors = shift_invert(eop, divfree, nev, tol=seed_tolerance)
                     modes, failed, guard = self._select(
                         eop, k, vectors, sigma, guard=keep
                     )
@@ -209,7 +214,7 @@ class EigenmodeRule:
                     ]
                     if guard is not None:
                         guard = dataclasses.replace(guard, k=guard.k.real)
-                outputs = self._postprocess(model, op, projector, modes)
+                outputs = self._postprocess(model, op, divfree, modes)
                 ks = [m.k for m in modes]
                 outputs["cluster"] = clusters(ks, opts.cluster_rtol)
                 entry = None
@@ -217,49 +222,24 @@ class EigenmodeRule:
                     entry = self._entry(eop, ks, outputs, guard)
             finally:
                 eop.free_handle()
-                if projector is not None:
-                    projector.free()
+                if divfree is not None:
+                    divfree.free()
         return outputs, entry
 
     def operator(self, op: DrivenOperator, sigma: float) -> EigenOperator:
         """The eigen operator ``T(k)`` of the driven operator, shifted at ``sigma``.
 
-        Nothing is factorized until the handle is first used.
+        Nothing is factorized until the handle is first used
+        (`gfem._engine.eigen.eigen_operator`).
         """
         opts = self.options
-        space, scale = op.space, op.built.scale
-        classes = split(op.pieces, scale, sigma)
-        powers = classes.powers
-        free = np.array(list(space.FreeDofs()), dtype=bool)  # ty: ignore[invalid-argument-type]
-
-        def shifted(k: complex):
-            return prepare(
-                Operator(op.form(k * const.c / scale), space.FreeDofs()),
-                symmetry="complex_symmetric",
-                kind=self.kind,
-                device=opts.device,
-                threads=opts.threads,
-                tolerance=min(opts.tolerance, _INNER * opts.eigen_tolerance),
-                width=1,
-            )
-
-        return EigenOperator(
-            shift=sigma,
-            prepare=shifted,
-            damping=(
-                assemble(space, powers[1], matrix_free=True) if powers[1] else None
-            ),
-            mass=assemble(space, powers[2]),
-            free=free,
-            scale=scale,
-            nonpolynomial=tuple(
-                NonPolynomial.from_piece(
-                    piece,
-                    assemble(space, [(1.0, piece)], matrix_free=True),
-                    scale,
-                )
-                for piece in classes.nonpolynomial
-            ),
+        return eigen_operator(
+            op,
+            sigma,
+            kind=self.kind,
+            device=opts.device,
+            threads=opts.threads,
+            tolerance=min(opts.tolerance, _INNER * opts.eigen_tolerance),
         )
 
     def _entry(
@@ -299,24 +279,6 @@ class EigenmodeRule:
                 "incomplete": incomplete,
             },
         )
-
-    def _projector(self, model: Model, built, order: int) -> DivFreeProjector:
-        disc = discretization(model.mesh)
-        pec = tuple(sorted({b.surface for b in model.boundaries if isinstance(b, PEC)}))
-        key = domain_key(model)
-        real = disc.space(
-            (key, "hcurl", order, pec, "real"),
-            lambda: hcurl_space(
-                model, built, order, complex_valued=False, dirichlet=pec
-            ),
-        )
-        h1 = disc.space(
-            (key, "h1", order, pec), lambda: h1_space(model, built, order, pec)
-        )
-        eps = coefficient(built, np.real(element_tensors(model, "eps_r")))
-        nodes = np.asarray(model.mesh.nodes) / built.scale
-        diameter = float(np.linalg.norm(np.ptp(nodes, axis=0)))
-        return DivFreeProjector(real, h1, eps, order, diameter)
 
     def _select(
         self,
@@ -405,7 +367,11 @@ class EigenmodeRule:
     # --- post-processing ---------------------------------------------------------
 
     def _postprocess(
-        self, model: Model, op, projector: DivFreeProjector, modes: list[Refined]
+        self,
+        model: Model,
+        op,
+        divfree: DivFreeProjector,
+        modes: list[Refined],
     ) -> dict[str, object]:
         built, space, order = op.built, op.space, op.order
         scale = built.scale
@@ -415,32 +381,23 @@ class EigenmodeRule:
             for name, data in ports.items()
         }
         mesh = model.mesh
-        eps = element_tensors(model, "eps_r")
-        eps_cf = coefficient(built, np.real(eps))
+        density = element_energy(model, op)
         n = len(modes)
         omega = np.array([m.k * const.c / scale for m in modes], dtype=complex)
         fields = np.zeros((space.ndof, n), dtype=complex)
         bulk = np.zeros((len(self.regions), n))
         q_port = np.zeros((len(self.resistive), n))
         participation = np.zeros((len(self.inductive), n))
-        gf = ngs.GridFunction(space)
         for j, mode in enumerate(modes):
             x = mode.x
-            s = x @ projector.energy(x)
+            s = x @ divfree.energy(x)
             x = x * np.exp(-0.5j * np.angle(s))
             if x[np.argmax(np.abs(x))].real < 0:
                 x = -x
             # electric energy per element (gfem order) at this amplitude
-            gf.vec.FV().NumPy()[:] = x
-            density = ngs.Integrate(
-                (eps_cf * gf) * ngs.Conj(gf),
-                built.mesh,
-                order=2 * order,
-                element_wise=True,
-            )
             per_tet = np.zeros(len(mesh.tetrahedra))
             per_tet[built.tetrahedron_order] = (
-                0.5 * const.epsilon_0 * scale * np.real(density.NumPy())
+                0.5 * const.epsilon_0 * scale * np.real(density(x))
             )
             volts = {name: complex(v @ x) for name, v in voltage.items()}
             capacitors = sum(
@@ -557,7 +514,7 @@ class EigenmodeRule:
                         space=op.space,
                         left=-per_k * c.mean() * x[:, members],
                         right=x[:, members] @ np.linalg.inv(g),
-                        weights=_weights(op, k[members].mean() * per_k),
+                        weights=op.weights(k[members].mean() * per_k),
                         order=op.order,
                         domain=domain,
                     )
@@ -663,15 +620,6 @@ class EigenmodeRule:
             materials=self._materials,
             cluster=jnp.asarray(outputs["cluster"]),
         )
-
-
-def _weights(op: DrivenOperator, omega: complex) -> dict[str, complex]:
-    """θ of every driven piece by name at the complex angular frequency ``omega``.
-
-    The sensitivity kernel reads the weights of the material-dependent terms
-    (``curl_curl``, ``mass``, ``conductivity``, the absorbing terms).
-    """
-    return {piece.name: complex(piece.theta(omega)) for piece in op.pieces}
 
 
 def _close(a: complex, b: complex, rtol: float) -> bool:
