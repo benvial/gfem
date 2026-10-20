@@ -113,7 +113,7 @@ class Tabulated:
         self.omegas = np.asarray(omegas, float)
         self.values = np.asarray(values)
 
-    def __call__(self, omega: float) -> complex:
+    def __call__(self, omega: complex) -> complex:
         """θ at a grid ω (matched to 1e-12 relative).
 
         Raises:
