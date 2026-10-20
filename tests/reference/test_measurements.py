@@ -14,9 +14,12 @@ substrate-air on the gaps.
   ``test_eigenmode.py``), so that comparison is loose.
 - Independent check: each participation is recomputed from `Field.at`
   probes (point location, not the face kernel's element choice) at a
-  6-point degree-4 rule on every triangle, each point moved 1e-7 of the
-  triangle size into the wanted side, with the sapphire tensor applied by
-  hand for metal-substrate.
+  6-point degree-4 rule on every triangle, each point moved a fraction
+  ``s`` of the triangle size into the wanted side, with the sapphire tensor
+  applied by hand for metal-substrate. The probe value is off by O(s) (it
+  is 1.2e-3 at s = 1e-3), and below s ~ 1e-4 NGSolve's point location
+  starts picking the element on the other side of the sheet; so the check
+  extrapolates s = 1e-2 and 1e-3 linearly to s = 0 (residual ~6e-6).
 - Golden baselines: gfem's own values on this mesh, for regressions.
 """
 
@@ -35,9 +38,15 @@ import gfem
 THREADS = 4
 T, EPS_LAYER, TAN_DELTA = 3e-9, 10.0, 2e-3
 SHEET, GAPS = "SUPERCONDUCTOR_pec", "sapphire__vacuum"
+SHIFTS = (1e-2, 1e-3)
 CASES = {"MA": SHEET, "MS": SHEET, "SA": GAPS, "default": GAPS}
 #: gfem on r20, per mode (7.68 GHz, 16.67 GHz): participation per kind.
-GOLDEN: dict[str, list[float]] = {}
+GOLDEN: dict[str, list[float]] = {
+    "MA": [1.0434512966e-06, 7.4625409097e-07],
+    "MS": [1.2694871726e-04, 8.7165238507e-05],
+    "SA": [4.1317468072e-04, 1.7625909603e-04],
+    "default": [4.2066371975e-04, 1.7862941926e-04],
+}
 
 # Strang-Fix 6-point rule, exact to degree 4: barycentrics and weights (sum 1)
 _A, _B = 0.445948490915965, 0.091576213509771
@@ -51,7 +60,7 @@ _RULE = np.array(
         [1 - 2 * _B, _B, _B],
     ]
 )
-_WEIGHTS = np.array([0.223381589678011] * 3 + [0.109951743655322] * 3) * 2
+_WEIGHTS = np.array([0.223381589678011] * 3 + [0.109951743655322] * 3)
 
 
 @pytest.fixture(scope="module")
@@ -121,7 +130,9 @@ def measured(solved):
         f"r20 solve {wall:.1f} s; measurements "
         + ", ".join(f"{k} {t:.2f} s" for k, t in times.items())
         + "\n  "
-        + "\n  ".join(f"{k}: {np.asarray(p.participation)}" for k, p in out.items())
+        + "\n  ".join(
+            f"{k}: {np.asarray(p.participation).tolist()!r}" for k, p in out.items()
+        )
     )
     return out, times, wall
 
@@ -133,7 +144,7 @@ def _side_tensor(model: gfem.Model, region: str) -> np.ndarray:
     return np.einsum("k,ki,kj->ij", eps, axes, axes)
 
 
-def _probe_participation(model, modes, surface, kind):
+def _probe_participation(model, modes, surface, kind, shift):
     """The layer energy from probes just inside the wanted side of each face."""
     mesh = model.mesh
     names = {r.tag: r.name for r in mesh.regions if r.dim == 3}
@@ -155,7 +166,7 @@ def _probe_participation(model, modes, surface, kind):
     centroid = nodes[mesh.tetrahedra[side]].mean(axis=1)
     toward = np.sign(np.einsum("ti,ti->t", centroid - v.mean(axis=1), normal))
     points = np.einsum("qk,tki->tqi", _RULE, v)
-    points += (1e-7 * size * toward)[:, None, None] * normal[:, None, :]
+    points += (shift * size * toward)[:, None, None] * normal[:, None, :]
     eps_s = _side_tensor(model, "sapphire")
     energy = []
     for field in modes.e_fields:
@@ -179,8 +190,11 @@ def _probe_participation(model, modes, surface, kind):
 @pytest.mark.parametrize("kind", ["MA", "MS", "SA"])
 def test_face_kernel_matches_probes_from_inside_each_side(solved, measured, kind):
     model, _, modes, _ = solved
-    expected = _probe_participation(model, modes, CASES[kind], kind)
-    np.testing.assert_allclose(measured[0][kind].participation, expected, rtol=1e-5)
+    coarse, fine = (
+        _probe_participation(model, modes, CASES[kind], kind, s) for s in SHIFTS
+    )
+    expected = (10 * fine - coarse) / 9  # linear extrapolation to s = 0
+    np.testing.assert_allclose(measured[0][kind].participation, expected, rtol=3e-5)
 
 
 def test_loss_and_sanity_of_the_three_interfaces(measured):
@@ -196,11 +210,10 @@ def test_measurements_cost_little_next_to_the_solve(measured):
     assert max(times.values()) < 0.2 * wall
 
 
-@pytest.mark.skipif(not GOLDEN, reason="golden baselines not recorded yet")
 def test_interface_participation_golden_baseline(measured):
     out = measured[0]
     for kind, values in GOLDEN.items():
-        np.testing.assert_allclose(out[kind].participation, values, rtol=1e-6)
+        np.testing.assert_allclose(out[kind].participation, values, rtol=1e-7)
 
 
 def test_interface_participation_parity_with_palace(solved, case):
