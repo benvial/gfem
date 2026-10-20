@@ -81,6 +81,41 @@ def test_gradient_of_each_property_matches_central_differences(line, name):
     assert_gradient_matches(objective, p, directions, step=STEPS[name])
 
 
+def test_gradient_beside_a_per_axis_lossy_crystal(tmp_path):
+    # a static anisotropic region (per-axis eps_r and tan_delta) next to the
+    # design field: its tensor enters the forward, never the derivative
+    path = tmp_path / "layered.msh"
+    layers = (("crystal", 0.4), ("field", 0.6))
+    sm.write_msh22(path, sm.strip_line(3.0, 2.0, 1.0, (3, 2, 2), layers=layers))
+    crystal = gfem.Material(
+        eps_r=(9.3, 9.3, 11.5),
+        tan_delta=(0.03, 0.03, 0.086),
+        axes=((0.8, 0.6, 0), (-0.6, 0.8, 0), (0, 0, 1)),
+    )
+    model = gfem.Model(
+        gfem.Mesh.from_gmsh(path, length_unit="mm"),
+        materials={"crystal": crystal, "field": gfem.Material()},
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top"), gfem.Absorbing("side")],
+        ports=[
+            gfem.LumpedPort("p1", "port1", "+z"),
+            gfem.LumpedPort("p2", "port2", "+z"),
+        ],
+    )
+    n = len(model.mesh.elements("field"))
+    rng = np.random.default_rng(3)
+    options = gfem.SolverOptions(linear_solver="direct")
+
+    def objective(eps):
+        field = gfem.MaterialField(eps_r=eps, tan_delta=jnp.full(n, 0.02))
+        moved = model.with_material("field", field)
+        s = gfem.solve(moved, gfem.Driven(F), options=options).s.values
+        return jnp.sum(jnp.abs(s) ** 2 * jnp.array([[1.0, 0.5], [2.0, -1.0]]))
+
+    p = jnp.asarray(rng.uniform(2.0, 5.0, n))
+    directions = unit_directions(rng, p.shape, 2)
+    assert_gradient_matches(objective, p, directions, step=STEPS["eps_r"])
+
+
 def test_unexcited_port_rows_use_an_adjoint_solve(line):
     values, _ = _values(line)
     full = jax.grad(_objective(line, values, "eps_r"))(values["eps_r"])

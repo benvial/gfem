@@ -72,10 +72,16 @@ _INNER = 1e-2
 #: Seeds with Re k at or below this fraction of the shift are the curl-curl
 #: null space or relaxation modes, not resonances.
 _STATIC = 1e-6
-#: Two refined modes closer than this many eigen tolerances (relative), with
-#: overlapping fields, are the same mode.
+#: Two refined modes closer than this many eigen tolerances (relative, and
+#: at least ``SolverOptions.cluster_rtol``), with overlapping fields, are the
+#: same mode.
 _DUPLICATE = 10.0
 _OVERLAP = 0.9
+#: A seed that needs correction steps is refined on a new factorization at
+#: its own Ritz value when the current shift would contract its error by
+#: less than this per step (the shift is nearer another Ritz value: residual
+#: inverse iteration would drift to that mode).
+_CONTRACTION = 0.5
 #: Arnoldi runs, each asking for twice as many pairs as the last, before
 #: too few modes near the target is an error.
 _ATTEMPTS = 3
@@ -225,6 +231,7 @@ class EigenmodeRule:
                 symmetry="complex_symmetric",
                 kind=self.kind,
                 device=opts.device,
+                threads=opts.threads,
                 tolerance=min(opts.tolerance, _INNER * opts.eigen_tolerance),
                 width=1,
             )
@@ -344,6 +351,7 @@ class EigenmodeRule:
                 tolerance=tolerance,
                 max_iterations=self.options.max_refine_iterations,
                 reshift=not full,
+                reshift_first=_contraction(complex(k[j]), op.shift, k) > _CONTRACTION,
             )
             if mode.k.real <= _STATIC * sigma:
                 continue
@@ -351,7 +359,8 @@ class EigenmodeRule:
                 if not full:
                     failed.append(mode)
                 continue
-            if any(_same(mode, other, tolerance) for other in accepted):
+            window = max(_DUPLICATE * tolerance, self.options.cluster_rtol)
+            if any(_same(mode, other, window) for other in accepted):
                 continue
             if full:
                 extra = mode
@@ -653,8 +662,21 @@ def clusters(ks: list[complex], rtol: float) -> np.ndarray:
     return np.array([renumber[v] for v in labels], dtype=np.int64)
 
 
-def _same(a: Refined, b: Refined, tolerance: float) -> bool:
-    if abs(a.k - b.k) > _DUPLICATE * tolerance * abs(b.k):
+def _contraction(seed: complex, shift: complex, ritz: np.ndarray) -> float:
+    """Residual inverse iteration's error ratio per step for ``seed``.
+
+    ``|seed - shift|`` over the distance from ``shift`` to the nearest other
+    Ritz value: the component of that mode grows unless the ratio is below 1.
+    """
+    others = ritz[np.abs(ritz - seed) > 1e-8 * abs(seed)]
+    if not len(others):
+        return 0.0
+    nearest = float(np.min(np.abs(others - shift)))
+    return abs(seed - shift) / nearest if nearest > 0 else math.inf
+
+
+def _same(a: Refined, b: Refined, window: float) -> bool:
+    if abs(a.k - b.k) > window * abs(b.k):
         return False
     overlap = abs(np.vdot(a.x, b.x)) / (np.linalg.norm(a.x) * np.linalg.norm(b.x))
     return overlap > _OVERLAP

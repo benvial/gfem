@@ -12,13 +12,19 @@ import ngsolve as ngs
 import numpy as np
 
 from gfem._engine.mesh import EngineMesh
-from gfem._materials import PROPERTIES, Material
+from gfem._materials import (
+    PROPERTIES,
+    Material,
+    lossy_permittivity,
+    principal_tensor,
+)
 from gfem.model import Model
 
 __all__ = [
     "coefficient",
     "element_tensors",
     "element_values",
+    "lossy_eps",
     "p0",
     "permittivity",
     "surface_p0",
@@ -31,8 +37,8 @@ def element_values(model: Model, name: str) -> np.ndarray:
     """Property ``name`` per tetrahedron (gfem element order), isotropic part.
 
     A tensor `Material` value gives the mean of its principal values here;
-    use `permittivity` for the full tensor. Tetrahedra without a material
-    (excluded volumes) get the property's default.
+    use `element_tensors` or `lossy_eps` for the full tensor. Tetrahedra
+    without a material (excluded volumes) get the property's default.
     """
     mesh = model.mesh
     default = _DEFAULTS[name]
@@ -59,9 +65,7 @@ def p0(built: EngineMesh, values: np.ndarray) -> ngs.GridFunction:
 
 
 def _tensor(material: Material, name: str = "eps_r") -> np.ndarray:
-    eps = np.broadcast_to(np.asarray(getattr(material, name), dtype=float), (3,))
-    axes = np.eye(3) if material.axes is None else np.asarray(material.axes)
-    return np.einsum("k,ki,kj->ij", eps, axes, axes)
+    return principal_tensor(np.asarray(getattr(material, name), float), material.axes)
 
 
 def permittivity(model: Model, built: EngineMesh) -> ngs.CoefficientFunction:
@@ -104,6 +108,30 @@ def element_tensors(model: Model, name: str) -> np.ndarray:
     tensor = scalar[:, None, None] * np.eye(3)
     for region, material in anisotropic.items():
         tensor[mesh.elements(region)] = _tensor(material, name)
+    return tensor
+
+
+def lossy_eps(model: Model) -> np.ndarray:
+    """``eps_r (1 - i tan_delta)`` per tetrahedron, ``(n,)`` or ``(n, 3, 3)``.
+
+    A `Material` with per-axis `eps_r` or `tan_delta` gives the tensor of its
+    principal values ``eps_r[k] (1 - i tan_delta[k])`` along its axes (the
+    ``(n, 3, 3)`` form then holds multiples of the identity elsewhere);
+    `MaterialField` values are isotropic.
+    """
+    scalar = element_values(model, "eps_r") * (
+        1.0 - 1j * element_values(model, "tan_delta").real
+    )
+    anisotropic = {
+        r: m
+        for r, m in model.materials.items()
+        if isinstance(m, Material) and not m.isotropic
+    }
+    if not anisotropic:
+        return scalar
+    tensor = scalar[:, None, None] * np.eye(3)
+    for region, material in anisotropic.items():
+        tensor[model.mesh.elements(region)] = lossy_permittivity(material)
     return tensor
 
 

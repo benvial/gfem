@@ -20,7 +20,12 @@ from gfem._boundaries import (
     WavePort,
     surfaces_of,
 )
-from gfem._materials import Material, MaterialField
+from gfem._materials import (
+    Material,
+    MaterialField,
+    lossy_permittivity,
+    principal_tensor,
+)
 from gfem.conventions import EXTERIOR_THICKNESS_FACTOR
 from gfem.errors import PortGeometryError
 from gfem.mesh import LENGTH_UNITS
@@ -213,14 +218,6 @@ def port_section(model: Model, port: WavePort) -> PortSection:
     )
 
 
-def _tensor(value, axes) -> np.ndarray:
-    """A relative property as a 3x3 tensor in the global frame."""
-    if isinstance(value, tuple):
-        a = np.eye(3) if axes is None else np.asarray(axes, float)
-        return a.T @ np.diag(value) @ a
-    return float(value) * np.eye(3)
-
-
 def _materials(model: Model, port: WavePort, tets: np.ndarray, frame: np.ndarray):
     """Per-triangle material values in the port frame."""
     mesh = model.mesh
@@ -237,8 +234,8 @@ def _materials(model: Model, port: WavePort, tets: np.ndarray, frame: np.ndarray
         rows = np.flatnonzero(region_of == rtag)
         material = model.materials[region]
         if isinstance(material, Material):
-            eps = _tensor(material.eps_r, material.axes) * (1 - 1j * material.tan_delta)
-            mu = _tensor(material.mu_r, material.axes).astype(complex)
+            eps = lossy_permittivity(material)
+            mu = principal_tensor(material.mu_r, material.axes).astype(complex)
             et, en = _in_frame(eps, frame, port, region, "eps_r")
             mt, mn = _in_frame(mu, frame, port, region, "mu_r")
             eps_tt[rows], eps_nn[rows] = et, en
