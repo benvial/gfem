@@ -78,7 +78,9 @@ def _run(model, tolerance):
         order=2, linear_solver="direct", port_mode_tolerance=tolerance
     )
     s = np.asarray(gfem.solve(model, gfem.Driven(GRID), options=options).s.values)
-    mode = gfem.solve(model, gfem.PortMode("p1", GRID), options=options).e_field
+    # the 2D port mode problem takes no linear solver choice
+    port_options = gfem.SolverOptions(order=2, port_mode_tolerance=tolerance)
+    mode = gfem.solve(model, gfem.PortMode("p1", GRID), options=port_options).e_field
     coefficients = np.asarray(mode._basis @ mode._coords.T)
     return s, coefficients
 
