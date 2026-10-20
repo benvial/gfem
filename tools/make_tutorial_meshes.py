@@ -65,11 +65,11 @@ CPW_METAL = (100.0, 105.0)
 def cpw():
     """The coplanar line mesh as `structured_meshes.structured` returns it."""
     s, g = CPW_SIGNAL, CPW_SIGNAL + CPW_GAP
-    half = (0.0, 12.5, s, 32.5, 40.0, 47.5, g, 100.0, 180.0, 300.0)
+    half = (0.0, s, 40.0, g, 120.0, 300.0)
     edges = (
-        np.linspace(0, CPW_LENGTH, 13),
+        np.linspace(0, CPW_LENGTH, 9),
         np.array(sorted({-y for y in half} | set(half))),
-        np.array([0.0, 50.0, 100.0, 105.0, 140.0, 200.0, 300.0]),
+        np.array([0.0, 100.0, 105.0, 160.0, 300.0]),
     )
     eps = 1e-6
     z0, z1 = CPW_METAL
@@ -91,12 +91,7 @@ def cpw():
             return "signal_wall"
         if in_metal and abs(y) < s + eps:
             return "signal"
-        if (
-            (in_metal
-            and abs(y) > g - eps
-            and abs(z - z0) > eps)
-            or (abs(z - z0) < eps and abs(y) > g - eps)
-        ):
+        if in_metal and abs(y) > g - eps:
             return "ground"
         if abs(z - z0) < eps:
             return "substrate_top"

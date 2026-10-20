@@ -73,23 +73,25 @@ design when its backward runs, which costs time, never accuracy.
 Every input of the model has one of three outcomes:
 
 - **a gradient**, for what the problem reads and gfem differentiates (for
-  electrostatics: `eps_r`, the real part when it is complex);
+  electrostatics: `eps_r`, the real part when it is complex, and the mesh
+  node coordinates, see [Shape gradients](shape-gradient.md));
 - **an exact zero**, for what the problem never reads. Electrostatics does not
   read `conductivity`, `tan_delta`, `mu_r`, the thermal properties or the
   elements of excluded volumes, so one `MaterialField` can serve an
   electrostatic and a driven objective together;
 - **`gfem.NonDifferentiableError`**, raised while JAX traces the gradient,
   before any solve, for what the problem reads but gfem cannot differentiate
-  yet (in this version: the mesh node coordinates). The message names the input
-  and the remedy.
+  yet (an output such as `result.energy`). The message names the input or
+  output and the remedy.
 
 gfem never returns a silent zero for an input the physics reads.
 
 ## Opting out: `jax.lax.stop_gradient`
 
 `jax.lax.stop_gradient` is the one way to use a value without its derivative.
-For example, `jax.grad` over a whole model also perturbs the mesh nodes, which
-raises; freeze them first:
+For example, `jax.grad` over a whole model also differentiates the mesh
+nodes, a shape gradient you may not need (it costs one more pass over the
+elements); freeze them first:
 
 ```python
 def objective(model):

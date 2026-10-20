@@ -83,6 +83,17 @@ def test_electrostatic_shape_gradient_taylor(capacitor):
     assert_taylor_second_order(objective, t, d, [4e-5, 2e-5, 1e-5, 5e-6])
 
 
+def test_shape_gradient_under_jit_and_vmap(capacitor):
+    objective, morph = _capacitor_objective(capacitor, "direct")
+    rng = np.random.default_rng(6)
+    batch = jnp.asarray(rng.uniform(-1e-5, 1e-5, (2, morph.n_params)))
+    loop = np.stack([np.asarray(jax.grad(objective)(t)) for t in batch])
+    np.testing.assert_allclose(
+        jax.jit(jax.grad(objective))(batch[0]), loop[0], rtol=1e-9
+    )
+    np.testing.assert_allclose(jax.vmap(jax.grad(objective))(batch), loop, rtol=1e-9)
+
+
 LAYERS = (("sub", 0.5), ("cover", 0.5))
 
 
@@ -136,6 +147,23 @@ def test_driven_shape_gradient_matches_fd(line, solver):
     t = jnp.zeros(morph.n_params)
     rng = np.random.default_rng(0)
     assert_gradient_matches(objective, t, unit_directions(rng, t.shape, 3), step=STEP)
+
+
+def test_driven_kept_field_shape_gradient_matches_fd(line):
+    # a field functional: one adjoint solve per frequency, then the same pass
+    problem = gfem.Driven(frequency=GRID[5], excite="p1", keep_fields=True)
+    morph = boundary_morph(line, "sub__cover", grows="sub")
+    options = gfem.SolverOptions(order=2, linear_solver="direct")
+
+    def objective(t):
+        result = gfem.solve(line.replace(mesh=morph(t)), problem, options=options)
+        e = result.e_field(GRID[5]).coefficients
+        weights = np.random.default_rng(7).uniform(0.5, 1.5, e.shape[0])
+        return jnp.sum(weights * jnp.abs(e) ** 2) * 1e-6
+
+    t = jnp.zeros(morph.n_params)
+    rng = np.random.default_rng(3)
+    assert_gradient_matches(objective, t, unit_directions(rng, t.shape, 2), step=STEP)
 
 
 def test_driven_adaptive_shape_gradient_matches_fd(line):
