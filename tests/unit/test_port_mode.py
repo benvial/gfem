@@ -287,6 +287,34 @@ def test_conductor_plates_follow_the_lossy_line_model(plate_mesh):
     np.testing.assert_allclose(np.asarray(result.gamma), gamma, rtol=1e-4)
 
 
+def _jittered(mesh, seed, rel):
+    """``mesh`` with in-plane node coordinates moved by ``rel`` (relative)."""
+    nodes = np.array(mesh.imported_nodes)
+    rng = np.random.default_rng(seed)
+    nodes[:, :2] *= 1 + rel * rng.uniform(-1, 1, (len(nodes), 2))
+    return jax.tree.unflatten(jax.tree.structure(mesh), [jnp.asarray(nodes)])
+
+
+def test_the_mode_phase_does_not_jump_under_rounding_level_node_moves(plate_mesh):
+    # A lossy mode's phase is fixed by its tangential field on the upper-right
+    # quadrant of the port. The structured fixture puts quadrature points on
+    # the quadrant's midlines, so a rounding-level move of the nodes must not
+    # change which side they fall on (it changed the phase by 6e-6 rad, which
+    # broke S12 = S21 on some CPUs).
+    def phase(mesh):
+        model = plate(mesh, path=False).replace(
+            boundaries=[gfem.Conductor("plates", conductivity=5.8e7)]
+        )
+        result = gfem.solve(model, gfem.PortMode("p1", 1.5e12))
+        e = np.asarray(result.e_field.at(np.array([[W / 2, D / 2, 0.0]])))
+        return np.angle(e[0, 0, 1])
+
+    reference = phase(plate_mesh)
+    for seed in range(3):
+        moved = phase(_jittered(plate_mesh, seed, 1e-13))
+        assert abs(moved - reference) < 1e-10
+
+
 def test_impedance_plates_follow_the_lossy_line_model(plate_mesh):
     rs, eps, f = 2.0, 4.0, (50e9, 100e9)
     model = gfem.Model(

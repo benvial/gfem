@@ -37,6 +37,10 @@ from gfem._engine import quadrature
 from gfem._engine.terms import surface_impedance
 from gfem._port_section import PortSection
 
+# Points this close to a midline of the phase-reference quadrant (relative to
+# the port's diameter) count as inside it.
+_QUADRANT_RTOL = 1e-10
+
 Z0 = scipy.constants.mu_0 * scipy.constants.c  # vacuum wave impedance, ohm
 
 
@@ -262,7 +266,11 @@ class PortModeSpace:
         corners = s.to_global(s.points) / s.scale
         lo, hi = corners.min(axis=0), corners.max(axis=0)
         da, db = np.argsort(hi - lo)[::-1][:2]
-        ca, cb = 0.5 * (lo + hi)[da], 0.5 * (lo + hi)[db]
+        # Closed like Palace's (x >= c), with a margin: symmetric quadrature
+        # rules put points on the medians of a structured mesh, which can lie
+        # on a midline, and rounding would put them on either side.
+        tol = _QUADRANT_RTOL * float((hi - lo).max())
+        ca, cb = 0.5 * (lo + hi)[da] - tol, 0.5 * (lo + hi)[db] - tol
         return ngs.IfPos(glob[da] - ca, 1.0, 0.0) * ngs.IfPos(glob[db] - cb, 1.0, 0.0)
 
     def _gauge_direction(self) -> ngs.CoefficientFunction:
@@ -323,9 +331,9 @@ class PortModeSpace:
     def gauge(self, coeffs: np.ndarray, gamma: complex) -> complex:
         """Palace's phase reference: ``int_Q t . (n_out x H) dA`` up to a factor.
 
-        ``Q`` is the upper-right quadrant of the port's bounding box along its
-        two largest global extents and ``t`` the in-plane part of (1, 1, 1);
-        the factor is real and positive.
+        ``Q`` is the closed upper-right quadrant of the port's bounding box
+        along its two largest global extents and ``t`` the in-plane part of
+        (1, 1, 1); the factor is real and positive.
         """
         et, en = self._gridfunction(coeffs).components
         a = ngs.grad(en) + gamma * et

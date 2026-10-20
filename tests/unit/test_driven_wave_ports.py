@@ -113,8 +113,21 @@ def test_a_wave_port_and_a_matched_lumped_port_mix(plate_mesh):
     assert set(r.port_modes) == {"p1"}
 
 
-def test_conductor_plates_make_a_lossy_passive_reciprocal_line(plate_mesh):
-    model = line(plate_mesh).replace(
+def _jittered(mesh, rel=1e-13, seed=0):
+    """``mesh`` with in-plane node coordinates moved by ``rel`` (relative)."""
+    nodes = np.array(mesh.imported_nodes)
+    nodes[:, :2] *= 1 + rel * np.random.default_rng(seed).uniform(
+        -1, 1, (len(nodes), 2)
+    )
+    return jax.tree.unflatten(jax.tree.structure(mesh), [jnp.asarray(nodes)])
+
+
+# jittered: a rounding-level node move must not change the ports' phase
+# references (it once put S01 - S10 at 2.3e-6 on some CPUs).
+@pytest.mark.parametrize("nodes", ["imported", "jittered"])
+def test_conductor_plates_make_a_lossy_passive_reciprocal_line(plate_mesh, nodes):
+    mesh = plate_mesh if nodes == "imported" else _jittered(plate_mesh)
+    model = line(mesh).replace(
         boundaries=[gfem.Conductor("plates", conductivity=5.8e7)]
     )
     # direct: GMRES at tolerance 1e-6 leaves S off by up to ~1e-6, so S01 - S10

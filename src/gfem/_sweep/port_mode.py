@@ -48,6 +48,7 @@ from gfem._engine.port_mode import PortModeSpace
 from gfem._engine.runtime import task_manager
 from gfem._linalg.superlu import backward_error, shift_invert_eigs
 from gfem._port_section import PortSection, port_section
+from gfem._sign import largest_entry
 from gfem.errors import PortModeError, PortModeTrackingWarning
 from gfem.model import Model
 from gfem.options import SolverOptions
@@ -593,7 +594,7 @@ class _Greedy:
                 if abs(g) > 1e-12 * np.abs(c).max():
                     z *= abs(g) / g
                 else:
-                    k = int(np.argmax(np.abs(c)))
+                    k = largest_entry(c)
                     z *= abs(c[k]) / c[k]
             else:
                 o = coords[i - 1].conj() @ mass @ z

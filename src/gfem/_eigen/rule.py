@@ -65,6 +65,7 @@ from gfem._engine.fields import fe_space
 from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair, ShapeTerm
 from gfem._linalg import KINDS
+from gfem._sign import largest_entry
 from gfem.conventions import MODE_ENERGY
 from gfem.errors import DegenerateModeError, EigenmodeConvergenceError
 from gfem.mesh import Mesh
@@ -392,7 +393,7 @@ class EigenmodeRule:
             x = mode.x
             s = x @ divfree.energy(x)
             x = x * np.exp(-0.5j * np.angle(s))
-            if x[np.argmax(np.abs(x))].real < 0:
+            if x[largest_entry(x)].real < 0:
                 x = -x
             # electric energy per element (gfem order) at this amplitude
             per_tet = np.zeros(len(mesh.tetrahedra))
