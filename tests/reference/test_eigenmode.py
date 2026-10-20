@@ -68,11 +68,8 @@ GOLDEN = {
 
 
 @pytest.fixture(scope="module")
-def reference():
-    ref = os.environ.get("GFEM_REFERENCE_DIR")
-    if not ref:
-        pytest.skip("GFEM_REFERENCE_DIR not set (needs the eigenmode Palace runs)")
-    return Path(ref) / "eigenmode"
+def reference(reference_dir):
+    return reference_dir / "eigenmode"
 
 
 def _model(case: Path) -> tuple[gfem.Model, dict]:

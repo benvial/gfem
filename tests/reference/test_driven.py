@@ -46,11 +46,8 @@ THREADS = 4
 
 
 @pytest.fixture(scope="module")
-def reference():
-    ref = os.environ.get("GFEM_REFERENCE_DIR")
-    if not ref:
-        pytest.skip("GFEM_REFERENCE_DIR not set (needs the driven Palace runs)")
-    return Path(ref) / "driven"
+def reference(reference_dir):
+    return reference_dir / "driven"
 
 
 def _model(case: Path) -> gfem.Model:

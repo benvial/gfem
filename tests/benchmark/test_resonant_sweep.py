@@ -21,8 +21,8 @@ import gfem
 S_TOLERANCE = 1e-5
 
 
-def test_adaptive_matches_801_point_uniform_sweep(tmp_path):
-    case = qr.case_dir()
+def test_adaptive_matches_801_point_uniform_sweep(tmp_path, reference_dir):
+    case = qr.case_dir(reference_dir)
     model, config = qr.model(case)
     frequency = qr.grid(config)
     assert len(frequency) == 801

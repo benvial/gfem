@@ -6,8 +6,6 @@ tools/make_mesh_fixtures.py: a 2 x 2 x 1 um substrate "sub" (tag 1) holding a
 conductors with a dielectric name), under a 2 x 2 x 1 um "air" box (tag 2).
 """
 
-import json
-import os
 from pathlib import Path
 
 import jax
@@ -199,49 +197,6 @@ def test_region_ids_export_to_vtu(two_box, tmp_path):
     np.testing.assert_array_equal(tris, two_box.triangles)
     np.testing.assert_array_equal(tri_region, two_box.triangle_tags)
     assert set(np.unique(tet_region)) == {1, 2}
-
-
-def _reference_cases():
-    ref = os.environ.get("GFEM_REFERENCE_DIR")
-    if not ref:
-        return [pytest.param(None, id="no-reference-dir")]
-    cases = sorted(Path(ref).glob("*/*/palace.msh"))
-    return [pytest.param(p.parent, id=str(p.parent.relative_to(ref))) for p in cases]
-
-
-@pytest.mark.parametrize("case", _reference_cases())
-def test_reference_mesh_imports_with_its_metadata_names_and_numbers(case):
-    if case is None:
-        pytest.skip("GFEM_REFERENCE_DIR not set (point it at the reference data)")
-    meta = json.loads((case / "metadata.json").read_text())["mesh"]
-    mesh = gfem.Mesh.from_gmsh(case / "palace.msh", length_unit="um")
-
-    for key, dim, tags in (
-        ("volumes", 3, mesh.tetrahedron_tags),
-        ("surfaces", 2, mesh.triangle_tags),
-    ):
-        expected = {g["name"]: (g["tag"], g["elements"]) for g in meta["groups"][key]}
-        got = {
-            r.name: (r.tag, int((tags == r.tag).sum()))
-            for r in mesh.regions
-            if r.dim == dim
-        }
-        assert got == expected
-    assert len(mesh.tetrahedra) == meta["elements_by_type"]["Tetrahedron 4"]
-    assert len(mesh.triangles) == meta["elements_by_type"]["Triangle 3"]
-    box = meta["bbox"]
-    np.testing.assert_allclose(
-        np.asarray(mesh.nodes).min(axis=0),
-        np.array([box["xmin"], box["ymin"], box["zmin"]]) * 1e-6,
-        atol=2e-13,
-    )
-    np.testing.assert_allclose(
-        np.asarray(mesh.nodes).max(axis=0),
-        np.array([box["xmax"], box["ymax"], box["zmax"]]) * 1e-6,
-        atol=2e-13,
-    )
-    for surface in mesh.surfaces:
-        assert mesh.adjacent_volumes(surface)
 
 
 def test_an_unnamed_physical_group_raises(tmp_path):

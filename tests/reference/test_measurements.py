@@ -23,7 +23,6 @@ substrate-air on the gaps.
 
 import json
 import math
-import os
 import time
 from pathlib import Path
 
@@ -67,11 +66,8 @@ _WEIGHTS = np.array([0.223381589678011] * 3 + [0.109951743655322] * 3)
 
 
 @pytest.fixture(scope="module")
-def case():
-    ref = os.environ.get("GFEM_REFERENCE_DIR")
-    if not ref:
-        pytest.skip("GFEM_REFERENCE_DIR not set (needs the eigenmode Palace runs)")
-    return Path(ref) / "eigenmode" / "r20"
+def case(reference_dir):
+    return reference_dir / "eigenmode" / "r20"
 
 
 def _per_axis(value: float | list[float]) -> float | tuple[float, ...]:
