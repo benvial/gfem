@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import importlib
 import math
 from collections.abc import Callable, Mapping, Sequence
 from importlib.metadata import version
@@ -19,6 +20,8 @@ from gfem._field import Field, FieldMap, ReducedFields
 from gfem._pytree import register_fields
 
 if TYPE_CHECKING:
+    import xarray
+
     from gfem._engine.port_mode import PortModeSpace
     from gfem._port_section import PortSection
 
@@ -33,6 +36,34 @@ __all__ = [
     "ReducedFields",
     "SweepInfo",
 ]
+
+
+def _xarray(result: Any) -> Any:
+    """The ``xarray`` module for ``result.to_xarray()``, with the install remedy.
+
+    Raises:
+        TypeError: ``result`` holds JAX tracers.
+        ImportError: xarray is not installed.
+    """
+    owner = type(result).__name__
+    if is_traced(result):
+        raise TypeError(
+            f"{owner}.to_xarray needs concrete values and cannot run under "
+            "jax.jit, jax.grad or jax.vmap; export the result outside the "
+            "transformed function."
+        )
+    try:
+        return importlib.import_module("xarray")
+    except ImportError:
+        raise ImportError(
+            f'{owner}.to_xarray needs xarray: pip install "gfem[xarray]".'
+        ) from None
+
+
+def _variable(dims: tuple[str, ...], values: Any, units: str | None = None) -> tuple:
+    """An xarray variable ``(dims, values, attrs)`` of host values."""
+    attrs = {} if units is None else {"units": units}
+    return dims, np.asarray(values), attrs
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -112,6 +143,33 @@ class ElectrostaticResult:
                 f"No terminal {terminal!r}; the terminals are "
                 f"{', '.join(repr(t) for t in self.terminals)}."
             ) from None
+
+    def to_xarray(self) -> xarray.Dataset:
+        """The capacitance matrix and region energies as an `xarray.Dataset`.
+
+        ``capacitance`` (F) has dimensions ``("terminal", "excitation")``,
+        both labelled by `terminals`; ``energy`` (J), when present, has
+        ``("region", "excitation")``. Needs the ``xarray`` extra: ``pip
+        install "gfem[xarray]"``.
+
+        Raises:
+            ImportError: xarray is not installed.
+            TypeError: The result holds JAX tracers.
+        """
+        xr = _xarray(self)
+        data = {
+            "capacitance": _variable(("terminal", "excitation"), self.capacitance, "F")
+        }
+        coords: dict[str, Any] = {
+            "terminal": list(self.terminals),
+            "excitation": list(self.terminals),
+        }
+        if self.energy:
+            data["energy"] = _variable(
+                ("region", "excitation"), list(self.energy.values()), "J"
+            )
+            coords["region"] = list(self.energy)
+        return xr.Dataset(data, coords=coords)
 
     def __repr__(self) -> str:
         try:
@@ -292,6 +350,32 @@ class PortModeResult:
         k0 = 2 * math.pi * self.frequency / scipy.constants.c
         return self.gamma / (1j * k0)
 
+    def to_xarray(self) -> xarray.Dataset:
+        """The mode's per-frequency values as an `xarray.Dataset`.
+
+        ``gamma`` (1/m), ``n_eff``, ``Z_PV`` (ohm), ``residual`` and
+        ``solved`` over the dimension ``frequency`` (Hz); the attributes
+        ``port`` and ``mode`` name the mode. The field is not exported.
+        Needs the ``xarray`` extra: ``pip install "gfem[xarray]"``.
+
+        Raises:
+            ImportError: xarray is not installed.
+            TypeError: The result holds JAX tracers.
+        """
+        xr = _xarray(self)
+        f = ("frequency",)
+        return xr.Dataset(
+            {
+                "gamma": _variable(f, self.gamma, "1/m"),
+                "n_eff": _variable(f, self.n_eff),
+                "Z_PV": _variable(f, self.Z_PV, "ohm"),
+                "residual": _variable(f, self.residual),
+                "solved": _variable(f, self.solved),
+            },
+            coords={"frequency": _variable(f, self.frequency, "Hz")},
+            attrs={"port": self.port, "mode": self.mode},
+        )
+
     def __repr__(self) -> str:
         f = np.asarray(self.frequency)
         n = np.asarray(self.n_eff)
@@ -458,6 +542,31 @@ class NetworkParameters:
             frequency=self.frequency,
             ports=self.ports,
             excited=self.ports,
+        )
+
+    def to_xarray(self) -> xarray.Dataset:
+        """S and the reference impedances as an `xarray.Dataset`.
+
+        ``s`` has dimensions ``("frequency", "port", "excited")`` (as
+        `values`) and ``z_ref`` (ohm) ``("frequency", "port")``; the
+        coordinates are the frequencies (Hz) and the port names. Needs the
+        ``xarray`` extra: ``pip install "gfem[xarray]"``.
+
+        Raises:
+            ImportError: xarray is not installed.
+            TypeError: The parameters hold JAX tracers.
+        """
+        xr = _xarray(self)
+        return xr.Dataset(
+            {
+                "s": _variable(("frequency", "port", "excited"), self.values),
+                "z_ref": _variable(("frequency", "port"), self.z_ref, "ohm"),
+            },
+            coords={
+                "frequency": _variable(("frequency",), self.frequency, "Hz"),
+                "port": list(self.ports),
+                "excited": list(self.excited),
+            },
         )
 
     def to_touchstone(self, path: str | Path, z0: float | None = None) -> Path:
@@ -921,6 +1030,51 @@ class EigenmodeResult:
                 "mode(s), numbered from 0."
             )
         return self.e_fields[mode]
+
+    def to_xarray(self) -> xarray.Dataset:
+        """The modes' scalar outputs as an `xarray.Dataset`.
+
+        ``omega`` (rad/s), ``frequency`` (Hz), ``q``, ``error`` and
+        ``cluster`` over the dimension ``mode`` (0 = nearest the target);
+        `q_port` and `participation` over ``("mode", "port")``, one port
+        axis for both (NaN where a port has no value), and
+        `bulk_participation` over ``("mode", "region")``. The fields and
+        materials are not exported. Needs the ``xarray`` extra: ``pip
+        install "gfem[xarray]"``.
+
+        Raises:
+            ImportError: xarray is not installed.
+            TypeError: The result holds JAX tracers.
+        """
+        xr = _xarray(self)
+        m = ("mode",)
+        data = {
+            "omega": _variable(m, self.omega, "rad/s"),
+            "frequency": _variable(m, self.frequency, "Hz"),
+            "q": _variable(m, self.q),
+            "error": _variable(m, self.error),
+            "cluster": _variable(m, self.cluster),
+        }
+        coords: dict[str, Any] = {"mode": np.arange(self.n_modes)}
+        ports = list(dict.fromkeys([*self.q_port, *self.participation]))
+        if ports:
+            coords["port"] = ports
+            for name, values in (
+                ("q_port", self.q_port),
+                ("participation", self.participation),
+            ):
+                table = np.full((self.n_modes, len(ports)), np.nan)
+                for k, port in enumerate(ports):
+                    if port in values:
+                        table[:, k] = np.asarray(values[port])
+                data[name] = _variable(("mode", "port"), table)
+        if self.bulk_participation:
+            coords["region"] = list(self.bulk_participation)
+            data["bulk_participation"] = _variable(
+                ("mode", "region"),
+                np.stack([np.asarray(v) for v in self.bulk_participation.values()], 1),
+            )
+        return xr.Dataset(data, coords=coords)
 
     def __repr__(self) -> str:
         try:

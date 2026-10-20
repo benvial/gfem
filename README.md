@@ -11,6 +11,8 @@ gfem is under development towards v0.1. Nothing here is a stable API yet.
 ```bash
 pip install gfem            # CPU
 pip install "gfem[cuda12]"  # optional cuDSS GPU solver (Linux x86_64, Windows)
+pip install "gfem[xarray]"  # optional: results as xarray datasets (.to_xarray())
+pip install "gfem[viz]"     # optional: fields as pyvista grids (.to_pyvista())
 ```
 
 Supported platforms: Linux x86_64 (glibc >= 2.28), macOS arm64 and Windows x86_64, Python >= 3.12.

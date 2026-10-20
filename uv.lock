@@ -928,6 +928,7 @@ dev = [
     { name = "pytest-cov", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
     { name = "ruff", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
     { name = "ty", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
+    { name = "xarray", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
 ]
 docs = [
     { name = "ipykernel", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
@@ -942,6 +943,7 @@ lint = [
 test = [
     { name = "pytest", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
     { name = "pytest-cov", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
+    { name = "xarray", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
 ]
 
 [package.metadata]
@@ -954,7 +956,7 @@ requires-dist = [
     { name = "nvmath-python", extras = ["cu13"], marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'cuda13') or (sys_platform == 'win32' and extra == 'cuda13')", specifier = ">=1.0,<1.1" },
     { name = "pyvista", marker = "extra == 'viz'" },
     { name = "scipy", specifier = ">=1.15" },
-    { name = "xarray", marker = "extra == 'xarray'" },
+    { name = "xarray", marker = "extra == 'xarray'", specifier = ">=2024.10" },
 ]
 provides-extras = ["cuda12", "cuda13", "viz", "xarray"]
 
@@ -964,6 +966,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=6.0" },
     { name = "ruff", specifier = ">=0.14" },
     { name = "ty", specifier = "==0.0.85" },
+    { name = "xarray", specifier = ">=2024.10" },
 ]
 docs = [
     { name = "ipykernel", specifier = ">=6.29" },
@@ -978,6 +981,7 @@ lint = [
 test = [
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-cov", specifier = ">=6.0" },
+    { name = "xarray", specifier = ">=2024.10" },
 ]
 
 [[package]]
