@@ -5,6 +5,7 @@ is a plane wave, so a two-port line has S21 = exp(-gamma L) and S11 = 0 up
 to the 3D discretization error.
 """
 
+import dataclasses
 import math
 from pathlib import Path
 
@@ -158,7 +159,9 @@ def test_wave_port_s_comes_out_of_jit_unchanged(plate_mesh, plate_result):
     )
 
 
-def test_gradients_through_wave_ports_raise(plate_mesh):
+def test_a_design_touching_a_wave_port_face_raises_under_grad(plate_mesh):
+    # "fill" fills the whole line, so its elements sit on both port faces:
+    # the port mode would depend on the design.
     model = line(plate_mesh).with_material(
         "fill", gfem.MaterialField.uniform("fill", gfem.Material(eps_r=EPS))
     )
@@ -168,8 +171,30 @@ def test_gradients_through_wave_ports_raise(plate_mesh):
         result = gfem.solve(m, gfem.Driven(F[:1]), options=OPTIONS)
         return jnp.abs(result.s.values[0, 1, 0])
 
-    with pytest.raises(gfem.NonDifferentiableError, match="wave port"):
+    with pytest.raises(gfem.PortGeometryError, match=r"WavePort 'p1'.*'fill'"):
         jax.grad(s21)(model)
+    # a forward solve of the same model is fine, and so is stop_gradient
+    assert np.isfinite(float(s21(model)))
+    frozen = jax.grad(lambda m: s21(jax.lax.stop_gradient(m)))(model)
+    assert not np.any(np.asarray(frozen.materials["fill"].eps_r))
+
+
+def test_thermal_properties_beside_a_wave_port_have_zero_gradient(plate_mesh):
+    # the driven solve (port mode included) never reads them: exact zeros
+    field = gfem.MaterialField.uniform(
+        "fill", gfem.Material(eps_r=EPS, thermal_conductivity=1.0)
+    )
+    model = line(plate_mesh).with_material("fill", field)
+
+    def s21(k):
+        m = model.with_material(
+            "fill", dataclasses.replace(field, thermal_conductivity=k)
+        )
+        m = m.replace(mesh=jax.lax.stop_gradient(m.mesh))
+        result = gfem.solve(m, gfem.Driven(F[:1]), options=OPTIONS)
+        return jnp.abs(result.s.values[0, 1, 0])
+
+    assert float(jax.grad(s21)(field.thermal_conductivity).sum()) == 0.0
 
 
 def test_kept_fields_keep_the_port_mode_fields(plate_mesh):

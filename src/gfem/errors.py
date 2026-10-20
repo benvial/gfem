@@ -65,8 +65,10 @@ class MeshQualityWarning(UserWarning):
 class PortGeometryError(ValueError):
     """A port whose geometry the solver cannot use.
 
-    For example a wave port surface that is not planar. The message names the
-    port and the remedy.
+    For example a wave port surface that is not planar, or, under
+    differentiation, a design that touches a wave port face (the port mode
+    is a constant of the solve, so the materials beside the face must be
+    too). The message names the port and the remedy.
     """
 
 
