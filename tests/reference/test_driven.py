@@ -479,18 +479,16 @@ def test_wave_port_low_frequency_backward_errors(reference):
         for k, f in enumerate(frequency):
             omega = 2 * math.pi * f
             b = ports.system.rhs(omega)
-            handle = prepare(
-                Operator(op.form(omega), op.space.FreeDofs()),
-                symmetry="complex_symmetric",
-                kind="direct",
-                width=b.shape[1],
+            handle = ports.prepare(
+                omega, kind="direct", device="cpu", tolerance=1e-6, width=b.shape[1]
             )
             x = handle.solve(b)
             handle.free()
+            u, c = ports.update(omega)
             parts = [
                 complex(piece.theta(omega)) * op.apply(j, x)
                 for j, piece in enumerate(op.pieces)
-            ]
+            ] + [u @ (c @ (u.T @ x))]  # the modal correction
             r = (sum(parts) - b)[free]
             scale = sum(np.linalg.norm(p[free]) for p in parts) + np.linalg.norm(
                 b[free]

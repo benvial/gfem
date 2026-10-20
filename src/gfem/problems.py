@@ -245,9 +245,11 @@ class Driven:
     A `WavePort` is fed by its port mode: before the 3D solve, a port mode
     sweep (`gfem.PortMode`) tabulates each wave port's mode over the
     frequencies, to ``SolverOptions.port_mode_tolerance``; the port face
-    carries Palace's boundary term (the mode's real wavenumber), S is the
-    field's projection on the mode, and ``WavePort(offset=...)`` de-embeds
-    it. The modes are on the result (``DrivenResult.port_modes``).
+    carries Palace's port boundary (a boundary term at the mode's real
+    wavenumber plus a rank-two modal correction, so the port absorbs its
+    own mode without reflection, hybrid modes included), S is the field's
+    projection on the mode, and ``WavePort(offset=...)`` de-embeds it. The
+    modes are on the result (``DrivenResult.port_modes``).
 
     Args:
         frequency: One frequency or a 1D sequence of them, Hz.

@@ -1,16 +1,24 @@
 """Wave ports in the driven problem: the port mode sweep coupled to the 3D field.
 
-A wave port enters the driven problem through three terms, all in Palace's
+A wave port enters the driven problem through four terms, all in Palace's
 form (the 3D field ``E`` and test function ``v`` in the units of
 `gfem._engine.terms`, the mode ``(E_t, E_n)`` propagating into the domain as
-``exp(-gamma s)``):
+``exp(-gamma s)``, ``gamma = alpha + i beta``):
 
 - a Robin term ``i beta ∫ mu_r^-1 E_t · v_t`` (`gfem._engine.terms`), with
   ``beta`` the real part of the mode's wavenumber (its attenuation dropped);
-- the incident wave's excitation ``2 ∫ mu_r^-1 (grad E_n + i beta E_t) ·
-  v_t``;
+- a rank-two modal correction ``W = h hᵀ / (hᵀ e) - h_s h_sᵀ / (h_sᵀ e)``
+  per port, never assembled, with ``h = ∫ mu_r^-1 (grad E_n + gamma E_t) ·
+  v_t`` the mode's n x H as a 3D vector, ``h_s`` the same without ``grad
+  E_n`` and ``e`` the mode's tangential trace (Palace's ``W_full -
+  W_scalar``, ``(-i omega / R) s sᵀ`` with ``R = sᵀ e``, in gfem's units).
+  On the port's own mode the Robin term and ``W`` together impose the
+  mode's full n x H, so a hybrid mode (``E_n != 0``) leaves the port
+  without reflection; for a TEM mode ``h = h_s`` and ``W = 0``. ``W`` is
+  complex symmetric and does not depend on the mode's scale;
+- the incident wave's excitation ``2 h``;
 - the S functional, the projection of the field on the conjugated mode,
-  ``S = (1/2) (i / (omega mu0)) ∫ E_t · conj(mu_r^-1 (grad E_n + i beta
+  ``S = (1/2) (i / (omega mu0)) ∫ E_t · conj(mu_r^-1 (grad E_n + gamma
   E_t))`` minus 1 at the excited port, with the mode scaled so that this
   projection of the incident mode itself has modulus 2 (1 W, in gfem's
   convention of time-averaged power; Palace's modes carry 1 W peak).
@@ -21,8 +29,9 @@ bases by global vertex numbers, so the trace of a 3D field is the 2D field
 with the same coefficients on matching edges and faces (`trace_dofs`). With
 the mode written in the port mode sweep's fixed basis, ``mode(omega) = W
 c(omega)``, the excitation and the functional are fixed vectors (one per
-basis column, assembled on the 2D port once) times tabulated scalars, which
-is what the adaptive sweep needs.
+basis column, assembled on the 2D port once) times tabulated scalars, and
+``W(omega) = vectors C(omega) vectorsᵀ`` with a tabulated ``(2 m, 2 m)``
+coefficient of rank two, which is what the adaptive sweep needs.
 """
 
 from __future__ import annotations
@@ -57,8 +66,12 @@ class WavePortCoupling:
         vectors: ``(ndof, 2 m)``: per mode basis column, the 3D vector of
             ``∫ mu_r^-1 (column) · v_t`` (tangential columns) or ``∫
             mu_r^-1 grad(column) · v_t`` (normal columns).
-        phi: ``(n_freq, 2 m)``: the mode's coefficients on those columns,
-            ``i beta c_t`` and ``c_n`` (beta per file unit).
+            Zero on the 3D space's fixed DOFs.
+        phi: ``(n_freq, 2 m)``: the mode's n x H on those columns, ``gamma
+            c_t`` and ``c_n`` (gamma per file unit): ``h = vectors @ phi``.
+        reaction: ``(2 m, m)``: the port-face products of the columns of
+            ``vectors`` with the mode basis's tangential columns, so ``hᵀ e
+            = phi @ reaction @ c_t``.
         norm: ``(n_freq,)``: the real factor that rescales the sweep's 1 W
             mode to Palace's power normalization (1 for a lossless mode).
         omegas: ``(n_freq,)`` the output grid, rad/s.
@@ -71,6 +84,7 @@ class WavePortCoupling:
     piece: terms.Piece
     vectors: np.ndarray
     phi: np.ndarray
+    reaction: np.ndarray
     norm: np.ndarray
     omegas: np.ndarray
     scale: float
@@ -91,6 +105,30 @@ class WavePortCoupling:
         k = self._at(omega)
         mu0 = scipy.constants.mu_0
         return 0.5j / (omega * mu0) * self.norm[k] * np.conj(self.phi[k])
+
+    def correction(self, omega: float) -> tuple[np.ndarray, np.ndarray]:
+        """The modal correction at ω as ``W = vectors P diag(d) Pᵀ vectorsᵀ``.
+
+        Returns:
+            ``P`` ``(2 m, 2)``, the n x H of the mode with and without
+            ``grad E_n`` (columns), and ``d`` ``(2,)``, ``(1 / R, -1 / R_s)``
+            with the unconjugated reactions ``R = hᵀ e``. ``d`` is zero
+            (no correction, as Palace) when a reaction vanishes.
+        """
+        k = self._at(omega)
+        m = self.reaction.shape[1]
+        full = self.phi[k]
+        scalar = np.concatenate([full[:m], np.zeros(m, full.dtype)])
+        p = np.stack([full, scalar], axis=1)
+        reactions = p.T @ (self.reaction @ self.sweep.coords[k, :m])
+        if not np.all(np.abs(reactions) > 0):  # pragma: no cover - Palace skips
+            return p, np.zeros(2, complex)
+        return p, np.array([1.0, -1.0]) / reactions
+
+    def correction_coefficients(self, omega: float) -> np.ndarray:
+        """``C(ω)`` ``(2 m, 2 m)`` with ``W = vectors C vectorsᵀ`` (rank two)."""
+        p, d = self.correction(omega)
+        return (p * d) @ p.T
 
     @property
     def z_ref(self) -> np.ndarray:
@@ -130,16 +168,21 @@ def wave_port_couplings(
         modes = PortModeSpace(section, order)
         sweep = port_mode_sweep(modes, frequency, port.mode, tolerance=tolerance)
         idx3, idx2 = trace_dofs(model, section, modes, built, space)
+        free = np.array(list(space.FreeDofs()), dtype=bool)  # ty: ignore[invalid-argument-type]
+        idx3, idx2 = idx3[free[idx3]], idx2[free[idx3]]
         g_form, t_form = modes.coupling_forms
         w = sweep.basis[modes.free]
         m = w.shape[1] // 2
         r = np.concatenate([t_form @ w[:, :m], g_form @ w[:, m:]], axis=1)
         vectors = np.zeros((space.ndof, 2 * m), r.dtype)
         vectors[idx3] = r[idx2]
+        # hᵀ e on the port face, as Palace (the mode vanishes on fixed DOFs)
+        reaction = r.T @ sweep.basis[: modes.n_t, :m]
         scale = section.scale
         beta = sweep.gamma.imag * scale
         coords = sweep.coords
-        phi = np.concatenate([1j * beta[:, None] * coords[:, :m], coords[:, m:]], 1)
+        gamma = sweep.gamma * scale
+        phi = np.concatenate([gamma[:, None] * coords[:, :m], coords[:, m:]], 1)
         # Palace's normalization: |(i / (omega mu0)) int E_t . conj(h)| = 2
         q = sweep.basis[: modes.n_t, :m].T @ np.conj(r)
         proj = np.einsum("fi,ij,fj->f", coords[:, :m], q, np.conj(phi))
@@ -161,6 +204,7 @@ def wave_port_couplings(
                 piece=piece,
                 vectors=vectors,
                 phi=phi,
+                reaction=reaction,
                 norm=norm,
                 omegas=omegas,
                 scale=scale,
