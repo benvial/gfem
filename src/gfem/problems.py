@@ -177,7 +177,15 @@ class PortMode:
 
     `gfem.solve` raises `PortModeError` when the mode is below cutoff
     somewhere in the band (naming the estimated cutoff) or degenerate, and
-    warns with `PortModeTrackingWarning` when it crosses another mode.
+    warns with `PortModeTrackingWarning` when it crosses another mode. The
+    2D problem always runs SuperLU on the CPU: options with another
+    ``device`` or ``linear_solver`` raise `ValueError`.
+
+    Port modes are constants: under `jax.grad` an input the problem reads
+    (an electromagnetic material property, the node coordinates) raises
+    `gfem.NonDifferentiableError` and a thermal property gets an exact
+    zero. Under `jax.jit` and `jax.vmap` the solve runs, but the result's
+    ``e_field`` is not available.
 
     Example:
         ``gfem.PortMode("p1", np.linspace(1e9, 100e9, 100))``

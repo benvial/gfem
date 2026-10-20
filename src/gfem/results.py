@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -152,14 +152,60 @@ class PortModeField:
         self, space: PortModeSpace, basis: np.ndarray, coords: np.ndarray
     ) -> None:
         """Internal: built by `gfem.solve` (field ``i`` is ``basis @ coords[i]``)."""
-        self._space = space
-        self._basis = basis
-        self._coords = coords
-        self.normal = tuple(float(x) for x in space.section.frame[2])
+        self._parts: tuple[PortModeSpace, np.ndarray, np.ndarray] | None = (
+            space,
+            basis,
+            coords,
+        )
+        self._build: Callable[[], tuple] | None = None
+        self._port = space.section.port.name
+
+    @classmethod
+    def _deferred(
+        cls,
+        port: str,
+        build: Callable[[], tuple[PortModeSpace, np.ndarray, np.ndarray]],
+    ) -> PortModeField:
+        """Internal: a field built by ``build()`` on first use.
+
+        A port mode solve traced by JAX returns its arrays only; the field
+        is then solved again from concrete model values when it is read,
+        and ``build`` raises when the values are tracers.
+        """
+        field = object.__new__(cls)
+        field._parts = None
+        field._build = build
+        field._port = port
+        return field
+
+    def _data(self) -> tuple[PortModeSpace, np.ndarray, np.ndarray]:
+        if self._parts is None:
+            if self._build is None:  # pragma: no cover - set by the constructors
+                raise RuntimeError("PortModeField has no data.")
+            self._parts = self._build()
+            self._build = None
+        return self._parts
+
+    @property
+    def _space(self) -> PortModeSpace:
+        return self._data()[0]
+
+    @property
+    def _basis(self) -> np.ndarray:
+        return self._data()[1]
+
+    @property
+    def _coords(self) -> np.ndarray:
+        return self._data()[2]
 
     @property
     def _section(self) -> PortSection:
         return self._space.section
+
+    @property
+    def normal(self) -> tuple[float, ...]:
+        """Unit inward port normal, global frame."""
+        return tuple(float(x) for x in self._section.frame[2])
 
     def at(self, points: Any) -> jax.Array:
         """The field at points on the port, ``(n_freq, n_points, 3)`` complex.
@@ -197,10 +243,8 @@ class PortModeField:
         return local
 
     def __repr__(self) -> str:
-        n = len(self._coords)
-        return (
-            f"PortModeField(E, V/m, {n} frequencies, port {self._section.port.name!r})"
-        )
+        n = "not built" if self._parts is None else f"{len(self._coords)} frequencies"
+        return f"PortModeField(E, V/m, {n}, port {self._port!r})"
 
 
 @dataclasses.dataclass(frozen=True, eq=False)

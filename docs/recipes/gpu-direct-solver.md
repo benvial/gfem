@@ -34,6 +34,10 @@ result = gfem.solve(model, problem, options=options)
 - `gfem.cuda_available()` starts a CUDA context, so it is `False` on a machine
   whose GPU is missing or in an error state, even when the CUDA libraries
   import.
+- Wave port modes are 2D problems and always run SuperLU on the CPU: inside a
+  driven sweep with wave ports only the 3D solve uses the GPU, and a
+  standalone `gfem.PortMode` solve with `device` other than `"cpu"` (or any
+  `linear_solver` but the default) raises `ValueError`.
 
 When the GPU cannot be used, the solve raises `gfem.DeviceUnavailableError`
 with the reason and the fix (install the extra, the CUDA driver's error, or

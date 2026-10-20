@@ -48,7 +48,7 @@ from gfem._engine.port_mode import PortModeSpace
 from gfem._engine.runtime import task_manager
 from gfem._linalg.superlu import backward_error, shift_invert_eigs
 from gfem._port_section import PortSection, port_section
-from gfem.errors import NonDifferentiableError, PortModeError, PortModeTrackingWarning
+from gfem.errors import PortModeError, PortModeTrackingWarning
 from gfem.model import Model
 from gfem.options import SolverOptions
 from gfem.problems import PortMode
@@ -131,32 +131,78 @@ class PortModeRule:
 
     Construction runs the static checks; `forward` extracts the port's
     cross-section and runs the port mode sweep over its frequencies. Port
-    modes are constants of a solve: there is no backward pass.
+    modes are constants of a solve: under `jax.grad` a perturbed input the
+    port mode problem reads raises `gfem.NonDifferentiableError`, one it
+    never reads (a thermal property) gets an exact zero, and `jax.jit` /
+    `jax.vmap` run the solve (the result's field is then not available).
     """
 
     physics = "em"
+    form = "port mode"
     #: Material properties the port mode problem reads.
     reads = frozenset({"eps_r", "mu_r", "tan_delta", "conductivity"})
+    #: No output has a gradient (`unsupported_input` raises for read inputs).
+    differentiable_outputs = frozenset()
 
     def __init__(self, model: Model, problem: PortMode, options: SolverOptions) -> None:
         """Check that the problem fits the model (see `gfem.PortMode`).
 
         Raises:
-            NonDifferentiableError: The model is traced by JAX.
-            ValueError: ``problem.port`` is not a wave port of the model.
+            ValueError: ``problem.port`` is not a wave port of the model, or
+                ``options`` asks for a linear solver or a device: the 2D
+                port mode problem always runs SuperLU on the CPU.
         """
         if not isinstance(problem, PortMode):
             raise TypeError(f"Expected gfem.PortMode, got {problem!r}.")
-        if any(is_traced(leaf) for leaf in jax.tree_util.tree_leaves(model)):
-            raise NonDifferentiableError(
-                "The port mode problem is not differentiable in gfem v0.1 (port "
-                "modes are constants of a solve). Solve PortMode outside the "
-                "function you differentiate."
+        if options.device != "cpu" or options.linear_solver != "auto":
+            raise ValueError(
+                "The port mode problem always uses SuperLU on the CPU (a 2D "
+                f"problem), but the options ask for device={options.device!r}, "
+                f"linear_solver={options.linear_solver!r}. Solve PortMode with "
+                "the default device and linear_solver."
             )
         self.problem = problem
         self.options = options
         self.port = _wave_port(model, problem.port)
         self.mode = self.port.mode if problem.mode is None else problem.mode
+        self._model = model
+
+    def output_specs(self, model: Model) -> dict[str, jax.ShapeDtypeStruct]:
+        """Shape and dtype of each forward output (one value per frequency)."""
+        del model
+        n = (len(self.problem.frequency),)
+        return {
+            "gamma": jax.ShapeDtypeStruct(n, jnp.complex128),
+            "Z_PV": jax.ShapeDtypeStruct(n, jnp.float64),
+            "residual": jax.ShapeDtypeStruct(n, jnp.float64),
+            "solved": jax.ShapeDtypeStruct(n, jnp.bool_),
+        }
+
+    def role(self, kind: tuple) -> str:
+        """``"read"`` if the port mode problem depends on input ``kind``.
+
+        The electromagnetic material properties, the node coordinates and
+        any boundary value are read; thermal properties are not.
+        """
+        if kind[0] == "material":
+            return "read" if kind[2] in self.reads else "unread"
+        return "read"
+
+    def unsupported_input(self, kind: tuple) -> str | None:
+        """Every read input: port modes are constants of a solve."""
+        del kind
+        return (
+            "the port mode problem is not differentiable in this version (port "
+            "modes are constants of a solve)"
+        )
+
+    def nondifferentiable_output(self, name: str) -> str:
+        """The error message for a cotangent on output ``name``."""
+        return (
+            f"gfem cannot differentiate the port mode output {name!r}: the port "
+            "mode problem is not differentiable in this version. Wrap it in "
+            "jax.lax.stop_gradient to use its value without its derivative."
+        )
 
     def forward(self, model: Model, *, keep: bool) -> tuple[dict, None]:
         """Run the port mode sweep.
@@ -166,7 +212,8 @@ class PortModeRule:
             keep: Ignored: nothing is kept for a backward pass.
 
         Returns:
-            ``{"sweep": PortModeSweep}`` and ``None``.
+            The per-frequency arrays of `output_specs` plus ``"sweep"`` (the
+            `PortModeSweep`), and ``None``.
         """
         del keep
         section = port_section(model, self.port)
@@ -178,21 +225,47 @@ class PortModeRule:
                 self.mode,
                 tolerance=self.options.port_mode_tolerance,
             )
-        return {"sweep": sweep}, None
+        outputs = {
+            "gamma": sweep.gamma,
+            "Z_PV": sweep.z_pv,
+            "residual": sweep.residual,
+            "solved": sweep.solved,
+            "sweep": sweep,
+        }
+        return outputs, None
 
     def result(self, outputs: dict) -> PortModeResult:
-        """The public result from the forward outputs."""
-        sweep: PortModeSweep = outputs["sweep"]
+        """The public result from the forward outputs.
+
+        Without ``"sweep"`` (a solve traced by JAX) the mode field is built
+        on first use, from the model's values when they are concrete.
+        """
+        sweep: PortModeSweep | None = outputs.get("sweep")
+        if sweep is None:
+            field = PortModeField._deferred(self.port.name, self._field)  # noqa: SLF001
+        else:
+            field = PortModeField(sweep.space, sweep.basis, sweep.coords)
         return PortModeResult(
             port=self.port.name,
             mode=self.mode,
-            frequency=jnp.asarray(sweep.frequency),
-            gamma=jnp.asarray(sweep.gamma),
-            Z_PV=jnp.asarray(sweep.z_pv),
-            residual=jnp.asarray(sweep.residual),
-            solved=jnp.asarray(sweep.solved),
-            e_field=PortModeField(sweep.space, sweep.basis, sweep.coords),
+            frequency=jnp.asarray(self.problem.frequency),
+            gamma=jnp.asarray(outputs["gamma"]),
+            Z_PV=jnp.asarray(outputs["Z_PV"]),
+            residual=jnp.asarray(outputs["residual"]),
+            solved=jnp.asarray(outputs["solved"]),
+            e_field=field,
         )
+
+    def _field(self) -> tuple[PortModeSpace, np.ndarray, np.ndarray]:
+        if is_traced(self._model):
+            raise TypeError(
+                "PortModeResult.e_field is not available from a port mode solve "
+                "traced by JAX (jax.jit, jax.grad, jax.vmap): the mode field needs "
+                "concrete model values. Solve PortMode outside the transformed "
+                "function to read e_field."
+            )
+        sweep = self.forward(self._model, keep=False)[0]["sweep"]
+        return sweep.space, sweep.basis, sweep.coords
 
 
 def _wave_port(model: Model, name: str) -> WavePort:
