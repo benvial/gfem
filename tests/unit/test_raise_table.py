@@ -158,6 +158,20 @@ EXPECTED |= {
     )
     for kind in [("nodes",)] + [("material", "dielectric", p) for p in ALL_PROPERTIES]
 }
+# The result carries the model's materials as solved (for measurements): each
+# leaf is its input passed through. The solve still raises at trace time for
+# every input it reads, so only the thermal leaves differentiate (identity).
+EXPECTED |= {
+    ("eigenmode", f"materials.dielectric.{out}", kind): (
+        RAISES
+        if kind == ("nodes",) or kind[2] in EM_PROPERTIES
+        else GRADIENT
+        if kind[2] == out
+        else ZERO
+    )
+    for out in ALL_PROPERTIES
+    for kind in [("nodes",)] + [("material", "dielectric", p) for p in ALL_PROPERTIES]
+}
 
 
 def _field(mesh, region, **overrides):

@@ -37,6 +37,7 @@ from gfem._checks import is_traced
 from gfem._materials import Material, MaterialField
 from gfem._port_section import PortSection
 from gfem._pytree import register_fields
+from gfem.measurements import InterfaceParticipation
 from gfem.mesh import Mesh
 from gfem.model import EnclosedBy, Model
 from gfem.options import SolverOptions
@@ -385,6 +386,7 @@ for _cls in (
     ReducedFields,
     Eigenmode,
     EigenmodeResult,
+    InterfaceParticipation,
 ):
     _codec.register(_cls)
 _codec.register(Electrostatic, to_args=_electrostatic_args)
