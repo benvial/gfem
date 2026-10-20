@@ -47,6 +47,9 @@ xarray = ["xarray"]
 
 [dependency-groups]
 dev = [{ include-group = "lint" }, { include-group = "test" }]
+# Running the tutorial notebooks (docs/tutorials): an external optimizer, plots,
+# and a headless notebook runner.
+docs = ["ipykernel>=6.29", "matplotlib>=3.9", "nbconvert>=7.16", "optax>=0.2.4"]
 lint = ["ruff>=0.14", "ty==0.0.85"]
 test = ["pytest>=8.3", "pytest-cov>=6.0"]
 
@@ -107,6 +110,10 @@ ignore = [
 select = ["ALL"]
 
 [tool.ruff.lint.per-file-ignores]
+"docs/**/*.ipynb" = [
+  "D",  # pydocstyle (tutorial helpers are explained in the prose)
+  "T201",  # print (notebooks report results)
+]
 "tests/**/*.py" = [
   "D",  # pydocstyle
   "INP001",  # implicit-namespace-package

@@ -23,6 +23,7 @@ from jax.core import Tracer
 
 from gfem import _morph
 from gfem._boundaries import surfaces_of
+from gfem._sparse import Coo, coo, spd_solve
 from gfem.errors import MeshQualityError, MeshQualityWarning, RegionNotFoundError
 from gfem.mesh import LENGTH_UNITS, Mesh
 from gfem.model import Model
@@ -224,10 +225,10 @@ class BoundaryMorph:
     _x0: np.ndarray
     _active: np.ndarray
     _factor: Any
-    _reduced: _Coo
-    _coupling: _Coo
-    _free: _Coo
-    _prescribed: _Coo
+    _reduced: Coo
+    _coupling: Coo
+    _free: Coo
+    _prescribed: Coo
     _nodes: np.ndarray
 
     def __init__(
@@ -255,10 +256,10 @@ class BoundaryMorph:
             "_x0": np.asarray(mesh.imported_nodes),
             "_active": active,
             "_factor": factor,
-            "_reduced": _coo(reduced),
-            "_coupling": _coo(coupling),
-            "_free": _coo(free.tocoo()),
-            "_prescribed": _coo(prescribed.tocoo()),
+            "_reduced": coo(reduced),
+            "_coupling": coo(coupling),
+            "_free": coo(free.tocoo()),
+            "_prescribed": coo(prescribed.tocoo()),
             "_nodes": _readonly(nodes),
             "n_params": len(nodes),
             "points": _readonly(np.asarray(mesh.imported_nodes)[nodes]),
@@ -299,18 +300,8 @@ class BoundaryMorph:
             )
             raise ValueError(msg)
 
-        def solve(_matvec: Callable, b: jax.Array) -> jax.Array:
-            return jax.pure_callback(
-                self._factor.solve,
-                jax.ShapeDtypeStruct(b.shape, b.dtype),
-                b,
-                vmap_method="sequential",
-            )
-
         rhs = self._coupling.matvec(t)
-        z = jax.lax.custom_linear_solve(
-            self._reduced.matvec, rhs, solve=solve, symmetric=True
-        )
+        z = spd_solve(self._reduced, self._factor, rhs)
         u = self._free.matvec(z) + self._prescribed.matvec(t)
         nodes = jnp.asarray(self._x0) + u.reshape(self._x0.shape)
         mesh = jax.tree_util.tree_unflatten(self._treedef, [nodes])
@@ -330,23 +321,6 @@ class BoundaryMorph:
 
 
 jax.tree_util.register_static(BoundaryMorph)
-
-
-class _Coo:
-    """A constant sparse matrix applied with JAX (linear in its argument)."""
-
-    def __init__(self, rows: np.ndarray, cols: np.ndarray, vals: np.ndarray, shape):
-        self.rows, self.cols, self.vals = rows, cols, vals
-        self.n, self.m = shape
-
-    def matvec(self, v: jax.Array) -> jax.Array:
-        return jax.ops.segment_sum(
-            jnp.asarray(self.vals) * v[self.cols], self.rows, num_segments=self.n
-        )
-
-
-def _coo(a: sp.coo_array) -> _Coo:
-    return _Coo(a.row.astype(np.int64), a.col.astype(np.int64), a.data, a.shape)
 
 
 def _readonly(a: np.ndarray) -> np.ndarray:

@@ -12,7 +12,7 @@ import jax as _jax
 _jax.config.update("jax_enable_x64", True)
 
 # Submodules are imported after the switch, so no gfem array is ever float32.
-from gfem import conventions, shape  # noqa: E402
+from gfem import conventions, design, shape  # noqa: E402
 from gfem._cuda import cuda_available  # noqa: E402
 from gfem.errors import (  # noqa: E402
     DeviceMemoryWarning,
@@ -94,6 +94,7 @@ __all__ = [
     "__version__",
     "conventions",
     "cuda_available",
+    "design",
     "enclosed_by",
     "load_result",
     "shape",
