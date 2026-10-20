@@ -13,6 +13,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import structured_meshes as sm
+from finite_differences import (
+    assert_gradient_matches,
+    assert_taylor_second_order,
+    unit_directions,
+)
 
 import gfem
 
@@ -156,7 +161,8 @@ def test_gradient_error_between_samples_follows_the_field_error(line, name):
 # the perturbed design too, so differences of the adaptive pipeline itself
 # check the frozen-basis gradient there.
 
-STEPS = {"eps_r": 1e-4, "conductivity": 1e-3}
+# Fourth-order differences (see tests/finite_differences.py).
+STEPS = {"eps_r": 1e-2, "conductivity": 5e-2}
 TAYLOR = {"eps_r": [1e-1, 1e-2, 1e-3], "conductivity": [1.0, 1e-1, 1e-2]}
 
 
@@ -166,13 +172,8 @@ def test_s_gradient_matches_central_differences(line, solver, name):
     values, rng = _design(line, seed=2)
     objective = _s_objective(line, values, name, _options(solver), ADAPTIVE, ON)
     p = values[name]
-    grad = jax.grad(objective)(p)
-    h = STEPS[name]
-    for _ in range(3):
-        d = rng.standard_normal(p.shape)
-        d /= np.linalg.norm(d)
-        fd = (objective(p + h * d) - objective(p - h * d)) / (2 * h)
-        assert float(jnp.real(grad) @ d) == pytest.approx(float(fd), rel=1e-6)
+    directions = unit_directions(rng, p.shape, 3)
+    assert_gradient_matches(objective, p, directions, step=STEPS[name])
 
 
 @pytest.mark.parametrize("solver", SOLVERS)
@@ -181,15 +182,8 @@ def test_s_taylor_remainder_is_second_order(line, solver, name):
     values, rng = _design(line, seed=3)
     objective = _s_objective(line, values, name, _options(solver), ADAPTIVE, ON)
     p = values[name]
-    j0, grad = jax.value_and_grad(objective)(p)
-    d = rng.standard_normal(p.shape)
-    d /= np.linalg.norm(d)
-    hs = TAYLOR[name]
-    remainders = [
-        abs(float(objective(p + h * d) - j0 - h * (jnp.real(grad) @ d))) for h in hs
-    ]
-    slopes = np.diff(np.log(remainders)) / np.diff(np.log(hs))
-    assert slopes == pytest.approx([2.0] * (len(hs) - 1), abs=0.1)
+    (d,) = unit_directions(rng, p.shape, 1)
+    assert_taylor_second_order(objective, p, d, TAYLOR[name])
 
 
 # --- kept fields: their cotangents take the same reduced adjoint as S ------------

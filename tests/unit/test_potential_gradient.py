@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import structured_meshes as sm
+from finite_differences import assert_gradient_matches, unit_directions
 
 import gfem
 
@@ -69,12 +70,8 @@ def test_potential_gradient_matches_finite_differences(stack):
     def objective(e):
         return _potential(stack, e).coefficients @ weights
 
-    grad = np.asarray(jax.grad(objective)(eps))
-    h = 1e-5
-    for _ in range(3):
-        d = jnp.asarray(rng.standard_normal(n))
-        fd = (objective(eps + h * d) - objective(eps - h * d)) / (2 * h)
-        assert float(grad @ d) == pytest.approx(float(fd), rel=1e-6, abs=1e-12)
+    directions = unit_directions(rng, eps.shape, 3)
+    assert_gradient_matches(objective, eps, directions, step=1e-2)
 
 
 def test_capacitance_and_potential_objectives_add(stack):

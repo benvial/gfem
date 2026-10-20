@@ -28,6 +28,11 @@ from gfem.errors import (  # noqa: E402
     SweepNotConvergedWarning,
 )
 from gfem.job import Job, load_result  # noqa: E402
+from gfem.measurements import (  # noqa: E402
+    InterfaceParticipation,
+    characteristic_impedance,
+    interface_participation,
+)
 from gfem.mesh import Mesh, Region  # noqa: E402
 from gfem.model import (  # noqa: E402
     PEC,
@@ -74,6 +79,7 @@ __all__ = [
     "ElectrostaticResult",
     "Field",
     "Impedance",
+    "InterfaceParticipation",
     "Job",
     "LumpedPort",
     "Material",
@@ -97,10 +103,12 @@ __all__ = [
     "SweepNotConvergedWarning",
     "WavePort",
     "__version__",
+    "characteristic_impedance",
     "conventions",
     "cuda_available",
     "design",
     "enclosed_by",
+    "interface_participation",
     "load_result",
     "shape",
     "solve",

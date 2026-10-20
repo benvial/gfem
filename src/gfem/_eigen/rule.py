@@ -115,6 +115,7 @@ class EigenmodeRule:
         #: Volume regions with tetrahedra in the solve domain: the field support.
         self.regions = tuple(r for r in mesh.volumes if active[mesh.elements(r)].any())
         self._mesh = model.mesh
+        self._materials = dict(model.materials)
         self._excluded = model._domain.excluded  # noqa: SLF001
 
     # --- forward -----------------------------------------------------------------
@@ -443,6 +444,7 @@ class EigenmodeRule:
                 for r, region in enumerate(self.regions)
             },
             e_fields=tuple(fields),
+            materials=self._materials,
         )
 
 
