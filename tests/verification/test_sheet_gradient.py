@@ -6,7 +6,8 @@ ports at both ends. A thin-film `Conductor` or an R + L `Impedance` on the
 sheet carries a per-face fill; S differentiates with respect to the fill
 through the face pass of the sensitivity kernel. The whole design chain
 (pixels on a `LayerGrid` of the sheet, Helmholtz filter, projection,
-exponential fill) differentiates end to end.
+exponential fill) differentiates end to end, and so do node coordinates
+moving the filled sheet itself.
 
 **Eigenmode**: a 20 x 10 x 20 mm PEC cavity glued at z = 10 mm, where the
 TE101 field is largest, with a resistive thin-film `Conductor` sheet of
@@ -164,6 +165,27 @@ def test_pixel_design_chain_differentiates_end_to_end(line):
     rho = jnp.asarray(rng.uniform(0.3, 0.7, grid.shape))
     directions = unit_directions(rng, rho.shape, 2)
     assert_gradient_matches(objective, rho, directions, step=FILL_STEP)
+
+
+def test_shape_gradient_through_a_filled_sheet(line):
+    # the sheet itself moves vertically: its term is a surface trace term
+    # whose per-face fill travels with the faces
+    from gfem.shape import boundary_morph
+
+    fill, rng = _fill(line, 4)
+    sheet = SHEETS["impedance"](gfem.SheetField(fill=fill))
+    base = _line_model(line, sheet)
+    morph = boundary_morph(base, "sheet", grows="lower")
+    problem = gfem.Driven(frequency=FREQUENCIES)
+    options = _options("direct")
+
+    def objective(t):
+        s = gfem.solve(base.replace(mesh=morph(t)), problem, options=options).s
+        return jnp.sum(WEIGHTS * jnp.abs(s.values) ** 2)
+
+    t = jnp.zeros(morph.n_params)
+    directions = unit_directions(rng, t.shape, 2)
+    assert_gradient_matches(objective, t, directions, step=2e-6)
 
 
 # --- eigenmode: the glued cavity -----------------------------------------------------
