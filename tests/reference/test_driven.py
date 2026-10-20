@@ -31,6 +31,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from isolated import isolated
 
 import gfem
 from gfem._engine import terms
@@ -309,18 +310,27 @@ CHECKS = (10.0, 25.0, 50.0, 66.6, 90.0)
 _ADAPTIVE: dict[str, tuple] = {}
 
 
+def _sweep(case: Path):
+    """``(result, wall s)`` of the adaptive sweep on Palace's grid."""
+    model = _model(case)
+    frequency, _ = _palace(case)
+    options = gfem.SolverOptions(threads=THREADS)
+    problem = gfem.Driven(frequency=frequency, sweep="adaptive")
+    start = time.perf_counter()
+    result = gfem.solve(model, problem, options=options)
+    return result, time.perf_counter() - start
+
+
 def _adaptive(reference, name):
-    """The adaptive sweep of a case on Palace's 300-point grid (cached)."""
+    """The adaptive sweep of a case on Palace's 300-point grid (cached).
+
+    It runs in a fresh process, so the peak RSS is the sweep's own (as for
+    Palace), not the high-water mark of the tests before it.
+    """
     if name not in _ADAPTIVE:
         case = reference / name
-        model = _model(case)
-        frequency, palace = _palace(case)
-        options = gfem.SolverOptions(threads=THREADS)
-        problem = gfem.Driven(frequency=frequency, sweep="adaptive")
-        start = time.perf_counter()
-        result = gfem.solve(model, problem, options=options)
-        wall = time.perf_counter() - start
-        _ADAPTIVE[name] = (model, frequency, palace, result, wall, _peak_rss_gib())
+        (result, wall), rss = isolated(_sweep, case)
+        _ADAPTIVE[name] = (_model(case), *_palace(case), result, wall, rss)
     return _ADAPTIVE[name]
 
 
