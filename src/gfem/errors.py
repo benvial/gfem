@@ -126,6 +126,23 @@ class EigenmodeConvergenceError(RuntimeError):
     """
 
 
+class DegenerateModeError(ValueError):
+    """An eigenmode gradient through one member of a degenerate cluster.
+
+    Modes whose frequencies agree to ``SolverOptions.cluster_rtol`` form a
+    cluster (``EigenmodeResult.cluster`` labels them). Inside a cluster
+    each mode, and so its derivative, depends on an arbitrary choice of
+    basis: only objectives symmetric in the cluster's modes (their sum or
+    mean, a smooth aggregate such as a log-sum-exp in place of ``max``) are
+    differentiable. Raised during the backward pass (so under `jax.grad` it
+    reaches the user as ``jax.errors.JaxRuntimeError`` with this message),
+    also when the cluster extends beyond the ``n_modes`` modes asked for.
+    The message names the modes, their frequencies and their gap, and the
+    remedies: a symmetric objective, ``n_modes`` covering the whole
+    cluster, a design that breaks the symmetry, or a `Driven` surrogate.
+    """
+
+
 class SweepNotConvergedWarning(UserWarning):
     """An adaptive frequency sweep stopped at its sample cap before converging.
 

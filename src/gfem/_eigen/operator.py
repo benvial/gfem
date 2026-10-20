@@ -254,6 +254,20 @@ class EigenOperator:
             out = out + t.value(k) * a
         return out
 
+    def derivative(self, k: complex, x: np.ndarray) -> np.ndarray:
+        """``T'(k) x = D x + 2 k M x + Σ θ_p'(k) A_p x``, ``'`` = ``d/dk``.
+
+        The denominator of the eigenvalue derivative ``dk/dp = -x^T (dT/dp)
+        x / x^T T'(k) x`` (and of the Rayleigh functional's Newton step).
+        """
+        x = np.where(self.free, x, 0)
+        out = 2 * k * self._matvec(self.mass, x)
+        if self.damping is not None:
+            out = out + self._matvec(self.damping, x)
+        for t in self.nonpolynomial:
+            out = out + t.derivative(k) * self._matvec(t.matrix, x)
+        return out
+
     # --- the frozen seed -----------------------------------------------------------
 
     @property

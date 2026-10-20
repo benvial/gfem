@@ -72,7 +72,9 @@ def test_pairs_are_bilinear_in_complex_columns_on_a_real_space(solved):
 
 def test_unsupported_inputs_are_named():
     assert unsupported("electrostatic", KIND) is None
-    assert "shape" in unsupported("electrostatic", ("nodes",))
+    assert unsupported("electrostatic", ("nodes",)) is None
+    assert unsupported("driven", ("nodes",)) is None
+    assert "shape" in unsupported("eigenmode", ("nodes",))
     assert "conductivity" in unsupported(
         "electrostatic", ("material", "oxide", "conductivity")
     )

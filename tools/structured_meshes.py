@@ -40,6 +40,8 @@ def structured(
     volume: Classify,
     surface: Classify,
     mapping: Callable[[np.ndarray], np.ndarray] | None = None,
+    *,
+    mirror: tuple[bool, bool, bool] = (False, False, False),
 ) -> tuple[np.ndarray, np.ndarray, list[str], np.ndarray, list[str]]:
     """Tetrahedra of the box grid with axis ``edges``, named by centroid.
 
@@ -49,6 +51,10 @@ def structured(
         surface: Region name of a boundary or interface triangle from its
             parameter centroid; ``""`` leaves the triangle out.
         mapping: Maps parameter points ``(n, 3)`` to coordinates.
+        mirror: Per axis, whether the cells of the upper half are the
+            mirror images of the lower half's (an even number of cells and
+            edges symmetric about their midpoint give a mesh symmetric
+            under that reflection; the Kuhn split alone is not).
 
     Returns:
         nodes, tetrahedra, tetrahedron region names, triangles, triangle
@@ -59,8 +65,21 @@ def structured(
     grid = np.stack(np.meshgrid(*edges, indexing="ij"), axis=-1).reshape(-1, 3)
     ids = np.arange(nx * ny * nz).reshape(nx, ny, nz)
     cubes = []
+    halves = [
+        (n - 1) // 2 if m else n for n, m in zip((nx, ny, nz), mirror, strict=True)
+    ]
     for i, j, k in itertools.product(range(nx - 1), range(ny - 1), range(nz - 1)):
-        cubes.append([ids[i + a, j + b, k + c] for a, b, c in _CORNERS])
+        flip = [c >= h for c, h in zip((i, j, k), halves, strict=True)]
+        cubes.append(
+            [
+                ids[
+                    i + (1 - a if flip[0] else a),
+                    j + (1 - b if flip[1] else b),
+                    k + (1 - c if flip[2] else c),
+                ]
+                for a, b, c in _CORNERS
+            ]
+        )
     tets = np.array(cubes)[:, _kuhn()].reshape(-1, 4)
     nodes = grid if mapping is None else mapping(grid)
     # positive orientation in mapped coordinates

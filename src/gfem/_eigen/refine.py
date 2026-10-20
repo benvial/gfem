@@ -63,16 +63,18 @@ def refine(
     *,
     tolerance: float,
     max_iterations: int,
-    reshift: bool = False,
+    reshift: bool = True,
+    reshift_first: bool = False,
 ) -> Refined:
     """Refine the pair ``(k, x)`` to backward error ``tolerance``.
 
-    ``reshift``: refactorize at ``k`` before the first correction step (the
-    current shift is nearer another mode than this one), if the seed's
-    backward error is within `TRUSTED`.
+    ``reshift_first``: refactorize at ``k`` before the first correction
+    step (the current shift is nearer another mode than this one), if the
+    seed's backward error is within `TRUSTED`.
 
     Returns the best pair seen (``converged`` False if it misses the
-    tolerance after ``max_iterations`` steps).
+    tolerance after ``max_iterations`` steps). With ``reshift`` False the
+    operator is never refactorized.
     """
     x = x / np.linalg.norm(x)
     best: Refined | None = None
@@ -87,8 +89,8 @@ def refine(
         if error <= tolerance or step == max_iterations:
             break
         stalled = len(history) >= 3 and history[-1] > 0.5 * history[-3]
-        trusted = reshift and step == 0 and error <= TRUSTED
-        if trusted or (stalled and shifts < MAX_SHIFTS):
+        trusted = reshift_first and step == 0 and error <= TRUSTED
+        if reshift and (trusted or (stalled and shifts < MAX_SHIFTS)):
             op.reshift(k)
             shifts += 1
             history.clear()

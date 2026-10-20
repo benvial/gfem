@@ -36,7 +36,7 @@ from gfem._engine.domain import boundary_region, domain_key, em_region, h1_space
 from gfem._engine.fields import fe_space
 from gfem._engine.mesh import EngineMesh
 from gfem._engine.runtime import task_manager
-from gfem._engine.sensitivity import FieldPair
+from gfem._engine.sensitivity import FieldPair, ShapeTerm
 from gfem._field import FieldMap
 from gfem._linalg import KINDS, Handle, Operator, prepare
 from gfem.errors import RegionNotFoundError
@@ -274,6 +274,23 @@ class ElectrostaticRule:
                 weights={"grad_grad": eps0},
                 order=self.options.order,
                 domain=domain,
+            )
+        ]
+
+    def shape_terms(self, model: Model) -> list[ShapeTerm]:
+        """The operator ``int Re(eps_r) grad u . grad v`` as a shape term.
+
+        The pairs' weight ``eps0`` and the length power 1 make it SI, as for
+        the permittivity. The terminal liftings are DOF values (1 on a
+        terminal's DOFs, 0 elsewhere), so they do not move with the nodes.
+        """
+        _, built = self._space(model)
+        return [
+            ShapeTerm(
+                "grad_grad",
+                "gradient",
+                coefficient=permittivity(model, built),
+                length_power=1,
             )
         ]
 
