@@ -9,25 +9,25 @@ it. ``eigenmode/r20`` is order 2 (one mode near 7.78 GHz), ``r5_p1`` order 1
 
 - Palace reports no mode near the 7.78 GHz target: its first modes are at
   16.67 GHz (r20) and 16.11 GHz (r5_p1). gfem finds the quarter-wave mode
-  Palace missed, at 7.683 GHz (r20) and 7.254 GHz (r5_p1), with backward
-  errors of 4e-10 and 2e-9, so each case solves for one more mode than
-  Palace's ``N``, and Palace's modes are matched by frequency.
-- Parity: Palace bisects the elements of "under-resolved interior
-  boundaries" next to the PEC sheet before solving (1 385 more elements on
-  r20, 562 on r5_p1; ``palace.stdout``), so the two codes do not
-  discretize the same mesh. The modes agree to 2e-5..8e-5 in Re f and
-  0.2-8 % in Q, against a mesh-to-mesh change of 3 % in f: well inside the
-  discretization error, but not the same-mesh parity of 1e-5 / 1e-3 that
-  the driven cases reach. That check is an expected failure until Palace is
-  rerun on the mesh gfem reads.
+  Palace missed, at 7.683 GHz (r20) and 7.254 GHz (r5_p1), so each case
+  solves for one more mode than Palace's ``N``, and Palace's modes are
+  matched by frequency.
+- Parity against Palace on the mesh gfem reads, both codes at eigen
+  tolerance 1e-10 (``output/palace_nobisect_tol1e-10``; gfem's default).
+  Palace's default ``Model.RefineCrackElements`` bisects the elements of
+  "under-resolved interior boundaries" next to the PEC sheet before
+  solving (1 385 more elements on r20, 562 on r5_p1; ``palace.stdout``):
+  those runs, ``output/palace``, differ from gfem by 2e-5..8e-5 in Re f.
+  The parity runs turn that refinement off and tighten Palace's eigen and
+  linear tolerances from gsim's 1e-6 to 1e-10: at 1e-6 these port-loaded
+  modes are not resolved to the parity gates in either code (Palace's Q
+  moves by up to 12 % and Re f by up to 1.5e-3, ``output/palace_nobisect``;
+  gfem's Re f by 1e-5 and Q by 0.5 %).
 - Golden baselines: gfem's own values on these meshes, for regressions.
-- Sapphire's loss tangent is anisotropic in Palace (3e-5, 3e-5, 8.6e-5
-  along its axes); `gfem.Material` takes one value, so the model uses
-  their mean (the smallest instead moves Q by 4 % on the high-Q 21.8 GHz
-  mode of r5_p1, by under 0.2 % on the others).
-- Wall time within 1.5x Palace's (r20 52 s against 1 184 s, r5_p1 18 s
-  against 221 s, at a load average of about 9); peak RSS 2.6 GiB against
-  Palace's 2.0 GiB on r20.
+- Sapphire's loss tangent is per axis (3e-5, 3e-5, 8.6e-5 along its
+  axes), as in Palace's ``LossTan``.
+- Wall time within 1.5x Palace's gsim-default run (``run.json``); peak RSS
+  is printed.
 """
 
 import json
@@ -46,17 +46,22 @@ THREADS = 4
 #: The ticket's parity tolerances (relative), on Re f and Q.
 PARITY_F, PARITY_Q = 1e-5, 1e-3
 #: Palace's run on the imported mesh (``Model.RefineCrackElements`` false:
-#: no local bisection next to the PEC sheet), beside the original run.
-SAME_MESH = "palace_nobisect"
+#: no local bisection next to the PEC sheet; eigen and linear tolerances
+#: 1e-10), beside the original run.
+SAME_MESH = "palace_nobisect_tol1e-10"
+#: Relative tolerances (Re f, Q) of the golden check: repeated solves
+#: spread by 1e-9 in Re f and 1e-5 in Q (threaded assembly round-off; the Q
+#: 2400 mode of r5_p1).
+GOLDEN_RTOL = 1e-7, 5e-5
 #: gfem on the reference meshes: (Re f in Hz, Q) per mode, nearest the target
 #: first.
 GOLDEN = {
-    "r20": [(7.682749319e9, 1473.177009), (16.671391261e9, 76.723288)],
+    "r20": [(7.682751588e9, 1472.297987), (16.671307772e9, 76.770489)],
     "r5_p1": [
-        (7.253506351e9, 1803.908682),
-        (16.114148028e9, 85.097380),
-        (21.795779488e9, 2392.007220),
-        (31.794563163e9, 47.730349),
+        (7.253515900e9, 1803.404767),
+        (16.113966300e9, 85.511569),
+        (21.795791020e9, 2403.167),
+        (31.793035140e9, 47.892295),
     ],
 }
 
@@ -127,7 +132,10 @@ def solved(request, reference):
     model, config = _model(case)
     eigen = config["Solver"]["Eigenmode"]
     problem = gfem.Eigenmode(target=eigen["Target"] * 1e9, n_modes=eigen["N"] + 1)
-    options = gfem.SolverOptions(order=config["Solver"]["Order"], threads=THREADS)
+    options = gfem.SolverOptions(
+        order=config["Solver"]["Order"],
+        threads=THREADS,
+    )
     load = os.getloadavg()[0]
     start = time.perf_counter()
     result = gfem.solve(model, problem, options=options)
@@ -146,17 +154,14 @@ def solved(request, reference):
 def test_eigenmode_golden_baseline(solved):
     name, _, result, _, _ = solved
     golden = np.array(GOLDEN[name])
-    np.testing.assert_allclose(result.frequency, golden[:, 0], rtol=1e-7)
-    np.testing.assert_allclose(result.q, golden[:, 1], rtol=1e-5)
-    assert (np.asarray(result.error) <= 1e-6).all()
+    rtol_f, rtol_q = GOLDEN_RTOL
+    np.testing.assert_allclose(result.frequency, golden[:, 0], rtol=rtol_f)
+    np.testing.assert_allclose(result.q, golden[:, 1], rtol=rtol_q)
+    assert (np.asarray(result.error) <= gfem.SolverOptions().eigen_tolerance).all()
     # the quarter-wave mode Palace missed, nearest the 7.78 GHz target
     assert abs(float(result.frequency[0]) - 7.78e9) < 0.6e9
 
 
-@pytest.mark.xfail(
-    reason="Palace bisects elements next to the PEC sheet: not the same mesh",
-    strict=True,
-)
 def test_eigenmode_parity_with_palace(solved):
     name, case, result, _, _ = solved
     eig, q_port = _palace(case)
