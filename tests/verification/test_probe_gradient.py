@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import structured_meshes as sm
+from finite_differences import assert_gradient_matches, unit_directions
 
 import gfem
 
@@ -61,11 +62,8 @@ def test_probe_objective_gradient_matches_finite_differences(line, solver):
     eps = jnp.asarray(rng.uniform(2.0, 6.0, n))
     grad = jax.grad(objective)(eps)
     assert np.abs(np.asarray(grad)).max() > 0
-    h = 1e-5
-    for _ in range(2):
-        d = rng.standard_normal(n)
-        fd = (objective(eps + h * d) - objective(eps - h * d)) / (2 * h)
-        np.testing.assert_allclose(jnp.dot(grad, d), fd, rtol=1e-6)
+    directions = unit_directions(rng, eps.shape, 2)
+    assert_gradient_matches(objective, eps, directions, step=1e-2, grad=grad)
 
 
 def test_probe_under_jit_matches_eager(line):
