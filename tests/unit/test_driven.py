@@ -341,21 +341,6 @@ def test_unsupported_or_inconsistent_driven_inputs_raise(
         _s(model, problem)
 
 
-def test_wave_ports_are_not_available_yet(tmp_path):
-    mesh = gfem.Mesh.from_gmsh(
-        sm.write_msh22(tmp_path / "l.msh", sm.strip_line(L, W, H, (2, 1, 1))),
-        length_unit="mm",
-    )
-    model = gfem.Model(
-        mesh,
-        materials={"dielectric": gfem.Material(eps_r=EPS)},
-        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
-        ports=[gfem.WavePort("p1", "port1"), gfem.LumpedPort("p2", "port2", "+z")],
-    )
-    with pytest.raises(NotImplementedError, match="WavePort"):
-        _s(model)
-
-
 def test_result_repr_and_db(line):
     result = _s(line)
     assert "p1" in repr(result)

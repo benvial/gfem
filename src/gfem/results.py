@@ -224,7 +224,8 @@ class PortModeResult:
             most 10x that of an exact solve.
         solved: ``(n_freq,)`` bool, True where the mode is an exact port mode
             solve; elsewhere it comes from the reduced port mode model.
-        e_field: The mode's electric field, normalized to 1 W.
+        e_field: The mode's electric field, normalized to 1 W; ``None`` on a
+            driven result that keeps no fields.
     """
 
     port: str
@@ -234,7 +235,7 @@ class PortModeResult:
     Z_PV: jax.Array
     residual: jax.Array
     solved: jax.Array
-    e_field: PortModeField
+    e_field: PortModeField | None = None
 
     @property
     def n_eff(self) -> jax.Array:
@@ -652,12 +653,24 @@ class DrivenResult:
         kept: ``(frequency in Hz, excited port)`` of each of `e_fields`
             (static labels), frequency-major.
         sweep: How the frequencies were solved (`SweepInfo`).
+        port_modes: The mode of each wave port over the frequencies
+            (`PortModeResult`, by port name), as the port mode sweep found
+            it before the 3D solve; empty without wave ports. Their fields
+            are kept with ``Driven(keep_fields=...)``. Constants of the
+            solve: not differentiable.
+        offsets: ``(port name, distance in m)`` of each wave port (static
+            labels; ``dict(result.offsets)``), from ``WavePort(offset=...)``:
+            S of a wave port is referred to
+            a plane that far inside the domain, ``S_ij`` multiplied by
+            ``exp(gamma_i d_i) exp(gamma_j d_j)``.
     """
 
     s: NetworkParameters
     e_fields: Sequence[Field] = ()
     kept: tuple[tuple[float, str], ...] = ()
     sweep: SweepInfo | None = None
+    port_modes: Mapping[str, PortModeResult] = dataclasses.field(default_factory=dict)
+    offsets: tuple[tuple[str, float], ...] = ()
 
     def __post_init__(self) -> None:
         """Hold the fields as a sequence matching their labels."""
@@ -667,6 +680,12 @@ class DrivenResult:
             object.__setattr__(self, "sweep", SweepInfo.uniform(self.s.frequency))
         object.__setattr__(
             self, "kept", tuple((float(f), str(p)) for f, p in self.kept)
+        )
+        object.__setattr__(self, "port_modes", dict(self.port_modes))
+        object.__setattr__(
+            self,
+            "offsets",
+            tuple((str(k), float(v)) for k, v in dict(self.offsets).items()),
         )
         if len(self.e_fields) != len(self.kept):
             raise ValueError(
@@ -732,4 +751,4 @@ class DrivenResult:
         )
 
 
-register_fields(DrivenResult, ("s", "e_fields"))
+register_fields(DrivenResult, ("s", "e_fields", "port_modes"))

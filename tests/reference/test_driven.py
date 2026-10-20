@@ -86,9 +86,27 @@ def _model(case: Path) -> gfem.Model:
         )
         for p in sorted(bnd["LumpedPort"], key=lambda p: p["Index"])
     ]
+    # gsim's WavePortPEC: perfect conductors in the port mode problem only
+    pec_edges = tuple(
+        name[2, t] for t in bnd.get("WavePortPEC", {}).get("Attributes", [])
+    )
+    ports += [
+        gfem.WavePort(
+            f"p{p['Index']}",
+            name[2, p["Attributes"][0]],
+            mode=p["Mode"],
+            offset=p["Offset"] * unit,
+            pec_edges=pec_edges,
+        )
+        for p in sorted(bnd.get("WavePort", []), key=lambda p: p["Index"])
+    ]
     shells = [c.surface for c in conductors]
+    # with wave ports the metal reaches the line's end faces, which absorb
+    ends = tuple(a.surface for a in absorbing) if bnd.get("WavePort") else ()
     excluded = tuple(
-        gfem.enclosed_by(s, s.replace("_xy", "_z")) for s in shells if s.endswith("_xy")
+        gfem.enclosed_by(s, s.replace("_xy", "_z"), *ends)
+        for s in shells
+        if s.endswith("_xy")
     )
     return gfem.Model(
         mesh,
@@ -369,3 +387,104 @@ def test_adaptive_sweep_time_against_palace(reference, name):
     assert result.sweep.converged
     assert wall <= 1.5 * palace_wall
     assert rss <= 1.5 * palace_rss
+
+
+# --- wave ports -------------------------------------------------------------------
+
+#: driven/r8_wp grid rows checked by uniform solves: 1, 9.94, 50.0 and 100 GHz.
+WP_ROWS = (0, 27, 148, 299)
+#: Exact port mode solves allowed per wave port over the 300-point grid.
+WP_EXACT = 12
+
+
+def test_wave_port_parity_s_matches_palace(reference):
+    case = reference / "r8_wp"
+    model = _model(case)
+    assert {type(p) for p in model.ports} == {gfem.WavePort}
+    frequency, palace = _palace(case)
+    rows = list(WP_ROWS)
+    options = gfem.SolverOptions(threads=THREADS)
+    start = time.perf_counter()
+    result = gfem.solve(model, gfem.Driven(frequency=frequency[rows]), options=options)
+    wall = time.perf_counter() - start
+    s = np.asarray(result.s.values)
+    diff = np.abs(s - palace[rows]).max(axis=(1, 2))
+    print(  # noqa: T201
+        f"r8_wp uniform: max |dS| vs Palace {np.round(diff, 9).tolist()} at "
+        f"{np.round(frequency[rows] / 1e9, 3).tolist()} GHz; n_eff "
+        f"{np.round(np.asarray(result.port_modes['p1'].n_eff), 6).tolist()}; "
+        f"{wall:.1f} s, peak RSS {_peak_rss_gib():.2f} GiB, load {os.getloadavg()}"
+    )
+    assert diff.max() <= TOLERANCE
+    np.testing.assert_allclose(s, np.swapaxes(s, 1, 2), atol=1e-6)
+
+
+def test_wave_port_adaptive_matches_palace_and_uniform(reference):
+    model, frequency, palace, result, wall, rss = _adaptive(reference, "r8_wp")
+    _report("r8_wp", result, wall, rss)
+    assert result.sweep.converged
+    for name, mode in result.port_modes.items():
+        exact = int(np.asarray(mode.solved).sum())
+        print(f"r8_wp port {name}: {exact} exact port mode solves")  # noqa: T201
+        assert exact <= WP_EXACT
+    adaptive = np.asarray(result.s.values)
+    diff = np.abs(adaptive - palace).max(axis=(1, 2))
+    print(  # noqa: T201
+        f"r8_wp adaptive: max |dS| vs Palace {diff.max():.3g} at "
+        f"{frequency[diff.argmax()] / 1e9:.3f} GHz"
+    )
+    assert diff.max() <= TOLERANCE
+    solved = np.array(result.sweep.solved)
+    rows = []
+    for f in CHECKS:
+        nearest = np.argsort(np.abs(frequency - f * 1e9))
+        rows.append(next(int(i) for i in nearest if not solved[i]))
+    options = gfem.SolverOptions(threads=THREADS)
+    uniform = gfem.solve(model, gfem.Driven(frequency=frequency[rows]), options=options)
+    du = np.abs(np.asarray(uniform.s.values) - adaptive[rows]).max(axis=(1, 2))
+    print(  # noqa: T201
+        f"r8_wp: |dS| adaptive vs uniform {np.round(du, 9).tolist()} at "
+        f"{np.round(frequency[rows] / 1e9, 3).tolist()} GHz"
+    )
+    assert du.max() <= TOLERANCE
+
+
+def test_wave_port_low_frequency_backward_errors(reference):
+    """Recorded, not a gate: the E-field formulation's low-frequency floor."""
+    case = reference / "r8_wp"
+    model = _model(case)
+    frequency = np.array([1e9, 10e9, 100e9])
+    options = gfem.SolverOptions(threads=THREADS, linear_solver="direct")
+    rule = DrivenRule(model, gfem.Driven(frequency=frequency), options)
+    with task_manager(THREADS):
+        ports = rule._ports(model)
+        op = ports.operator
+        free = np.array(list(op.space.FreeDofs()), dtype=bool)
+        for k, f in enumerate(frequency):
+            omega = 2 * math.pi * f
+            b = ports.system.rhs(omega)
+            handle = prepare(
+                Operator(op.form(omega), op.space.FreeDofs()),
+                symmetry="complex_symmetric",
+                kind="direct",
+                width=b.shape[1],
+            )
+            x = handle.solve(b)
+            handle.free()
+            parts = [
+                complex(piece.theta(omega)) * op.apply(j, x)
+                for j, piece in enumerate(op.pieces)
+            ]
+            r = (sum(parts) - b)[free]
+            scale = sum(np.linalg.norm(p[free]) for p in parts) + np.linalg.norm(
+                b[free]
+            )
+            port = [
+                float(c.sweep.residual[k]) if c.sweep.solved[k] else math.nan
+                for c in ports.waves
+            ]
+            print(  # noqa: T201
+                f"r8_wp {f / 1e9:g} GHz: 3D backward error (direct) "
+                f"{np.linalg.norm(r) / scale:.2e}; port mode backward error "
+                f"(exact solves) {port}"
+            )

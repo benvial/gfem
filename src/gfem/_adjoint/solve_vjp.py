@@ -39,7 +39,9 @@ A rule provides: ``form`` (its operator family in the property-to-form-term
 table), ``differentiable_outputs``, ``output_specs(model)`` (name ->
 ``jax.ShapeDtypeStruct``), ``role(kind)`` (``"read"`` or ``"unread"``),
 ``forward(model, *, keep)``, ``backward(model, entry, cotangents)``,
-``options`` and ``problem``. Host calls get the model and a shallow copy of
+``options`` and ``problem``, and optionally ``unsupported_input(kind)``
+(a reason, or ``None``) for read inputs the rule itself cannot
+differentiate. Host calls get the model and a shallow copy of
 the rule whose ``problem`` holds the call's concrete values, so a rule reads
 problem values from ``self.problem`` and never sees a tracer there.
 """
@@ -247,7 +249,10 @@ def _wanted(rule: Any, kinds: list[tuple], perturbed: list[bool]) -> tuple[int, 
     for i, (kind, moving) in enumerate(zip(kinds, perturbed, strict=True)):
         if not moving or rule.role(kind) == "unread":
             continue
-        reason = unsupported(rule.form, kind)
+        own = getattr(rule, "unsupported_input", None)
+        reason = None if own is None else own(kind)
+        if reason is None:
+            reason = unsupported(rule.form, kind)
         if reason is not None:
             raise NonDifferentiableError(
                 f"gfem cannot differentiate {rule.form} results with respect to "
