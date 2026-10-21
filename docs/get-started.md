@@ -7,10 +7,10 @@ gfem is under development towards v0.1. Nothing here is a stable API yet.
 gfem is not on PyPI yet. Build the wheel from a checkout of the repository and
 install it:
 
-```bash
-uv build --wheel             # writes dist/gfem-<version>-py3-none-any.whl
-pip install dist/gfem-*.whl  # CPU
-```
+{{ install }}
+
+`uv build` writes `dist/gfem-<version>-py3-none-any.whl`; the plain install
+is the CPU build.
 
 Optional extras go after the wheel path:
 

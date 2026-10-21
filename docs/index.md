@@ -1,11 +1,11 @@
+---
+layout: gfem-home
+---
+
 # gfem
 
-Differentiable finite-element electromagnetics in Python: gradients of full-wave
-results with respect to geometry and materials.
-
-Start with {doc}`get-started`, then the {doc}`topology tutorial
-<tutorials/topology>`. {doc}`capabilities` lists what gfem solves and
-differentiates.
+<!-- The front page is layout/gfem-home.html (its copy and figures live there);
+this file holds the page title and the site tree. -->
 
 ```{toctree}
 :hidden:

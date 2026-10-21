@@ -1,7 +1,8 @@
 {#- gfem override of shibuya 2026.7.12 partials/site-head.html. Upstream copy: _templates/upstream/partials/site-head.html.
     Changes, marked "gfem:": (1) the Menu button is a worded utility button shown below 900px (CSS), not the
     md:hidden hamburger; (2) on docs pages the drawer (#head-nav) also carries the site tree, so one Menu
-    replaces header nav and sidebar together. Everything else is upstream, so the diff stays small. -#}
+    replaces header nav and sidebar together; (3) the outer element is a <header> landmark (was: div).
+    Everything else is upstream, so the diff stays small. -#}
 {%- macro render_logo(src, classname) -%}
   {%- if src and src.startswith(('https://', 'http://')) -%}
     <img class="{{ classname }}" src="{{ src }}" alt="{{ project }}" height="28" loading="lazy" />
@@ -12,7 +13,7 @@
   {%- endif -%}
 {%- endmacro -%}
 
-<div class="sy-head">
+<header class="sy-head">{#- gfem: header landmark (was: div) -#}
   <div class="sy-head-blur"></div>
   <div class="sy-head-inner sy-container mx-auto">
     <a class="sy-head-brand" href="{% if theme_logo_target %}{{ theme_logo_target }}{% else %}{{ pathto(root_doc) }}{% endif %}">
@@ -47,4 +48,4 @@
       </button>
     </div>
   </div>
-</div>
+</header>

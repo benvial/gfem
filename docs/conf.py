@@ -4,9 +4,12 @@ Build with ``uv run --python 3.13 --group docs --group site sphinx-build docs
 docs/_build/html``.
 """
 
+import json
 import os
 import sys
 from pathlib import Path
+
+from sphinx.errors import ConfigError
 
 DOCS = Path(__file__).resolve().parent
 
@@ -204,3 +207,78 @@ extensions.append("gfem_capabilities")
 # empty until a remote exists, e.g. f"{REPO_URL}/blob/main/".
 gfem_capabilities_source_url = ""
 # --- end Capabilities ------------------------------------------------------------
+
+# --- Front page: layout/gfem-home.html (index.md: `layout: gfem-home`) -----------
+# The copy is static in the template; every number or quoted line reaches it here,
+# or through gfem_capabilities (the compact matrix and the Palace rows, above).
+
+# The repository URL; empty until a public remote exists (handoff checklist).
+REPO_URL = ""
+# The install line, in one place: the front page shows it and get-started.md uses
+# it through the {{ install }} substitution. At PyPI publishing it becomes
+# {"line": "pip install gfem", "note": ""} and the front page's "not on PyPI yet"
+# sentence goes.
+if REPO_URL:
+    gfem_install = {"line": f'pip install "gfem @ git+{REPO_URL}"', "note": ""}
+else:
+    gfem_install = {
+        "line": "uv build --wheel && pip install dist/gfem-*.whl",
+        "note": "Build the wheel in a checkout of the repository.",
+    }
+myst_enable_extensions += ["substitution"]
+myst_substitutions = {"install": f"```bash\n{gfem_install['line']}\n```"}
+
+
+def _code_line(notebook: Path) -> dict:
+    """The tutorial's value_and_grad line, split around ``jax.value_and_grad(``."""
+    cells = json.loads(notebook.read_text())["cells"]
+    lines = [
+        line.rstrip("\n")
+        for cell in cells
+        if "decisive" in cell.get("metadata", {}).get("tags", [])
+        for line in cell["source"]
+        if line.startswith("value_and_grad = ")
+    ]
+    call = "jax.value_and_grad("
+    if len(lines) != 1 or call not in lines[0]:
+        msg = (
+            f"front page: expected one `value_and_grad = ...{call}...` line in a "
+            f"`decisive` cell of {notebook.name}, found {lines}"
+        )
+        raise ConfigError(msg)
+    head, args = lines[0].split(call, 1)
+    return {"head": head, "args": args}
+
+
+def _front(path: Path) -> dict | None:
+    """The hero data written by tools/front_page_data.py, or None when absent."""
+    if not path.exists():
+        if os.environ.get("GFEM_DOCS_STRICT") == "1":
+            msg = (
+                f"front page: {path.relative_to(DOCS.parent)} is missing; run "
+                "`uv run python tools/front_page_data.py` first (GFEM_DOCS_STRICT=1)"
+            )
+            raise ConfigError(msg)
+        return None  # a local build: the hero frame says how to generate it
+    data = json.loads(path.read_text())
+    final = data["final"]  # J of each etch variant after the optimisation
+    return {
+        "steps": len(data["history"]),
+        "final": {name: f"{value:.3f}" for name, value in final.items()},
+        "worst": f"{max(final.values()):.3f}",
+        "balance": f"{data['balance']:.1e}",
+        # inlined into a <script> (no extra fetch); "</" cannot close the element
+        "topo_json": json.dumps(data, separators=(",", ":")).replace("</", "<\\/"),
+    }
+
+
+html_context["gfem_front"] = _front(DOCS / "_generated" / "front-page.json")
+html_context["gfem_code_line"] = _code_line(DOCS / "tutorials" / "topology.ipynb")
+html_context["gfem_install"] = gfem_install
+# The front-page header: Get started, Tutorials, Capabilities (no Recipes, no API).
+html_context["gfem_nav_home"] = [
+    link
+    for link in html_theme_options["nav_links"]
+    if link["title"] in {"Get started", "Tutorials", "Capabilities"}
+]
+# --- end front page ---------------------------------------------------------------
