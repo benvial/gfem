@@ -44,8 +44,9 @@ class SolverOptions:
             for driven, BDDC + conjugate gradients for electrostatic, direct
             for eigenmode), ``"bddc_gmres"`` (BDDC with the Krylov method
             that fits the operator: conjugate gradients for electrostatic)
-            or ``"direct"`` (sparse Cholesky, one factorization reused for
-            every right-hand side).
+            or ``"direct"`` (one LDL^T factorization reused for every
+            right-hand side: MKL PARDISO with METIS ordering when the ``mkl``
+            extra is installed, NGSolve's sparse Cholesky otherwise).
         tolerance: Relative residual of iterative solves.
         device: Where the direct solver runs: ``"cpu"``, ``"cuda"`` or
             ``"cuda:N"`` (the N-th GPU). A GPU needs
