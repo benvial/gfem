@@ -29,8 +29,8 @@ version = release = gfem.__version__
 
 # The repository and the published site. REPO_URL also switches the install
 # line below to a pip-from-git install.
-REPO_URL = "https://github.com/benvial/demo"
-html_baseurl = "https://benvial.github.io/demo/"
+REPO_URL = "https://github.com/benvial/gfem"
+html_baseurl = "https://benvial.github.io/gfem/"
 
 extensions = [
     "myst_nb",  # also loads myst_parser for the .md pages
