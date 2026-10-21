@@ -85,6 +85,16 @@ def test_direct_is_pardiso_with_metis_exactly_when_mkl_is_installed(
     np.testing.assert_allclose(handle.solve(B, transpose=True), X, rtol=1e-14)
 
 
+def test_direct_handles_an_operator_without_free_dofs(built):
+    # every DOF fixed (an electrostatic terminal and ground on a one-cell
+    # plate): PARDISO refuses an empty matrix, so this cannot reach it
+    op, space = _laplace(built)
+    none_free = ngs.BitArray(space.ndof)
+    none_free.Clear()
+    handle = prepare(Operator(op.form, none_free), symmetry="hermitian", kind="direct")
+    np.testing.assert_array_equal(handle.solve(np.ones(space.ndof)), 0)
+
+
 def test_direct_memory_counts_the_factors(built):
     op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
     handle = prepare(op, symmetry="complex_symmetric", kind="direct")

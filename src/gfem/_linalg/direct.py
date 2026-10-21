@@ -77,7 +77,8 @@ class DirectHandle(NgsHandle):
     @staticmethod
     def _factor(matrix: ngs.BaseMatrix, freedofs: ngs.BitArray | None):
         inverse = INVERSE
-        if pardiso_available():
+        free = matrix.height if freedofs is None else freedofs.NumSet()
+        if pardiso_available() and free > 0:  # PARDISO refuses an empty matrix
             inverse = PARDISO
             matrix.inverse_flags = pyngcore.Flags(PARDISO_FLAGS)  # ty: ignore[unresolved-attribute]
         if freedofs is None:
