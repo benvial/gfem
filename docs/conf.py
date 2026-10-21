@@ -40,6 +40,13 @@ nb_merge_streams = True  # one output box per cell, not one per print()
 nb_output_stderr = "warn"  # stray stderr is a warning, so -W fails on it
 os.environ.setdefault("JAX_PLATFORMS", "cpu")  # no "CUDA jaxlib" stderr line
 
+# --- Figure pipeline -----------------------------------------------------------
+# Executing kernels read docs/_ipython, whose startup file applies the gfem
+# matplotlib style (docs/_mpl) and displays every figure as a light/dark pair
+# (docs/_ext/gfem_figures.py). With "off" the committed outputs are shown as is.
+os.environ.setdefault("IPYTHONDIR", str(DOCS / "_ipython"))
+# --- end figure pipeline -------------------------------------------------------
+
 # --- Docstrings: gfem uses Google style ----------------------------------------
 napoleon_google_docstring = True
 napoleon_numpy_docstring = False
