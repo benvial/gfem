@@ -27,6 +27,11 @@ project = "gfem"
 html_title = "gfem"
 version = release = gfem.__version__
 
+# The repository and the published site. REPO_URL also switches the install
+# line below to a pip-from-git install.
+REPO_URL = "https://github.com/benvial/demo"
+html_baseurl = "https://benvial.github.io/demo/"
+
 extensions = [
     "myst_nb",  # also loads myst_parser for the .md pages
     "sphinx.ext.napoleon",
@@ -132,7 +137,7 @@ ogp_image_alt = (
 )
 ogp_social_cards = {"enable": False}
 ogp_custom_meta_tags = ['<meta name="twitter:card" content="summary_large_image">']
-# ogp_site_url and html_baseurl: set once the public remote exists.
+ogp_site_url = html_baseurl
 # --- end theme ---------------------------------------------------------------------
 
 # --- Search: Pagefind, with Sphinx's search page as the fallback ------------------
@@ -216,9 +221,8 @@ intersphinx_mapping = {
 # compact matrix and Palace rows); no html_context entry is needed.
 # docs/_ext is on sys.path (the API reference block above).
 extensions.append("gfem_capabilities")
-# Base URL the test paths are appended to (cells link to their test file);
-# empty until a remote exists, e.g. f"{REPO_URL}/blob/main/".
-gfem_capabilities_source_url = ""
+# Base URL the test paths are appended to (cells link to their test file).
+gfem_capabilities_source_url = f"{REPO_URL}/blob/main/"
 # --- end Capabilities ------------------------------------------------------------
 
 # --- Front page: layout/gfem-home.html (index.md: `layout: gfem-home`) -----------
@@ -230,9 +234,6 @@ gfem_capabilities_source_url = ""
 # floor, the install line and its note) or through gfem_capabilities (the
 # compact matrix, the provenance line, the Palace rows, above).
 
-# The repository URL; empty until a public remote exists. Setting it also needs
-# html_baseurl, ogp_site_url and gfem_capabilities_source_url.
-REPO_URL = ""
 # The install line and its note, in one place: the front page and get-started.md
 # (the {{ install }} substitution) show both. At PyPI publishing this becomes
 # {"line": "pip install gfem", "note": ""}.
