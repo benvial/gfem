@@ -8,11 +8,11 @@
       gfem_install       the install line and its note (one conf.py value)
       gfem_status        the version label, from gfem.__version__ (conf.py)
       gfem_python        the Python floor, from requires-python in pyproject.toml (conf.py)
-      gfem_capabilities  the gradient matrix, its provenance and the Palace rows (docs/_ext/gfem_capabilities.py) -#}
+      gfem_capabilities  the gradient matrix, its provenance and the Palace rows (docs/_ext/gfem_capabilities.py)
+    Status marks are gfem.css's .gfem-glyph inside a .gfem-verified / .gfem-zero / .gfem-raises parent. -#}
 {%- extends "layout.html" -%}
 {%- set front = gfem_front -%}
 {%- set caps = gfem_capabilities -%}
-{%- set marks = {"verified": "dot", "zero": "dash", "raises": "ring"} -%}
 
 {%- block extrahead %}
   {{ super() }}
@@ -89,12 +89,12 @@
             {%- for row in caps.rows %}
             <tr><th scope="row">{{ row.label }}<span>{{ row.detail }}</span></th>
               {%- for col in caps.columns %}{% set cell = row.cells|selectattr("column", "equalto", col.key)|first %}
-              <td data-h="{{ col.label }}"><span class="mark{% if cell.status == 'raises' %} raises{% endif %}"><span class="{{ marks[cell.status] }}"></span>{{ cell.label }}</span></td>
+              <td data-h="{{ col.label }}"><span class="mark gfem-{{ cell.status }}"><span class="gfem-glyph"></span>{{ cell.label }}</span></td>
               {%- endfor %}</tr>
             {%- endfor %}
           </tbody>
         </table>
-        <div class="legend"><span class="key"><span class="dot"></span>checked against finite differences</span><span class="key"><span class="dash"></span>exact zero: the physics never reads the input</span><span class="key"><span class="ring"></span>raises <code>NonDifferentiableError</code> unless named</span></div>
+        <div class="legend"><span class="key gfem-verified"><span class="gfem-glyph"></span>checked against finite differences</span><span class="key gfem-zero"><span class="gfem-glyph"></span>exact zero: the physics never reads the input</span><span class="key gfem-raises"><span class="gfem-glyph"></span>raises <code>NonDifferentiableError</code> unless named</span></div>
       </div>
     </section>
 

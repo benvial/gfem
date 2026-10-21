@@ -16,7 +16,6 @@
 .gfem-home .btn:hover { background: var(--accent-hover); }
 .gfem-home .btn.quiet { background: none; color: var(--ink); border-color: var(--hair); }
 .gfem-home .btn.quiet:hover { border-color: var(--ink); }
-.gfem-home .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink); display: inline-block; }
 .gfem-home .gfem-foot .sy-foot-inner { max-width: 1320px; padding: 0 var(--s-7); }
 .gfem-home .sy-foot.gfem-foot { border-top: 0; padding-top: 0; }
 .gfem-home .gfem-foot-row { border-top: 1px solid var(--hair); padding-top: var(--s-5); }
@@ -82,12 +81,9 @@ table.matrix th, table.matrix td { text-align: left; padding: var(--s-3) var(--s
 table.matrix thead th { border-top: 1px solid var(--ink); font-weight: 500; color: var(--ink); vertical-align: bottom; }
 table.matrix tbody th { font-weight: 600; color: var(--ink); width: 30%; }
 table.matrix tbody th span { display: block; font-weight: 400; color: var(--muted); }
+/* the marks themselves are gfem.css's .gfem-glyph */
 .mark { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; color: var(--muted); font: var(--t-data); }
-.mark .dot { flex: none; }
-.ring { width: 12px; height: 12px; border: 1px solid var(--ink); border-radius: 50%; position: relative; flex: none; }
-.ring::after { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--ink); transform: rotate(45deg); }
-.mark.raises { color: var(--ink); font-weight: 500; }
-.dash { width: 10px; height: 1px; background: var(--muted); flex: none; }
+.mark.gfem-raises { color: var(--ink); font-weight: 500; }
 .legend .key { display: inline-flex; align-items: center; gap: 7px; }
 .legend { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-5); padding-top: var(--s-3); font: var(--t-small); color: var(--muted); }
 
