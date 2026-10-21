@@ -139,6 +139,7 @@ def test_the_sensitivity_ramp_swaps_to_its_dark_colormap(gfem_figures, fig):
 
 
 def test_figures_stay_paired_after_pyplot_resets_the_formatters(gfem_figures, fig):
+    pytest.importorskip("IPython")  # docs group only; CI's unit job has no kernel
     from IPython.core.interactiveshell import InteractiveShell
 
     figure, _ = fig
