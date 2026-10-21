@@ -5,6 +5,9 @@ Small problems (a few thousand DOFs, well under 100 MB of device memory), so a
 Cholesky on the CPU.
 """
 
+import logging
+from pathlib import Path
+
 import ngsolve as ngs
 import numpy as np
 import pytest
@@ -14,6 +17,9 @@ import gfem
 from gfem._engine import quadrature
 from gfem._engine.mesh import to_ngsolve
 from gfem._linalg import Operator, cudss, prepare
+from gfem._linalg.cudss import CudssHandle
+
+DATA = Path(__file__).parents[1] / "unit" / "data"
 
 
 @pytest.fixture(scope="module")
@@ -147,3 +153,106 @@ def test_electrostatic_capacitance_on_the_gpu(tmp_path):
         return gfem.solve(model, problem, options=options).capacitance
 
     np.testing.assert_allclose(capacitance("cuda"), capacitance("cpu"), rtol=1e-9)
+
+
+# --- one solver plan per sweep ----------------------------------------------------
+
+
+@pytest.fixture
+def plans(monkeypatch):
+    """Count cuDSS plans (nvmath ``DirectSolver.plan`` calls)."""
+    solver = cudss._nvmath().DirectSolver
+    plan = solver.plan
+    calls = []
+
+    def spy(self, *args, **kwargs):
+        calls.append(1)
+        return plan(self, *args, **kwargs)
+
+    monkeypatch.setattr(solver, "plan", spy)
+    return calls
+
+
+def test_refactorization_solves_like_a_fresh_handle_on_one_plan(built, plans, caplog):
+    handle = prepare(
+        _maxwell(built, k=4.0)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+        device="cuda",
+        width=2,
+    )
+    op, space = _maxwell(built, k=5.0)
+    free = np.array(list(space.FreeDofs()))
+    with caplog.at_level(logging.WARNING):
+        handle.refactor(op)
+    assert len(plans) == 1
+    # nvmath warns at every reset of the matrix; a sweep resets it on purpose
+    assert "Resetting the LHS" not in caplog.text
+    fresh = prepare(
+        _maxwell(built, k=5.0)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+        device="cuda",
+        width=2,
+    )
+    B = _rhs(space.ndof, 3, seed=5)
+    X, ref = handle.solve(B), fresh.solve(B)
+    assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
+    assert _residual(handle, B, X, free) < 1e-10
+    handle.free()
+    fresh.free()
+
+
+def test_a_changed_pattern_plans_again(built, plans, monkeypatch):
+    # one space keeps its pattern, so a changed one is simulated
+    handle = prepare(
+        _maxwell(built, k=4.0)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+        device="cuda",
+    )
+    monkeypatch.setattr(cudss, "same_pattern", lambda *_: False)
+    op, space = _maxwell(built, k=5.0)
+    handle.refactor(op)
+    assert len(plans) == 2
+    free = np.array(list(space.FreeDofs()))
+    B = _rhs(space.ndof, 1, seed=6)
+    assert _residual(handle, B, handle.solve(B), free) < 1e-10
+    handle.free()
+
+
+def _plate_line(second):
+    """The unit tests' parallel-plate line: a wave port and a ``second`` port."""
+    mesh = gfem.Mesh.from_gmsh(DATA / "parallel_plate.msh", length_unit="um")
+    vp = ((20e-6, 0.0, 0.0), (20e-6, 10e-6, 0.0))
+    ports = [gfem.WavePort("p1", "port1", voltage_path=vp)]
+    if second == "wave":
+        ports.append(gfem.WavePort("p2", "port2"))
+    else:
+        ports.append(
+            gfem.LumpedPort("p2", "port2", direction=(0, 1, 0), impedance=47.0)
+        )
+    return gfem.Model(
+        mesh,
+        materials={"fill": gfem.Material(eps_r=4.0)},
+        boundaries=[gfem.PEC("plates")],
+        ports=ports,
+    )
+
+
+@pytest.mark.parametrize("sweep", ["uniform", "adaptive"])
+@pytest.mark.parametrize("second", ["wave", "lumped"])
+def test_a_gpu_sweep_plans_once_and_matches_per_frequency_handles(
+    plans, monkeypatch, sweep, second
+):
+    model = _plate_line(second)
+    problem = gfem.Driven((1.5e12, 2.0e12, 2.5e12, 3.0e12), sweep=sweep)
+    options = gfem.SolverOptions(order=3, linear_solver="direct", device="cuda")
+    s = np.asarray(gfem.solve(model, problem, options=options).s.values)
+    assert len(plans) == 1
+    # a handle that cannot refactorize is planned afresh at each frequency
+    monkeypatch.delattr(CudssHandle, "refactor")
+    plans.clear()
+    result = gfem.solve(model, problem, options=options)
+    assert len(plans) > 1
+    np.testing.assert_allclose(result.s.values, s, rtol=0, atol=1e-12)

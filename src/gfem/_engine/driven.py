@@ -4,9 +4,11 @@ At each frequency the operator ``A(ω) = Σ θ_k(ω) A_k`` (see
 `gfem._engine.terms`) is assembled and prepared once, and every excited
 port's right-hand side is solved in one handle call: GMRES + BDDC by
 default, each port starting from its solution at the previous frequency,
-or one sparse Cholesky factorization (``direct``). ``A`` is complex
-symmetric (A^T = A), and a port's excitation vector is proportional to its
-voltage functional, so S is symmetric to solver precision.
+or one sparse Cholesky factorization (``direct``). A sweep keeps one base
+handle (`_SweepHandle`): a direct solver plans at the first frequency and
+refactorizes at the others. ``A`` is complex symmetric (A^T = A), and a
+port's excitation vector is proportional to its voltage functional, so S
+is symmetric to solver precision.
 
 S is read from the port voltages: with the excited port fed 1 W incident
 power (incident voltage sqrt(2 R)), ``S_ij = V_i / sqrt(2 R_i) - δ_ij``,
@@ -48,7 +50,7 @@ import dataclasses
 import functools
 import math
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Self
 
 import jax
 import jax.numpy as jnp
@@ -71,7 +73,14 @@ from gfem._engine.mesh import EngineMesh
 from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair, ShapeTerm, is_sheet
 from gfem._engine.wave_ports import WavePortCoupling, wave_port_couplings
-from gfem._linalg import KINDS, Handle, Operator, low_rank_update, prepare
+from gfem._linalg import (
+    KINDS,
+    Handle,
+    Operator,
+    Refactorable,
+    low_rank_update,
+    prepare,
+)
 from gfem._sweep.adaptive import AffineSystem, AffineTerm, adaptive_sweep
 from gfem.errors import PortGeometryError
 from gfem.mesh import Mesh
@@ -334,31 +343,26 @@ class DrivenRule:
             ports = self._ports(model)
             s = np.zeros((len(frequencies), len(self.port_names), width), complex)
             previous = None
-            for n, f in enumerate(frequencies):
-                omega = 2 * math.pi * f
-                handle = ports.prepare(
-                    omega,
-                    kind=self.kind,
-                    device=self.options.device,
-                    threads=self.options.threads,
-                    tolerance=self.options.tolerance,
-                    width=width,
-                )
-                try:
-                    x = handle.solve(ports.system.rhs(omega), x0=previous)
-                    its = getattr(handle, "iterations", [])
-                    iterations.append(tuple(int(i) for i in its))
-                finally:
-                    handle.free()
-                previous = x
-                if keep:
-                    solutions.append(np.array(x, dtype=complex))
-                if n in self.kept:
-                    fields.append(np.array(x, dtype=complex))
-                s[n] = sum(
-                    np.asarray(t.coefficients(omega)) @ (t.vectors.T @ x)
-                    for t in ports.system.outputs
-                )
+            with ports.sweep(
+                kind=self.kind,
+                device=self.options.device,
+                threads=self.options.threads,
+                tolerance=self.options.tolerance,
+                width=width,
+            ) as handles:
+                for n, f in enumerate(frequencies):
+                    omega = 2 * math.pi * f
+                    x, its = handles.solve(omega, ports.system.rhs(omega), x0=previous)
+                    iterations.append(its)
+                    previous = x
+                    if keep:
+                        solutions.append(np.array(x, dtype=complex))
+                    if n in self.kept:
+                        fields.append(np.array(x, dtype=complex))
+                    s[n] = sum(
+                        np.asarray(t.coefficients(omega)) @ (t.vectors.T @ x)
+                        for t in ports.system.outputs
+                    )
         outputs = {
             "s": ports.scattering(s),
             "z_ref": ports.z_ref,
@@ -502,41 +506,36 @@ class DrivenRule:
         z_scale = float(extent) / scipy.constants.c
         with task_manager(options.threads):
             ports = self._ports(model)
-
-            def solve(
-                omega: float, rhs: np.ndarray, x0: np.ndarray | None
-            ) -> np.ndarray:
-                handle = ports.prepare(
-                    omega,
-                    kind=self.kind,
-                    device=options.device,
-                    threads=options.threads,
-                    tolerance=options.tolerance,
-                    width=len(self.excite),
-                )
-                try:
-                    x = handle.solve(rhs, x0=x0)
-                    its = getattr(handle, "iterations", [])
-                    iterations.append(tuple(int(i) for i in its))
-                finally:
-                    handle.free()
-                return x
-
-            system = dataclasses.replace(
-                ports.system, solve=solve, adjoint_loads=ports.adjoint_loads
-            )
             samples = self.problem.samples
-            sweep = adaptive_sweep(
-                system,
-                2 * np.pi * np.asarray(frequencies),
-                tolerance=options.adaptive_tolerance,
-                max_samples=options.adaptive_max_samples,
-                memory=options.adaptive_memory,
-                samples=None
-                if samples is None
-                else [frequencies.index(f) for f in samples],
-                z_scale=z_scale,
-            )
+            with ports.sweep(
+                kind=self.kind,
+                device=options.device,
+                threads=options.threads,
+                tolerance=options.tolerance,
+                width=len(self.excite),
+            ) as handles:
+
+                def solve(
+                    omega: float, rhs: np.ndarray, x0: np.ndarray | None
+                ) -> np.ndarray:
+                    x, its = handles.solve(omega, rhs, x0=x0)
+                    iterations.append(its)
+                    return x
+
+                system = dataclasses.replace(
+                    ports.system, solve=solve, adjoint_loads=ports.adjoint_loads
+                )
+                sweep = adaptive_sweep(
+                    system,
+                    2 * np.pi * np.asarray(frequencies),
+                    tolerance=options.adaptive_tolerance,
+                    max_samples=options.adaptive_max_samples,
+                    memory=options.adaptive_memory,
+                    samples=None
+                    if samples is None
+                    else [frequencies.index(f) for f in samples],
+                    z_scale=z_scale,
+                )
         outputs: dict[str, object] = {
             "s": ports.scattering(sweep.outputs),
             "z_ref": ports.z_ref,
@@ -1159,6 +1158,21 @@ class _Ports:
             diagonal.append(d)
         return np.concatenate(columns, axis=1), np.diag(np.concatenate(diagonal))
 
+    def operator_at(self, omega: float) -> Operator:
+        """``A(ω)``, the operator without the modal corrections, to prepare."""
+        op = self.operator
+        return Operator(op.form(omega), op.space.FreeDofs())
+
+    def system_handle(self, base: Handle, omega: float, *, borrow: bool) -> Handle:
+        """A handle of ``A(ω) + W(ω)`` from a handle ``base`` of ``A(ω)``.
+
+        ``base`` itself without wave ports; otherwise a Woodbury update that
+        owns ``base`` or ``borrow``s it.
+        """
+        if not self.waves:
+            return base
+        return low_rank_update(base, *self.update(omega), borrow=borrow)
+
     def prepare(
         self,
         omega: float,
@@ -1170,9 +1184,8 @@ class _Ports:
         threads: int | None = None,
     ) -> Handle:
         """A handle of the system operator ``A(ω) + W(ω)`` (see `_Ports`)."""
-        op = self.operator
         handle = prepare(
-            Operator(op.form(omega), op.space.FreeDofs()),
+            self.operator_at(omega),
             symmetry="complex_symmetric",
             kind=kind,
             device=device,
@@ -1180,9 +1193,26 @@ class _Ports:
             width=width,
             threads=threads,
         )
-        if not self.waves:
-            return handle
-        return low_rank_update(handle, *self.update(omega))
+        return self.system_handle(handle, omega, borrow=False)
+
+    def sweep(
+        self,
+        *,
+        kind: str,
+        device: str,
+        tolerance: float,
+        width: int,
+        threads: int | None = None,
+    ) -> _SweepHandle:
+        """One base handle for a sweep's frequencies (see `_SweepHandle`)."""
+        return _SweepHandle(
+            self,
+            kind=kind,
+            device=device,
+            tolerance=tolerance,
+            width=width,
+            threads=threads,
+        )
 
     def functional(self, omega: float) -> np.ndarray:
         """``(ndof, n_ports)``: port i's outgoing wave is ``functional[:, i] @ x``.
@@ -1245,6 +1275,60 @@ class _Ports:
         terms_ = [*self.system.excitation, *self.system.outputs]
         terms_ += list(self.system.corrections)
         return sum(int(t.vectors.nbytes) for t in terms_)
+
+
+class _SweepHandle:
+    """One base handle of ``A(ω)`` for a whole sweep: one solver plan.
+
+    `at` gives a handle of the system operator ``A(ω) + W(ω)`` at each
+    frequency. The first call prepares the base handle; later ones
+    refactorize it at the new ω when it can (`gfem._linalg.Refactorable`),
+    or else free it and prepare a new one. Wave ports wrap the base per
+    frequency in a borrowing Woodbury update. A handle from `at` is valid
+    until the next call. `free` (or leaving the ``with`` block) releases
+    the base, also when the sweep raises.
+    """
+
+    def __init__(self, ports: _Ports, **options: Any) -> None:
+        """Hold ``ports`` and the `gfem._linalg.prepare` options of the base."""
+        self._ports = ports
+        self._options = options
+        self._base: Handle | None = None
+
+    def at(self, omega: float) -> Handle:
+        """A handle of ``A(ω) + W(ω)``, borrowing the sweep's base handle."""
+        operator = self._ports.operator_at(omega)
+        base = self._base
+        if isinstance(base, Refactorable):
+            base.refactor(operator)
+        else:
+            self.free()
+            base = self._base = prepare(
+                operator, symmetry="complex_symmetric", **self._options
+            )
+        return self._ports.system_handle(base, omega, borrow=True)
+
+    def solve(
+        self, omega: float, rhs: np.ndarray, *, x0: np.ndarray | None = None
+    ) -> tuple[np.ndarray, tuple[int, ...]]:
+        """Solve at ``ω``: the solution and the Krylov iterations per column."""
+        handle = self.at(omega)
+        before = len(getattr(handle, "iterations", ()))
+        x = handle.solve(rhs, x0=x0)
+        its = list(getattr(handle, "iterations", ()))[before:]
+        return x, tuple(int(i) for i in its)
+
+    def free(self) -> None:
+        """Release the base handle."""
+        if self._base is not None:
+            self._base.free()
+        self._base = None
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.free()
 
 
 class _Handles:

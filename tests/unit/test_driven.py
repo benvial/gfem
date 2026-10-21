@@ -17,8 +17,10 @@ import scipy.constants as const
 import structured_meshes as sm
 
 import gfem
-from gfem._engine import terms
+from gfem._engine import driven, terms
 from gfem._engine.driven import DrivenRule
+from gfem._linalg import prepare
+from gfem._linalg.direct import DirectHandle
 
 L, W, H = 10.0, 2.0, 1.0  # mm
 EPS = 4.0
@@ -224,6 +226,33 @@ def test_bddc_gmres_is_the_default_and_matches_direct(line):
     # GMRES at the second frequency starts from the first one's solution
     assert len(outputs["iterations"]) == 2
     assert all(len(its) == 2 for its in outputs["iterations"])
+
+
+def _count_prepares(monkeypatch) -> list[int]:
+    """Spy on the driven sweep's `prepare`: one entry per base handle."""
+    calls = []
+
+    def spy(*args, **kwargs):
+        calls.append(1)
+        return prepare(*args, **kwargs)
+
+    monkeypatch.setattr(driven, "prepare", spy)
+    return calls
+
+
+@pytest.mark.parametrize("sweep", ["uniform", "adaptive"])
+def test_a_direct_sweep_plans_once_and_matches_fresh_handles(line, monkeypatch, sweep):
+    problem = gfem.Driven(frequency=(3e9, 4e9, 5e9, 6e9), sweep=sweep)
+    calls = _count_prepares(monkeypatch)
+    s = np.asarray(_s(line, problem).s.values)
+    assert len(calls) == 1
+    # a handle that cannot refactorize is prepared afresh at each frequency
+    monkeypatch.delattr(DirectHandle, "refactor")
+    calls.clear()
+    result = _s(line, problem)
+    solved = 4 if sweep == "uniform" else len(result.sweep.sampled_frequencies)
+    assert len(calls) == solved > 1
+    np.testing.assert_allclose(result.s.values, s, rtol=0, atol=1e-12)
 
 
 def test_excite_selects_the_columns_of_s(line):
