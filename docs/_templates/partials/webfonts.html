@@ -1,0 +1,17 @@
+{#- gfem override of shibuya partials/webfonts.html: Barlow (every interface word) + JetBrains Mono
+    (code and data only), self-hosted from _static/fonts/ (SIL OFL, licences next to the files). -#}
+{%- set gfem_fonts = pathto('_static/fonts/', 1) %}
+<link rel="preload" href="{{ gfem_fonts }}Barlow-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<style>
+@font-face { font-family: "Barlow"; font-style: normal; font-weight: 400; font-display: swap; src: url("{{ gfem_fonts }}Barlow-Regular.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-style: normal; font-weight: 500; font-display: swap; src: url("{{ gfem_fonts }}Barlow-Medium.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-style: normal; font-weight: 600; font-display: swap; src: url("{{ gfem_fonts }}Barlow-SemiBold.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400; font-display: swap; src: url("{{ gfem_fonts }}JetBrainsMono-Regular.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 500; font-display: swap; src: url("{{ gfem_fonts }}JetBrainsMono-Medium.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-style: italic; font-weight: 400; font-display: swap; src: url("{{ gfem_fonts }}JetBrainsMono-Italic.woff2") format("woff2"); }
+:root {
+  --sy-f-text: "Barlow", system-ui, var(--sy-f-cjk), sans-serif;
+  --sy-f-heading: "Barlow", system-ui, var(--sy-f-cjk), sans-serif;
+  --sy-f-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+</style>
