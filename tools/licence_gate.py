@@ -4,9 +4,11 @@ Policy: GPL and LGPL dependencies are allowed; non-free and
 non-commercial licences are not. Proprietary licences pass only where
 ``licences.toml`` allows them: any proprietary licence for the NVIDIA
 runtime distributions reached through the ``cuda12`` / ``cuda13`` extras,
-and the Intel Simplified Software License alone for the distributions of
-the ``mkl`` extra. A distribution whose licence cannot be
-read from its metadata fails until a human records it in ``licences.toml``.
+and, for the distributions of the ``mkl`` extra, only the Intel licence
+recorded for each (the Intel Simplified Software License, or Intel's
+Developer Tools EULA for the OpenMP runtime). A distribution whose licence
+cannot be read from its metadata fails until a human records it in
+``licences.toml``.
 
 Run it with the interpreter of the environment to audit, for example::
 

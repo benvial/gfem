@@ -121,6 +121,19 @@ def test_repository_policy_admits_the_intel_simplified_licence_for_mkl_only(
     assert _violations(tmp_path, gate.load_policy()) == {"other-lib": "non-free"}
 
 
+def test_repository_policy_admits_the_intel_developer_tools_eula_for_openmp_only(
+    tmp_path,
+):
+    _install(tmp_path, "intel-openmp", *EULA)
+    _install(tmp_path, "intel-cmplr-lib-ur", *EULA)
+    _install(tmp_path, "mkl", *EULA)
+    _install(tmp_path, "other-lib", *EULA)
+    assert _violations(tmp_path, gate.load_policy()) == {
+        "mkl": "non-free",
+        "other-lib": "non-free",
+    }
+
+
 def test_repository_policy_accepts_the_development_environment():
     report = gate.audit(None, gate.load_policy())
     assert [e for e in report if not e.ok] == []

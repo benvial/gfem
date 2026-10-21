@@ -25,7 +25,9 @@ and a METIS nested-dissection ordering instead of NGSolve's sparse Cholesky:
 a smaller factor and a faster factorization, with the same results to the
 direct solve's accuracy. Intel publishes MKL wheels for Linux x86_64 and
 Windows x86_64 only; elsewhere the extra installs nothing. MKL and its runtime
-are proprietary Intel software; see {doc}`project/licence`.
+are proprietary Intel software, and Intel's OpenMP runtime comes under a
+licence that forbids SaaS and service-bureau use: read {doc}`project/licence`
+before installing the extra.
 
 Supported platforms: Linux x86_64 (glibc >= 2.28), macOS arm64 and Windows
 x86_64, Python >= {{ python }}.

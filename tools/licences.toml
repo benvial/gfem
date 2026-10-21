@@ -9,12 +9,21 @@
 allow-proprietary = ["cuda-*", "cutensor-*", "nvidia-*"]
 
 # Intel MKL (PARDISO for the CPU direct solver) and its runtime, reached only
-# through the optional mkl extra. These distributions may carry the Intel
-# Simplified Software License (redistributable in binary form, no
-# non-commercial term) and no other proprietary licence; the base install
+# through the optional mkl extra. Each distribution may carry the one Intel
+# licence listed for it and no other proprietary licence; the base install
 # stays OSI-licensed.
+#
+# Intel Simplified Software License: redistributable in binary form, no
+# non-commercial term.
 [allow-licence."Intel Simplified Software License"]
 distributions = ["mkl", "tbb", "tcmlib"]
+
+# Intel End User License Agreement for Developer Tools: the OpenMP runtime mkl
+# requires. Redistributable as part of a product, no non-commercial term, but
+# clause 3.1(xi) forbids use for SaaS or service-bureau purposes (documented in
+# docs/project/licence.md).
+[allow-licence."Intel End User License Agreement for Developer Tools"]
+distributions = ["intel-openmp", "intel-cmplr-lib-*"]
 
 [overrides.cuda-toolkit]
 licence = "LicenseRef-NVIDIA-Proprietary"
