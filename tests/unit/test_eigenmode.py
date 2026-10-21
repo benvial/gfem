@@ -15,6 +15,7 @@ import math
 
 import jax
 import jax.numpy as jnp
+import ngsolve as ngs
 import numpy as np
 import pytest
 import scipy.constants as const
@@ -27,6 +28,7 @@ from gfem._engine.driven import driven_operator
 from gfem._engine.eigen import projector
 from gfem._engine.runtime import task_manager
 from gfem._linalg import prepare
+from gfem._linalg.bddc import BddcHandle
 from gfem._linalg.direct import DirectHandle
 
 L, W, H = 10.0, 2.0, 1.0  # mm
@@ -277,6 +279,30 @@ def test_a_reshift_refactorizes_the_prepared_operator(mesh, monkeypatch):
     calls.clear()
     fresh = gfem.solve(model, problem)
     assert len(calls) == 2
+    np.testing.assert_allclose(result.omega, fresh.omega, rtol=1e-12)
+    np.testing.assert_allclose(result.q, fresh.q, rtol=1e-10)
+
+
+def test_a_bddc_reshift_sets_the_preconditioner_up_at_the_new_shift(mesh, monkeypatch):
+    # shift-invert solves start cold, so a reshift never solves on the
+    # preconditioner of the old shift: the modes are those of fresh handles
+    model = _terminated(mesh, 1000.0)
+    problem = gfem.Eigenmode(target=8e9, n_modes=2)
+    options = gfem.SolverOptions(linear_solver="bddc_gmres")
+    builds = []
+    build = ngs.Preconditioner
+
+    def spy(*args, **kwargs):
+        builds.append(1)
+        return build(*args, **kwargs)
+
+    monkeypatch.setattr(ngs, "Preconditioner", spy)
+    result = gfem.solve(model, problem, options=options)
+    assert len(builds) == 2
+    monkeypatch.delattr(BddcHandle, "refactor")
+    builds.clear()
+    fresh = gfem.solve(model, problem, options=options)
+    assert len(builds) == 2
     np.testing.assert_allclose(result.omega, fresh.omega, rtol=1e-12)
     np.testing.assert_allclose(result.q, fresh.q, rtol=1e-10)
 
