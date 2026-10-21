@@ -1,0 +1,33 @@
+{#- gfem override of shibuya 2026.7.12 searchbox.html. Upstream copy: _templates/upstream/searchbox.html.
+    The header search opens Pagefind's Component UI modal (pagefind/ is written by `python -m pagefind
+    --site docs/_build/html` after sphinx-build). The upstream form to Sphinx's search page stays as the
+    fallback: gfem.css shows it only while the Pagefind elements are undefined, that is when the index was
+    not built or its script failed to load. The modal footer links to the same search page, which is better
+    at exact API object names. Styles: gfem.css "3m. search". -#}
+{%- if pathto('search') != '#' -%}
+<div class="gfem-search">
+  <form class="searchbox flex items-center" action="{{ pathto('search') }}" method="get">
+    <input type="text" name="q" placeholder="{{ _('Search') }}" aria-label="{{ _('Search') }}" />
+    <kbd>/</kbd>
+  </form>
+  <pagefind-modal-trigger placeholder="{{ _('Search') }}" shortcut="/"></pagefind-modal-trigger>
+  <pagefind-modal id="gfem-search-modal">
+    <pagefind-modal-header>
+      <pagefind-input placeholder="Search the gfem docs"></pagefind-input>
+    </pagefind-modal-header>
+    <pagefind-modal-body>
+      <pagefind-summary></pagefind-summary>
+      <pagefind-results show-images="false"></pagefind-results>
+    </pagefind-modal-body>
+    <pagefind-modal-footer>
+      <pagefind-keyboard-hints></pagefind-keyboard-hints>
+      <a class="gfem-search-page" href="{{ pathto('search') }}">Exact API names: search page</a>
+    </pagefind-modal-footer>
+  </pagefind-modal>
+  {#- Below 900px the header extra sits in the closed drawer (display: none), which would also hide the
+      dialog opened by the "/" shortcut. Move the modal to <body> now, before Pagefind upgrades it. -#}
+  <script>document.body.append(document.getElementById("gfem-search-modal"));</script>
+  <link rel="stylesheet" href="{{ pathto('pagefind/pagefind-component-ui.css', 1) }}" />
+  <script src="{{ pathto('pagefind/pagefind-component-ui.js', 1) }}" defer></script>
+</div>
+{%- endif -%}

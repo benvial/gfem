@@ -289,6 +289,80 @@ dt.sig .sig-name { font-weight: 500; }
 .gfem-foot-row a:hover { color: var(--ink); }
 .gfem-foot-end { margin-left: auto; }
 
+/* ------------------------------------------------------------ 3m. search (Pagefind Component UI)
+   _templates/searchbox.html. Pagefind themes through --pf-* variables, set here on html.light /
+   html.dark, which outrank its :root defaults. Its own rules carry three-ID specificity (the
+   :is(*, #\#) trick) and every .pf-* element gets `all: revert`, so every declaration on a .pf-*
+   element below needs !important. The structural changes the Mesh world needs: no cards,
+   no rounded corners, no grey fills, no icons, a worded Close, the teal focus ring restored
+   (the flat rule above removes the box-shadow rings Pagefind uses for focus). */
+html.light, html.dark {
+  --pf-font: var(--f-text);
+  --pf-text: var(--ink); --pf-text-secondary: var(--ink-2); --pf-text-muted: var(--muted);
+  --pf-background: var(--ground); --pf-border: var(--hair); --pf-border-focus: var(--ink);
+  --pf-hover: transparent; --pf-skeleton: var(--hair); --pf-skeleton-shine: var(--ground);
+  --pf-mark: var(--ink); --pf-scroll-shadow: transparent;
+  --pf-shadow-sm: none; --pf-shadow-md: none; --pf-shadow-lg: none;
+  --pf-outline-focus: var(--accent); --pf-outline-width: 2px; --pf-outline-offset: 3px;
+  --pf-border-radius: 0;
+  --pf-input-height: 36px; --pf-input-font-size: 17px;
+  --pf-summary-font-size: 14.5px; --pf-result-title-font-size: 17px; --pf-result-excerpt-font-size: 14.5px;
+  --pf-results-gap: 0;
+  --pf-modal-max-width: var(--measure); --pf-modal-top: 12dvh;
+  --pf-modal-backdrop: color-mix(in srgb, var(--ground) 86%, transparent);  /* a wash, not a dark scrim */
+}
+/* the header trigger: the utility-button look of the fallback input it replaces */
+.gfem-search { display: flex; align-items: center; }
+.gfem-search:has(pagefind-modal-trigger:defined) > form.searchbox { display: none; }  /* Pagefind loaded */
+.gfem-search > pagefind-modal-trigger:not(:defined) { display: none; }               /* no index: the form */
+.gfem-search > pagefind-modal-trigger { min-width: 220px; color-scheme: inherit; }
+.gfem-search .pf-trigger-btn {
+  font: var(--t-small) !important; padding: 0 12px !important; gap: var(--s-3) !important;
+  transition: color .2s var(--ease-out), border-color .2s var(--ease-out) !important; }
+.gfem-search .pf-trigger-icon { display: none !important; }
+.gfem-search .pf-trigger-btn:hover .pf-trigger-text { color: var(--ink) !important; }
+.gfem-search .pf-trigger-key { font: var(--t-small) !important; color: var(--muted) !important; background: none !important;
+  border: 0 !important; border-radius: 0 !important; min-width: 0 !important; height: auto !important; padding: 0 !important; }
+/* the modal: ground, one hairline frame, an ink rule opening the result list, hairline rows */
+#gfem-search-modal { color-scheme: inherit; scrollbar-color: var(--mesh) transparent; }  /* undo all: initial on the host */
+#gfem-search-modal dialog.pf-modal { border: 1px solid var(--hair) !important; border-radius: 0 !important; }
+#gfem-search-modal pagefind-modal-header { padding: var(--s-3) var(--s-5) !important; border-bottom: 1px solid var(--ink) !important; }
+#gfem-search-modal pagefind-modal-body { padding: var(--s-2) var(--s-5) var(--s-5) !important; scrollbar-color: var(--mesh) transparent; }
+#gfem-search-modal pagefind-modal-footer { padding: var(--s-3) var(--s-5) !important; font: var(--t-small) !important; color: var(--muted) !important; }
+#gfem-search-modal .pf-input-wrapper::before { display: none !important; }              /* no magnifier icon */
+#gfem-search-modal .pf-input { padding-inline-start: 0 !important; font: var(--t-body) !important; caret-color: var(--accent) !important; }
+#gfem-search-modal .pf-input-clear { font: var(--t-small) !important; border-radius: 0 !important; }
+#gfem-search-modal .pf-summary { font: var(--t-small) !important; color: var(--muted) !important; margin: var(--s-2) 0 !important; }
+#gfem-search-modal .pf-result { gap: 0 !important; border-bottom: 1px solid var(--hair) !important; padding: var(--s-3) 0 !important; }
+#gfem-search-modal .pf-result-card { border: 0 !important; border-radius: 0 !important; background: none !important; padding: 0 !important; }
+#gfem-search-modal .pf-result-title { font: 500 17px/1.35 var(--f-text) !important; }
+#gfem-search-modal .pf-result-excerpt { font: var(--t-small) !important; color: var(--ink-2) !important; margin-top: var(--s-1) !important; }
+#gfem-search-modal .pf-result-excerpt mark, #gfem-search-modal .pf-heading-excerpt mark { color: var(--ink) !important; font-weight: 600 !important; }
+#gfem-search-modal .pf-heading-chips { gap: 0 !important; padding-inline-start: var(--s-4) !important; margin-top: var(--s-2) !important; }
+#gfem-search-modal .pf-heading-chip { border: 0 !important; border-radius: 0 !important; background: none !important; padding: var(--s-1) 0 !important; }
+#gfem-search-modal .pf-heading-link { font: var(--t-small) !important; color: var(--ink-2) !important; }
+#gfem-search-modal .pf-heading-excerpt { font: var(--t-small) !important; color: var(--muted) !important; }
+/* hover and the keyboard-selected entry: teal like a pager title, plus an underline (colour is never alone) */
+#gfem-search-modal :is(.pf-result-link, .pf-heading-link):is(:hover, [data-pf-selected]) {
+  color: var(--accent) !important; text-decoration: underline !important; text-decoration-thickness: 1px !important;
+  text-underline-offset: 3px !important; }
+#gfem-search-modal .pf-heading-link::before { color: var(--muted) !important; }
+:is(.gfem-search, #gfem-search-modal) :is(.pf-input, .pf-input-clear, .pf-result-link, .pf-heading-link, .pf-trigger-btn, .pf-modal-close):focus-visible {
+  outline: 2px solid var(--accent) !important; outline-offset: 3px !important; }
+#gfem-search-modal :is(.pf-key, .pf-keyboard-key, .pf-modal-footer-key) {
+  font: var(--t-small) !important; color: var(--muted) !important; background: none !important; border-radius: 0 !important; }
+#gfem-search-modal .pf-keyboard-hints { font: var(--t-small) !important; }
+#gfem-search-modal .pf-empty, #gfem-search-modal .pf-empty-text { font: var(--t-small) !important; color: var(--muted) !important; }
+.gfem-search-page { margin-left: auto; color: var(--ink-2); text-decoration: underline; text-decoration-color: var(--hair); text-underline-offset: 3px; }
+.gfem-search-page:hover { color: var(--ink); text-decoration-color: var(--accent); }
+/* the small-screen Close: a worded utility button, as Menu */
+#gfem-search-modal .pf-modal-close {
+  width: auto !important; height: auto !important; padding: 6px 10px !important; border: 1px solid var(--hair) !important;
+  border-radius: 0 !important; background: none !important; color: var(--muted) !important; font: var(--t-small) !important; }
+#gfem-search-modal .pf-modal-close > svg { display: none; }
+#gfem-search-modal .pf-modal-close::before { content: "Close"; }
+#gfem-search-modal .pf-modal-close:hover { color: var(--ink) !important; border-color: var(--ink) !important; }
+
 /* ------------------------------------------------------------ 4. responsive
    TOC drops at 1100; Menu + drawer replace header nav AND sidebar at 900.
    Shibuya's compiled breakpoints are 768 (md) and 1280 (xl); these rules move them. */
@@ -321,6 +395,8 @@ dt.sig .sig-name { font-weight: 500; }
   .searchbox input { box-sizing: border-box; }
   .searchbox kbd { display: none; }
   .searchbox input { min-width: 0; }
+  .gfem-search, .gfem-search > pagefind-modal-trigger { width: 100%; min-width: 0; }
+  .gfem-search .pf-trigger-shortcut { display: none !important; }
   .sy-main > .flex > div, .sy-breadcrumbs { padding-left: var(--s-4); padding-right: var(--s-4); }
   .sy-main > .flex > div { padding-top: var(--s-5); padding-bottom: var(--s-7); }
   .yue ul.gfem-status > li > p { display: block; }
