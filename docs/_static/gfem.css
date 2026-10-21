@@ -241,6 +241,19 @@ html:is(.light,.dark) .highlight span[class^="c"][class] { color: var(--muted); 
     linear-gradient(to top right, transparent calc(50% - .6px), var(--ink) calc(50% - .6px), var(--ink) calc(50% + .6px), transparent calc(50% + .6px));
   border: 1.2px solid var(--ink); box-sizing: border-box; }
 .yue ul.gfem-status > li:has(.tag.zero)::before { left: 5px; top: calc(10px + .75em); width: 10px; height: 1px; border-radius: 0; background: var(--muted); }
+.yue ul.gfem-status .what .gfem-detail { display: block; color: var(--muted); }
+
+/* gradient matrix (docs/_ext/gfem_capabilities.py): the status list's marks in a grid */
+.yue table.gfem-matrix th, .yue table.gfem-matrix td { vertical-align: top; text-align: left; }
+.yue table.gfem-matrix tbody th { font-weight: 400; }
+.yue table.gfem-matrix .gfem-detail { display: block; color: var(--muted); }
+.yue table.gfem-matrix .gfem-mark { display: inline-flex; align-items: baseline; gap: 8px; color: var(--ink); white-space: nowrap; }
+.yue table.gfem-matrix .gfem-raises { font-weight: 500; }
+.yue table.gfem-matrix .gfem-glyph { flex: none; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--ink); transform: translateY(-1px); }
+.yue table.gfem-matrix .gfem-zero .gfem-glyph { width: 10px; height: 1px; border-radius: 0; background: var(--muted); transform: translateY(-4px); }
+.yue table.gfem-matrix .gfem-raises .gfem-glyph { width: 12px; height: 12px; border-radius: 50%; box-sizing: border-box; border: 1.2px solid var(--ink); transform: translateY(1px);
+  background: linear-gradient(to top right, transparent calc(50% - .6px), var(--ink) calc(50% - .6px), var(--ink) calc(50% + .6px), transparent calc(50% + .6px)); }
+.yue p.gfem-provenance { font: var(--t-small); color: var(--muted); }
 
 /* ------------------------------------------------------------ 3h. figures */
 .yue figure.gfem-figure { margin: var(--s-6) 0; }
