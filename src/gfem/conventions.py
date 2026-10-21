@@ -118,7 +118,7 @@ Eigenmodes
 An eigenmode is a complex angular frequency ``omega`` and a field ``E``
 with ``Re(E exp(+iωt))`` source-free; ``Im omega > 0`` decays, and
 ``Q = |omega| / (2 |Im omega|)`` (Palace's definition). The mode's
-electric energy is
+electric energy is::
 
     E_elec = 1/2 Re ∫ D* · E dV + Σ C_j |V_j|^2 / 2
 
