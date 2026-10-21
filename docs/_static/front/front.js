@@ -1,5 +1,5 @@
 // gfem front page (layout/gfem-home.html): draws the hero and the three etch
-// variants from window.TOPO, which conf.py inlines from docs/_generated/front-page.json
+// variants from window.TOPO, which conf.py inlines from docs/_data/front-page.json
 // (tools/front_page_data.py, the topology tutorial's own solve).
 // Shibuya owns the theme switch (html.light / html.dark) and the menu; the figures
 // redraw, without the converge reveal, when the theme class or the width changes.
@@ -15,22 +15,23 @@
     const halves = opts.halves;
     const span = halves ? (x1 - x0) / 2 : x1 - x0, depth = y1 - y0;
     const gap = halves ? 10 : 0;
-    const s = W / span, rowH = depth * s, H = halves ? 2 * rowH + gap : rowH;
+    const scale = W / span, rowH = depth * scale, H = halves ? 2 * rowH + gap : rowH;
     svgEl.setAttribute("viewBox", `0 0 ${W} ${H}`);
     svgEl.style.height = H + "px";
     svgEl.replaceChildren();
-    const c = getComputedStyle(document.documentElement);
-    const field = c.getPropertyValue("--accent-field").trim();
-    const inkRGB = c.getPropertyValue("--ink-field").trim();
-    const mesh = c.getPropertyValue("--mesh").trim();
+    const css = getComputedStyle(document.documentElement);
+    const field = css.getPropertyValue("--accent-field").trim();
+    const inkRGB = css.getPropertyValue("--ink-field").trim();
+    const mesh = css.getPropertyValue("--mesh").trim();
     const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const P = data.nodes;
+    const nodes = data.nodes;
     data.tris.forEach((t, i) => {
       // keep a triangle whole in its row: its centroid picks the half
-      const cx = (P[t[0]][0] + P[t[1]][0] + P[t[2]][0]) / 3;
+      const cx = (nodes[t[0]][0] + nodes[t[1]][0] + nodes[t[2]][0]) / 3;
       const shift = halves && cx > x0 + span ? span : 0;
       const pts = t.map((k) => {
-        const x = (P[k][0] - x0 - shift) * s, y = (y1 - P[k][1]) * s + (shift ? rowH + gap : 0);
+        const x = (nodes[k][0] - x0 - shift) * scale;
+        const y = (y1 - nodes[k][1]) * scale + (shift ? rowH + gap : 0);
         return x.toFixed(1) + "," + y.toFixed(1);
       });
       const v = value(i);
@@ -85,18 +86,37 @@
     let first = true;
     const draw = () => { drawFront(window.TOPO, first); first = false; };
     draw();
-    new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
-    let rt;
-    addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(draw, 150); });
+    // redraw on a theme switch only: html's class list changes for other reasons too
+    const root = document.documentElement;
+    let dark = root.classList.contains("dark");
+    new MutationObserver(() => {
+      if (root.classList.contains("dark") === dark) return;
+      dark = !dark;
+      draw();
+    }).observe(root, { attributes: true, attributeFilter: ["class"] });
+    let resizeTimer;
+    addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(draw, 150); });
   }
 
-  // The install line's copy button.
+  // The install line's copy button. Without clipboard access (an insecure context, a
+  // denied permission) it selects the line instead, for a manual copy.
   const copy = document.querySelector(".gfem-copy");
   copy?.addEventListener("click", () => {
-    const text = [...copy.parentElement.childNodes].filter((n) => n !== copy).map((n) => n.textContent).join("").trim();
-    navigator.clipboard?.writeText(text).then(() => {
-      copy.textContent = "copied";
+    const pre = copy.parentElement;
+    const text = [...pre.childNodes].filter((n) => n !== copy).map((n) => n.textContent).join("").trim();
+    const flash = (label) => {
+      copy.textContent = label;
       setTimeout(() => (copy.textContent = "copy"), 1500);
-    });
+    };
+    const selectLine = () => {
+      const range = document.createRange();
+      range.selectNodeContents(pre);
+      range.setStartAfter(copy);
+      getSelection().removeAllRanges();
+      getSelection().addRange(range);
+      flash("selected");
+    };
+    if (!navigator.clipboard) return selectLine();
+    navigator.clipboard.writeText(text).then(() => flash("copied"), selectLine);
   });
 })();
