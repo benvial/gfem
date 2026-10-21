@@ -183,3 +183,17 @@ intersphinx_mapping = {
     "xarray": ("https://docs.xarray.dev/en/stable", None),
 }
 # --- end API reference ----------------------------------------------------------
+
+# --- Capabilities: claims derived from the tests (ADR 0017) ---------------------
+# docs/_ext/gfem_capabilities.py imports the verification tests' CELLS,
+# EXPECTED and OUT_OF_SCOPE and AST-reads the reference tolerances, for the
+# gfem-gradient-matrix, gfem-raises and gfem-palace-agreement directives on
+# capabilities.md. A claim that cannot be derived fails the build. Every page
+# template also gets the same dict as `gfem_capabilities` (the front page's
+# compact matrix and Palace rows); no html_context entry is needed.
+# docs/_ext is on sys.path (the API reference block above).
+extensions.append("gfem_capabilities")
+# Base URL the test paths are appended to (cells link to their test file);
+# empty until a remote exists, e.g. f"{REPO_URL}/blob/main/".
+gfem_capabilities_source_url = ""
+# --- end Capabilities ------------------------------------------------------------
