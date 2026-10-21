@@ -11,3 +11,6 @@ coverage.xml
 .ruff_cache/
 docs/_build/
 docs/_generated/
+# IPython's runtime files in the docs build's kernel profile (keep startup/)
+docs/_ipython/profile_default/*
+!docs/_ipython/profile_default/startup/
