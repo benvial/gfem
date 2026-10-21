@@ -49,13 +49,6 @@ def test_direct_solves_many_right_hand_sides_on_the_free_dofs(built):
     assert handle.nbytes > 0
 
 
-def test_direct_always_uses_sparse_cholesky_never_the_default(built):
-    # NGSolve's default inverse is UMFPACK, which exhausts memory at scale.
-    assert ngs.BaseMatrix.GetDefaultInverseType() != "sparsecholesky"
-    handle = prepare(_laplace(built)[0], symmetry="hermitian", kind="direct")
-    assert type(handle._inverse).__name__.startswith("SparseCholesky")
-
-
 def test_complex_symmetric_operator_and_complex_rhs(built):
     op, space = _laplace(built, complex_valued=True, shift=1 - 2j)
     handle = prepare(op, symmetry="complex_symmetric", kind="direct")
@@ -312,7 +305,8 @@ def test_direct_factorizes_a_scipy_spd_matrix():
     np.testing.assert_allclose(A @ handle.solve(b), b, atol=1e-12)
     B = rng.standard_normal((n, 2))
     np.testing.assert_allclose(A @ handle.solve(B), B, atol=1e-12)
-    assert type(handle._inverse).__name__.startswith("SparseCholesky")
+    # the direct backend's factorization (tests/unit/test_linalg_mkl.py)
+    assert type(handle._inverse).__name__.startswith(("SparseCholesky", "MKLPardiso"))
     with pytest.raises(ValueError, match="square"):
         factorize(sp.eye(3, 4))
 

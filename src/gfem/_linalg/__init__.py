@@ -20,8 +20,10 @@ rows, so a Dirichlet lifting ``u_D`` is completed by
 
 Backends:
 
-- ``"direct"``: NGSolve sparse Cholesky, always passed explicitly, never
-  NGSolve's UMFPACK default. One factorization serves every right-hand side.
+- ``"direct"``: an LDL^T factorization, always named explicitly, never
+  NGSolve's default inverse: MKL PARDISO with METIS ordering when the ``mkl``
+  extra is installed, NGSolve sparse Cholesky otherwise. One factorization
+  serves every right-hand side.
 - ``"bddc_gmres"``: NGSolve BDDC with a sparse Cholesky coarse problem, and
   conjugate gradients (Hermitian operators) or GMRES (the others) to the
   relative ``tolerance``. GMRES takes an initial guess (``solve(B, x0=...)``,
@@ -213,7 +215,7 @@ def prepare(
 def factorize(matrix) -> Handle:
     """A ``direct`` handle on a real symmetric positive definite SciPy matrix.
 
-    Every DOF is free. NGSolve sparse Cholesky, as for `prepare`.
+    Every DOF is free. The ``direct`` backend's factorization, as for `prepare`.
 
     Raises:
         ValueError: ``matrix`` is not square.

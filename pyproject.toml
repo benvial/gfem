@@ -42,6 +42,12 @@ cuda12 = [
 cuda13 = [
   "nvmath-python[cu13]>=1.0,<1.1; (sys_platform == 'linux' and platform_machine == 'x86_64') or sys_platform == 'win32'",
 ]
+# MKL PARDISO with METIS ordering for the CPU direct solver (Intel Simplified
+# Software License, proprietary). Wheels exist for x86_64 Linux and Windows
+# only; elsewhere the extra installs nothing and `direct` stays sparse Cholesky.
+mkl = [
+  "mkl>=2026.2; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')",
+]
 viz = ["pyvista"]
 xarray = ["xarray>=2024.10"]
 

@@ -1,23 +1,58 @@
-"""The ``direct`` backend: NGSolve sparse Cholesky (LDL^T) factorization."""
+"""The ``direct`` backend: a symmetric LDL^T factorization on the CPU.
+
+With the ``gfem[mkl]`` extra installed, NGSolve's MKL PARDISO factors with a
+METIS nested-dissection ordering and the symmetric matrix type; it fills
+about a third less than NGSolve's sparse Cholesky (minimum degree) and
+factors several times faster. Without it, NGSolve's sparse Cholesky. Both
+give the same answers to the direct solve's accuracy.
+
+Installing ``mkl`` switches NGSolve's process-wide default inverse to PARDISO
+(an LU with minimum degree), so every inverse gfem creates names its type.
+"""
 
 from __future__ import annotations
 
+import functools
+
 import ngsolve as ngs
 import numpy as np
+import pyngcore
 import scipy.sparse as sp
 
 from gfem._linalg import Operator, Symmetry
 from gfem._linalg.base import NgsHandle, host_bytes, same_pattern
 
+#: NGSolve's sparse Cholesky: the factorization without MKL, and the BDDC
+#: coarse solve's.
 INVERSE = "sparsecholesky"
+#: NGSolve's MKL PARDISO wrapper and its flags: METIS ordering, and the
+#: symmetric matrix type (gfem stores the full matrix, so NGSolve would
+#: otherwise factor it as unsymmetric LU, with twice the fill).
+PARDISO = "pardiso"
+PARDISO_FLAGS = {"ordering": "metis", "symmetric": True}
+
+
+@functools.cache
+def pardiso_available() -> bool:
+    """Whether NGSolve found MKL PARDISO in a pip ``mkl`` (the ``mkl`` extra)."""
+    try:
+        from ngsolve.solvers import mkl_pardiso
+    except ImportError:
+        return False
+    return (
+        mkl_pardiso._pardiso is not None  # noqa: SLF001
+        and mkl_pardiso._mkl_free_buffers is not None  # noqa: SLF001
+    )
 
 
 class DirectHandle(NgsHandle):
-    """One sparse Cholesky factorization, reused for every right-hand side.
+    """One LDL^T factorization, reused for every right-hand side.
 
-    Sparse Cholesky factors ``A = L D L^T``, so it needs ``A^T = A``: a real
-    symmetric operator (``"hermitian"`` on a real space) or a complex
-    symmetric one. Complex Hermitian and general operators are refused.
+    MKL PARDISO when the ``mkl`` extra is installed, NGSolve's sparse
+    Cholesky otherwise (see the module docstring). Both factor
+    ``A = L D L^T``, so they need ``A^T = A``: a real symmetric operator
+    (``"hermitian"`` on a real space) or a complex symmetric one. Complex
+    Hermitian and general operators are refused.
 
     `refactor` factorizes another operator's values in place (NGSolve's
     ``Update()``): a `gfem._linalg.Refactorable` handle.
@@ -41,9 +76,14 @@ class DirectHandle(NgsHandle):
 
     @staticmethod
     def _factor(matrix: ngs.BaseMatrix, freedofs: ngs.BitArray | None):
+        inverse = INVERSE
+        free = matrix.height if freedofs is None else freedofs.NumSet()
+        if pardiso_available() and free > 0:  # PARDISO refuses an empty matrix
+            inverse = PARDISO
+            matrix.inverse_flags = pyngcore.Flags(PARDISO_FLAGS)  # ty: ignore[unresolved-attribute]
         if freedofs is None:
-            return matrix.Inverse(inverse=INVERSE)
-        return matrix.Inverse(freedofs, inverse=INVERSE)
+            return matrix.Inverse(inverse=inverse)
+        return matrix.Inverse(freedofs, inverse=inverse)
 
     @classmethod
     def from_operator(cls, operator: Operator, symmetry: Symmetry) -> DirectHandle:
@@ -99,7 +139,7 @@ class DirectHandle(NgsHandle):
     @staticmethod
     def _refuse(symmetry: Symmetry) -> None:
         raise ValueError(
-            "The direct solver (sparse Cholesky, A = L D L^T) needs A^T = A: a "
+            "The direct solver (A = L D L^T) needs A^T = A: a "
             f"real symmetric or complex symmetric operator, not {symmetry!r}."
         )
 
@@ -112,4 +152,10 @@ class DirectHandle(NgsHandle):
         """Host memory of the matrix and the factors, in bytes."""
         if self._solver is None or self._matrix is None:
             return 0
-        return host_bytes(self._matrix) + host_bytes(self._solver)
+        factors = host_bytes(self._solver)
+        params = getattr(self._solver, "_params", None)
+        if not factors and params is not None:
+            # NGSolve's PARDISO wrapper reports no memory: take PARDISO's own
+            # permanent (iparm[15]) and factor (iparm[16]) memory, in KiB
+            factors = 1024 * (int(params[15]) + int(params[16]))
+        return host_bytes(self._matrix) + factors
