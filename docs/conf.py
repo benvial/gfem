@@ -1,7 +1,9 @@
 """Sphinx configuration for the gfem docs site.
 
-Build with ``uv run --python 3.13 --group docs --group site sphinx-build docs
-docs/_build/html``.
+Build with ``just docs`` (or ``uv run --python 3.13 --group docs --group site
+sphinx-build docs docs/_build/html``). The build executes no notebook: the
+tutorials' outputs and the front page's hero data are committed, and
+``just notebooks`` / ``just front-page-data`` regenerate them.
 """
 
 import json
@@ -23,7 +25,6 @@ extensions = [
 
 exclude_patterns = [
     "_build",
-    "_generated",
     "**.ipynb_checkpoints",
     "jupyter_execute",
     "tutorials/data",
@@ -32,22 +33,21 @@ exclude_patterns = [
 # --- MyST / MyST-NB -----------------------------------------------------------
 myst_enable_extensions = ["colon_fence", "dollarmath", "deflist"]
 
-# The notebooks keep their committed outputs. "off" (the local default) renders
-# them; docs.yml sets GFEM_NB_EXECUTION=cache to execute them through
-# jupyter-cache.
-nb_execution_mode = os.environ.get("GFEM_NB_EXECUTION", "off")
-nb_execution_cache_path = str(DOCS / "_build" / ".jupyter_cache")
-nb_execution_timeout = 1800  # as CI's tutorials job
-nb_execution_raise_on_error = True
+# The tutorials render their committed outputs; the build never executes them
+# (CI's tutorials job does, on the plain path).
+nb_execution_mode = "off"
 nb_merge_streams = True  # one output box per cell, not one per print()
 nb_output_stderr = "warn"  # stray stderr is a warning, so -W fails on it
-os.environ.setdefault("JAX_PLATFORMS", "cpu")  # no "CUDA jaxlib" stderr line
+# gfem is imported by the build (Capabilities from the tests); JAX on CPU keeps
+# it from probing for CUDA.
+os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
 # --- Figure pipeline -----------------------------------------------------------
-# Executing kernels read docs/_ipython, whose startup file applies the gfem
-# matplotlib style (docs/_mpl) and displays every figure as a light/dark pair
-# (docs/_ext/gfem_figures.py). With "off" the committed outputs are shown as is.
-os.environ.setdefault("IPYTHONDIR", str(DOCS / "_ipython"))
+# `just notebooks` executes the tutorials in place with IPYTHONDIR=docs/_ipython,
+# whose startup file applies the gfem matplotlib style (docs/_mpl) and gives
+# every figure a text/html light/dark pair next to its plain image/png
+# (docs/_ext/gfem_figures.py). MyST-NB's HTML priority puts text/html before
+# image/png, so the site shows the pair and Jupyter or GitHub the plain PNG.
 # --- end figure pipeline -------------------------------------------------------
 
 # --- Docstrings: gfem uses Google style ----------------------------------------
@@ -256,12 +256,12 @@ def _code_line(notebook: Path) -> dict:
 
 
 def _front(path: Path) -> dict | None:
-    """The hero data written by tools/front_page_data.py, or None when absent."""
+    """The committed hero data (tools/front_page_data.py), or None when absent."""
     if not path.exists():
         if os.environ.get("GFEM_DOCS_STRICT") == "1":
             msg = (
-                f"front page: {path.relative_to(DOCS.parent)} is missing; run "
-                "`uv run python tools/front_page_data.py` first (GFEM_DOCS_STRICT=1)"
+                f"front page: {path.relative_to(DOCS.parent)} is missing; "
+                "regenerate it with `just front-page-data` (GFEM_DOCS_STRICT=1)"
             )
             raise ConfigError(msg)
         return None  # a local build: the hero frame says how to generate it
@@ -277,7 +277,7 @@ def _front(path: Path) -> dict | None:
     }
 
 
-html_context["gfem_front"] = _front(DOCS / "_generated" / "front-page.json")
+html_context["gfem_front"] = _front(DOCS / "_data" / "front-page.json")
 html_context["gfem_code_line"] = _code_line(DOCS / "tutorials" / "topology.ipynb")
 html_context["gfem_install"] = gfem_install
 # The front-page header: Get started, Tutorials, Capabilities (no Recipes, no API).

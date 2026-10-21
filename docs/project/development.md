@@ -15,12 +15,19 @@ data from `GFEM_REFERENCE_DIR` and skip when it is unset.
 
 ## Docs
 
-The docs site needs Python 3.13:
+The docs site needs Python 3.13 and [just](https://just.systems):
 
 ```bash
 uv sync --python 3.13 --group docs --group site
-uv run --python 3.13 --group docs --group site sphinx-build docs docs/_build/html
+just docs   # strict build and search index, into docs/_build/html
+just serve  # the same, then serve it at http://localhost:8000
 ```
 
-The tutorials render their committed outputs. Set `GFEM_NB_EXECUTION=cache` to
-execute them instead.
+The build executes no notebook. The tutorials' outputs and the front page's
+hero data (`docs/_data/front-page.json`) are committed; after changing a
+tutorial, regenerate them and commit the result:
+
+```bash
+just notebooks        # re-execute docs/tutorials/*.ipynb in place, docs figure style
+just front-page-data  # rerun the topology tutorial for the front page's hero data
+```

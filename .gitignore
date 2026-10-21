@@ -10,7 +10,6 @@ coverage.xml
 .pytest_cache/
 .ruff_cache/
 docs/_build/
-docs/_generated/
 docs/api/gfem/
 # IPython's runtime files in the docs build's kernel profile (keep startup/)
 docs/_ipython/profile_default/*

@@ -1,4 +1,4 @@
-# gfem matplotlib style (light), applied by the docs build only (docs/_ext/gfem_figures.py).
+# gfem matplotlib style (light), applied by `just notebooks` only (docs/_ext/gfem_figures.py).
 # Values are the site's colour tokens (docs/_static/gfem.css). Colour-blind-safe cycle
 # (Okabe-Ito based): ink, vermillion, blue, reddish purple, orange, sky. Teal is reserved
 # for the sensitivity colormap.

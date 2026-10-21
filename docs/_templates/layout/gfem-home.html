@@ -3,7 +3,7 @@
     Header: the site-head partial fed the three-item front-page nav (gfem_nav_home in conf.py) by
     re-binding theme_nav_links before the include; gfem_home drops the drawer's site tree.
     Body: static copy in this template; numbers from the build:
-      gfem_front         docs/_generated/front-page.json (tools/front_page_data.py), via conf.py
+      gfem_front         docs/_data/front-page.json (committed; just front-page-data), via conf.py
       gfem_code_line     the tutorial's value_and_grad line, read from topology.ipynb by conf.py
       gfem_install       the install line (one conf.py value)
       gfem_capabilities  the gradient matrix and Palace rows (docs/_ext/gfem_capabilities.py) -#}
@@ -37,7 +37,7 @@
     <figure class="grad" aria-labelledby="grad-cap">
       <div class="plot">
         {%- if f %}<svg id="grad" role="img" aria-label="Top view of the design layer's tetrahedral mesh, each element shaded by the sensitivity of the band-stop objective to its permittivity at the start design"></svg><div class="tip" id="grad-tip" hidden></div>
-        {%- else %}<p class="gfem-missing">The hero data is not generated: run <code>uv run python tools/front_page_data.py</code>, then rebuild.</p>{% endif -%}
+        {%- else %}<p class="gfem-missing">The hero data is missing: run <code>just front-page-data</code>, then rebuild.</p>{% endif -%}
       </div>
       <div class="ports"><span class="wide">x = 10 mm, feed to port 1</span><span class="narrow">top row x = 10 to 20 mm, bottom row 20 to 30 mm</span><span class="scale" aria-label="Scale: normalised sensitivity from 0 to 1">0 <i style="background:rgba(var(--accent-field),0)"></i><i style="background:rgba(var(--accent-field),.23)"></i><i style="background:rgba(var(--accent-field),.46)"></i><i style="background:rgba(var(--accent-field),.69)"></i><i style="background:rgba(var(--accent-field),.92)"></i> 1</span><span class="wide">x = 30 mm, feed to port 2</span></div>
       <div class="chain" aria-label="The differentiable chain">

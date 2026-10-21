@@ -1,10 +1,12 @@
 """Theme-paired matplotlib figures for the docs build.
 
-When the docs build executes the tutorials, every kernel runs
-``docs/_ipython/profile_default/startup/00-gfem-figures.py`` (``conf.py``
+When ``just notebooks`` executes the tutorials for the docs, every kernel
+runs ``docs/_ipython/profile_default/startup/00-gfem-figures.py`` (the recipe
 points ``IPYTHONDIR`` at ``docs/_ipython``), which calls `install`. From then
-on a displayed figure is drawn in the gfem style and comes out as a light and
-a dark PNG, swapped by Shibuya's ``light-only`` / ``dark-only`` classes. The
+on a displayed figure is drawn in the gfem style and its output holds, next
+to the plain (light) ``image/png``, a ``text/html`` light and dark PNG pair,
+swapped by Shibuya's ``light-only`` / ``dark-only`` classes. The notebooks
+are committed with those outputs and the docs build renders the pair. The
 dark render is the same figure recoloured by role: every colour is looked up
 in a light-to-dark table and replaced, the PNG is drawn, and the figure is
 restored. The notebooks themselves stay plain matplotlib.
@@ -13,9 +15,10 @@ The recolour table pairs each colour of ``docs/_mpl/gfem.mplstyle`` with the
 same key of ``docs/_mpl/gfem-dark.mplstyle`` (the plot cycle pairs entry by
 entry), plus the site's colour tokens (``gfem.css``) and plain colours the
 styles do not name.
-A colour or colormap outside the table is written to stderr, which the docs
-build turns into a warning (``nb_output_stderr = "warn"``) and ``-W`` into a
-failure: an off-palette figure cannot reach the site silently.
+A colour or colormap outside the table is written to stderr, which lands in
+the committed output; the docs build turns it into a warning
+(``nb_output_stderr = "warn"``) and ``-W`` into a failure: an off-palette
+figure cannot reach the site silently.
 """
 
 import base64
