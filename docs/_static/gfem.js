@@ -25,7 +25,13 @@
   const toc = document.querySelector(".localtoc li");
   if (toc && !document.querySelector(".localtoc li.active") && scrollY < 40) toc.classList.add("active");
 
-  // 4. Drawer: focus moves to the first link on open; Escape closes and returns focus to Menu.
+  // 4. Search modal: the "search page" link carries the typed query to Sphinx's search page.
+  document.querySelector(".gfem-search-page")?.addEventListener("click", (e) => {
+    const q = document.querySelector("#gfem-search-modal .pf-input")?.value.trim();
+    if (q) e.currentTarget.search = "?q=" + encodeURIComponent(q);
+  });
+
+  // 5. Drawer: focus moves to the first link on open; Escape closes and returns focus to Menu.
   const btn = document.querySelector(".gfem-menu"), nav = document.getElementById("head-nav");
   if (!btn || !nav) return;
   btn.addEventListener("click", () => {

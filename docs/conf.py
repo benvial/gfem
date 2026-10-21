@@ -112,6 +112,19 @@ ogp_custom_meta_tags = ['<meta name="twitter:card" content="summary_large_image"
 # ogp_site_url and html_baseurl: set once the public remote exists.
 # --- end theme ---------------------------------------------------------------------
 
+# --- Search: Pagefind, with Sphinx's search page as the fallback ------------------
+# Pagefind runs on the built HTML after sphinx-build,
+#   uv run --python 3.13 --group site python -m pagefind --site docs/_build/html
+# and two more template overrides carry it (Shibuya originals in _templates/upstream/):
+# layout/default.html marks the article data-pagefind-body, so only page content is
+# indexed; searchbox.html opens Pagefind's Component UI modal and keeps the form to
+# Sphinx's search.html, which stays built (the default) for exact API names and for
+# builds without the Pagefind step. Styles: gfem.css "3m. search".
+# _ext/gfem_search.py keeps the permalink "#" out of result titles (_ext is put on
+# sys.path in the API block below).
+extensions += ["gfem_search"]
+# --- end search -------------------------------------------------------------------
+
 # --- API reference: sphinx-autoapi and docs/_ext/gfem_api.py --------------------
 # One page per public module under api/, each public name documented once on
 # its home module; gfem_api.py resolves the gfem.X and module spellings.
