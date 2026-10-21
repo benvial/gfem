@@ -8,6 +8,14 @@
 # extras (cuDSS via nvmath-python). gfem stays MIT so these remain usable.
 allow-proprietary = ["cuda-*", "cutensor-*", "nvidia-*"]
 
+# Intel MKL (PARDISO for the CPU direct solver) and its runtime, reached only
+# through the optional mkl extra. These distributions may carry the Intel
+# Simplified Software License (redistributable in binary form, no
+# non-commercial term) and no other proprietary licence; the base install
+# stays OSI-licensed.
+[allow-licence."Intel Simplified Software License"]
+distributions = ["mkl", "tbb", "tcmlib"]
+
 [overrides.cuda-toolkit]
 licence = "LicenseRef-NVIDIA-Proprietary"
 reason = "Metapackage with no licence metadata; pulls the NVIDIA CUDA runtime wheels (CUDA EULA)."
@@ -19,3 +27,7 @@ reason = "Metadata says LicenseRef-Nvidia-cuDSS-License: the proprietary cuDSS E
 [overrides.nvidia-cudss-cu13]
 licence = "LicenseRef-NVIDIA-Proprietary"
 reason = "Metadata says LicenseRef-Nvidia-cuDSS-License: the proprietary cuDSS EULA, redistributable, no non-commercial term."
+
+[overrides.umf]
+licence = "Apache-2.0 WITH LLVM-exception"
+reason = "Metadata says 'Apache-2.0 with LLVM exceptions' with a proprietary classifier; LICENSE.txt is Apache-2.0 with the LLVM exceptions. Pulled by the mkl extra."
