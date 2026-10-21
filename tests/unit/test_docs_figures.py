@@ -157,3 +157,23 @@ def test_figures_stay_paired_after_pyplot_resets_the_formatters(gfem_figures, fi
         InteractiveShell.clear_instance()
 
     assert 'class="dark-only"' in data["text/html"]
+
+
+def test_axes_holding_an_image_draw_no_grid(gfem_figures, fig):
+    figure, ax = fig
+    ax.imshow(np.zeros((4, 4)), cmap="gray", vmin=0, vmax=1)
+    assert any(line.get_visible() for line in ax.get_xgridlines())  # the style's grid
+
+    gfem_figures.figure_html(figure)
+
+    gridlines = [*ax.get_xgridlines(), *ax.get_ygridlines()]
+    assert not any(line.get_visible() for line in gridlines)
+
+
+def test_axes_without_an_image_keep_their_grid(gfem_figures, fig):
+    figure, ax = fig
+    ax.plot([0, 1], [0, 1])
+
+    gfem_figures.figure_html(figure)
+
+    assert any(line.get_visible() for line in ax.get_xgridlines())

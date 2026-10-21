@@ -54,7 +54,8 @@ REPO = Path(__file__).resolve().parents[1]
 OUT = REPO / "docs" / "_static" / "logo"
 FONTS = REPO / "docs" / "_mpl" / "fonts"
 FONT = FONTS / "Barlow-SemiBold.ttf"  # wordmark and lockup
-TEXT_FONT = FONTS / "Barlow-Regular.ttf"  # social card headline (Regular Display Rule)
+# social card headline: display text is set in Regular, never bold
+TEXT_FONT = FONTS / "Barlow-Regular.ttf"
 
 RATIO = 0.78  # height / width of the nabla
 

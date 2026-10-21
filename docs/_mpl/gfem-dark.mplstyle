@@ -1,11 +1,11 @@
-# gfem matplotlib style (dark): the same roles as gfem.mplstyle with DESIGN.md's dark tokens.
+# gfem matplotlib style (dark): the same roles as gfem.mplstyle with the site's dark tokens.
 # Colour-blind-safe cycle (Okabe-Ito based): ink, vermillion, sky, reddish purple, orange,
 # yellow. Teal is reserved for the sensitivity colormap.
 # docs/_ext/gfem_figures.py reads it as the dark side of the recolour table.
 font.family: Barlow, DejaVu Sans
 font.size: 10.5
 axes.titlesize: 11
-axes.titleweight: semibold  # DESIGN.md asks 500; the Barlow TTFs ship 400 and 600
+axes.titleweight: semibold  # the site's titles are 500; the Barlow TTFs ship 400 and 600
 axes.titlelocation: left
 axes.labelsize: 10.5
 axes.labelcolor: c4c8ce

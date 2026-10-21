@@ -1,0 +1,31 @@
+# gfem maintenance recipes (https://just.systems); `just` lists them.
+# The docs build executes no notebook: the tutorials' outputs and the front
+# page's hero data are committed, and these recipes regenerate them.
+
+set shell := ["bash", "-eo", "pipefail", "-c"]
+
+docs_env := "uv run --python 3.13 --group docs --group site"
+
+# List the recipes.
+default:
+    @just --list
+
+# Re-execute docs/tutorials/*.ipynb in place with the docs IPython profile (gfem style, light/dark figure pairs).
+notebooks:
+    IPYTHONDIR="{{ justfile_directory() }}/docs/_ipython" JAX_PLATFORMS=cpu \
+    {{ docs_env }} jupyter nbconvert --to notebook --execute --inplace \
+        --ExecutePreprocessor.timeout=1800 --ExecutePreprocessor.record_timing=False \
+        docs/tutorials/*.ipynb
+
+# Regenerate the front page's hero data, docs/_data/front-page.json, from the topology tutorial.
+front-page-data:
+    {{ docs_env }} python tools/front_page_data.py
+
+# Build the site as docs.yml does (strict, then the Pagefind index) into docs/_build/html.
+docs:
+    GFEM_DOCS_STRICT=1 {{ docs_env }} sphinx-build -n -W --keep-going docs docs/_build/html
+    {{ docs_env }} python -m pagefind --site docs/_build/html
+
+# Build the site, then serve it at http://localhost:8000.
+serve: docs
+    {{ docs_env }} python -m http.server --directory docs/_build/html 8000

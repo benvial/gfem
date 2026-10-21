@@ -1,8 +1,9 @@
 name: Docs
 # Builds the site strictly on every pull request (HTML uploaded as an artifact)
-# and deploys it to GitHub Pages on every push to main. The tutorials are
-# executed by MyST-NB through jupyter-cache; the cache and the front-page hero
-# data are restored together, keyed on everything that can change their output.
+# and deploys it to GitHub Pages on every push to main. Nothing is executed:
+# the tutorials' outputs and the front-page hero data are committed
+# (`just notebooks`, `just front-page-data`); ci.yml's tutorials job still runs
+# the notebooks end to end.
 # One-time setting: Settings -> Pages -> Source: GitHub Actions, and restrict the
 # github-pages environment's deployment branches to main.
 on:
@@ -23,8 +24,6 @@ jobs:
   build:
     name: build the site (ubuntu, py3.13)
     runs-on: ubuntu-latest
-    env:
-      JAX_PLATFORMS: cpu
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
       with:
@@ -38,25 +37,9 @@ jobs:
       # gfem itself plus the dev group (the Capabilities generator imports the
       # tests), the notebook runtime (docs) and the Sphinx stack (site, 3.13+).
       run: uv sync --locked --python 3.13 --group docs --group site
-    - name: Restore executed notebooks and hero data
-      id: cache
-      # jupyter-cache keys only on code-cell source, so the key also covers the
-      # package, the lock, the kernel startup hook, the extensions, the plot
-      # styles and the hero script. No restore-keys: a partial match would bring
-      # stale outputs back.
-      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
-      with:
-        path: |
-          docs/_build/.jupyter_cache
-          docs/_generated/
-        key: docs-${{ runner.os }}-py3.13-${{ hashFiles('docs/tutorials/**', 'docs/_ext/**', 'docs/_ipython/**', 'docs/_mpl/**', 'tools/front_page_data.py', 'src/**', 'uv.lock') }}
-    - name: Front-page hero data
-      if: steps.cache.outputs.cache-hit != 'true'
-      run: uv run --no-sync python tools/front_page_data.py
     - name: Sphinx (strict)
       env:
-        GFEM_NB_EXECUTION: cache
-        GFEM_DOCS_STRICT: "1"
+        GFEM_DOCS_STRICT: "1"  # the committed hero data must be there
       run: uv run --no-sync sphinx-build -n -W --keep-going docs docs/_build/html
     - name: Pagefind index
       run: uv run --no-sync python -m pagefind --site docs/_build/html

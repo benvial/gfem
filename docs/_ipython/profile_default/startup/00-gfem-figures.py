@@ -1,9 +1,10 @@
-"""Docs build only: draw figures in the gfem style, as light/dark pairs.
+"""Docs notebooks only: draw figures in the gfem style, as light/dark pairs.
 
 IPython runs this file in every kernel started with ``IPYTHONDIR`` pointing
-at ``docs/_ipython``, which ``docs/conf.py`` sets for the notebook execution.
-A plain ``jupyter`` or ``nbconvert`` run never sees it, so the tutorials stay
-plain matplotlib. The work is in ``docs/_ext/gfem_figures.py``.
+at ``docs/_ipython``, which ``just notebooks`` sets when it executes the
+tutorials for the docs. A plain ``jupyter`` or ``nbconvert`` run never sees
+it, so the tutorial code stays plain matplotlib. The work is in
+``docs/_ext/gfem_figures.py``.
 """
 
 
@@ -24,7 +25,8 @@ def _install_gfem_figures():
         module.install(shell)
     except Exception:  # noqa: BLE001
         # IPython only logs a failing startup file. Say so on every cell's
-        # stderr instead, which the docs build turns into a warning.
+        # stderr instead: it lands in the committed outputs, and the docs
+        # build turns it into a warning.
         error = traceback.format_exc()
         shell.events.register(
             "pre_run_cell",

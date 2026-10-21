@@ -45,7 +45,7 @@ html.light, html.dark {
   --sy-c-link-hover: var(--ink);
   --sy-c-border: var(--hair);
   --sy-c-divider: var(--hair);
-  --sy-c-surface: transparent;          /* the Hairline Rule: no grey fills */
+  --sy-c-surface: transparent;          /* hairlines separate, never grey fills */
   --sy-c-overlay: transparent;
   --sy-c-foot-background: var(--ground);
   --sy-c-foot-divider: var(--hair);
@@ -69,7 +69,7 @@ html.light, html.dark {
   --code-block-caption-background: transparent;
   --syntax-text: var(--ink);
   --syntax-comment: var(--muted);
-  /* API signatures: no teal names (One Hue Rule) */
+  /* API signatures: no teal names (teal is kept for links, actions and sensitivity) */
   --sig-name: var(--ink); --sig-property: var(--muted); --sig-param: var(--ink-2); --sig-typehint: var(--ink-2);
   /* MyST-NB: palette from the gfem tokens, in both modes */
   --mystnb-source-bg-color: transparent;
@@ -144,7 +144,7 @@ html[data-color-mode="light"] .gfem-theme-light, html[data-color-mode="dark"] .g
   display: flex; align-items: center; gap: var(--s-2); padding: 5px 0; text-decoration: none; color: var(--ink-2); }
 .localtoc a { padding: 4px 0; }
 .globaltoc a:hover, .localtoc a:hover, .localtoc > ul li > a:hover { color: var(--ink); }
-/* the You-Are-Here Rule: one filled downward triangle (10x9), transparent on every other entry */
+/* you are here: one filled downward triangle (10x9), transparent on every other entry */
 .globaltoc a::before, .localtoc a::before {
   content: ""; width: 10px; height: 9px; flex: none; background: transparent;
   clip-path: polygon(0 0, 100% 0, 50% 100%); }
@@ -164,7 +164,7 @@ html[data-color-mode="light"] .gfem-theme-light, html[data-color-mode="dark"] .g
 /* ------------------------------------------------------- 3d. article + type */
 .sy-main > .flex > div { padding: var(--s-6) var(--s-7) var(--s-8); max-width: none; }
 .yue { font: var(--t-body); color: var(--ink-2); }
-/* the One Measure Rule: everything in the reading column but the page title sits on 720px */
+/* one measure: everything in the reading column but the page title sits on 720px */
 .yue section > :not(h1, section), .yue > :not(section) { max-width: var(--measure); }
 .yue h1 { font: var(--t-h1); letter-spacing: -.02em; color: var(--ink); margin: 0 0 var(--s-5); }
 .yue h2 { font: var(--t-h2); color: var(--ink); margin: var(--s-7) 0 var(--s-3); }
@@ -190,7 +190,7 @@ html[data-color-mode="light"] .gfem-theme-light, html[data-color-mode="dark"] .g
 .back-to-top { display: none !important; }
 .copy-page-wrapper { display: none; }
 
-/* --------------------------------------------- 3e. code (Hairline Rule + Teal Wash) */
+/* --------------------------------------------- 3e. code (hairlines, accent-soft highlight) */
 .highlight, .literal-block-wrapper { --margin: var(--s-5); --radius: 0; }
 .yue div[class^="highlight-"], .yue div.highlight-default { margin: var(--s-5) 0; position: relative; }
 .highlight > pre {
@@ -232,16 +232,22 @@ html:is(.light,.dark) .highlight span[class^="c"][class] { color: var(--muted); 
 .yue ul.gfem-status .tag { font: var(--t-data); color: var(--muted); white-space: nowrap; text-align: right; }
 .yue ul.gfem-status .tag code { font: inherit; color: inherit; }
 .yue ul.gfem-status .tag.raises { color: var(--ink); font-weight: 500; }
-/* marks in the 20px column: dot (verified), struck ring (raises), dash (exact zero) */
-.yue ul.gfem-status > li::before {
-  content: ""; position: absolute; left: 7px; top: calc(10px + .75em - 3px);
-  width: 6px; height: 6px; border-radius: 50%; background: var(--ink); }
-.yue ul.gfem-status > li:has(.tag.raises)::before {
-  left: 4px; top: calc(10px + .75em - 6px); width: 12px; height: 12px; background:
-    linear-gradient(to top right, transparent calc(50% - .6px), var(--ink) calc(50% - .6px), var(--ink) calc(50% + .6px), transparent calc(50% + .6px));
-  border: 1.2px solid var(--ink); box-sizing: border-box; }
-.yue ul.gfem-status > li:has(.tag.zero)::before { left: 5px; top: calc(10px + .75em); width: 10px; height: 1px; border-radius: 0; background: var(--muted); }
 .yue ul.gfem-status .what .gfem-detail { display: block; color: var(--muted); }
+
+/* status marks, the one implementation: dot (verified), dash (exact zero), struck ring (raises).
+   Drawn by a .gfem-glyph inside a .gfem-verified / .gfem-zero / .gfem-raises parent (the gradient
+   matrix, the front page) and by the status list's li::before, keyed on its .tag. */
+.gfem-glyph, .yue ul.gfem-status > li::before {
+  flex: none; display: inline-block; box-sizing: border-box; width: 6px; height: 6px; border-radius: 50%; background: var(--ink); }
+.gfem-zero .gfem-glyph, .yue ul.gfem-status > li:has(.tag.zero)::before {
+  width: 10px; height: 1px; border-radius: 0; background: var(--muted); }
+.gfem-raises .gfem-glyph, .yue ul.gfem-status > li:has(.tag.raises)::before {
+  width: 12px; height: 12px; border-radius: 50%; border: 1.2px solid var(--ink);
+  background: linear-gradient(to top right, transparent calc(50% - .6px), var(--ink) calc(50% - .6px), var(--ink) calc(50% + .6px), transparent calc(50% + .6px)); }
+/* the status list's marks sit in its 20px left column */
+.yue ul.gfem-status > li::before { content: ""; position: absolute; left: 7px; top: calc(10px + .75em - 3px); }
+.yue ul.gfem-status > li:has(.tag.raises)::before { left: 4px; top: calc(10px + .75em - 6px); }
+.yue ul.gfem-status > li:has(.tag.zero)::before { left: 5px; top: calc(10px + .75em); }
 
 /* gradient matrix (docs/_ext/gfem_capabilities.py): the status list's marks in a grid */
 .yue table.gfem-matrix th, .yue table.gfem-matrix td { vertical-align: top; text-align: left; }
@@ -249,10 +255,10 @@ html:is(.light,.dark) .highlight span[class^="c"][class] { color: var(--muted); 
 .yue table.gfem-matrix .gfem-detail { display: block; color: var(--muted); }
 .yue table.gfem-matrix .gfem-mark { display: inline-flex; align-items: baseline; gap: 8px; color: var(--ink); white-space: nowrap; }
 .yue table.gfem-matrix .gfem-raises { font-weight: 500; }
-.yue table.gfem-matrix .gfem-glyph { flex: none; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--ink); transform: translateY(-1px); }
-.yue table.gfem-matrix .gfem-zero .gfem-glyph { width: 10px; height: 1px; border-radius: 0; background: var(--muted); transform: translateY(-4px); }
-.yue table.gfem-matrix .gfem-raises .gfem-glyph { width: 12px; height: 12px; border-radius: 50%; box-sizing: border-box; border: 1.2px solid var(--ink); transform: translateY(1px);
-  background: linear-gradient(to top right, transparent calc(50% - .6px), var(--ink) calc(50% - .6px), var(--ink) calc(50% + .6px), transparent calc(50% + .6px)); }
+/* the matrix's marks sit on the text baseline */
+.yue table.gfem-matrix .gfem-glyph { transform: translateY(-1px); }
+.yue table.gfem-matrix .gfem-zero .gfem-glyph { transform: translateY(-4px); }
+.yue table.gfem-matrix .gfem-raises .gfem-glyph { transform: translateY(1px); }
 .yue p.gfem-provenance { font: var(--t-small); color: var(--muted); }
 
 /* ------------------------------------------------------------ 3h. figures */

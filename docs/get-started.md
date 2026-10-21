@@ -1,11 +1,8 @@
 # Get started
 
-gfem is under development towards v0.1. Nothing here is a stable API yet.
+gfem is {{ status }}. Nothing here is a stable API yet.
 
 ## Install
-
-gfem is not on PyPI yet. Build the wheel from a checkout of the repository and
-install it:
 
 {{ install }}
 
@@ -23,7 +20,7 @@ pip install "$(ls dist/gfem-*.whl)[viz]"     # fields as pyvista grids (.to_pyvi
 `cuda13` replaces `cuda12` for CUDA 13; the two exclude each other.
 
 Supported platforms: Linux x86_64 (glibc >= 2.28), macOS arm64 and Windows
-x86_64, Python >= 3.12.
+x86_64, Python >= {{ python }}.
 
 Importing gfem turns on JAX double precision (`jax_enable_x64`), which every
 gfem solve requires.

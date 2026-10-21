@@ -1,20 +1,24 @@
 """Theme-paired matplotlib figures for the docs build.
 
-When the docs build executes the tutorials, every kernel runs
-``docs/_ipython/profile_default/startup/00-gfem-figures.py`` (``conf.py``
+When ``just notebooks`` executes the tutorials for the docs, every kernel
+runs ``docs/_ipython/profile_default/startup/00-gfem-figures.py`` (the recipe
 points ``IPYTHONDIR`` at ``docs/_ipython``), which calls `install`. From then
-on a displayed figure is drawn in the gfem style and comes out as a light and
-a dark PNG, swapped by Shibuya's ``light-only`` / ``dark-only`` classes. The
+on a displayed figure is drawn in the gfem style and its output holds, next
+to the plain (light) ``image/png``, a ``text/html`` light and dark PNG pair,
+swapped by Shibuya's ``light-only`` / ``dark-only`` classes. The notebooks
+are committed with those outputs and the docs build renders the pair. The
 dark render is the same figure recoloured by role: every colour is looked up
 in a light-to-dark table and replaced, the PNG is drawn, and the figure is
 restored. The notebooks themselves stay plain matplotlib.
 
 The recolour table pairs each colour of ``docs/_mpl/gfem.mplstyle`` with the
 same key of ``docs/_mpl/gfem-dark.mplstyle`` (the plot cycle pairs entry by
-entry), plus the DESIGN.md tokens and plain colours the styles do not name.
-A colour or colormap outside the table is written to stderr, which the docs
-build turns into a warning (``nb_output_stderr = "warn"``) and ``-W`` into a
-failure: an off-palette figure cannot reach the site silently.
+entry), plus the site's colour tokens (``gfem.css``) and plain colours the
+styles do not name.
+A colour or colormap outside the table is written to stderr, which lands in
+the committed output; the docs build turns it into a warning
+(``nb_output_stderr = "warn"``) and ``-W`` into a failure: an off-palette
+figure cannot reach the site silently.
 """
 
 import base64
@@ -45,12 +49,13 @@ FONTS = MPL_DIR / "fonts"
 DPI = 192  # twice the CSS pixel density, so the PNGs stay sharp on HiDPI screens
 CSS_DPI = 96
 
-# DESIGN.md tokens (light -> dark) that the styles do not name.
+# The site's colour tokens (docs/_static/gfem.css, light -> dark) that the
+# styles do not name.
 TOKENS = {
     "#ffffff": "#111317",  # ground; also white, as tutorials hard-code it
     "#cdd0d5": "#353a42",  # mesh
-    "#007c6e": "#3cc4b0",  # accent (Sensitivity Teal)
-    "#e2f2ef": "#12302b",  # accent-soft (Teal Wash)
+    "#007c6e": "#3cc4b0",  # accent
+    "#e2f2ef": "#12302b",  # accent-soft
 }
 # Achromatic colours the tutorials hard-code: color="k" and color="gray".
 PLAIN = {
@@ -58,7 +63,8 @@ PLAIN = {
     "#808080": "#9aa1aa",  # "gray" -> muted-dark
 }
 
-# The Ramp Rule (DESIGN.md): ground to 0.92 * teal + 0.08 * ground, per theme.
+# The sensitivity ramp: one hue, from the ground to 0.92 * teal + 0.08 * ground,
+# per theme.
 RAMPS = {
     "gfem_sensitivity": ("#ffffff", "#007c6e"),
     "gfem_sensitivity_dark": ("#111317", "#3cc4b0"),
@@ -237,8 +243,16 @@ def _img(theme, png, alt):
     )
 
 
+def _no_grid_on_images(fig):
+    # The style's grid is for plots; drawn over an image it hides the data.
+    for ax in fig.axes:
+        if ax.images:
+            ax.grid(False)
+
+
 def figure_html(fig: Figure) -> str:
     """The light and dark renders of ``fig`` as two theme-switched ``<img>``."""
+    _no_grid_on_images(fig)
     alt = _alt(fig)
     light = _png(fig)
     dark = _dark_png(fig)

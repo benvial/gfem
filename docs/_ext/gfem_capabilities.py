@@ -1,7 +1,7 @@
 """The Capabilities page's claims, derived from the tests at docs build time.
 
 The gradient matrix (problem type x gradient input), the raises list and the
-agreement-with-Palace tolerances are not typed by hand (ADR 0017):
+agreement-with-Palace tolerances are never typed by hand:
 
 - the matrix and the raises list come from the verification tests'
   module-level data, imported by path without running a solve:
@@ -37,6 +37,7 @@ REPO = Path(__file__).resolve().parents[2]
 MATRIX_TEST = "tests/verification/test_gradient_matrix.py"
 RAISE_TEST = "tests/verification/test_gradient_matrix_raise_table.py"
 CAPABILITIES_DOC = "capabilities"
+FRONT_DOC = "index"  # the gfem-home layout renders the compact matrix and Palace rows
 CONTEXT_KEY = "gfem_capabilities"  # the template context name
 
 
@@ -117,10 +118,10 @@ OUTCOMES = {"gradient", "zero", "raises"}
 
 def _input_column(kind) -> str | None:
     """The grid column of an EXPECTED input kind (None: off the grid)."""
-    if kind == ("nodes",):
-        return "nodes"
     if not isinstance(kind, tuple):
         kind = (kind,)
+    if kind == ("nodes",):
+        return "nodes"
     if len(kind) == 3 and kind[0] == "material" and kind[2] in MATERIAL_PROPERTIES:
         return MATERIAL_PROPERTIES[kind[2]]
     if len(kind) == 4 and kind[0] == "boundary" and kind[2:] == ("fill", "fill"):
@@ -194,10 +195,11 @@ def gradient_matrix(cells, expected, out_of_scope) -> dict:
         headlines.add(key)
         if column is not None:
             claimed.setdefault((problem.row, column), set()).add(outcome)
-    for key in sorted({k for k, _, _ in expected} - headlines):
+    missing = sorted({k for k, _, _ in expected} - headlines)
+    if missing:
+        leaves = ", ".join(f"{k!r} ({PROBLEMS[k].headline!r})" for k in missing)
         raise CapabilitiesError(
-            f"{RAISE_TEST}: problem {key!r} has no row for its headline result "
-            f"leaf {PROBLEMS[key].headline!r}"
+            f"{RAISE_TEST}: no row for the headline result leaf of problem {leaves}"
         )
 
     labels = {}
@@ -597,9 +599,9 @@ def setup(app):
         context[CONTEXT_KEY] = app.env.gfem_capabilities
 
     def reread(_app, env, *_changes) -> list[str]:
-        # The page renders the tests' data, not its own source: read it again
-        # on every build so an incremental build never serves stale claims.
-        return [CAPABILITIES_DOC] if CAPABILITIES_DOC in env.found_docs else []
+        # Both pages render the tests' data, not their own source: read them
+        # again on every build so an incremental build never serves stale claims.
+        return [d for d in (CAPABILITIES_DOC, FRONT_DOC) if d in env.found_docs]
 
     app.add_config_value("gfem_capabilities_source_url", "", "html", str)
     app.connect("builder-inited", derive_claims)

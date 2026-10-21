@@ -1,11 +1,12 @@
-# gfem matplotlib style (light), applied by the docs build only (docs/_ext/gfem_figures.py).
-# Values are DESIGN.md tokens. Colour-blind-safe cycle (Okabe-Ito based): ink, vermillion,
-# blue, reddish purple, orange, sky. Teal is reserved for the sensitivity colormap.
+# gfem matplotlib style (light), applied by `just notebooks` only (docs/_ext/gfem_figures.py).
+# Values are the site's colour tokens (docs/_static/gfem.css). Colour-blind-safe cycle
+# (Okabe-Ito based): ink, vermillion, blue, reddish purple, orange, sky. Teal is reserved
+# for the sensitivity colormap.
 # docs/_ext/gfem_figures.py pairs every colour here with the same key in gfem-dark.mplstyle.
 font.family: Barlow, DejaVu Sans
 font.size: 10.5
 axes.titlesize: 11
-axes.titleweight: semibold  # DESIGN.md asks 500; the Barlow TTFs ship 400 and 600
+axes.titleweight: semibold  # the site's titles are 500; the Barlow TTFs ship 400 and 600
 axes.titlelocation: left
 axes.labelsize: 10.5
 axes.labelcolor: 3a3f46
