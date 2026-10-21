@@ -20,5 +20,6 @@ gfem/options/index
 gfem/errors/index
 gfem/conventions/index
 gfem/job/index
-../glossary
 ```
+
+The {doc}`../glossary` defines the terms these pages use.

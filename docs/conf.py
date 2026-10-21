@@ -37,6 +37,9 @@ exclude_patterns = [
     "**.ipynb_checkpoints",
     "jupyter_execute",
     "tutorials/data",
+    # never published, though a local checkout may keep them under docs/
+    "adr",
+    "agents",
 ]
 
 # --- MyST / MyST-NB -----------------------------------------------------------
