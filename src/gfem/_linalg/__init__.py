@@ -9,7 +9,9 @@ factors. ``Handle.free()`` releases the backend's memory.
 A handle may also refactorize (`Refactorable`): ``handle.refactor(operator)``
 assembles another operator with the same sparsity pattern (the next
 frequency of a sweep) and factorizes its values on the existing solver
-plan, so a sweep plans once. ``"direct"`` and ``"cudss"`` handles can.
+plan, so a sweep plans once. ``"direct"`` and ``"cudss"`` handles can;
+``"bddc_gmres"`` keeps its preconditioner for the new operator instead, and
+sets it up again once it has gone stale (preconditioner reuse).
 
 Vectors are NumPy arrays over all DOFs of the operator's space. ``solve``
 reads only the free rows of ``B`` and returns zeros in the fixed (Dirichlet)

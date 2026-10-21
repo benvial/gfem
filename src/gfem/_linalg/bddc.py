@@ -6,6 +6,9 @@ That coarse problem is factorized with an explicit ``sparsecholesky``
 inverse, never NGSolve's UMFPACK default. The Krylov method follows the
 operator: conjugate gradients for a Hermitian (real symmetric positive
 definite) operator, GMRES otherwise.
+
+Across a sweep the handle keeps its preconditioner (`BddcHandle.refactor`)
+and sets it up again only when GMRES iterations grow past one setup's worth.
 """
 
 from __future__ import annotations
@@ -21,6 +24,15 @@ from gfem._linalg.direct import INVERSE
 #: factorization. (``coarsetype="direct"`` is not set: on the driven H(curl)
 #: reference it made the setup 5x slower and GMRES take 68 iterations, not 49.)
 COARSE = {"inverse": INVERSE}
+#: Krylov iterations a BDDC setup is worth, summed over the right-hand sides
+#: of a solve: on the driven references (order 2) one setup took as long as
+#: about 30 GMRES iterations of one right-hand side.
+SETUP_ITERATIONS = 30
+
+
+def _slack(columns: int) -> int:
+    """Extra iterations per column a stale preconditioner may cost: ``Δ``."""
+    return max(1, round(SETUP_ITERATIONS / columns))
 
 
 class BddcHandle(NgsHandle):
@@ -28,6 +40,10 @@ class BddcHandle(NgsHandle):
 
     BDDC reads the fixed DOFs from the space: the operator's free DOFs must
     be the space's ``FreeDofs()`` (build the space with ``dirichlet=``).
+
+    `refactor` swaps in another operator and keeps the preconditioner
+    (preconditioner reuse across a sweep), setting it up again when it has
+    gone stale: a `gfem._linalg.Refactorable` handle.
 
     Attributes:
         iterations: Krylov iterations of every column solved so far.
@@ -60,34 +76,102 @@ class BddcHandle(NgsHandle):
         self.tolerance = tolerance
         self.maxiter = maxiter
         self.iterations: list[int] = []
-        self._preconditioner = preconditioner
-        if symmetry == "hermitian":
-            self._solver = ngs.solvers.CGSolver(
-                form.mat,
-                preconditioner.mat,
-                tol=tolerance,
-                maxiter=maxiter,
-                conjugate=is_complex,
-            )
-        else:
-            self._solver = ngs.solvers.GMResSolver(
-                form.mat, preconditioner.mat, tol=tolerance, maxiter=maxiter
-            )
+        self._hold(form, preconditioner)
 
-    def _check(self, solver, reference: float | None = None) -> None:
-        """Record the iterations; raise if the solve stopped unconverged.
+    def _hold(self, form: ngs.BilinearForm, preconditioner) -> None:
+        """Solve ``form``'s matrix on a preconditioner just set up from it."""
+        self._form = form
+        self._preconditioner = preconditioner
+        self._matrix = form.mat
+        self._solver = self._krylov(form.mat, preconditioner)
+        self._stale = False
+        self._n_ref: int | None = None
+        self._rebuild = False
+
+    def _build(self, form: ngs.BilinearForm) -> None:
+        """Set BDDC up again on ``form`` (assembled again), and hold it."""
+        # release the old setup first
+        self._solver = self._preconditioner = self._matrix = self._form = None
+        preconditioner = ngs.Preconditioner(form, "bddc", **COARSE)
+        form.Assemble()
+        self._hold(form, preconditioner)
+
+    def _held(self) -> tuple[ngs.BaseMatrix, ngs.Preconditioner, ngs.BilinearForm]:
+        """The matrix, its preconditioner and its form.
+
+        Raises:
+            RuntimeError: The handle was freed.
+        """
+        matrix, pre, form = self._matrix, self._preconditioner, self._form
+        if self._solver is None or matrix is None or pre is None or form is None:
+            raise RuntimeError("This solver handle was freed.")
+        return matrix, pre, form
+
+    def _krylov(self, matrix: ngs.BaseMatrix, pre: ngs.Preconditioner):
+        """The Krylov solver of ``matrix`` on the preconditioner ``pre``."""
+        if self.symmetry == "hermitian":
+            return ngs.solvers.CGSolver(
+                matrix,
+                pre.mat,
+                tol=self.tolerance,
+                maxiter=self.maxiter,
+                conjugate=self._complex,
+            )
+        return ngs.solvers.GMResSolver(
+            matrix, pre.mat, tol=self.tolerance, maxiter=self.maxiter
+        )
+
+    def refactor(self, operator: Operator) -> None:
+        """Assemble ``operator`` and solve it on the held preconditioner.
+
+        Preconditioner reuse (see `gfem._linalg.Refactorable`): only the
+        matrix is assembled, and the Krylov solver is rebuilt on it; the
+        preconditioner goes stale. It is set up again here instead when a
+        warm solve on it went past ``n_ref + Δ`` iterations per column, with
+        ``n_ref`` the iterations per column of the first warm solve after
+        its setup and ``Δ`` `SETUP_ITERATIONS` shared by the solve's
+        columns. A stale preconditioner serves warm GMRES solves only (see
+        `_warm`); a solve without an initial guess sets it up again first.
+        The rule counts iterations, never times, so runs repeat exactly.
+        """
+        _, pre, _ = self._held()
+        form = operator.form
+        with self._lock:
+            if self._rebuild:
+                self._build(form)
+                return
+            form.Assemble()
+            self._form = form
+            self._matrix = form.mat
+            self._solver = self._krylov(form.mat, pre)
+            self._stale = True
+
+    def _converged(self, solver, reference: float | None, maxiter: int) -> bool:
+        """Whether ``solver`` stopped at the tolerance, not at ``maxiter``.
 
         ``reference`` is the residual the tolerance is relative to; ``None``
         is the first residual of the iteration.
         """
-        self.iterations.append(int(solver.iterations))
         residuals = solver.residuals
         if not residuals:
-            return
+            return True
         start = residuals[0] if reference is None else reference
         # Krylov solvers stop early on an exact (lucky) breakdown too.
-        if len(residuals) < self.maxiter or residuals[-1] <= self.tolerance * start:
+        return len(residuals) < maxiter or residuals[-1] <= self.tolerance * start
+
+    def _check(
+        self, solver, reference: float | None = None, iterations: int = 0
+    ) -> None:
+        """Record the iterations; raise if the solve stopped unconverged.
+
+        ``reference`` is as for `_converged`; ``iterations`` were spent on
+        the column before ``solver`` (a capped stale solve).
+        """
+        self.iterations.append(iterations + int(solver.iterations))
+        if self._converged(solver, reference, self.maxiter):
             return
+        residuals = solver.residuals
+        start = residuals[0] if reference is None else reference
         name = "CG" if self.symmetry == "hermitian" else "GMRES"
         raise RuntimeError(
             f"BDDC + {name} did not converge to the relative tolerance "
@@ -99,10 +183,12 @@ class BddcHandle(NgsHandle):
     def _inverse_map(
         self, B: np.ndarray, tolerance: float | None, x0: np.ndarray | None = None
     ) -> np.ndarray:
-        solver = self._solver
-        if solver is None:
-            raise RuntimeError("This solver handle was freed.")
+        _, _, form = self._held()
         with self._lock:  # reentrant: _map and _warm take it again
+            if self._stale and (x0 is None or self.symmetry == "hermitian"):
+                # only a warm start pays for a stale preconditioner
+                self._build(form)
+            solver = self._solver
             prepared = self.tolerance
             if tolerance is not None:
                 # NGSolve's Krylov solvers read .tol on every Solve
@@ -121,17 +207,25 @@ class BddcHandle(NgsHandle):
         side, not to the first residual, so a good guess saves iterations.
         A guess whose residual exceeds ``|P b|`` (worse than zero) is
         dropped.
+
+        On a stale preconditioner (see `refactor`) each column stops at
+        ``n_ref + 2Δ`` iterations; a column that does sets BDDC up again at
+        this matrix and goes on from where it stopped.
         """
         cols, flat = self._columns(B)
         guesses, _ = self._columns(x0)
-        matrix = self._matrix
-        pre = self._preconditioner
-        if matrix is None or self._solver is None or pre is None:
-            raise RuntimeError("This solver handle was freed.")
+        matrix, _, _ = self._held()
         out = np.zeros(cols.shape, dtype=np.complex128 if self._complex else float)
         b, x, r = (matrix.CreateColVector() for _ in range(3))
+        before = len(self.iterations)
+        slack = _slack(cols.shape[1])
+        stale = self._stale
         with self._lock:
             for j in range(cols.shape[1]):
+                matrix, pre, form = self._held()
+                cap = self.maxiter
+                if self._stale and self._n_ref is not None:
+                    cap = min(cap, self._n_ref + 2 * slack)
                 b.FV().NumPy()[:] = cols[:, j]
                 r.data = pre.mat * b
                 reference = ngs.Norm(r)
@@ -142,14 +236,34 @@ class BddcHandle(NgsHandle):
                 if ngs.Norm(b_res) >= reference:
                     x[:] = 0
                 solver = ngs.solvers.GMResSolver(
-                    matrix,
-                    pre.mat,
-                    atol=self.tolerance * reference,
-                    maxiter=self.maxiter,
+                    matrix, pre.mat, atol=self.tolerance * reference, maxiter=cap
                 )
                 solver.Solve(rhs=b, sol=x, initialize=False)
-                self._check(solver, reference)
+                spent = 0
+                if cap < self.maxiter and not self._converged(solver, reference, cap):
+                    # set up at this matrix, and go on from the partial iterate
+                    spent = int(solver.iterations)  # ty: ignore[unresolved-attribute]
+                    self._build(form)
+                    matrix, pre, _ = self._held()
+                    r.data = pre.mat * b
+                    reference = ngs.Norm(r)
+                    solver = ngs.solvers.GMResSolver(
+                        matrix,
+                        pre.mat,
+                        atol=self.tolerance * reference,
+                        maxiter=self.maxiter,
+                    )
+                    solver.Solve(rhs=b, sol=x, initialize=False)
+                self._check(solver, reference, spent)
                 out[:, j] = x.FV().NumPy()
+            # the rebuild rule, by iteration count (unless a cap set BDDC up)
+            its = self.iterations[before:]
+            if not its or (stale and not self._stale):
+                pass
+            elif self._n_ref is None:
+                self._n_ref = max(its)
+            elif self._stale and max(its) > self._n_ref + slack:
+                self._rebuild = True
         return out[:, 0] if flat else out
 
     @property
@@ -164,3 +278,4 @@ class BddcHandle(NgsHandle):
         """Drop the Krylov solver, the preconditioner and the matrix."""
         super().free()
         self._preconditioner = None
+        self._form = None

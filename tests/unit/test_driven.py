@@ -11,6 +11,7 @@ import cmath
 import math
 
 import jax
+import ngsolve as ngs
 import numpy as np
 import pytest
 import scipy.constants as const
@@ -20,6 +21,7 @@ import gfem
 from gfem._engine import driven, terms
 from gfem._engine.driven import DrivenRule
 from gfem._linalg import prepare
+from gfem._linalg.bddc import BddcHandle
 from gfem._linalg.direct import DirectHandle
 
 L, W, H = 10.0, 2.0, 1.0  # mm
@@ -253,6 +255,66 @@ def test_a_direct_sweep_plans_once_and_matches_fresh_handles(line, monkeypatch, 
     solved = 4 if sweep == "uniform" else len(result.sweep.sampled_frequencies)
     assert len(calls) == solved > 1
     np.testing.assert_allclose(result.s.values, s, rtol=0, atol=1e-12)
+
+
+def _count_preconditioners(monkeypatch) -> list[int]:
+    """Spy on BDDC setups: one entry per preconditioner built."""
+    calls = []
+    build = ngs.Preconditioner
+
+    def spy(*args, **kwargs):
+        calls.append(1)
+        return build(*args, **kwargs)
+
+    monkeypatch.setattr(ngs, "Preconditioner", spy)
+    return calls
+
+
+def test_a_bddc_sweep_keeps_its_preconditioner_and_matches_fresh_setups(
+    line, monkeypatch
+):
+    problem = gfem.Driven(frequency=(3e9, 3.5e9, 4e9, 4.5e9))
+    builds = _count_preconditioners(monkeypatch)
+    s = np.asarray(_s(line, problem, linear_solver="bddc_gmres").s.values)
+    assert len(builds) == 1
+    # without refactorization, BDDC is set up afresh at each frequency
+    monkeypatch.delattr(BddcHandle, "refactor")
+    builds.clear()
+    fresh = np.asarray(_s(line, problem, linear_solver="bddc_gmres").s.values)
+    assert len(builds) == 4
+    np.testing.assert_allclose(s, fresh, rtol=0, atol=1e-6)
+
+
+def test_a_wide_bddc_sweep_rebuilds_its_stale_preconditioner(line, monkeypatch):
+    # a preconditioner from 1 GHz costs GMRES 3x its iterations at 15 GHz
+    problem = gfem.Driven(frequency=np.linspace(1e9, 29e9, 8))
+    direct = np.asarray(_s(line, problem).s.values)
+    builds = _count_preconditioners(monkeypatch)
+    s = np.asarray(_s(line, problem, linear_solver="bddc_gmres").s.values)
+    assert 1 < len(builds) < 8
+    # GMRES stops at 1e-6 of |P b|; a stale P measures the residual less well
+    np.testing.assert_allclose(s, direct, rtol=0, atol=1e-5)
+
+
+def test_a_stale_solve_at_its_cap_rebuilds_and_converges(line, monkeypatch):
+    # 1.5 GHz sets the reference; 30 GHz would take ~90 iterations per port
+    problem = gfem.Driven(frequency=(1e9, 1.5e9, 30e9))
+    direct = np.asarray(_s(line, problem).s.values)
+    builds = _count_preconditioners(monkeypatch)
+    s = np.asarray(_s(line, problem, linear_solver="bddc_gmres").s.values)
+    # set up at 1 GHz, and again inside the 30 GHz solve (no later refactor)
+    assert len(builds) == 2
+    np.testing.assert_allclose(s, direct, rtol=0, atol=1e-5)
+
+
+def test_a_bddc_sweep_rebuilds_at_the_same_iterations_every_run(line):
+    # the rebuild rule counts iterations, never times: runs repeat exactly
+    problem = gfem.Driven(frequency=(1e9, 1.5e9, 12e9, 13e9, 20e9, 30e9))
+    rule = DrivenRule(line, problem, gfem.SolverOptions())
+    first, _ = rule.forward(line, keep=False)
+    second, _ = rule.forward(line, keep=False)
+    assert first["iterations"] == second["iterations"]
+    assert max(map(max, first["iterations"])) > 45  # a capped solve, set up again
 
 
 def test_excite_selects_the_columns_of_s(line):

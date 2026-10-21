@@ -241,6 +241,24 @@ def test_gmres_initial_guess_saves_iterations_at_the_same_tolerance(built):
     assert second.iterations[-1] <= 1
 
 
+def test_bddc_refactorization_without_a_guess_solves_like_a_fresh_handle(built):
+    # the preconditioner is kept for warm starts only: a cold solve after a
+    # refactorization sets BDDC up again at the new operator
+    def operator(shift):
+        return _laplace(built, complex_valued=True, shift=shift, order=4)[0]
+
+    handle, fresh = (
+        prepare(operator(s), symmetry="complex_symmetric", kind="bddc_gmres")
+        for s in (1 - 2j, -40 + 1j)
+    )
+    handle.refactor(operator(-40 + 1j))
+    rng = np.random.default_rng(14)
+    B = rng.standard_normal((handle.ndof, 2)) + 0j
+    X, ref = handle.solve(B), fresh.solve(B)
+    assert handle.iterations == fresh.iterations
+    np.testing.assert_allclose(X, ref, rtol=0, atol=1e-12 * np.abs(ref).max())
+
+
 def test_direct_ignores_the_initial_guess(built):
     op, space = _laplace(built, complex_valued=True, shift=1 - 2j)
     handle = prepare(op, symmetry="complex_symmetric", kind="direct")
