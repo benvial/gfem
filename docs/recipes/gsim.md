@@ -158,3 +158,28 @@ the uniform sweep where the fields matter most.
 Under `jax.grad`, `jax.jit` or `jax.vmap` an adaptive sweep needs its samples
 frozen (`Driven(samples=...)`): see [Differentiate an adaptive frequency
 sweep](adaptive-sweep-gradient.md).
+
+## Many cores: frequency workers
+
+A uniform sweep can also run several frequencies at once.
+`gfem.SolverOptions(frequency_workers=k)` splits the grid into `k` contiguous
+blocks and solves each block in a {term}`frequency worker`, a separate process
+with `threads // k` of the solve's threads (of every logical CPU when `threads`
+is `None`). One small solve uses many threads poorly, so workers pay off on a
+many-core machine; on a few cores the gain is small.
+
+```python
+options = gfem.SolverOptions(frequency_workers=4, threads=16)
+problem = gfem.Driven(frequency=np.linspace(1e9, 100e9, 64))
+result = gfem.solve(model, problem, options=options)
+```
+
+- Memory grows about `k` times: each worker holds one solve.
+- S agrees with one worker's to the solver precision: with `bddc_gmres`, each
+  block's first solve starts cold, so S moves within `SolverOptions.tolerance`.
+- Only uniform driven sweeps use it; adaptive sweeps, eigenmode and
+  electrostatic solves ignore it. Wave ports and GPU devices need
+  `frequency_workers=1`.
+- The workers are spawned processes: a script that sets `frequency_workers`
+  guards its entry point with `if __name__ == "__main__":`.
+- Gradients work as usual; the adjoint solves run in the main process.
