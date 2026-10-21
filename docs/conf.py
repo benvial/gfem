@@ -9,14 +9,23 @@ tutorials' outputs and the front page's hero data are committed, and
 import json
 import os
 import sys
+import tomllib
 from pathlib import Path
 
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
 from sphinx.errors import ConfigError
 
 DOCS = Path(__file__).resolve().parent
 
+# gfem is imported by the build (the version here, Capabilities from the tests);
+# JAX on CPU keeps it from probing for CUDA.
+os.environ.setdefault("JAX_PLATFORMS", "cpu")
+import gfem  # noqa: E402
+
 project = "gfem"
 html_title = "gfem"
+version = release = gfem.__version__
 
 extensions = [
     "myst_nb",  # also loads myst_parser for the .md pages
@@ -38,9 +47,6 @@ myst_enable_extensions = ["colon_fence", "dollarmath", "deflist"]
 nb_execution_mode = "off"
 nb_merge_streams = True  # one output box per cell, not one per print()
 nb_output_stderr = "warn"  # stray stderr is a warning, so -W fails on it
-# gfem is imported by the build (Capabilities from the tests); JAX on CPU keeps
-# it from probing for CUDA.
-os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
 # --- Figure pipeline -----------------------------------------------------------
 # `just notebooks` executes the tutorials in place with IPYTHONDIR=docs/_ipython,
@@ -213,25 +219,63 @@ gfem_capabilities_source_url = ""
 # --- end Capabilities ------------------------------------------------------------
 
 # --- Front page: layout/gfem-home.html (index.md: `layout: gfem-home`) -----------
-# The copy is static in the template; every number or quoted line reaches it here,
-# or through gfem_capabilities (the compact matrix and the Palace rows, above).
+# Static in the template: the headline, lead, scope and section prose, the
+# chain of the differentiable pipeline, the button and link labels, the
+# accessibility labels and the platform list ("Linux x86_64, macOS arm64 and
+# Windows x86_64"). Every number and quoted line reaches it from here (the hero
+# data and its model values, the code line, the version status, the Python
+# floor, the install line and its note) or through gfem_capabilities (the
+# compact matrix, the provenance line, the Palace rows, above).
 
 # The repository URL; empty until a public remote exists. Setting it also needs
 # html_baseurl, ogp_site_url and gfem_capabilities_source_url.
 REPO_URL = ""
-# The install line, in one place: the front page shows it and get-started.md uses
-# it through the {{ install }} substitution. At PyPI publishing it becomes
-# {"line": "pip install gfem", "note": ""} and the front page's "not on PyPI yet"
-# sentence goes.
+# The install line and its note, in one place: the front page and get-started.md
+# (the {{ install }} substitution) show both. At PyPI publishing this becomes
+# {"line": "pip install gfem", "note": ""}.
 if REPO_URL:
-    gfem_install = {"line": f'pip install "gfem @ git+{REPO_URL}"', "note": ""}
+    gfem_install = {
+        "line": f'pip install "gfem @ git+{REPO_URL}"',
+        "note": "gfem is not on PyPI yet: pip installs it from the repository.",
+    }
 else:
     gfem_install = {
         "line": "uv build --wheel && pip install dist/gfem-*.whl",
-        "note": "Build the wheel in a checkout of the repository.",
+        "note": "gfem is not on PyPI yet: build the wheel in a checkout of the "
+        "repository and install it.",
     }
+
+
+def _status(version: str) -> str:
+    """The version label: "under development towards v0.1" before a release."""
+    v = Version(version)
+    if v.is_prerelease:
+        return f"under development towards v{v.major}.{v.minor}"
+    return f"v{v.public}"
+
+
+def _python_floor(pyproject: Path) -> str:
+    """The lowest supported Python, from ``requires-python`` (">=3.12" -> "3.12")."""
+    spec = tomllib.loads(pyproject.read_text())["project"]["requires-python"]
+    floors = [s.version for s in SpecifierSet(spec) if s.operator == ">="]
+    if len(floors) != 1:
+        msg = f"front page: cannot read one >= floor from requires-python {spec!r}"
+        raise ConfigError(msg)
+    return floors[0]
+
+
+gfem_status = _status(release)
+gfem_python = _python_floor(DOCS.parent / "pyproject.toml")
 myst_enable_extensions += ["substitution"]
-myst_substitutions = {"install": f"```bash\n{gfem_install['line']}\n```"}
+myst_substitutions = {
+    "status": gfem_status,
+    "python": gfem_python,
+    "install": "\n\n".join(
+        part
+        for part in (gfem_install["note"], f"```bash\n{gfem_install['line']}\n```")
+        if part
+    ),
+}
 
 
 def _code_line(notebook: Path) -> dict:
@@ -255,6 +299,10 @@ def _code_line(notebook: Path) -> dict:
     return {"head": head, "args": args}
 
 
+def _num(value: float) -> str:
+    return f"{value:g}"
+
+
 def _front(path: Path) -> dict | None:
     """The committed hero data (tools/front_page_data.py), or None when absent."""
     if not path.exists():
@@ -267,11 +315,22 @@ def _front(path: Path) -> dict | None:
         return None  # a local build: the hero frame says how to generate it
     data = json.loads(path.read_text())
     final = data["final"]  # J of each etch variant after the optimisation
+    params = data["params"]  # the tutorial's model values
+    x0, x1 = data["extent_mm"][:2]
     return {
         "steps": len(data["history"]),
         "final": {name: f"{value:.3f}" for name, value in final.items()},
         "worst": f"{max(final.values()):.3f}",
         "balance": f"{data['balance']:.1e}",
+        "layer": [_num(v) for v in params["layer_mm"]],
+        "x": [_num(x0), _num((x0 + x1) / 2), _num(x1)],  # layer ends and middle
+        "radius": _num(params["radius_mm"]),
+        "eps_r": _num(params["eps_r"]),
+        "pass": _num(params["pass_ghz"]),
+        "stop": _num(params["stop_ghz"]),
+        "beta0": _num(params["beta0"]),
+        "steps_per_beta": params["steps_per_beta"],
+        "sweep": [_num(v) for v in params["sweep_ghz"]],
         # inlined into a <script> (no extra fetch); "</" cannot close the element
         "topo_json": json.dumps(data, separators=(",", ":")).replace("</", "<\\/"),
     }
@@ -280,6 +339,8 @@ def _front(path: Path) -> dict | None:
 html_context["gfem_front"] = _front(DOCS / "_data" / "front-page.json")
 html_context["gfem_code_line"] = _code_line(DOCS / "tutorials" / "topology.ipynb")
 html_context["gfem_install"] = gfem_install
+html_context["gfem_status"] = gfem_status  # the footer and the front page
+html_context["gfem_python"] = gfem_python
 # The front-page header: Get started, Tutorials, Capabilities (no Recipes, no API).
 html_context["gfem_nav_home"] = [
     link

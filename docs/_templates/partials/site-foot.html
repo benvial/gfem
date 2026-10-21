@@ -1,11 +1,12 @@
 {#- gfem override of shibuya partials/site-foot.html: the Project group (gfem_project_links in conf.py,
-    as docnames) and the status line; no "Made with Sphinx and Shibuya". -#}
+    as docnames) and the status line (gfem_status, from gfem.__version__ in conf.py); no "Made with
+    Sphinx and Shibuya". -#}
 <footer class="sy-foot gfem-foot">
   <div class="sy-foot-inner sy-container mx-auto">
     <nav class="gfem-foot-row" aria-label="Project">
       <span>gfem</span>
       {%- for title, docname in gfem_project_links %}<a href="{{ pathto(docname) }}">{{ title }}</a>{% endfor %}
-      <span class="gfem-foot-end">MIT licence · under development towards v0.1</span>
+      <span class="gfem-foot-end">MIT licence · {{ gfem_status }}</span>
     </nav>
   </div>
 </footer>
