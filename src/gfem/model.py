@@ -163,7 +163,8 @@ class Model:
         excluded: Volumes removed from the solve domain of electromagnetic
             problems, typically meshed conductors whose shell carries a
             `Conductor` or `PEC`: volume region names, or
-            `enclosed_by(*surfaces)`. An excluded region has no material.
+            ``enclosed_by(*surfaces)`` (see `enclosed_by`). An excluded region
+            has no material.
 
     Raises:
         RegionNotFoundError: A name is not a region of the mesh.
