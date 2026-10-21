@@ -8,6 +8,8 @@ Cholesky on the CPU.
 import logging
 from pathlib import Path
 
+import jax
+import jax.numpy as jnp
 import ngsolve as ngs
 import numpy as np
 import pytest
@@ -256,3 +258,66 @@ def test_a_gpu_sweep_plans_once_and_matches_per_frequency_handles(
     result = gfem.solve(model, problem, options=options)
     assert len(plans) > 1
     np.testing.assert_allclose(result.s.values, s, rtol=0, atol=1e-12)
+
+
+@pytest.fixture
+def alive(monkeypatch):
+    """The most cuDSS factorizations alive at once (handles prepared, not freed)."""
+    held: set[int] = set()
+    most = [0]
+    init, free = CudssHandle.__init__, CudssHandle.free
+
+    def spy_init(self, *args, **kwargs):
+        init(self, *args, **kwargs)
+        held.add(id(self))
+        most[0] = max(most[0], len(held))
+
+    def spy_free(self):
+        held.discard(id(self))
+        free(self)
+
+    monkeypatch.setattr(CudssHandle, "__init__", spy_init)
+    monkeypatch.setattr(CudssHandle, "free", spy_free)
+    return most
+
+
+def test_gpu_sweep_gradient_matches_the_cpu_on_one_factorization(
+    tmp_path, plans, alive
+):
+    # S21 with only p1 excited: every frequency takes an adjoint solve
+    path = tmp_path / "line.msh"
+    sm.write_msh22(path, sm.strip_line(3.0, 2.0, 1.0, (3, 2, 1)))
+    line = gfem.Model(
+        gfem.Mesh.from_gmsh(path, length_unit="mm"),
+        materials={"dielectric": gfem.Material()},
+        boundaries=[
+            gfem.PEC("bottom"),
+            gfem.PEC("top"),
+            gfem.Absorbing("side", order=1),
+        ],
+        ports=[
+            gfem.LumpedPort("p1", "port1", "+z"),
+            gfem.LumpedPort("p2", "port2", "+z"),
+        ],
+    )
+    rng = np.random.default_rng(3)
+    eps_r = jnp.asarray(rng.uniform(2.0, 5.0, len(line.mesh.tetrahedra)))
+    problem = gfem.Driven(frequency=(15e9, 18e9, 21e9), excite="p1")
+
+    def gradient(device):
+        options = gfem.SolverOptions(linear_solver="direct", device=device)
+
+        def objective(p):
+            model = line.with_material("dielectric", gfem.MaterialField(eps_r=p))
+            s = gfem.solve(model, problem, options=options).s
+            return jnp.sum(jnp.abs(s["p2", "p1"]) ** 2)
+
+        return np.asarray(jax.grad(objective)(eps_r))
+
+    gpu = gradient("cuda")
+    # one plan for the forward sweep, one for the backward's adjoint solves
+    assert len(plans) == 2
+    assert alive[0] == 1
+    cpu = gradient("cpu")
+    assert np.abs(cpu).max() > 0
+    np.testing.assert_allclose(gpu, cpu, rtol=1e-9, atol=1e-12 * np.abs(cpu).max())

@@ -49,7 +49,6 @@ from __future__ import annotations
 import dataclasses
 import functools
 import math
-from collections.abc import Callable
 from typing import Any, Self
 
 import jax
@@ -784,14 +783,12 @@ class DrivenRule:
                 if load.any():
                     handle = handles.get(
                         n,
-                        lambda omega=omega: ports.prepare(
-                            omega,
-                            kind=self.kind,
-                            device=self.options.device,
-                            threads=self.options.threads,
-                            tolerance=adjoint_tolerance(self.options),
-                            width=width,
-                        ),
+                        omega,
+                        kind=self.kind,
+                        device=self.options.device,
+                        threads=self.options.threads,
+                        tolerance=adjoint_tolerance(self.options),
+                        width=width,
                     )
                     adjoint += handle.solve(
                         load, tolerance=adjoint_tolerance(self.options)
@@ -1318,6 +1315,11 @@ class _SweepHandle:
         its = list(getattr(handle, "iterations", ()))[before:]
         return x, tuple(int(i) for i in its)
 
+    @property
+    def nbytes(self) -> int:
+        """Host memory held by the base handle, in bytes."""
+        return 0 if self._base is None else int(self._base.nbytes)
+
     def free(self) -> None:
         """Release the base handle."""
         if self._base is not None:
@@ -1332,7 +1334,12 @@ class _SweepHandle:
 
 
 class _Handles:
-    """Prepared driven operators by frequency index, for adjoint solves.
+    """Prepared system operators for adjoint solves, by frequency index.
+
+    On the CPU, one handle per frequency, kept for later backward passes.
+    On a GPU, one sweep-scoped base handle (`_SweepHandle`) refactorized at
+    each frequency, so device memory holds one factorization whatever the
+    number of frequencies; a later backward pass refactorizes again.
 
     Also keeps the solve's port terms (`_Ports`), so a backward pass does
     not re-run the wave ports' port mode sweeps.
@@ -1341,17 +1348,30 @@ class _Handles:
     def __init__(self, ports: _Ports | None = None) -> None:
         self.ports = ports
         self._handles: dict[int, Handle] = {}
+        self._sweep: _SweepHandle | None = None
 
-    def get(self, n: int, build: Callable[[], Handle]) -> Handle:
-        """The handle of frequency ``n``, prepared by ``build()`` on first use."""
+    def get(self, n: int, omega: float, **options: Any) -> Handle:
+        """The handle of frequency ``n`` at ``ω`` (`_Ports.prepare` ``options``).
+
+        On a GPU it is valid until the next call.
+        """
+        ports = self.ports
+        if ports is None:  # pragma: no cover - the backward sets the ports
+            raise RuntimeError("The adjoint handles have no port terms.")
+        if options["device"] != "cpu":
+            if self._sweep is None:
+                self._sweep = ports.sweep(**options)
+            return self._sweep.at(omega)
         if n not in self._handles:
-            self._handles[n] = build()
+            self._handles[n] = ports.prepare(omega, **options)
         return self._handles[n]
 
     @property
     def nbytes(self) -> int:
         """Host memory held, in bytes."""
         held = sum(int(h.nbytes) for h in self._handles.values())
+        if self._sweep is not None:
+            held += self._sweep.nbytes
         return held + (self.ports.nbytes if self.ports is not None else 0)
 
     def free(self) -> None:
@@ -1359,6 +1379,9 @@ class _Handles:
         for handle in self._handles.values():
             handle.free()
         self._handles = {}
+        if self._sweep is not None:
+            self._sweep.free()
+        self._sweep = None
         self.ports = None
 
 
