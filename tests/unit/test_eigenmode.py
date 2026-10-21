@@ -22,6 +22,9 @@ import structured_meshes as sm
 from scipy.optimize import brentq
 
 import gfem
+from gfem._engine.driven import driven_operator
+from gfem._engine.eigen import projector
+from gfem._engine.runtime import task_manager
 
 L, W, H = 10.0, 2.0, 1.0  # mm
 EPS = 4.0
@@ -329,6 +332,30 @@ def test_unconverged_modes_raise_without_a_partial_result(mesh):
         gfem.EigenmodeConvergenceError, match=r"(?s)0 of the 1.*Remedies"
     ):
         gfem.solve(_terminated(mesh, 1000.0), gfem.Eigenmode(8e9), options=options)
+
+
+# --- the divergence-free projection ----------------------------------------------
+
+
+@pytest.mark.parametrize("order", [1, 2])
+def test_divfree_projection_matches_the_complex_product_bit_for_bit(tmp_path, order):
+    # the real G applied to the real and imaginary parts gives exactly what
+    # SciPy's complex product (G upcast to complex) gives; two layers in z
+    # leave free H1 nodes between the plates at order 1 too
+    path = tmp_path / "line.msh"
+    sm.write_msh22(path, sm.strip_line(L, W, H, (6, 1, 2)))
+    model = _line(gfem.Mesh.from_gmsh(path, length_unit="mm"))
+    with task_manager(1):
+        op = driven_operator(model, order)
+        project = projector(model, op)
+        g = project._g.astype(complex)
+        rng = np.random.default_rng(0)
+        x = rng.standard_normal(g.shape[0]) + 1j * rng.standard_normal(g.shape[0])
+        expected = x - g @ project._laplace.solve(g.T @ project.energy(x))
+        projected = project(x)
+        project.free()
+    assert np.linalg.norm(projected - x) > 0.1 * np.linalg.norm(x)
+    assert np.array_equal(projected, expected)
 
 
 # --- serialization -----------------------------------------------------------------
