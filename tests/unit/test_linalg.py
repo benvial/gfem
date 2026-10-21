@@ -88,6 +88,27 @@ def test_freed_handle_refuses_to_solve(built):
         handle.apply(np.ones(n))
 
 
+def test_direct_refactorization_solves_like_a_fresh_handle(built):
+    # one sweep, two frequencies: the second refactorizes the first's plan
+    handle = prepare(
+        _laplace(built, complex_valued=True, shift=1 - 2j)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+    )
+    op, space = _laplace(built, complex_valued=True, shift=3 + 1j)
+    handle.refactor(op)
+    fresh = prepare(
+        _laplace(built, complex_valued=True, shift=3 + 1j)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+    )
+    rng = np.random.default_rng(12)
+    B = rng.standard_normal((space.ndof, 2)) + 1j * rng.standard_normal((space.ndof, 2))
+    X, ref = handle.solve(B), fresh.solve(B)
+    assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
+    np.testing.assert_allclose(handle.apply(X), fresh.apply(X), rtol=1e-14)
+
+
 def test_wrong_shape_raises(built):
     handle = prepare(_laplace(built)[0], symmetry="hermitian", kind="direct")
     with pytest.raises(ValueError, match="shape"):
@@ -343,3 +364,19 @@ def test_a_zero_update_is_the_operator_itself(built):
     b = rng.standard_normal(space.ndof) + 0j
     x = low_rank_update(base, U, np.zeros((2, 2))).solve(b)
     np.testing.assert_allclose(x, base.solve(b), atol=1e-12 * np.abs(x).max())
+
+
+def test_a_borrowing_low_rank_update_frees_only_its_own_columns(built):
+    op, space = _laplace(built, complex_valued=True, shift=1 - 2j)
+    rng = np.random.default_rng(13)
+    U, C, _ = _update(space, rng)
+    base = prepare(op, symmetry="complex_symmetric", kind="direct")
+    b = rng.standard_normal(space.ndof) + 0j
+    x = base.solve(b)
+    handle = low_rank_update(base, U, C, borrow=True)
+    handle.solve(b)
+    handle.free()
+    assert handle.nbytes == 0
+    with pytest.raises(RuntimeError, match="freed"):
+        handle.solve(b)
+    np.testing.assert_array_equal(base.solve(b), x)  # the base is still usable

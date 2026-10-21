@@ -15,6 +15,21 @@ def host_bytes(obj) -> int:
     return sum(int(u.host) for u in obj.GetMemoryUsage())
 
 
+def same_pattern(a, b) -> bool:
+    """Whether two assembled sparse matrices have one sparsity pattern.
+
+    Compares the sizes and nonzero counts, then the CSR row pointers and
+    column indices (no copies: NGSolve's CSR arrays are views).
+    """
+    if a.height != b.height or a.nze != b.nze:
+        return False
+    _, cols_a, rowptr_a = a.CSR()
+    _, cols_b, rowptr_b = b.CSR()
+    return np.array_equal(np.asarray(rowptr_a), np.asarray(rowptr_b)) and (
+        np.array_equal(np.asarray(cols_a), np.asarray(cols_b))
+    )
+
+
 class NgsHandle:
     """A handle on an assembled NGSolve matrix with free DOFs.
 

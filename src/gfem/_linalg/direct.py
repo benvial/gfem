@@ -7,7 +7,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from gfem._linalg import Operator, Symmetry
-from gfem._linalg.base import NgsHandle, host_bytes
+from gfem._linalg.base import NgsHandle, host_bytes, same_pattern
 
 INVERSE = "sparsecholesky"
 
@@ -18,6 +18,9 @@ class DirectHandle(NgsHandle):
     Sparse Cholesky factors ``A = L D L^T``, so it needs ``A^T = A``: a real
     symmetric operator (``"hermitian"`` on a real space) or a complex
     symmetric one. Complex Hermitian and general operators are refused.
+
+    `refactor` factorizes another operator's values in place (NGSolve's
+    ``Update()``): a `gfem._linalg.Refactorable` handle.
     """
 
     kind = "direct"
@@ -34,11 +37,13 @@ class DirectHandle(NgsHandle):
         if symmetry == "general" or (symmetry == "hermitian" and is_complex):
             self._refuse(symmetry)
         super().__init__(matrix, freedofs, symmetry, is_complex=is_complex)
-        self._solver = (
-            matrix.Inverse(inverse=INVERSE)
-            if freedofs is None
-            else matrix.Inverse(freedofs, inverse=INVERSE)
-        )
+        self._solver = self._factor(matrix, freedofs)
+
+    @staticmethod
+    def _factor(matrix: ngs.BaseMatrix, freedofs: ngs.BitArray | None):
+        if freedofs is None:
+            return matrix.Inverse(inverse=INVERSE)
+        return matrix.Inverse(freedofs, inverse=INVERSE)
 
     @classmethod
     def from_operator(cls, operator: Operator, symmetry: Symmetry) -> DirectHandle:
@@ -70,6 +75,26 @@ class DirectHandle(NgsHandle):
             n,
         )
         return cls(assembled, None, "hermitian", is_complex=False)
+
+    def refactor(self, operator: Operator) -> None:
+        """Assemble ``operator`` and refactorize (see `gfem._linalg.Refactorable`).
+
+        The new values are copied into the factored matrix, and NGSolve's
+        ``Update()`` factorizes them again; a changed pattern is factorized
+        anew.
+        """
+        matrix = self._matrix
+        if self._solver is None or matrix is None:
+            raise RuntimeError("This solver handle was freed.")
+        form = operator.form
+        form.Assemble()
+        with self._lock:
+            if same_pattern(matrix, form.mat):
+                matrix.AsVector().data = form.mat.AsVector()
+                self._solver.Update()
+            else:
+                self._matrix = form.mat
+                self._solver = self._factor(form.mat, operator.freedofs)
 
     @staticmethod
     def _refuse(symmetry: Symmetry) -> None:

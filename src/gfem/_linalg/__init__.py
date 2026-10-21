@@ -6,6 +6,11 @@ and sets up a backend (a factorization, a preconditioner) into a `Handle`.
 needed: terminal solves, port solves and adjoint solves reuse the same
 factors. ``Handle.free()`` releases the backend's memory.
 
+A handle may also refactorize (`Refactorable`): ``handle.refactor(operator)``
+assembles another operator with the same sparsity pattern (the next
+frequency of a sweep) and factorizes its values on the existing solver
+plan, so a sweep plans once. ``"direct"`` and ``"cudss"`` handles can.
+
 Vectors are NumPy arrays over all DOFs of the operator's space. ``solve``
 reads only the free rows of ``B`` and returns zeros in the fixed (Dirichlet)
 rows, so a Dirichlet lifting ``u_D`` is completed by
@@ -37,7 +42,7 @@ auxiliary systems assembled outside NGSolve.
 from __future__ import annotations
 
 import dataclasses
-from typing import Literal, Protocol
+from typing import Literal, Protocol, runtime_checkable
 
 import ngsolve as ngs
 import numpy as np
@@ -47,6 +52,7 @@ __all__ = [
     "Handle",
     "Kind",
     "Operator",
+    "Refactorable",
     "Symmetry",
     "factorize",
     "low_rank_update",
@@ -112,6 +118,26 @@ class Handle(Protocol):
 
     def free(self) -> None:
         """Release the backend; later calls to `solve` raise."""
+        ...
+
+
+@runtime_checkable
+class Refactorable(Handle, Protocol):
+    """A handle that refactorizes: a new operator on the same solver plan.
+
+    ``isinstance(handle, Refactorable)`` tells whether a handle can.
+    """
+
+    def refactor(self, operator: Operator) -> None:
+        """Assemble ``operator`` and factorize its values in place.
+
+        The operator has the handle's symmetry and free DOFs (the same
+        space). A changed sparsity pattern is planned again, never refused.
+        Later solves use the new operator.
+
+        Raises:
+            RuntimeError: The handle was freed.
+        """
         ...
 
 
@@ -195,16 +221,21 @@ def factorize(matrix) -> Handle:
     return DirectHandle.from_scipy(matrix)
 
 
-def low_rank_update(handle: Handle, vectors: np.ndarray, coefficients) -> Handle:
+def low_rank_update(
+    handle: Handle, vectors: np.ndarray, coefficients, *, borrow: bool = False
+) -> Handle:
     """A handle of ``A + U C Uᵀ`` from a handle of ``A`` (Woodbury).
 
-    See `gfem._linalg.lowrank`. The result owns ``handle``.
+    See `gfem._linalg.lowrank`. The result owns ``handle`` unless it borrows
+    it.
 
     Args:
         handle: The prepared base operator ``A``.
         vectors: ``U``, ``(ndof, p)``, zero on the fixed DOFs.
         coefficients: ``C``, ``(p, p)``.
+        borrow: Leave ``handle`` to its owner: freeing the result releases
+            only the update's own columns.
     """
     from gfem._linalg.lowrank import LowRankUpdate
 
-    return LowRankUpdate(handle, vectors, coefficients)
+    return LowRankUpdate(handle, vectors, coefficients, borrow=borrow)

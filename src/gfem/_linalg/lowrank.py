@@ -15,6 +15,10 @@ invertible.
 
 ``U`` must vanish on the fixed DOFs (the update acts on the free ones, like
 the base solve).
+
+The update owns its base handle unless it borrows it (``borrow=True``): a
+borrowing update's `free` drops only its own columns, and the base stays
+usable (a sweep's base handle, wrapped at each frequency).
 """
 
 from __future__ import annotations
@@ -37,8 +41,18 @@ class LowRankUpdate:
         coefficients: ``C``.
     """
 
-    def __init__(self, handle: Handle, vectors: np.ndarray, coefficients) -> None:
-        """Wrap ``handle`` (of ``A``) with the update ``U C Uᵀ``."""
+    def __init__(
+        self,
+        handle: Handle,
+        vectors: np.ndarray,
+        coefficients,
+        *,
+        borrow: bool = False,
+    ) -> None:
+        """Wrap ``handle`` (of ``A``) with the update ``U C Uᵀ``.
+
+        ``borrow`` leaves ``handle`` to its owner: `free` does not free it.
+        """
         vectors = np.asarray(vectors)
         coefficients = np.asarray(coefficients)
         p = vectors.shape[1]
@@ -53,6 +67,7 @@ class LowRankUpdate:
         self.vectors = vectors
         self.coefficients = coefficients
         self._base: Handle | None = handle
+        self._owner = not borrow
         self._z: dict[tuple[bool, float | None], np.ndarray] = {}
         self._iterations: list[int] = []
 
@@ -124,8 +139,8 @@ class LowRankUpdate:
         )
 
     def free(self) -> None:
-        """Release the base handle and the kept columns."""
-        if self._base is not None:
+        """Release the kept columns, and the base handle unless borrowed."""
+        if self._base is not None and self._owner:
             self._base.free()
         self._base = None
         self._z = {}

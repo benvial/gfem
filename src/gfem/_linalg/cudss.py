@@ -10,21 +10,42 @@ cuDSS solves a fixed number of right-hand-side columns per solver object, so
 the handle solves ``width`` columns at a time: wider blocks go in chunks,
 narrower ones are zero-padded. All of them reuse the same factors.
 
+`CudssHandle.refactor` factorizes another operator with the same pattern on
+the handle's solver plan: the next frequency of a sweep gathers its values
+into the triangle and factorizes, without planning again.
+
 This is the only module that imports nvmath.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import logging
 from pathlib import Path
 
 import numpy as np
 import scipy.sparse as sp
 
 from gfem._linalg import Operator, Symmetry
-from gfem._linalg.base import NgsHandle, host_bytes
+from gfem._linalg.base import NgsHandle, host_bytes, same_pattern
 
 _INT32_MAX = np.iinfo(np.int32).max
+
+
+class _NoResetWarning(logging.Filter):
+    """Drop nvmath's warning at each reset of the matrix values.
+
+    It says a reset needs a new factorization; `CudssHandle.refactor`
+    factorizes right after, at every frequency of a sweep.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not record.getMessage().startswith("Resetting the LHS 'a'")
+
+
+#: nvmath's logger for the handle's solvers (its default is the root logger).
+_LOGGER = logging.getLogger(__name__)
+_LOGGER.addFilter(_NoResetWarning())
 
 
 def _nvmath():
@@ -114,6 +135,9 @@ class CudssHandle(NgsHandle):
     ``A = L D L^T`` (no conjugate), complex ``"hermitian"`` ones
     ``A = L D L^H``. ``"general"`` is refused. Precision is float64 /
     complex128.
+
+    `refactor` factorizes another operator's values on the same plan: a
+    `gfem._linalg.Refactorable` handle.
     """
 
     kind = "cudss"
@@ -139,15 +163,8 @@ class CudssHandle(NgsHandle):
         if width < 1:
             raise ValueError(f"width must be at least 1, got {width}.")
         super().__init__(matrix, freedofs, symmetry, is_complex=is_complex)
-        data, cols, rowptr = matrix.CSR()
-        indptr, indices, gather = lower_pattern(
-            np.asarray(rowptr), np.asarray(cols), self._free
-        )
         self._dtype = np.complex128 if is_complex else np.float64
-        values = np.take(np.asarray(data), gather).astype(self._dtype, copy=False)
-        self._lower = sp.csr_matrix(
-            (values, indices, indptr), shape=(len(indptr) - 1,) * 2
-        )
+        self._lower, self._gather = self._triangle(matrix)
         self.width = width
         self.device_id = device_id
         self._multithreading_lib = None if threads == 1 else threading_layer()
@@ -179,6 +196,44 @@ class CudssHandle(NgsHandle):
             threads=threads,
         )
 
+    def _triangle(self, matrix) -> tuple[sp.csr_matrix, np.ndarray]:
+        """The free-DOF lower triangle of ``matrix`` and its gather index."""
+        data, cols, rowptr = matrix.CSR()
+        indptr, indices, gather = lower_pattern(
+            np.asarray(rowptr), np.asarray(cols), self._free
+        )
+        values = np.take(np.asarray(data), gather).astype(self._dtype, copy=False)
+        lower = sp.csr_matrix((values, indices, indptr), shape=(len(indptr) - 1,) * 2)
+        return lower, gather
+
+    def refactor(self, operator: Operator) -> None:
+        """Assemble ``operator`` and refactorize (see `gfem._linalg.Refactorable`).
+
+        On the same pattern, gathers the new values into the triangle and
+        factorizes on the existing plan, in the memory mode of the first
+        plan. A changed pattern is planned again (hybrid memory stays on if
+        it was).
+        """
+        solver = self._solver
+        matrix = self._matrix
+        if solver is None or matrix is None:
+            raise RuntimeError("This solver handle was freed.")
+        form = operator.form
+        form.Assemble()
+        with self._lock:
+            if same_pattern(matrix, form.mat):
+                data = np.asarray(form.mat.CSR()[0])
+                np.take(data, self._gather, out=self._lower.data)
+                self._matrix = form.mat
+                solver.reset_operands(a=self._lower)
+                solver.factorize()
+                return
+            self._matrix = form.mat
+            self._lower, self._gather = self._triangle(form.mat)
+            self._solver = None
+            solver.free()
+            self._solver = self._factorize()
+
     @staticmethod
     def _refuse() -> None:
         raise NotImplementedError(
@@ -202,6 +257,7 @@ class CudssHandle(NgsHandle):
             sparse_system_type=matrix_type,
             sparse_system_view=nsa.DirectSolverMatrixViewType.LOWER,
             multithreading_lib=self._multithreading_lib,
+            logger=_LOGGER,
         )
         execution = nsa.ExecutionCUDA(
             device_id=self.device_id,
@@ -215,10 +271,12 @@ class CudssHandle(NgsHandle):
 
     def _factorize(self):
         """Plan; switch to hybrid memory if the factors do not fit; factorize."""
-        solver = self._solver_object(hybrid=False)
+        solver = self._solver_object(hybrid=self.hybrid_memory)
         try:
             estimates = solver.plan().memory_estimates
-            if int(estimates.peak_device_memory) > _free_device_memory(self.device_id):
+            if not self.hybrid_memory and int(
+                estimates.peak_device_memory
+            ) > _free_device_memory(self.device_id):
                 solver.free()
                 solver = self._solver_object(hybrid=True)
                 estimates = solver.plan().memory_estimates
@@ -266,7 +324,8 @@ class CudssHandle(NgsHandle):
             return 0
         lower = self._lower
         csr = lower.data.nbytes + lower.indices.nbytes + lower.indptr.nbytes
-        return host_bytes(self._matrix) + 2 * csr + sum(self._estimates)
+        held = 2 * csr + self._gather.nbytes
+        return host_bytes(self._matrix) + held + sum(self._estimates)
 
     def free(self) -> None:
         """Release the GPU factors and the matrix."""
