@@ -61,9 +61,12 @@ def eigen_operator(
     powers = classes.powers
     free = np.array(list(space.FreeDofs()), dtype=bool)  # ty: ignore[invalid-argument-type]
 
-    def shifted(k: complex):
+    def operator(k: complex) -> Operator:
+        return Operator(op.form(k * const.c / scale), space.FreeDofs())
+
+    def shifted(operator: Operator):
         return prepare(
-            Operator(op.form(k * const.c / scale), space.FreeDofs()),
+            operator,
             symmetry="complex_symmetric",
             kind=kind,
             device=device,
@@ -74,6 +77,7 @@ def eigen_operator(
 
     return EigenOperator(
         shift=sigma,
+        operator=operator,
         prepare=shifted,
         damping=(
             _linear_map(assemble(space, powers[1], matrix_free=True))

@@ -39,7 +39,7 @@ import numpy as np
 import scipy.constants as const
 
 from gfem._engine import terms
-from gfem._linalg import Handle
+from gfem._linalg import Handle, Operator, Refactorable
 
 __all__ = ["EigenOperator", "LinearMap", "NonPolynomial", "Split", "split"]
 
@@ -153,7 +153,8 @@ class EigenOperator:
     Attributes:
         shift: ``sigma``, the wavenumber per file unit of the prepared
             operator: the target's, until `reshift`.
-        prepare: ``k -> Handle`` of ``T(k)`` (``k`` may be complex).
+        operator: ``k -> T(k)``, not yet assembled (``k`` may be complex).
+        prepare: A `gfem._linalg` handle of an operator from ``operator``.
         damping: ``D`` (a linear map, applied matrix-free), or ``None``
             when undamped.
         mass: ``M``, a linear map.
@@ -164,7 +165,8 @@ class EigenOperator:
     """
 
     shift: complex
-    prepare: Callable[[complex], Handle]
+    operator: Callable[[complex], Operator]
+    prepare: Callable[[Operator], Handle]
     damping: LinearMap | None
     mass: LinearMap
     free: np.ndarray
@@ -182,12 +184,19 @@ class EigenOperator:
     def factorize(self) -> Handle:
         """Prepare ``T(shift)`` now unless it is prepared, and return it."""
         if self._handle is None:
-            self._handle = self.prepare(self.shift)
+            self._handle = self.prepare(self.operator(self.shift))
         return self._handle
 
     def reshift(self, k: complex) -> None:
-        """Refactorize at ``k``."""
-        self.free_handle()
+        """Refactorize at ``k``.
+
+        A prepared `gfem._linalg.Refactorable` handle factorizes ``T(k)`` on
+        its solver plan; any other is freed and prepared on next use.
+        """
+        if isinstance(self._handle, Refactorable):
+            self._handle.refactor(self.operator(k))
+        else:
+            self.free_handle()
         self.shift = k
         self.shifts += 1
 
