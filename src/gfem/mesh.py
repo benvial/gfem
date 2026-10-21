@@ -149,7 +149,7 @@ class Mesh:
 
     @property
     def regions(self) -> tuple[Region, ...]:
-        """Every region: volumes, then surfaces, each by tag."""
+        """All regions, volumes then surfaces, each by tag."""
         return self._topology.regions
 
     @property

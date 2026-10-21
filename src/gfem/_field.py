@@ -31,7 +31,7 @@ SPACES = ("h1", "hcurl", "hdiv", "l2")
 class Field:
     """A solution quantity on the model's mesh, as finite-element coefficients.
 
-    Results carry their fields as `Field`s, for example
+    Results carry their fields as `Field` objects, for example
     ``cap.potential["trace"]`` for an electrostatic terminal potential. A
     field knows what it is (``quantity``, ``unit``), how it is discretized
     (``space``, ``order``) and where it is defined (``support``); its values
@@ -57,7 +57,8 @@ class Field:
             (electric field), ``"B"`` (magnetic flux density), and later
             ``"H"``, ``"T"`` (temperature) or a loss density.
         unit: The SI unit of the field's values, e.g. ``"V"``, ``"V/m"``.
-        space: The finite-element space, one of `SPACES`.
+        space: The finite-element space, one of ``"h1"``, ``"hcurl"``,
+            ``"hdiv"`` or ``"l2"``.
         order: The polynomial order of the space.
         support: The volume regions the field is defined on. Volume entities
             removed from the solve (the model's ``excluded=``) are outside the
