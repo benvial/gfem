@@ -76,24 +76,35 @@ def _free_device_memory(device_id: int) -> int:
     return int(free)
 
 
-def lower_triangle(matrix: sp.csr_matrix, free: np.ndarray) -> sp.csr_matrix:
-    """The lower triangle of the free-DOF block, with int32 indices.
+def lower_pattern(
+    rowptr: np.ndarray, cols: np.ndarray, free: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The free-DOF lower triangle of a CSR pattern, and where its values are.
+
+    ``rowptr`` and ``cols`` are NGSolve's CSR pattern (sorted columns in each
+    row). Returns the triangle's int32 ``indptr`` and ``indices``, in free-DOF
+    numbering, and ``gather``, the positions in the CSR data of its values:
+    ``np.take(data, gather)`` is the triangle's ``data``, for any values on
+    this pattern.
 
     Raises:
         ValueError: The triangle has more nonzeros than int32 indexes.
     """
-    idx = np.flatnonzero(free)
-    block = matrix[idx][:, idx]
-    lower = sp.tril(block, format="csr")
-    if lower.nnz > _INT32_MAX:
+    n = len(rowptr) - 1
+    rows = np.repeat(np.arange(n, dtype=np.int32), np.diff(rowptr.astype(np.int64)))
+    keep = free[rows] & free[cols] & (cols <= rows)
+    gather = np.flatnonzero(keep)
+    if len(gather) > _INT32_MAX:
         raise ValueError(
-            f"The matrix has {lower.nnz} nonzeros in its lower triangle, more "
+            f"The matrix has {len(gather)} nonzeros in its lower triangle, more "
             "than the GPU solver's 32-bit indices allow; use device='cpu'."
         )
-    lower.sort_indices()
-    lower.indices = lower.indices.astype(np.int32)
-    lower.indptr = lower.indptr.astype(np.int32)
-    return lower
+    renumber = (np.cumsum(free) - 1).astype(np.int32)
+    indices = renumber[cols[gather]]
+    nfree = int(np.count_nonzero(free))
+    indptr = np.zeros(nfree + 1, dtype=np.int32)
+    np.cumsum(np.bincount(renumber[rows[gather]], minlength=nfree), out=indptr[1:])
+    return indptr, indices, gather
 
 
 class CudssHandle(NgsHandle):
@@ -129,12 +140,14 @@ class CudssHandle(NgsHandle):
             raise ValueError(f"width must be at least 1, got {width}.")
         super().__init__(matrix, freedofs, symmetry, is_complex=is_complex)
         data, cols, rowptr = matrix.CSR()
-        full = sp.csr_matrix(
-            (np.asarray(data), np.asarray(cols), np.asarray(rowptr)),
-            shape=(self.ndof, self.ndof),
+        indptr, indices, gather = lower_pattern(
+            np.asarray(rowptr), np.asarray(cols), self._free
         )
         self._dtype = np.complex128 if is_complex else np.float64
-        self._lower = lower_triangle(full.astype(self._dtype), self._free)
+        values = np.take(np.asarray(data), gather).astype(self._dtype, copy=False)
+        self._lower = sp.csr_matrix(
+            (values, indices, indptr), shape=(len(indptr) - 1,) * 2
+        )
         self.width = width
         self.device_id = device_id
         self._multithreading_lib = None if threads == 1 else threading_layer()

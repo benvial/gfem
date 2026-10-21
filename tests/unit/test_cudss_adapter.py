@@ -150,6 +150,27 @@ def _reference(handle, B, free, transpose=False):
     return X
 
 
+def test_lower_pattern_gathers_the_free_lower_triangle():
+    # NGSolve's CSR: symmetric pattern, sorted unique columns per row
+    rng = np.random.default_rng(3)
+    n = 40
+    upper = sp.random(n, n, density=0.15, random_state=rng, dtype=complex)
+    upper.data += 1j * rng.standard_normal(upper.nnz)
+    A = (upper + upper.T + sp.eye(n)).tocsr()
+    A.sort_indices()
+    free = rng.random(n) > 0.3
+    idx = np.flatnonzero(free)
+    reference = sp.tril(A[idx][:, idx], format="csr")
+    reference.sort_indices()
+
+    indptr, indices, gather = cudss.lower_pattern(A.indptr, A.indices, free)
+
+    np.testing.assert_array_equal(indptr, reference.indptr)
+    np.testing.assert_array_equal(indices, reference.indices)
+    np.testing.assert_array_equal(np.take(A.data, gather), reference.data)
+    assert indptr.dtype == indices.dtype == np.int32
+
+
 @pytest.mark.usefixtures("gpu")
 def test_complex_symmetric_solves_match_the_cpu_solver(built):
     op, space = _symmetric(built)
