@@ -237,8 +237,16 @@ def _img(theme, png, alt):
     )
 
 
+def _no_grid_on_images(fig):
+    # The style's grid is for plots; drawn over an image it hides the data.
+    for ax in fig.axes:
+        if ax.images:
+            ax.grid(False)
+
+
 def figure_html(fig: Figure) -> str:
     """The light and dark renders of ``fig`` as two theme-switched ``<img>``."""
+    _no_grid_on_images(fig)
     alt = _alt(fig)
     light = _png(fig)
     dark = _dark_png(fig)
