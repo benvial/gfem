@@ -1,0 +1,323 @@
+/* The gfem "Mesh" visual world on Shibuya 2026.7.12.
+   Layers: 1 tokens, 2 Shibuya variable mapping, 3 components, 4 responsive.
+   Shibuya switches theme with html.light / html.dark (not prefers-color-scheme or [data-theme]),
+   so every dark value is keyed on html.dark. */
+
+/* ---------------------------------------------------------------- 1. tokens */
+:root, html.light {
+  --ground: #ffffff; --ink: #16181d; --ink-2: #3a3f46; --muted: #61676f;
+  --hair: #e3e5e8; --mesh: #cdd0d5;
+  --accent: #007c6e; --accent-hover: #036e63; --accent-ink: #ffffff; --accent-soft: #e2f2ef;
+  --accent-field: 0, 124, 110; --ink-field: 22, 24, 29;
+  --measure: 720px;
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 64px; --s-9: 96px;
+  --f-text: "Barlow", system-ui, sans-serif; --f-mono: "JetBrains Mono", ui-monospace, monospace;
+  --t-display: 400 clamp(40px, 4.4vw, 60px)/1.03 var(--f-text);
+  --t-h1: 400 40px/1.1 var(--f-text);
+  --t-h2: 500 22px/1.3 var(--f-text);
+  --t-h3: 600 17px/1.4 var(--f-text);
+  --t-body: 400 17px/1.62 var(--f-text);
+  --t-small: 400 14.5px/1.5 var(--f-text);
+  --t-group: 600 13px/1.4 var(--f-text);
+  --t-code: 400 13px/1.62 var(--f-mono);
+  --t-data: 400 11.5px/1.4 var(--f-mono);
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  color-scheme: light;
+}
+html.dark {
+  --ground: #111317; --ink: #e6e8eb; --ink-2: #c4c8ce; --muted: #9aa1aa;
+  --hair: #2a2e35; --mesh: #353a42;
+  --accent: #3cc4b0; --accent-hover: color-mix(in srgb, #3cc4b0 86%, #e6e8eb); --accent-ink: #0b1412; --accent-soft: #12302b;
+  --accent-field: 60, 196, 176; --ink-field: 230, 232, 235;
+  color-scheme: dark;
+}
+
+/* ------------------------------------------------- 2. Shibuya variable mapping */
+html.light, html.dark {
+  /* Shibuya roles (theme.conf accent_color = "teal" picks the Radix scale; these pin it to gfem's) */
+  --sy-c-background: var(--ground);
+  --sy-c-background-dropback: var(--ground);
+  --sy-c-text: var(--ink-2);
+  --sy-c-light: var(--muted);
+  --sy-c-bold: var(--ink);
+  --sy-c-heading: var(--ink);
+  --sy-c-link: var(--accent);
+  --sy-c-link-hover: var(--ink);
+  --sy-c-border: var(--hair);
+  --sy-c-divider: var(--hair);
+  --sy-c-surface: transparent;          /* the Hairline Rule: no grey fills */
+  --sy-c-overlay: transparent;
+  --sy-c-foot-background: var(--ground);
+  --sy-c-foot-divider: var(--hair);
+  --sy-c-foot-text: var(--muted);
+  --sy-s-navbar-height: 60px;
+  --accent-9: var(--accent); --accent-10: var(--accent-hover); --accent-contrast: var(--accent-ink);
+  --accent-a3: var(--accent-soft); --accent-a4: var(--accent-soft); --accent-a8: var(--accent-soft);
+  --accent-a11: var(--accent); --color-surface-accent: transparent;
+  /* yue (article typography) */
+  --yue-c-text: var(--ink-2); --yue-c-heading: var(--ink); --yue-c-bold: var(--ink);
+  --yue-c-link-1: var(--ink); --yue-c-link-2: var(--ink); --yue-c-link-border: var(--hair);
+  --yue-c-code-text: var(--ink); --yue-c-code-background: transparent;
+  --yue-c-caption: var(--muted); --yue-c-hr: var(--hair);
+  --yue-c-table-border: var(--hair); --yue-c-th-background: transparent; --yue-c-th-border: var(--ink);
+  --yue-c-td-border: var(--hair); --yue-c-row-background: transparent;
+  --yue-c-ul-marker: var(--muted); --yue-c-ol-marker: var(--muted);
+  --yue-c-quote: var(--ink-2); --yue-c-quote-border: var(--hair); --yue-c-quote-symbol: var(--muted);
+  /* code */
+  --code-block-background: transparent;
+  --code-block-highlight: var(--accent-soft);
+  --code-block-caption-background: transparent;
+  --syntax-text: var(--ink);
+  --syntax-comment: var(--muted);
+  /* API signatures: no teal names (One Hue Rule) */
+  --sig-name: var(--ink); --sig-property: var(--muted); --sig-param: var(--ink-2); --sig-typehint: var(--ink-2);
+  /* MyST-NB: palette from the gfem tokens, in both modes */
+  --mystnb-source-bg-color: transparent;
+  --mystnb-source-border-color: var(--hair);
+  --mystnb-source-margin-color: var(--hair);
+  --mystnb-source-border-radius: 0;
+  --mystnb-stdout-bg-color: transparent;
+  --mystnb-stdout-border-color: var(--hair);
+  --mystnb-stderr-bg-color: transparent;
+  --mystnb-stderr-border-color: var(--ink);
+  --mystnb-traceback-bg-color: transparent;
+  --mystnb-traceback-border-color: var(--ink);
+  --mystnb-scrollbar-thumb-color: var(--mesh);
+  --mystnb-scrollbar-thumb-hover-color: var(--muted);
+  --mystnb-scrollbar-thumb-border-radius: 0;
+}
+
+/* ------------------------------------------------------- 3a. browser surfaces */
+html { scrollbar-color: var(--mesh) transparent; }
+body { background: var(--ground); color: var(--ink-2); font: var(--t-body); caret-color: var(--accent); }
+::selection { background: var(--accent-soft); color: var(--ink); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+a { text-underline-offset: 3px; }
+*, *::before, *::after { box-shadow: none !important; }  /* flat: no shadows anywhere */
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* ------------------------------------------------------------- 3b. header */
+.sy-head { background: var(--ground); border-bottom: 1px solid var(--hair); }
+.sy-head-blur { display: none; }                         /* no blur, no shadow: ground + hairline */
+.sy-head-inner { padding-left: var(--s-6); padding-right: var(--s-6); gap: var(--s-6); }
+.sy-head-brand img { height: 22px; width: auto; }        /* docs: 22px (the lockup) */
+/* the <strong>{{ project }}</strong> after the logo: Shibuya's own CSS already hides it
+   (.sy-head-brand img+strong { display:none }); nothing to add. */
+.sy-head-links { margin-left: 0; }
+.sy-head-links a, .sy-head-links button { font: 500 15px/1 var(--f-text); color: var(--muted); padding: 5px 0; }
+.sy-head-links ul { display: flex; gap: var(--s-5); }
+.sy-head-links a:hover { color: var(--ink); }
+.sy-head-links a[aria-current] { color: var(--ink); }
+.searchbox input { font: var(--t-small); background: none; border: 1px solid var(--hair); border-radius: 0; padding: 7px 12px; color: var(--ink); min-width: 220px; }
+.searchbox input::placeholder { color: var(--muted); }
+.searchbox kbd { font: var(--t-small) !important; background: none !important; border: 0 !important; border-radius: 0; color: var(--muted); }
+/* utility buttons: theme switch, Menu */
+.sy-head-actions { gap: var(--s-3); }
+.sy-head-actions button.theme-switch, .sy-head-actions button.gfem-menu {
+  height: auto; font: var(--t-small); color: var(--muted); background: none; border: 1px solid var(--hair);
+  border-radius: 0; padding: 6px 10px; cursor: pointer; transition: color .2s var(--ease-out), border-color .2s var(--ease-out); }
+.sy-head-actions button.theme-switch:hover, .sy-head-actions button.gfem-menu:hover { color: var(--ink); border-color: var(--ink); }
+.theme-switch > span { display: none; }
+html[data-color-mode="auto"] .gfem-theme-auto, html:not([data-color-mode]) .gfem-theme-auto,
+html[data-color-mode="light"] .gfem-theme-light, html[data-color-mode="dark"] .gfem-theme-dark { display: inline; }
+.gfem-menu { display: none; color: var(--ink) !important; padding: 6px 12px !important; }
+.gfem-menu .gfem-menu-open, .gfem-menu[aria-expanded="true"] .gfem-menu-closed { display: none; }
+.gfem-menu[aria-expanded="true"] .gfem-menu-open { display: inline; }
+.gfem-drawer-tree { display: none; }
+
+/* ------------------------------------------------------ 3c. sidebar + TOC */
+@media (min-width: 900px) {
+  #lside { width: 248px; border-right: 1px solid var(--hair); }
+  #lside .sy-scrollbar { padding: var(--s-6) var(--s-5) var(--s-6) var(--s-6); }
+}
+.globaltoc { font: var(--t-small); padding-bottom: 0; }
+.globaltoc .caption, .localtoc > h3, .sy-rside-inner > div > h3 {
+  font: var(--t-group) !important; color: var(--muted); text-transform: none !important; letter-spacing: 0 !important;
+  border-top: 0; padding: 0; margin: 0 0 var(--s-2); }
+.globaltoc ul + .caption { margin-top: var(--s-5); }
+.globaltoc .caption + ul { margin-bottom: 0; }
+.globaltoc li { margin: 0; }
+.globaltoc li > ul, .globaltoc li.toctree-l1 > ul { margin-left: 0; border-left: 0; font-size: inherit; }
+.globaltoc li.toctree-l2 { border-left: 0; margin-left: 0; padding-left: var(--s-4); }
+.globaltoc li > button { display: none; }                 /* no expander chevrons */
+.globaltoc a, .localtoc a {
+  display: flex; align-items: center; gap: var(--s-2); padding: 5px 0; text-decoration: none; color: var(--ink-2); }
+.localtoc a { padding: 4px 0; }
+.globaltoc a:hover, .localtoc a:hover, .localtoc > ul li > a:hover { color: var(--ink); }
+/* the You-Are-Here Rule: one filled downward triangle (10x9), transparent on every other entry */
+.globaltoc a::before, .localtoc a::before {
+  content: ""; width: 10px; height: 9px; flex: none; background: transparent;
+  clip-path: polygon(0 0, 100% 0, 50% 100%); }
+.globaltoc a.current[href="#"] { color: var(--ink); font-weight: 500; }
+.globaltoc a.current[href="#"]::before { background: var(--accent); }
+.localtoc { font: var(--t-small); }
+.localtoc a { overflow-wrap: anywhere; }
+.localtoc > ul > li ul { padding-left: var(--s-4); }
+.localtoc > ul li { margin: 0; }
+.localtoc > ul li.active > a { color: var(--ink); }
+.localtoc > ul li.active > a::before { background: var(--accent); }
+@media (min-width: 1100px) {
+  #rside { width: 220px; }
+  .sy-rside-inner { padding: var(--s-6) var(--s-5) !important; top: 60px !important; }
+}
+
+/* ------------------------------------------------------- 3d. article + type */
+.sy-main > .flex > div { padding: var(--s-6) var(--s-7) var(--s-8); max-width: none; }
+.yue { font: var(--t-body); color: var(--ink-2); }
+/* the One Measure Rule: everything in the reading column but the page title sits on 720px */
+.yue section > :not(h1, section), .yue > :not(section) { max-width: var(--measure); }
+.yue h1 { font: var(--t-h1); letter-spacing: -.02em; color: var(--ink); margin: 0 0 var(--s-5); }
+.yue h2 { font: var(--t-h2); color: var(--ink); margin: var(--s-7) 0 var(--s-3); }
+.yue h3 { font: var(--t-h3); color: var(--ink); margin: var(--s-6) 0 var(--s-2); }
+.yue p { margin: 0 0 var(--s-4); }
+.yue strong { color: var(--ink); }
+.yue a { color: var(--ink); font-weight: inherit; text-decoration-color: var(--hair); text-decoration-thickness: 1px; }
+.yue a:hover { color: var(--ink); text-decoration-color: var(--accent); text-decoration-thickness: 1px; }
+.yue code, .yue p > code, .yue li > code { font: .86em var(--f-mono); color: var(--ink); background: none; padding: 0; font-weight: 400; border-radius: 0; }
+.yue a.headerlink { color: var(--muted); font-family: var(--f-text); }
+.yue ul > li::marker { color: var(--muted); }
+.yue hr { border-color: var(--hair); }
+.yue table { font: var(--t-small); }
+.yue thead th { border-top: 1px solid var(--ink); font-weight: 500; color: var(--ink); }
+/* breadcrumbs: a quiet Label line above the title, no bar */
+.sy-breadcrumbs { position: static; padding: var(--s-6) var(--s-7) 0; display: block !important; }  /* Shibuya hides them from 1280px */
+.sy-breadcrumbs-inner { border-bottom: 0; padding: 0; }
+.sy-breadcrumbs ol { font: var(--t-small); color: var(--muted); }
+.sy-breadcrumbs ol a { color: var(--muted); text-decoration: underline; text-decoration-color: var(--hair); text-underline-offset: 3px; }
+.sy-breadcrumbs ol strong { font-weight: 400; color: var(--muted); }
+.sy-breadcrumbs .md\:hidden, .sy-breadcrumbs .xl\:hidden { display: none !important; }  /* one Menu, no TOC drawer */
+.sy-breadcrumbs + .flex > div { padding-top: var(--s-3); }
+.back-to-top { display: none !important; }
+.copy-page-wrapper { display: none; }
+
+/* --------------------------------------------- 3e. code (Hairline Rule + Teal Wash) */
+.highlight, .literal-block-wrapper { --margin: var(--s-5); --radius: 0; }
+.yue div[class^="highlight-"], .yue div.highlight-default { margin: var(--s-5) 0; position: relative; }
+.highlight > pre {
+  font: var(--t-code); border: 1px solid var(--hair); border-radius: 0; background: none;
+  padding: var(--s-4) var(--s-5); }
+.highlight .hll { background: var(--accent-soft); }
+/* monochrome syntax: ink text, keywords 500, strings and comments muted, comments italic */
+html.light .highlight span[class], html.dark .highlight span[class] { color: inherit; font-style: normal; font-weight: inherit; }
+html:is(.light,.dark) .highlight span:is(.k,.kn,.kd,.kc,.kr,.kp,.ow) { font-weight: 500; }
+html:is(.light,.dark) .highlight span[class^="s"][class] { color: var(--muted); }
+html:is(.light,.dark) .highlight span[class^="c"][class] { color: var(--muted); font-style: italic; }
+/* sphinx-copybutton as the worded utility "copy" button */
+.yue button.copybtn {
+  top: var(--s-2) !important; right: var(--s-2) !important; width: auto; height: auto; opacity: 1;
+  font: var(--t-small); color: var(--muted); background: var(--ground) !important;
+  border: 1px solid var(--hair) !important; border-radius: 0; padding: 2px 8px; }
+.yue button.copybtn > svg { display: none; }
+.yue button.copybtn::before { content: "copy"; }
+.yue button.copybtn.success::before { content: "copied"; }
+.yue button.copybtn::after { display: none !important; }
+.yue button.copybtn:hover { color: var(--ink); border-color: var(--ink) !important; }
+
+/* ------------------------------------------------------------ 3f. notes */
+.yue .admonition {
+  display: block; border: 1px solid var(--hair); border-radius: 0; background: none; padding: var(--s-4) var(--s-5);
+  margin: var(--s-5) 0; font: var(--t-small); color: var(--ink-2); }
+.yue .admonition > p.admonition-title {
+  display: inline; float: left; margin: 0 .35em 0 0; padding: 0; background: none;
+  font: 600 14.5px/1.5 var(--f-text); color: var(--ink); }
+.yue .admonition::before, .yue .admonition::after, .yue .admonition > p.admonition-title::before { display: none !important; }
+.yue .admonition > p.admonition-title::after { content: "."; }
+.yue .admonition > p:last-child { margin-bottom: 0; }
+
+/* ------------------------------------------------------------ 3g. status list */
+.yue ul.gfem-status { list-style: none; padding: 0; margin: var(--s-5) 0; border-top: 1px solid var(--ink); }
+.yue ul.gfem-status > li { margin: 0; padding: 10px 0 10px 32px; border-bottom: 1px solid var(--hair); font: var(--t-small); position: relative; }
+.yue ul.gfem-status > li > p { margin: 0; display: flex; justify-content: space-between; align-items: baseline; gap: var(--s-3); }
+.yue ul.gfem-status .what { min-width: 0; }
+.yue ul.gfem-status .tag { font: var(--t-data); color: var(--muted); white-space: nowrap; text-align: right; }
+.yue ul.gfem-status .tag code { font: inherit; color: inherit; }
+.yue ul.gfem-status .tag.raises { color: var(--ink); font-weight: 500; }
+/* marks in the 20px column: dot (verified), struck ring (raises), dash (exact zero) */
+.yue ul.gfem-status > li::before {
+  content: ""; position: absolute; left: 7px; top: calc(10px + .75em - 3px);
+  width: 6px; height: 6px; border-radius: 50%; background: var(--ink); }
+.yue ul.gfem-status > li:has(.tag.raises)::before {
+  left: 4px; top: calc(10px + .75em - 6px); width: 12px; height: 12px; background:
+    linear-gradient(to top right, transparent calc(50% - .6px), var(--ink) calc(50% - .6px), var(--ink) calc(50% + .6px), transparent calc(50% + .6px));
+  border: 1.2px solid var(--ink); box-sizing: border-box; }
+.yue ul.gfem-status > li:has(.tag.zero)::before { left: 5px; top: calc(10px + .75em); width: 10px; height: 1px; border-radius: 0; background: var(--muted); }
+
+/* ------------------------------------------------------------ 3h. figures */
+.yue figure.gfem-figure { margin: var(--s-6) 0; }
+.yue figure.gfem-figure picture, .yue figure.gfem-figure img { display: block; width: 100%; }
+.yue figure.gfem-figure figcaption, .yue figcaption, .yue .caption { font: var(--t-small); color: var(--muted); margin-top: var(--s-2); }
+/* theme-swapped figures use Shibuya's own .light-only / .dark-only classes: no rule needed here */
+
+/* ------------------------------------------------------------ 3i. pager */
+.navigation { border-top: 1px solid var(--hair); max-width: var(--measure); margin-top: var(--s-8); padding-top: 0; gap: var(--s-4); }
+.navigation a { padding: var(--s-4) 0; text-decoration: none; font: var(--t-small); color: var(--muted); display: block; }
+.navigation a > i { display: none; }
+.navigation .page-info > span { color: var(--muted); }
+.navigation .page-info .title { font: 500 17px/1.35 var(--f-text); color: var(--ink); transition: color .2s var(--ease-out); }
+.navigation a:hover, .navigation a:hover .title { color: var(--accent); }
+.navigation a:hover .page-info > span { color: var(--muted); }
+
+/* ------------------------------------------------------------ 3j. MyST-NB cells */
+.yue div.cell div.cell_input { border: 1px solid var(--hair); border-left-width: 1px; border-radius: 0; background: none; }
+.yue div.cell div.cell_input .highlight > pre { border: 0; }
+.yue div.cell_output .output.stream, .yue div.cell_output .output.text_plain { border: 0; border-left: 1px solid var(--hair); padding-left: var(--s-4); }
+.yue div.cell_output pre { font: var(--t-code); color: var(--ink-2); background: none; }
+
+/* ------------------------------------------------------------ 3k. API (autoapi) */
+dt.sig { font: var(--t-code); border-radius: 0; border-top: 1px solid var(--hair); }
+dt.sig:hover { background: none; }
+dt.sig .sig-name { font-weight: 500; }
+
+/* ------------------------------------------------------------ 3l. footer */
+.sy-foot.gfem-foot { border-top: 1px solid var(--hair); padding: var(--s-5) 0 var(--s-7); }
+.gfem-foot .sy-foot-inner { padding-left: var(--s-6); padding-right: var(--s-6); }
+.gfem-foot-row { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-5); font: var(--t-small); color: var(--muted); }
+.gfem-foot-row a { color: var(--ink-2); text-decoration: none; }
+.gfem-foot-row a:hover { color: var(--ink); }
+.gfem-foot-end { margin-left: auto; }
+
+/* ------------------------------------------------------------ 4. responsive
+   TOC drops at 1100; Menu + drawer replace header nav AND sidebar at 900.
+   Shibuya's compiled breakpoints are 768 (md) and 1280 (xl); these rules move them. */
+@media (min-width: 1100px) and (max-width: 1279px) {      /* keep the TOC column from 1100 */
+  #rside { position: static; transform: none; width: 220px; padding: 0; background: none; z-index: auto; overflow: visible; }
+  #rside .sy-rside-inner { position: sticky; }
+  .rside-close, .rside-overlay { display: none !important; }
+}
+.sy-main { min-width: 0; }
+#rside { flex-shrink: 0; }
+@media (max-width: 1099px) { #rside, .rside-overlay { display: none !important; } }
+@media (max-width: 899px) {
+  .gfem-menu { display: inline-block; }
+  #lside, .lside-overlay { display: none !important; }     /* its tree lives in the drawer */
+  .sy-head-inner { padding-left: var(--s-4); padding-right: var(--s-4); gap: var(--s-3); }
+  body[data-expanded*=head-nav] { overflow: hidden; }
+  .sy-head-nav { display: none; position: fixed; top: var(--sy-s-offset-top); left: 0; right: 0; bottom: 0;
+    width: 100%; box-sizing: border-box; overflow-y: auto; background: var(--ground);
+    border-top: 1px solid var(--hair); padding: var(--s-5) var(--s-4); z-index: 30; }
+  .sy-head-nav[aria-hidden=false] { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; }
+  .sy-head-links { margin: 0; order: 1; }
+  .sy-head-links ul { display: block; }
+  .sy-head-links .link { margin: 0; }
+  .sy-head-links a { display: flex; padding: 8px 0; font: var(--t-body); color: var(--ink-2); }
+  .gfem-drawer-tree { display: block; order: 2; margin-top: var(--s-4); font: var(--t-body); }
+  .gfem-drawer-tree .caption { margin-top: var(--s-4) !important; }
+  .gfem-drawer-tree a { padding: 8px 0; }
+  .sy-head-extra { order: 0; position: static; flex-direction: column; width: 100%; padding: 0 0 var(--s-4); }
+  .sy-head-extra form.searchbox { position: static; width: 100%; }
+  .searchbox input { box-sizing: border-box; }
+  .searchbox kbd { display: none; }
+  .searchbox input { min-width: 0; }
+  .sy-main > .flex > div, .sy-breadcrumbs { padding-left: var(--s-4); padding-right: var(--s-4); }
+  .sy-main > .flex > div { padding-top: var(--s-5); padding-bottom: var(--s-7); }
+  .yue ul.gfem-status > li > p { display: block; }
+  .yue ul.gfem-status .tag { display: block; text-align: left; white-space: normal; margin-top: 2px; }
+  .gfem-foot .sy-foot-inner { padding-left: var(--s-4); padding-right: var(--s-4); }
+  .gfem-foot-row { flex-direction: column; }
+  .gfem-foot-end { margin-left: 0; }
+}
+@media (min-width: 900px) {
+  .sy-head-nav { display: flex !important; position: static; border: 0; padding: 0; background: none; }
+  .sy-head-extra { margin-left: auto; padding: 0; }
+  .sy-head-extra form.searchbox { position: relative; top: auto; left: auto; right: auto; }
+}
