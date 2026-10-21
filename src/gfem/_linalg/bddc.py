@@ -258,12 +258,11 @@ class BddcHandle(NgsHandle):
                 out[:, j] = x.FV().NumPy()
             # the rebuild rule, by iteration count (unless a cap set BDDC up)
             its = self.iterations[before:]
-            if not its or (stale and not self._stale):
-                pass
-            elif self._n_ref is None:
-                self._n_ref = max(its)
-            elif self._stale and max(its) > self._n_ref + slack:
-                self._rebuild = True
+            if its and not (stale and not self._stale):
+                if self._n_ref is None:
+                    self._n_ref = max(its)
+                elif self._stale and max(its) > self._n_ref + slack:
+                    self._rebuild = True
         return out[:, 0] if flat else out
 
     @property
