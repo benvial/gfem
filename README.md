@@ -1,4 +1,9 @@
-# gfem
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/logo/gfem-lockup-dark.svg">
+    <img alt="gfem" src="docs/_static/logo/gfem-lockup-light.svg" height="64">
+  </picture>
+</h1>
 
 Differentiable finite-element electromagnetics for RF, microwave, mm-wave and superconducting quantum devices.
 gfem runs on [NGSolve](https://ngsolve.org) for discretization and [JAX](https://jax.readthedocs.io) for
