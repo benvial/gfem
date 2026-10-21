@@ -22,9 +22,12 @@ import structured_meshes as sm
 from scipy.optimize import brentq
 
 import gfem
+from gfem._engine import eigen as engine_eigen
 from gfem._engine.driven import driven_operator
 from gfem._engine.eigen import projector
 from gfem._engine.runtime import task_manager
+from gfem._linalg import prepare
+from gfem._linalg.direct import DirectHandle
 
 L, W, H = 10.0, 2.0, 1.0  # mm
 EPS = 4.0
@@ -247,6 +250,35 @@ def test_bddc_gmres_shift_solves_give_the_direct_modes(mesh):
         model, problem, options=gfem.SolverOptions(linear_solver="bddc_gmres")
     )
     np.testing.assert_allclose(iterative.omega, direct.omega, rtol=1e-9)
+
+
+def _count_shift_prepares(monkeypatch) -> list[int]:
+    """Spy on the eigen operator's `prepare`: one entry per ``T(k)`` handle."""
+    calls = []
+
+    def spy(*args, **kwargs):
+        if kwargs["symmetry"] == "complex_symmetric":  # not the projector's H1
+            calls.append(1)
+        return prepare(*args, **kwargs)
+
+    monkeypatch.setattr(engine_eigen, "prepare", spy)
+    return calls
+
+
+def test_a_reshift_refactorizes_the_prepared_operator(mesh, monkeypatch):
+    # the second mode, far from the target, is refined at its own shift
+    model = _terminated(mesh, 1000.0)
+    problem = gfem.Eigenmode(target=8e9, n_modes=2)
+    calls = _count_shift_prepares(monkeypatch)
+    result = gfem.solve(model, problem)
+    assert len(calls) == 1
+    # a handle that cannot refactorize is prepared afresh at the new shift
+    monkeypatch.delattr(DirectHandle, "refactor")
+    calls.clear()
+    fresh = gfem.solve(model, problem)
+    assert len(calls) == 2
+    np.testing.assert_allclose(result.omega, fresh.omega, rtol=1e-12)
+    np.testing.assert_allclose(result.q, fresh.q, rtol=1e-10)
 
 
 # --- inductive ports -----------------------------------------------------------------
