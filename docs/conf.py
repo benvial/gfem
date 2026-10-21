@@ -309,13 +309,7 @@ def _num(value: float) -> str:
 def _front(path: Path) -> dict | None:
     """The committed hero data (tools/front_page_data.py), or None when absent."""
     if not path.exists():
-        if os.environ.get("GFEM_DOCS_STRICT") == "1":
-            msg = (
-                f"front page: {path.relative_to(DOCS.parent)} is missing; "
-                "regenerate it with `just front-page-data` (GFEM_DOCS_STRICT=1)"
-            )
-            raise ConfigError(msg)
-        return None  # a local build: the hero frame says how to generate it
+        return None  # the hero frame says how to generate it; strict builds fail
     data = json.loads(path.read_text())
     final = data["final"]  # J of each etch variant after the optimisation
     params = data["params"]  # the tutorial's model values
@@ -339,7 +333,8 @@ def _front(path: Path) -> dict | None:
     }
 
 
-html_context["gfem_front"] = _front(DOCS / "_data" / "front-page.json")
+FRONT_DATA = DOCS / "_data" / "front-page.json"
+html_context["gfem_front"] = _front(FRONT_DATA)
 html_context["gfem_code_line"] = _code_line(DOCS / "tutorials" / "topology.ipynb")
 html_context["gfem_install"] = gfem_install
 html_context["gfem_status"] = gfem_status  # the footer and the front page
@@ -351,3 +346,23 @@ html_context["gfem_nav_home"] = [
     if link["title"] in {"Get started", "Tutorials", "Capabilities"}
 ]
 # --- end front page ---------------------------------------------------------------
+
+
+def setup(app):
+    """Fail a strict build (GFEM_DOCS_STRICT=1) that lacks the hero data.
+
+    Raised from config-inited, not while conf.py runs, so Sphinx prints the
+    message instead of a crash report.
+    """
+
+    def require_front(_app, config) -> None:
+        if os.environ.get("GFEM_DOCS_STRICT") == "1" and not config.html_context.get(
+            "gfem_front"
+        ):
+            msg = (
+                f"front page: {FRONT_DATA.relative_to(DOCS.parent)} is missing; "
+                "regenerate it with `just front-page-data` (GFEM_DOCS_STRICT=1)"
+            )
+            raise ConfigError(msg)
+
+    app.connect("config-inited", require_front)
