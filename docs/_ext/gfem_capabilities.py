@@ -199,8 +199,7 @@ def gradient_matrix(cells, expected, out_of_scope) -> dict:
     if missing:
         leaves = ", ".join(f"{k!r} ({PROBLEMS[k].headline!r})" for k in missing)
         raise CapabilitiesError(
-            f"{RAISE_TEST}: no row for the headline result leaf of problem "
-            f"{leaves}"
+            f"{RAISE_TEST}: no row for the headline result leaf of problem {leaves}"
         )
 
     labels = {}
