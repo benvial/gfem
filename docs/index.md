@@ -62,6 +62,7 @@ capabilities
 :hidden:
 :caption: API
 
+api/index
 glossary
 ```
 
