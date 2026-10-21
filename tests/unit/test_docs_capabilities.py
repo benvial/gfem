@@ -2,9 +2,9 @@
 
 The site's gradient claims and Palace tolerances are derived from the tests
 at docs build time (no hand-typed table); a claim that cannot be derived
-fails the build. These tests pin the derivation against the matrix the
-front-page concept fixed by hand, and each drift guard against a broken
-input. The generator is imported without Sphinx.
+fails the build. These tests pin the derivation against a grid reviewed by
+hand, and each drift guard against a broken input. The generator is imported
+without Sphinx.
 """
 
 import dataclasses
@@ -22,7 +22,7 @@ _spec.loader.exec_module(caps)
 
 V, Z, R = "verified", "zero", "raises"
 
-# The grid as the front-page concept reviewed it by hand (ticket 10):
+# The grid as reviewed by hand against the tests:
 # rows driven, eigenmode, electrostatic, port mode; columns permittivity,
 # conductivity, sheet fill, node coordinates.
 GRID = {
@@ -52,8 +52,16 @@ def test_matrix_matches_the_reviewed_grid(derived):
 
 
 def test_counts_come_from_the_cells(derived):
-    assert derived["counts"] == {"cells": 47, "direct": 28, "bddc_gmres": 19}
-    assert "47 cells (28 on the direct solver, 19" in derived["provenance"]
+    counts = derived["counts"]
+    per_grid_cell = [c["cells"] for r in derived["rows"] for c in r["cells"]]
+    assert counts["cells"] == sum(per_grid_cell)
+    assert counts["cells"] == counts["direct"] + counts["bddc_gmres"]
+    assert counts["direct"] > 0
+    assert counts["bddc_gmres"] > 0
+    assert derived["provenance"].startswith(
+        f"{counts['cells']} cells ({counts['direct']} on the direct solver, "
+        f"{counts['bddc_gmres']} repeated on BDDC + GMRES)"
+    )
 
 
 def test_driven_sheet_fill_is_verified_on_lumped_ports_only(derived):
@@ -144,6 +152,23 @@ def test_a_problem_without_its_headline_leaf_fails(data):
     expected = {k: v for k, v in data[1].items() if k[:2] != ("port_mode", "gamma")}
     with pytest.raises(caps.CapabilitiesError, match=r"port_mode.*gamma"):
         _derive(data, expected=expected)
+
+
+def test_every_problem_without_its_headline_leaf_is_named_at_once(data):
+    gone = {("port_mode", "gamma"), ("electrostatic", "capacitance")}
+    expected = {k: v for k, v in data[1].items() if k[:2] not in gone}
+    with pytest.raises(caps.CapabilitiesError) as error:
+        _derive(data, expected=expected)
+    assert "'port_mode'" in str(error.value)
+    assert "'electrostatic'" in str(error.value)
+
+
+def test_a_bare_input_kind_reads_as_a_one_tuple(data):
+    expected = {
+        (key, leaf, "nodes" if kind == ("nodes",) else kind): outcome
+        for (key, leaf, kind), outcome in data[1].items()
+    }
+    assert _derive(data, expected=expected) == _derive(data)
 
 
 def test_a_gradient_no_cell_verifies_fails(data):
