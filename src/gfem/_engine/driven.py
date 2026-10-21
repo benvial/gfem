@@ -6,7 +6,11 @@ port's right-hand side is solved in one handle call: GMRES + BDDC by
 default, each port starting from its solution at the previous frequency,
 or one sparse Cholesky factorization (``direct``). A sweep keeps one base
 handle (`_SweepHandle`): a direct solver plans at the first frequency and
-refactorizes at the others. ``A`` is complex symmetric (A^T = A), and a
+refactorizes at the others. With ``SolverOptions.frequency_workers`` above
+1, a uniform sweep splits into contiguous blocks of frequencies, each swept
+the same way in a frequency worker (`gfem._engine.workers`), joined in
+frequency order; the backward pass stays in this process. ``A`` is complex
+symmetric (A^T = A), and a
 port's excitation vector is proportional to its voltage functional, so S
 is symmetric to solver precision.
 
@@ -64,7 +68,7 @@ from gfem._boundaries import (
     sheet_of,
     surfaces_of,
 )
-from gfem._engine import terms
+from gfem._engine import terms, workers
 from gfem._engine.cache import Entry, discretization
 from gfem._engine.domain import domain_key, em_region, hcurl_space, pec_surfaces
 from gfem._engine.fields import fe_space
@@ -282,6 +286,14 @@ class DrivenRule:
         self.regions = tuple(r for r in mesh.volumes if active[mesh.elements(r)].any())
         #: The wave ports' names, in model port order.
         self.wave_ports = tuple(p.name for p in model.ports if isinstance(p, WavePort))
+        if self.wave_ports and options.frequency_workers > 1 and not self.adaptive:
+            # each worker would track the port modes over its own block only
+            raise NotImplementedError(
+                f"WavePort {self.wave_ports[0]!r}: frequency workers cannot solve "
+                "wave ports in this version of gfem, so a uniform sweep with "
+                f"wave ports needs frequency_workers=1, got "
+                f"{options.frequency_workers}."
+            )
         #: The wave ports' modes.
         self.modes = {p.name: p.mode for p in model.ports if isinstance(p, WavePort)}
         #: The wave ports' de-embedding offsets, m.
@@ -316,6 +328,9 @@ class DrivenRule:
     ) -> tuple[dict[str, object], Entry | None]:
         """Solve every excited port at every frequency.
 
+        With ``frequency_workers`` above 1 the frequencies are split over
+        workers (`_forward_workers`); the outputs are the same.
+
         Args:
             model: The model, with concrete leaves.
             keep: Keep every port solution for a backward pass (fields
@@ -334,6 +349,8 @@ class DrivenRule:
         if self.adaptive:
             return self._forward_adaptive(model, keep=keep)
         frequencies = self.problem.frequency
+        if min(self.options.frequency_workers, len(frequencies)) > 1:
+            return self._forward_workers(model, keep=keep)
         width = len(self.excite)
         iterations: list[tuple[int, ...]] = []
         fields: list[np.ndarray] = []
@@ -376,6 +393,60 @@ class DrivenRule:
                 physics=self.physics,
                 handle=_Handles(ports),
                 fields={"solution": np.concatenate(solutions, axis=1)},
+            )
+        return outputs, entry
+
+    def _forward_workers(
+        self, model: Model, *, keep: bool
+    ) -> tuple[dict[str, object], Entry | None]:
+        """`forward` over frequency workers (`gfem._engine.workers`).
+
+        The frequencies split into ``frequency_workers`` contiguous blocks
+        (`numpy.array_split`), each swept by `forward` in a worker with its
+        share of ``threads``; the blocks join in frequency order, so every
+        output stays frequency-major. The entry holds the solutions only:
+        a backward pass builds its port terms and adjoint handles here.
+        """
+        frequencies = self.problem.frequency
+        indices = np.array_split(
+            np.arange(len(frequencies)), self.options.frequency_workers
+        )
+        indices = [block for block in indices if len(block)]
+        threads = workers.worker_threads(self.options.threads, len(indices))
+        options = dataclasses.replace(
+            self.options, threads=threads, frequency_workers=1
+        )
+        problems = [
+            Driven(
+                [frequencies[i] for i in block],
+                excite=self.excite,
+                keep_fields=[frequencies[i] for i in block if i in self.kept],
+            )
+            for block in indices
+        ]
+        parts = workers.model_parts(model)
+        blocks = workers.run(
+            _solve_block,
+            [(*parts, problem, options, keep) for problem in problems],
+            [_describe(problem.frequency) for problem in problems],
+            threads=threads,
+        )
+        outputs: dict[str, object] = {
+            "s": np.concatenate([b["s"] for b in blocks]),
+            "z_ref": np.concatenate([b["z_ref"] for b in blocks]),
+            "iterations": [its for b in blocks for its in b["iterations"]],
+        }
+        if self.kept:
+            outputs["e_field"] = np.concatenate(
+                [b["e_field"] for b in blocks if "e_field" in b], axis=1
+            )
+        entry = None
+        if keep:
+            solution = np.concatenate([b["solution"] for b in blocks], axis=1)
+            entry = Entry(
+                physics=self.physics,
+                handle=_Handles(None),
+                fields={"solution": solution},
             )
         return outputs, entry
 
@@ -1050,6 +1121,31 @@ def check_ports_held(model: Model) -> None:
                     "gfem.shape.boundary_morph holds the model's ports (and "
                     "fixed= surfaces) for you."
                 )
+
+
+def _solve_block(
+    aux: Any, children: Any, problem: Driven, options: SolverOptions, keep: bool
+) -> dict[str, Any]:
+    """A frequency worker's `DrivenRule.forward` of its block, as arrays.
+
+    ``aux`` and ``children`` are the model's parts (`gfem._engine.workers`).
+    """
+    model = workers.model_from_parts(aux, children)
+    outputs, entry = DrivenRule(model, problem, options).forward(model, keep=keep)
+    names = ("s", "z_ref", "iterations", "e_field")
+    block = {name: outputs[name] for name in names if name in outputs}
+    if entry is not None:
+        block["solution"] = entry.fields["solution"]
+        entry.free()
+    return block
+
+
+def _describe(frequencies: tuple[float, ...]) -> str:
+    """A block of frequencies, for errors."""
+    first, last = frequencies[0], frequencies[-1]
+    if first == last:
+        return f"{first:g} Hz"
+    return f"{first:g} to {last:g} Hz"
 
 
 def _no_solve(*_: object) -> np.ndarray:
