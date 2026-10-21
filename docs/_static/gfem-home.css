@@ -1,10 +1,10 @@
 /* The gfem front page (layout/gfem-home.html) on Shibuya; loaded by that layout only.
    Tokens come from gfem.css. Header and footer rules re-aim Shibuya's .sy-head / .sy-foot at the
-   1320px front-page container; the rest lays out the hero and the 5:7 sections (DESIGN.md, front page). */
+   1320px front-page container; the rest lays out the hero and the sections, each 5:7 (claim left, proof right). */
 .gfem-home { --sy-s-navbar-height: 72px; }
 .gfem-home .sy-head { border-bottom: 0; }
 .gfem-home .sy-head-inner { max-width: 1320px; padding: 0 var(--s-7);
-  background: linear-gradient(var(--hair), var(--hair)) bottom / calc(100% - 2 * var(--s-7)) 1px no-repeat; }  /* hairline on the container, as in the prototype */
+  background: linear-gradient(var(--hair), var(--hair)) bottom / calc(100% - 2 * var(--s-7)) 1px no-repeat; }  /* the hairline spans the container, not the viewport */
 .gfem-home .sy-head-brand img { height: 26px; }            /* the lockup is 26px tall on the front page */
 .gfem-home .sy-head-links a { color: var(--ink-2); }
 .gfem-home .sy-head-extra { display: none !important; }    /* the front-page header: three links, no search */

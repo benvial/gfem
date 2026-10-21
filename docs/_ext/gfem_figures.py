@@ -11,7 +11,8 @@ restored. The notebooks themselves stay plain matplotlib.
 
 The recolour table pairs each colour of ``docs/_mpl/gfem.mplstyle`` with the
 same key of ``docs/_mpl/gfem-dark.mplstyle`` (the plot cycle pairs entry by
-entry), plus the DESIGN.md tokens and plain colours the styles do not name.
+entry), plus the site's colour tokens (``gfem.css``) and plain colours the
+styles do not name.
 A colour or colormap outside the table is written to stderr, which the docs
 build turns into a warning (``nb_output_stderr = "warn"``) and ``-W`` into a
 failure: an off-palette figure cannot reach the site silently.
@@ -45,12 +46,13 @@ FONTS = MPL_DIR / "fonts"
 DPI = 192  # twice the CSS pixel density, so the PNGs stay sharp on HiDPI screens
 CSS_DPI = 96
 
-# DESIGN.md tokens (light -> dark) that the styles do not name.
+# The site's colour tokens (docs/_static/gfem.css, light -> dark) that the
+# styles do not name.
 TOKENS = {
     "#ffffff": "#111317",  # ground; also white, as tutorials hard-code it
     "#cdd0d5": "#353a42",  # mesh
-    "#007c6e": "#3cc4b0",  # accent (Sensitivity Teal)
-    "#e2f2ef": "#12302b",  # accent-soft (Teal Wash)
+    "#007c6e": "#3cc4b0",  # accent
+    "#e2f2ef": "#12302b",  # accent-soft
 }
 # Achromatic colours the tutorials hard-code: color="k" and color="gray".
 PLAIN = {
@@ -58,7 +60,8 @@ PLAIN = {
     "#808080": "#9aa1aa",  # "gray" -> muted-dark
 }
 
-# The Ramp Rule (DESIGN.md): ground to 0.92 * teal + 0.08 * ground, per theme.
+# The sensitivity ramp: one hue, from the ground to 0.92 * teal + 0.08 * ground,
+# per theme.
 RAMPS = {
     "gfem_sensitivity": ("#ffffff", "#007c6e"),
     "gfem_sensitivity_dark": ("#111317", "#3cc4b0"),

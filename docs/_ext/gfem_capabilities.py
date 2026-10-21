@@ -1,7 +1,7 @@
 """The Capabilities page's claims, derived from the tests at docs build time.
 
 The gradient matrix (problem type x gradient input), the raises list and the
-agreement-with-Palace tolerances are not typed by hand (ADR 0017):
+agreement-with-Palace tolerances are never typed by hand:
 
 - the matrix and the raises list come from the verification tests'
   module-level data, imported by path without running a solve:

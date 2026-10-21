@@ -57,9 +57,13 @@ napoleon_use_rtype = False
 napoleon_use_ivar = True  # "Attributes:" as :ivar: fields
 
 # --- Theme: the gfem "Mesh" world on Shibuya ------------------------------------
-# Every visual rule is carried by one of: these settings, the five partial
-# overrides in _templates/ (Shibuya 2026.7.12 originals in _templates/upstream/,
-# so an upgrade check is a diff), _static/gfem.css or _static/gfem.js.
+# Every visual rule is carried by one of: these settings, the seven Shibuya
+# template overrides in _templates/ (five partials and components here, plus
+# layout/default.html and searchbox.html for search below; each Shibuya
+# 2026.7.12 original sits in _templates/upstream/, so an upgrade check is a
+# diff), _static/gfem.css or _static/gfem.js. The front page adds its own
+# layout, _templates/layout/gfem-home.html, with _static/gfem-home.css and
+# _static/front/front.js.
 extensions += [
     "sphinx_copybutton",  # the worded "copy" button on code blocks
     "sphinxext.opengraph",
@@ -194,7 +198,7 @@ intersphinx_mapping = {
 }
 # --- end API reference ----------------------------------------------------------
 
-# --- Capabilities: claims derived from the tests (ADR 0017) ---------------------
+# --- Capabilities: claims derived from the tests at build time -----------------
 # docs/_ext/gfem_capabilities.py imports the verification tests' CELLS,
 # EXPECTED and OUT_OF_SCOPE and AST-reads the reference tolerances, for the
 # gfem-gradient-matrix, gfem-raises and gfem-palace-agreement directives on
@@ -212,7 +216,8 @@ gfem_capabilities_source_url = ""
 # The copy is static in the template; every number or quoted line reaches it here,
 # or through gfem_capabilities (the compact matrix and the Palace rows, above).
 
-# The repository URL; empty until a public remote exists (handoff checklist).
+# The repository URL; empty until a public remote exists. Setting it also needs
+# html_baseurl, ogp_site_url and gfem_capabilities_source_url.
 REPO_URL = ""
 # The install line, in one place: the front page shows it and get-started.md uses
 # it through the {{ install }} substitution. At PyPI publishing it becomes
