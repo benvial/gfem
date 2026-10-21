@@ -16,7 +16,7 @@ means the physics never reads that input.
 **FD-verified**: a cell of the gradient verification matrix in
 `tests/verification/test_gradient_matrix.py`, which CI's verification job runs
 on every pull request and push to `main`. **Exact zero**: the problem never reads the input.
-**Raises**: `gfem.NonDifferentiableError` at trace time, unless another error
+**Raises**: {py:obj}`gfem.NonDifferentiableError` at trace time, unless another error
 is named; the outcomes are pinned in
 `tests/verification/test_gradient_matrix_raise_table.py`.
 
@@ -30,21 +30,21 @@ gradient that would be wrong:
 
 ## Problem types, ports and boundaries
 
-- **Problems**: `gfem.Driven` (the response of a model to its ports over a
-  frequency grid, uniform or adaptive sweep), `gfem.Eigenmode` (resonant
-  modes nearest a target frequency, with their Q), `gfem.Electrostatic` (the
-  Maxwell capacitance matrix between named terminals) and `gfem.PortMode`
+- **Problems**: {py:obj}`gfem.Driven` (the response of a model to its ports over a
+  frequency grid, uniform or adaptive sweep), {py:obj}`gfem.Eigenmode` (resonant
+  modes nearest a target frequency, with their Q), {py:obj}`gfem.Electrostatic` (the
+  Maxwell capacitance matrix between named terminals) and {py:obj}`gfem.PortMode`
   (the 2D mode of a wave port).
-- **Ports**: `gfem.LumpedPort` on one or several surfaces driven together,
-  and `gfem.WavePort` on an exterior surface, fed by its port mode.
-- **Boundaries**: `gfem.PEC`, `gfem.PMC` (symmetry planes), `gfem.Absorbing`
-  (first or second order), `gfem.Conductor` (a finite-conductivity metal, by
-  its surface impedance) and `gfem.Impedance` (per-square R, L and C).
-- **Materials and designs**: `gfem.Material` per region, `gfem.MaterialField`
-  per element, and `gfem.SheetField` for the fill of a patterned metal sheet
+- **Ports**: {py:obj}`gfem.LumpedPort` on one or several surfaces driven together,
+  and {py:obj}`gfem.WavePort` on an exterior surface, fed by its port mode.
+- **Boundaries**: {py:obj}`gfem.PEC`, {py:obj}`gfem.PMC` (symmetry planes), {py:obj}`gfem.Absorbing`
+  (first or second order), {py:obj}`gfem.Conductor` (a finite-conductivity metal, by
+  its surface impedance) and {py:obj}`gfem.Impedance` (per-square R, L and C).
+- **Materials and designs**: {py:obj}`gfem.Material` per region, {py:obj}`gfem.MaterialField`
+  per element, and {py:obj}`gfem.SheetField` for the fill of a patterned metal sheet
   ({doc}`recipes/sheet-design`).
-- **Measurements**: `gfem.characteristic_impedance` and
-  `gfem.interface_participation` ({doc}`recipes/measurements`).
+- **Measurements**: {py:obj}`gfem.characteristic_impedance` and
+  {py:obj}`gfem.interface_participation` ({doc}`recipes/measurements`).
 - **Linear solvers**: direct, BDDC + GMRES, and the experimental cuDSS
   direct solver on an NVIDIA GPU ({doc}`recipes/gpu-direct-solver`).
 
