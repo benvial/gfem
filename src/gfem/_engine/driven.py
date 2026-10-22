@@ -584,6 +584,8 @@ class DrivenRule:
                 threads=options.threads,
                 tolerance=options.tolerance,
                 width=len(self.excite),
+                # samples lie far apart: a reused BDDC would mostly hit its cap
+                reuse_preconditioner=False,
             ) as handles:
 
                 def solve(
@@ -1297,8 +1299,13 @@ class _Ports:
         tolerance: float,
         width: int,
         threads: int | None = None,
+        reuse_preconditioner: bool = True,
     ) -> _SweepHandle:
-        """One base handle for a sweep's frequencies (see `_SweepHandle`)."""
+        """One base handle for a sweep's frequencies (see `_SweepHandle`).
+
+        ``reuse_preconditioner=False`` sets an iterative backend's
+        preconditioner up at every frequency (`gfem._linalg.prepare`).
+        """
         return _SweepHandle(
             self,
             kind=kind,
@@ -1306,6 +1313,7 @@ class _Ports:
             tolerance=tolerance,
             width=width,
             threads=threads,
+            reuse_preconditioner=reuse_preconditioner,
         )
 
     def functional(self, omega: float) -> np.ndarray:
@@ -1377,10 +1385,13 @@ class _SweepHandle:
     `at` gives a handle of the system operator ``A(ω) + W(ω)`` at each
     frequency. The first call prepares the base handle; later ones
     refactorize it at the new ω when it can, or else free it and prepare a
-    new one (`gfem._linalg.refactorize_or_prepare`). Wave ports wrap the base per
-    frequency in a borrowing Woodbury update. A handle from `at` is valid
-    until the next call. `free` (or leaving the ``with`` block) releases
-    the base, also when the sweep raises.
+    new one (`gfem._linalg.refactorize_or_prepare`). An iterative base keeps
+    its preconditioner across frequencies (preconditioner reuse) unless
+    prepared with ``reuse_preconditioner=False``, as the adaptive sweep's
+    is. Wave ports wrap the base per frequency in a borrowing Woodbury
+    update. A handle from `at` is valid until the next call. `free` (or
+    leaving the ``with`` block) releases the base, also when the sweep
+    raises.
     """
 
     def __init__(self, ports: _Ports, **options: Any) -> None:

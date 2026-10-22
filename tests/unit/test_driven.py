@@ -357,6 +357,17 @@ def test_a_bddc_sweep_caps_the_first_warm_solve_after_a_large_jump(
     assert max(out["iterations"][1]) <= bound
 
 
+def test_a_bddc_adaptive_sweep_sets_bddc_up_at_every_sample(fine_line, monkeypatch):
+    # adaptive samples lie far apart (1 GHz, then 60 GHz): a reused
+    # preconditioner would mostly hit its cap, so each sample sets BDDC up
+    problem = gfem.Driven(frequency=np.linspace(1e9, 60e9, 60), sweep="adaptive")
+    direct = np.asarray(_s(fine_line, problem).s.values)
+    builds = _count_preconditioners(monkeypatch)
+    out = _bddc_forward(fine_line, problem)
+    np.testing.assert_allclose(out["s"], direct, rtol=0, atol=1e-4)
+    assert len(builds) == len(out["iterations"]) > 1
+
+
 def test_excite_selects_the_columns_of_s(line):
     full = np.asarray(_s(line).s.values)
     one = _s(line, gfem.Driven(frequency=F, excite="p2")).s
