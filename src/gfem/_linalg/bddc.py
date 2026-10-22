@@ -20,14 +20,23 @@ from gfem._linalg import Operator, Symmetry
 from gfem._linalg.base import NgsHandle, host_bytes
 from gfem._linalg.direct import INVERSE
 
-#: The coarse (wirebasket) problem's solver: always an explicit sparse Cholesky
-#: factorization. (``coarsetype="direct"`` is not set: on the driven H(curl)
-#: reference it made the setup 5x slower and GMRES take 68 iterations, not 49.)
-COARSE = {"inverse": INVERSE}
 #: Krylov iterations a BDDC setup is worth, summed over the right-hand sides
 #: of a solve: on the driven references (order 2) one setup took as long as
 #: about 30 GMRES iterations of one right-hand side.
 SETUP_ITERATIONS = 30
+
+
+def _set_up(form: ngs.BilinearForm) -> ngs.Preconditioner:
+    """Register BDDC on ``form`` and assemble it, which sets BDDC up.
+
+    The coarse (wirebasket) problem's solver is always an explicit sparse
+    Cholesky factorization. (``coarsetype="direct"`` is not set: on the
+    driven H(curl) reference it made the setup 5x slower and GMRES take 68
+    iterations, not 49.)
+    """
+    preconditioner = ngs.Preconditioner(form, "bddc", inverse=INVERSE)
+    form.Assemble()
+    return preconditioner
 
 
 def _slack(columns: int) -> int:
@@ -69,8 +78,7 @@ class BddcHandle(NgsHandle):
                 "DOFs must be the space's FreeDofs(); build the space with "
                 "dirichlet= on the fixed boundaries."
             )
-        preconditioner = ngs.Preconditioner(form, "bddc", **COARSE)
-        form.Assemble()
+        preconditioner = _set_up(form)
         is_complex = bool(space.is_complex)
         super().__init__(form.mat, operator.freedofs, symmetry, is_complex=is_complex)
         self.tolerance = tolerance
@@ -92,9 +100,7 @@ class BddcHandle(NgsHandle):
         """Set BDDC up again on ``form`` (assembled again), and hold it."""
         # release the old setup first
         self._solver = self._preconditioner = self._matrix = self._form = None
-        preconditioner = ngs.Preconditioner(form, "bddc", **COARSE)
-        form.Assemble()
-        self._hold(form, preconditioner)
+        self._hold(form, _set_up(form))
 
     def _held(self) -> tuple[ngs.BaseMatrix, ngs.Preconditioner, ngs.BilinearForm]:
         """The matrix, its preconditioner and its form.

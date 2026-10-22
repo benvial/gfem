@@ -140,7 +140,8 @@ def test_every_gfem_inverse_call_names_its_type():
             keywords = {k.arg for k in node.keywords}
             if name == "Inverse" and "inverse" not in keywords:
                 unnamed.append(f"{path.relative_to(SRC)}:{node.lineno}")
-            if name == "Preconditioner" and not keywords & {"inverse", None}:
+            # an explicit keyword: ``**flags`` may not hold it
+            if name == "Preconditioner" and "inverse" not in keywords:
                 unnamed.append(f"{path.relative_to(SRC)}:{node.lineno}")
     assert unnamed == []
 
