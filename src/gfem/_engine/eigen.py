@@ -25,7 +25,7 @@ from gfem._engine.cache import discretization
 from gfem._engine.coefficients import coefficient, element_tensors
 from gfem._engine.domain import domain_key, h1_space, pec_surfaces
 from gfem._engine.driven import DrivenOperator, real_space
-from gfem._linalg import Operator, prepare
+from gfem._linalg import Handle, Operator, prepare
 from gfem.model import Model
 
 __all__ = [
@@ -61,9 +61,13 @@ def eigen_operator(
     powers = classes.powers
     free = np.array(list(space.FreeDofs()), dtype=bool)  # ty: ignore[invalid-argument-type]
 
-    def shifted(k: complex):
+    def operator(k: complex) -> Operator:
+        return Operator(op.form(k * const.c / scale), space.FreeDofs())
+
+    def prepare_shift(t: Operator) -> Handle:
+        """Prepare ``t``: ``T(k)`` at one shift (`operator`)."""
         return prepare(
-            Operator(op.form(k * const.c / scale), space.FreeDofs()),
+            t,
             symmetry="complex_symmetric",
             kind=kind,
             device=device,
@@ -74,7 +78,8 @@ def eigen_operator(
 
     return EigenOperator(
         shift=sigma,
-        prepare=shifted,
+        operator=operator,
+        prepare=prepare_shift,
         damping=(
             _linear_map(assemble(space, powers[1], matrix_free=True))
             if powers[1]
@@ -227,6 +232,8 @@ class DivFreeProjector:
             shape=(g.height, g.width),
         )
         self._g.eliminate_zeros()
+        # G^T as CSR, so a product with it runs row by row like G's
+        self._gt = self._g.T.tocsr()
         phi, psi = h1.TnT()
         laplace = ngs.BilinearForm(h1, symmetric=True)
         laplace += (eps * ngs.grad(phi)) * ngs.grad(psi) * dx
@@ -240,10 +247,16 @@ class DivFreeProjector:
         return matvec(self.mass, x.real) + 1j * matvec(self.mass, x.imag)
 
     def __call__(self, x: np.ndarray) -> np.ndarray:
-        """``x`` without its gradient part (``(n,)`` complex)."""
-        rhs = self._g.T @ self.energy(x)
+        """``x`` without its gradient part (``(n,)`` complex).
+
+        The real ``G`` and ``G^T`` act on the real and imaginary parts
+        separately: a product with a complex vector would copy ``G`` to
+        complex on every call. The result is bit-identical.
+        """
+        energy = self.energy(x)
+        rhs = self._gt @ energy.real + 1j * (self._gt @ energy.imag)
         phi = self._laplace.solve(rhs)
-        return x - self._g @ phi
+        return x - (self._g @ phi.real + 1j * (self._g @ phi.imag))
 
     def free(self) -> None:
         """Release the H1 factorization."""

@@ -1,5 +1,7 @@
 """The solver-handle seam: prepare once, solve many right-hand sides, free."""
 
+import threading
+
 import ngsolve as ngs
 import numpy as np
 import pytest
@@ -49,13 +51,6 @@ def test_direct_solves_many_right_hand_sides_on_the_free_dofs(built):
     assert handle.nbytes > 0
 
 
-def test_direct_always_uses_sparse_cholesky_never_the_default(built):
-    # NGSolve's default inverse is UMFPACK, which exhausts memory at scale.
-    assert ngs.BaseMatrix.GetDefaultInverseType() != "sparsecholesky"
-    handle = prepare(_laplace(built)[0], symmetry="hermitian", kind="direct")
-    assert type(handle._inverse).__name__.startswith("SparseCholesky")
-
-
 def test_complex_symmetric_operator_and_complex_rhs(built):
     op, space = _laplace(built, complex_valued=True, shift=1 - 2j)
     handle = prepare(op, symmetry="complex_symmetric", kind="direct")
@@ -86,6 +81,27 @@ def test_freed_handle_refuses_to_solve(built):
         handle.solve(np.ones(n))
     with pytest.raises(RuntimeError, match="freed"):
         handle.apply(np.ones(n))
+
+
+def test_direct_refactorization_solves_like_a_fresh_handle(built):
+    # one sweep, two frequencies: the second refactorizes the first's plan
+    handle = prepare(
+        _laplace(built, complex_valued=True, shift=1 - 2j)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+    )
+    op, space = _laplace(built, complex_valued=True, shift=3 + 1j)
+    handle.refactorize(op)
+    fresh = prepare(
+        _laplace(built, complex_valued=True, shift=3 + 1j)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+    )
+    rng = np.random.default_rng(12)
+    B = rng.standard_normal((space.ndof, 2)) + 1j * rng.standard_normal((space.ndof, 2))
+    X, ref = handle.solve(B), fresh.solve(B)
+    assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
+    np.testing.assert_allclose(handle.apply(X), fresh.apply(X), rtol=1e-14)
 
 
 def test_wrong_shape_raises(built):
@@ -220,6 +236,65 @@ def test_gmres_initial_guess_saves_iterations_at_the_same_tolerance(built):
     assert second.iterations[-1] <= 1
 
 
+def test_bddc_refactorization_without_a_guess_solves_like_a_fresh_handle(built):
+    # the preconditioner is kept for warm starts only: a cold solve after a
+    # refactorization sets BDDC up again at the new operator
+    def operator(shift):
+        return _laplace(built, complex_valued=True, shift=shift, order=4)[0]
+
+    handle, fresh = (
+        prepare(operator(s), symmetry="complex_symmetric", kind="bddc_gmres")
+        for s in (1 - 2j, -40 + 1j)
+    )
+    handle.refactorize(operator(-40 + 1j))
+    rng = np.random.default_rng(14)
+    B = rng.standard_normal((handle.ndof, 2)) + 0j
+    X, ref = handle.solve(B), fresh.solve(B)
+    assert handle.iterations == fresh.iterations
+    np.testing.assert_allclose(X, ref, rtol=0, atol=1e-12 * np.abs(ref).max())
+
+
+class _Gate:
+    """A reentrant lock that reports a thread waiting for it."""
+
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.waiting = threading.Event()
+
+    def __enter__(self):
+        if not self.lock.acquire(blocking=False):
+            self.waiting.set()
+            self.lock.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.lock.release()
+
+
+def test_bddc_refactorization_checks_the_handle_under_its_lock(built):
+    # a handle freed while a refactorization waits for the lock is not
+    # brought back: the refactorization reads the held state under the lock
+    op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
+    handle = prepare(op, symmetry="complex_symmetric", kind="bddc_gmres")
+    gate = handle._lock = _Gate()
+    raised = []
+
+    def refactorize():
+        try:
+            handle.refactorize(_laplace(built, complex_valued=True, shift=2j)[0])
+        except RuntimeError as err:
+            raised.append(err)
+
+    with gate:
+        worker = threading.Thread(target=refactorize)
+        worker.start()
+        assert gate.waiting.wait(timeout=30)
+        handle.free()
+    worker.join(timeout=30)
+    assert [str(err) for err in raised] == ["This solver handle was freed."]
+    assert handle.nbytes == 0
+
+
 def test_direct_ignores_the_initial_guess(built):
     op, space = _laplace(built, complex_valued=True, shift=1 - 2j)
     handle = prepare(op, symmetry="complex_symmetric", kind="direct")
@@ -273,7 +348,8 @@ def test_direct_factorizes_a_scipy_spd_matrix():
     np.testing.assert_allclose(A @ handle.solve(b), b, atol=1e-12)
     B = rng.standard_normal((n, 2))
     np.testing.assert_allclose(A @ handle.solve(B), B, atol=1e-12)
-    assert type(handle._inverse).__name__.startswith("SparseCholesky")
+    # the direct backend's factorization (tests/unit/test_linalg_mkl.py)
+    assert type(handle._inverse).__name__.startswith(("SparseCholesky", "MKLPardiso"))
     with pytest.raises(ValueError, match="square"):
         factorize(sp.eye(3, 4))
 
@@ -343,3 +419,19 @@ def test_a_zero_update_is_the_operator_itself(built):
     b = rng.standard_normal(space.ndof) + 0j
     x = low_rank_update(base, U, np.zeros((2, 2))).solve(b)
     np.testing.assert_allclose(x, base.solve(b), atol=1e-12 * np.abs(x).max())
+
+
+def test_a_borrowing_low_rank_update_frees_only_its_own_columns(built):
+    op, space = _laplace(built, complex_valued=True, shift=1 - 2j)
+    rng = np.random.default_rng(13)
+    U, C, _ = _update(space, rng)
+    base = prepare(op, symmetry="complex_symmetric", kind="direct")
+    b = rng.standard_normal(space.ndof) + 0j
+    x = base.solve(b)
+    handle = low_rank_update(base, U, C, borrow=True)
+    handle.solve(b)
+    handle.free()
+    assert handle.nbytes == 0
+    with pytest.raises(RuntimeError, match="freed"):
+        handle.solve(b)
+    np.testing.assert_array_equal(base.solve(b), x)  # the base is still usable

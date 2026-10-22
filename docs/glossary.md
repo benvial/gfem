@@ -19,6 +19,12 @@ Adaptive sweep
   {term}`sample frequencies <Sample frequency>` and evaluates a
   {term}`reduced model` over the requested grid.
 
+Frequency worker
+  A separate process that solves one contiguous block of a uniform
+  {term}`driven <Driven problem>` sweep's frequencies with its share of the
+  solve's threads (`SolverOptions.frequency_workers`); the blocks join back in
+  frequency order.
+
 Sample frequency
   An output frequency at which an {term}`adaptive sweep` solved the full
   problem.

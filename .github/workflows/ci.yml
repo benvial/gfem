@@ -129,6 +129,10 @@ jobs:
         - {os: windows-latest, python: "3.12", extra: cuda13}
         # On macOS the extra installs nothing and a GPU request says so.
         - {os: macos-latest, python: "3.12", extra: cuda12}
+        # MKL wheels exist only for Linux x86_64 and Windows (no-op on macOS).
+        - {os: ubuntu-latest, python: "3.12", extra: mkl}
+        - {os: windows-latest, python: "3.12", extra: mkl}
+        - {os: macos-latest, python: "3.12", extra: mkl}
     defaults:
       run:
         shell: bash
@@ -153,7 +157,7 @@ jobs:
         "$py" -I -c "import gfem, jax.numpy as jnp; print(gfem.__version__, jnp.asarray(1.0).dtype)"
     - name: No-GPU contract
       # Hosted runners have no GPU: device="cuda" must raise, never fall back.
-      if: matrix.extra != ''
+      if: startsWith(matrix.extra, 'cuda')
       run: |
         py=.venv-gate/bin/python; [ -x "$py" ] || py=.venv-gate/Scripts/python.exe
         "$py" -I -c "

@@ -303,7 +303,11 @@ class Driven:
             ``keep_fields`` is traced by JAX.
 
     Example:
-        ``gfem.Driven(frequency=np.linspace(1e9, 100e9, 100))``
+        ``gfem.Driven(frequency=np.linspace(1e9, 100e9, 100))`` solves all
+        100 frequencies in full; for a many-point sweep,
+        ``gfem.Driven(frequency=np.linspace(1e9, 100e9, 300),
+        sweep="adaptive")`` solves a few and reads the rest from the reduced
+        model.
     """
 
     frequency: tuple[float, ...]

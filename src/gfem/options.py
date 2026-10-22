@@ -44,8 +44,9 @@ class SolverOptions:
             for driven, BDDC + conjugate gradients for electrostatic, direct
             for eigenmode), ``"bddc_gmres"`` (BDDC with the Krylov method
             that fits the operator: conjugate gradients for electrostatic)
-            or ``"direct"`` (sparse Cholesky, one factorization reused for
-            every right-hand side).
+            or ``"direct"`` (one LDL^T factorization reused for every
+            right-hand side: MKL PARDISO with METIS ordering when the ``mkl``
+            extra is installed, NGSolve's sparse Cholesky otherwise).
         tolerance: Relative residual of iterative solves.
         device: Where the direct solver runs: ``"cpu"``, ``"cuda"`` or
             ``"cuda:N"`` (the N-th GPU). A GPU needs
@@ -79,6 +80,19 @@ class SolverOptions:
         cluster_rtol: Relative distance under which eigenfrequencies form a
             degenerate cluster.
         max_refine_iterations: Most iterations of the eigenmode refinement.
+        frequency_workers: Processes a uniform `gfem.Driven` sweep spreads
+            its frequencies over, in contiguous blocks, each with
+            ``threads // frequency_workers`` threads (at least 1; with
+            ``threads=None``, of the logical CPUs the process may run
+            on). It applies to uniform driven sweeps only: adaptive
+            sweeps, eigenmode and electrostatic solves ignore it. Memory
+            grows about ``frequency_workers`` times, one solve per worker.
+            S agrees with one worker's to the solver precision (each
+            block's iterative solves start cold). Not available with wave
+            ports on more than one frequency (`NotImplementedError`) or a
+            GPU device. The workers are
+            spawned processes, so a script that sets it must guard its
+            entry point with ``if __name__ == "__main__":``.
     """
 
     order: int = 2
@@ -95,6 +109,7 @@ class SolverOptions:
     eigen_tolerance: float = 1e-10
     cluster_rtol: float = 1e-6
     max_refine_iterations: int = 50
+    frequency_workers: int = 1
 
     def __post_init__(self) -> None:
         set_ = object.__setattr__
@@ -136,6 +151,12 @@ class SolverOptions:
         if self.retain_memory is not None:
             _int(self.retain_memory, "retain_memory", 0)
         _int(self.max_refine_iterations, "max_refine_iterations", 1)
+        _int(self.frequency_workers, "frequency_workers", 1)
+        if self.device.startswith("cuda") and self.frequency_workers > 1:
+            raise ValueError(
+                f"device={self.device!r} needs frequency_workers=1: frequency "
+                "workers would share one GPU's memory."
+            )
         if self.adaptive_tolerance < 10 * self.tolerance:
             raise ValueError(
                 f"SolverOptions.adaptive_tolerance={self.adaptive_tolerance:g} must be "

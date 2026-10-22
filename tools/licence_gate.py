@@ -1,10 +1,14 @@
 """Licence gate: audit an installed dependency tree and gfem's own wheel.
 
 Policy: GPL and LGPL dependencies are allowed; non-free and
-non-commercial licences are not. Proprietary licences pass only for the
-NVIDIA runtime distributions reached through the ``cuda12`` / ``cuda13``
-extras, listed in ``licences.toml``. A distribution whose licence cannot be
-read from its metadata fails until a human records it in ``licences.toml``.
+non-commercial licences are not. Proprietary licences pass only where
+``licences.toml`` allows them: any proprietary licence for the NVIDIA
+runtime distributions reached through the ``cuda12`` / ``cuda13`` extras,
+and, for the distributions of the ``mkl`` extra, only the Intel licence
+recorded for each (the Intel Simplified Software License, or Intel's
+Developer Tools EULA for the OpenMP runtime). A distribution whose licence
+cannot be read from its metadata fails until a human records it in
+``licences.toml``.
 
 Run it with the interpreter of the environment to audit, for example::
 
@@ -247,10 +251,23 @@ class Policy:
             metadata.
         allow_proprietary: ``fnmatch`` patterns of distributions allowed to
             carry a proprietary (but never a non-commercial) licence.
+        allow_licences: a proprietary licence, by the name its metadata
+            gives, to the ``fnmatch`` patterns of distributions allowed to
+            carry that licence and no other proprietary one.
     """
 
     overrides: dict[str, str] = field(default_factory=dict)
     allow_proprietary: tuple[str, ...] = ()
+    allow_licences: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+    def allows(self, name: str, licence: str | None) -> bool:
+        """Whether distribution ``name`` may carry proprietary ``licence``."""
+        patterns = [*self.allow_proprietary]
+        if licence:
+            for allowed, names in self.allow_licences.items():
+                if allowed.casefold() == licence.strip().casefold():
+                    patterns += names
+        return any(fnmatch.fnmatch(name, pattern) for pattern in patterns)
 
 
 def load_policy(path: Path = DEFAULT_POLICY) -> Policy:
@@ -259,8 +276,13 @@ def load_policy(path: Path = DEFAULT_POLICY) -> Policy:
     overrides = {
         normalize(k): v["licence"] for k, v in data.get("overrides", {}).items()
     }
+    licences = {
+        k: tuple(v["distributions"]) for k, v in data.get("allow-licence", {}).items()
+    }
     return Policy(
-        overrides=overrides, allow_proprietary=tuple(data.get("allow-proprietary", []))
+        overrides=overrides,
+        allow_proprietary=tuple(data.get("allow-proprietary", [])),
+        allow_licences=licences,
     )
 
 
@@ -300,17 +322,16 @@ def audit(paths: list[str] | None, policy: Policy) -> list[Entry]:
         if name in entries:
             continue
         classifiers = meta.get_all("Classifier") or []
+        named = meta.get("License-Expression") or meta.get("License")
         if name in policy.overrides:
-            licence = policy.overrides[name]
+            licence = named = policy.overrides[name]
             kind = _expression_kind(licence)
             licence += " (reviewed)"
         else:
             expression, text = meta.get("License-Expression"), meta.get("License")
             kind = licence_kind(expression, text, classifiers)
             licence = _describe(expression, text, classifiers)
-        allowed = any(
-            fnmatch.fnmatch(name, pattern) for pattern in policy.allow_proprietary
-        )
+        allowed = policy.allows(name, named)
         if kind is Kind.FREE:
             verdict, ok = "free", True
         elif kind is Kind.PROPRIETARY and allowed:

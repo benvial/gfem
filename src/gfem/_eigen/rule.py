@@ -90,6 +90,11 @@ _STATIC = 1e-6
 #: same mode.
 _DUPLICATE = 10.0
 _OVERLAP = 0.9
+#: Ritz values this close (relative) are one multiple eigenvalue. ARPACK
+#: returns an arbitrary basis of its eigenspace, as nearly parallel as
+#: round-off makes it: the seeds are orthonormalized, or two members would
+#: overlap like one mode refined twice.
+_MULTIPLE = 1e-8
 #: A seed that needs correction steps is refined on a new factorization at
 #: its own Ritz value when the current shift would contract its error by
 #: less than this per step (the shift is nearer another Ritz value: residual
@@ -307,6 +312,7 @@ class EigenmodeRule:
         tolerance = self.options.eigen_tolerance
         seeds = [j for j in range(len(k)) if k[j].real > _STATIC * sigma]
         seeds.sort(key=lambda j: abs(k[j].real - sigma))
+        vectors = _orthonormal_multiples(k, vectors)
         accepted: list[Refined] = []
         failed: list[Refined] = []
         extra = None
@@ -650,11 +656,31 @@ def _contraction(seed: complex, shift: complex, ritz: np.ndarray) -> float:
     ``|seed - shift|`` over the distance from ``shift`` to the nearest other
     Ritz value: the component of that mode grows unless the ratio is below 1.
     """
-    others = ritz[np.abs(ritz - seed) > 1e-8 * abs(seed)]
+    others = ritz[np.abs(ritz - seed) > _MULTIPLE * abs(seed)]
     if not len(others):
         return 0.0
     nearest = float(np.min(np.abs(others - shift)))
     return abs(seed - shift) / nearest if nearest > 0 else math.inf
+
+
+def _orthonormal_multiples(k: np.ndarray, vectors: np.ndarray) -> np.ndarray:
+    """``vectors`` with each multiple Ritz value's vectors orthonormalized.
+
+    Any basis of a multiple eigenvalue's eigenspace is as good a set of
+    seeds; an orthonormal one keeps its members apart under `_same`.
+    """
+    out = vectors
+    done = np.zeros(len(k), dtype=bool)
+    for j in range(len(k)):
+        if done[j]:
+            continue
+        members = np.flatnonzero(np.abs(k - k[j]) <= _MULTIPLE * abs(k[j]))
+        done[members] = True
+        if len(members) > 1:
+            if out is vectors:
+                out = vectors.copy()
+            out[:, members] = np.linalg.qr(vectors[:, members])[0]
+    return out
 
 
 def _same(a: Refined, b: Refined, window: float) -> bool:

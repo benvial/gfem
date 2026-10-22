@@ -88,6 +88,52 @@ def test_allowed_proprietary_distributions_still_fail_on_non_commercial(tmp_path
     assert _violations(tmp_path, policy) == {"nvidia-thing": "non-free"}
 
 
+ISSL = (
+    "License: Intel Simplified Software License",
+    "Classifier: License :: Other/Proprietary License",
+)
+EULA = (
+    "License: Intel End User License Agreement for Developer Tools",
+    "Classifier: License :: Other/Proprietary License",
+)
+
+
+def test_a_licence_allowance_admits_only_that_licence_on_its_distributions(
+    tmp_path,
+):
+    _install(tmp_path, "mkl", *ISSL)
+    _install(tmp_path, "intel-openmp", *EULA)
+    _install(tmp_path, "other-lib", *ISSL)
+    policy = gate.Policy(
+        allow_licences={"Intel Simplified Software License": ("mkl", "intel-*")}
+    )
+    assert _violations(tmp_path, policy) == {
+        "intel-openmp": "non-free",
+        "other-lib": "non-free",
+    }
+
+
+def test_repository_policy_admits_the_intel_simplified_licence_for_mkl_only(
+    tmp_path,
+):
+    _install(tmp_path, "mkl", *ISSL)
+    _install(tmp_path, "other-lib", *ISSL)
+    assert _violations(tmp_path, gate.load_policy()) == {"other-lib": "non-free"}
+
+
+def test_repository_policy_admits_the_intel_developer_tools_eula_for_openmp_only(
+    tmp_path,
+):
+    _install(tmp_path, "intel-openmp", *EULA)
+    _install(tmp_path, "intel-cmplr-lib-ur", *EULA)
+    _install(tmp_path, "mkl", *EULA)
+    _install(tmp_path, "other-lib", *EULA)
+    assert _violations(tmp_path, gate.load_policy()) == {
+        "mkl": "non-free",
+        "other-lib": "non-free",
+    }
+
+
 def test_repository_policy_accepts_the_development_environment():
     report = gate.audit(None, gate.load_policy())
     assert [e for e in report if not e.ok] == []

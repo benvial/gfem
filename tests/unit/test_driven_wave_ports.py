@@ -15,6 +15,9 @@ import numpy as np
 import pytest
 
 import gfem
+from gfem._engine import driven
+from gfem._linalg import prepare
+from gfem._linalg.direct import DirectHandle
 
 DATA = Path(__file__).parent / "data"
 C0 = 299792458.0
@@ -164,6 +167,32 @@ def test_adaptive_s_matches_the_uniform_sweep(plate_mesh):
         np.asarray(uniform.port_modes["p1"].gamma),
         rtol=1e-12,
     )
+
+
+@pytest.mark.parametrize("sweep", ["uniform", "adaptive"])
+def test_a_direct_sweep_plans_once_and_matches_fresh_handles(
+    plate_mesh, monkeypatch, sweep
+):
+    # one base handle, wrapped per frequency in a borrowing Woodbury update
+    model = line(plate_mesh, second="lumped")
+    problem = gfem.Driven(F, sweep=sweep)
+    options = dataclasses.replace(OPTIONS, linear_solver="direct")
+    calls = []
+
+    def spy(*args, **kwargs):
+        calls.append(1)
+        return prepare(*args, **kwargs)
+
+    monkeypatch.setattr(driven, "prepare", spy)
+    s = np.asarray(gfem.solve(model, problem, options=options).s.values)
+    assert len(calls) == 1
+    # a handle that cannot refactorize is prepared afresh at each frequency
+    monkeypatch.delattr(DirectHandle, "refactorize")
+    calls.clear()
+    result = gfem.solve(model, problem, options=options)
+    solved = len(F) if sweep == "uniform" else len(result.sweep.sampled_frequencies)
+    assert len(calls) == solved > 1
+    np.testing.assert_allclose(result.s.values, s, rtol=0, atol=1e-12)
 
 
 def test_wave_port_s_comes_out_of_jit_unchanged(plate_mesh, plate_result):

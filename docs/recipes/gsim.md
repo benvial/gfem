@@ -113,3 +113,74 @@ From here every gfem recipe applies. [Differentiate S-parameters and driven
 fields](s-parameter-gradient.md) turns a region into a `gfem.MaterialField` and
 takes `jax.grad` of an objective; the [topology
 tutorial](../tutorials/topology.ipynb) runs a whole optimization.
+
+## Many frequencies: the adaptive sweep
+
+gsim sets up a broadband sweep (`fmin=1e9, fmax=100e9` above), and a
+`gfem.Driven` sweep is uniform by default: every frequency is a full solve.
+For more than about 20 frequencies, ask for the adaptive sweep. It solves a
+few sample frequencies in full, every excited port at once, and reads S and
+the kept fields at every frequency of the grid from a reduced model built on
+those solutions:
+
+```python
+import numpy as np
+
+problem = gfem.Driven(frequency=np.linspace(1e9, 100e9, 300), sweep="adaptive")
+result = gfem.solve(model, problem)
+s21 = result.s["p2", "p1"]  # all 300 frequencies
+result.sweep.sampled_frequencies  # the frequencies solved in full, Hz
+```
+
+`result.sweep` tells how each frequency was obtained:
+
+- `solved` marks, frequency by frequency, the ones solved in full; the rest
+  come from the reduced model.
+- `converged` says whether the last samples agreed with the reduced model
+  to `SolverOptions.adaptive_tolerance`. A sweep that reaches
+  `SolverOptions.adaptive_max_samples` first warns with
+  `gfem.SweepNotConvergedWarning` and reports `converged=False`: raise the
+  sample cap.
+
+On a short grid the greedy may run out of frequencies: it then solves every
+one in full, as a uniform sweep does, and reports `converged=True`.
+
+The speed costs field accuracy. A uniform sweep's fields are as accurate as
+the linear solve (`SolverOptions.tolerance`). An adaptive sweep's fields, at
+the frequencies it did not solve, are accurate to about `adaptive_tolerance`
+or better (relative error, `1e-3` by default), and S to about its square. Measurements
+read the fields ([Measure fields after the solve](measurements.md)), so a
+probe or an interface participation on an adaptive result carries that error.
+Tighten it with `gfem.SolverOptions(adaptive_tolerance=1e-5)` or
+`gfem.SolverOptions.preset("accurate")`, at the cost of more samples, or keep
+the uniform sweep where the fields matter most.
+
+Under `jax.grad`, `jax.jit` or `jax.vmap` an adaptive sweep needs its samples
+frozen (`Driven(samples=...)`): see [Differentiate an adaptive frequency
+sweep](adaptive-sweep-gradient.md).
+
+## Many cores: frequency workers
+
+A uniform sweep can also run several frequencies at once.
+`gfem.SolverOptions(frequency_workers=k)` splits the grid into `k` contiguous
+blocks and solves each block in a {term}`frequency worker`, a separate process
+with `threads // k` of the solve's threads (of the logical CPUs the process
+may run on when `threads` is `None`). One small solve uses many threads
+poorly, so workers pay off on a many-core machine; on a few cores the gain is
+small.
+
+```python
+options = gfem.SolverOptions(frequency_workers=4, threads=16)
+problem = gfem.Driven(frequency=np.linspace(1e9, 100e9, 64))
+result = gfem.solve(model, problem, options=options)
+```
+
+- Memory grows about `k` times: each worker holds one solve.
+- S agrees with one worker's to the solver precision: with `bddc_gmres`, each
+  block's first solve starts cold, so S moves within `SolverOptions.tolerance`.
+- Only uniform driven sweeps use it; adaptive sweeps, eigenmode and
+  electrostatic solves ignore it. GPU devices, and wave ports on more than one
+  frequency, need `frequency_workers=1`.
+- The workers are spawned processes: a script that sets `frequency_workers`
+  guards its entry point with `if __name__ == "__main__":`.
+- Gradients work as usual; the adjoint solves run in the main process.

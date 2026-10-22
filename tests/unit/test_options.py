@@ -26,6 +26,7 @@ def test_defaults():
     assert o.eigen_tolerance == 1e-10
     assert o.cluster_rtol == 1e-6
     assert o.max_refine_iterations == 50
+    assert o.frequency_workers == 1  # one process: the sweep as it always ran
 
 
 def test_options_are_frozen_and_keyword_only():
@@ -70,6 +71,8 @@ def test_presets():
         ({"eigen_tolerance": 0.0}, "eigen_tolerance"),
         ({"max_refine_iterations": 0}, "max_refine_iterations"),
         ({"port_mode_tolerance": 0.0}, "port_mode_tolerance"),
+        ({"frequency_workers": 0}, "frequency_workers"),
+        ({"frequency_workers": 2.0}, "frequency_workers"),
     ],
 )
 def test_invalid_values_name_the_option(kwargs, word):
@@ -83,6 +86,13 @@ def test_cuda_needs_the_direct_solver():
     )
     with pytest.raises(ValueError, match="linear_solver='direct'"):
         gfem.SolverOptions(device="cuda")
+
+
+def test_frequency_workers_stay_off_a_gpu():
+    # k processes would share one GPU's memory
+    with pytest.raises(ValueError, match="frequency_workers=1"):
+        gfem.SolverOptions(device="cuda", linear_solver="direct", frequency_workers=2)
+    assert gfem.SolverOptions(frequency_workers=2).frequency_workers == 2
 
 
 def test_adaptive_tolerance_must_sit_above_the_solve_tolerance():

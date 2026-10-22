@@ -960,6 +960,9 @@ cuda12 = [
 cuda13 = [
     { name = "nvmath-python", extra = ["cu13"], marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-4-gfem-cuda13') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-4-gfem-cuda13') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
 ]
+mkl = [
+    { name = "mkl", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
+]
 viz = [
     { name = "pyvista", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
 ]
@@ -1005,6 +1008,7 @@ test = [
 requires-dist = [
     { name = "jax", specifier = ">=0.12" },
     { name = "meshio", specifier = ">=5.3.5" },
+    { name = "mkl", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'mkl') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'mkl')", specifier = ">=2026.2" },
     { name = "ngsolve", specifier = ">=6.2.2608,<6.3" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "nvmath-python", extras = ["cu12"], marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'cuda12') or (sys_platform == 'win32' and extra == 'cuda12')", specifier = ">=1.0,<1.1" },
@@ -1013,7 +1017,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.15" },
     { name = "xarray", marker = "extra == 'xarray'", specifier = ">=2024.10" },
 ]
-provides-extras = ["cuda12", "cuda13", "viz", "xarray"]
+provides-extras = ["cuda12", "cuda13", "mkl", "viz", "xarray"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1086,6 +1090,30 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/01/e1/2069291243c926a2ff1cd706c7f3eeb9b62144bf60f77c9fb9ff2fb26bd3/iniconfig-2.3.1.tar.gz", hash = "sha256:67f4b9c50da0dedf52af349e7749a80a9057a5031199791b906c3bb3ae878960", size = 21209, upload-time = "2026-10-06T22:48:38.076Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/56/43/4ca9e49d27a1fcf6bece6f6aec0ea46bb9112489b93d4b688fb415457bdb/iniconfig-2.3.1-py3-none-any.whl", hash = "sha256:9121e2c1fdb355232495be3194c8dfe87ccc2d5dee45947b78e68f499790d7a7", size = 7552, upload-time = "2026-10-06T22:48:36.959Z" },
+]
+
+[[package]]
+name = "intel-cmplr-lib-ur"
+version = "2026.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "umf", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f3/5b/10acaa79feeae68db3ee7e1e712cb007c665b05000c71a7e7afdab1750e6/intel_cmplr_lib_ur-2026.2.0-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:0d0a5099aa2e1e38375b509c2a8182e719ed74aa656b2a800ddf6cfbd3384b80", size = 33070367, upload-time = "2026-10-16T12:35:00.896Z" },
+    { url = "https://files.pythonhosted.org/packages/5e/25/546c8f9d6e4d9501e848d352ecac99dc79e4bf41badc8ef1a2db6402637b/intel_cmplr_lib_ur-2026.2.0-py2.py3-none-win_amd64.whl", hash = "sha256:5bbf5f18ed13c801895d6f5fc40f0ef356344345b84c3bf29cc7b57bd3df9362", size = 672060, upload-time = "2026-10-16T12:32:00.153Z" },
+]
+
+[[package]]
+name = "intel-openmp"
+version = "2026.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "intel-cmplr-lib-ur", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/79/fd/8c80ef4b540e62761bb62b6bde10c17339218f6a25e27aedac816ac5c4c1/intel_openmp-2026.2.0-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:2308a1a3e74718a9cd8cccf218c34d8cd80b43d3b89dfbb01b38dee205c50980", size = 50322489, upload-time = "2026-10-16T12:35:17.817Z" },
+    { url = "https://files.pythonhosted.org/packages/cd/81/3014f8c74e15bbea3de37e12ef43ea8df8fac498378162d1a89f28236398/intel_openmp-2026.2.0-py2.py3-none-win_amd64.whl", hash = "sha256:0fcd60701d6dcf8f17cd40c9733d7046ff3b82921a0a039bea2e6a68fb12c152", size = 23199644, upload-time = "2026-10-16T12:32:13.886Z" },
 ]
 
 [[package]]
@@ -1652,6 +1680,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/96/eb/749a4e69bf7396e751ae37444abe997eff2254e695a8095b84d1c89c1181/mistune-3.4.0.tar.gz", hash = "sha256:2eaf7952af928ca8d33b779762effc1da517b62c6ad85ec8ca957e3b07b9782a", size = 136772, upload-time = "2026-10-19T10:44:28.172Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2c/f7/021d590d52c1ac28e3290311776854c6a1c927fa3fb4b25ce74caf937a3d/mistune-3.4.0-py3-none-any.whl", hash = "sha256:d03cec4c8620f21517a996d82d14f3b59c30d79bda2cc6c56bd32b839f18ce6b", size = 70398, upload-time = "2026-10-19T10:44:26.751Z" },
+]
+
+[[package]]
+name = "mkl"
+version = "2026.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "intel-openmp", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
+    { name = "tbb", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dc/51/3447e212ae3b09f3da7f0ae1b834aa452b8114cfffbb7a8f702715cb3706/mkl-2026.2.0-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:eaab1875ce9f47ab3c66d5632cef06baf768c05781f2f28847bdbc4343500ed7", size = 221067932, upload-time = "2026-10-16T12:37:17.127Z" },
+    { url = "https://files.pythonhosted.org/packages/31/bc/0e8380d982d353bad1f01d4828830563e53d309eeb38d5be3d6f519d83cb/mkl-2026.2.0-py2.py3-none-win_amd64.whl", hash = "sha256:5f2c187f0dda47efa19c1922cb3c8815924b8e5ed1613d28a3a69ec2327d4045", size = 185172289, upload-time = "2026-10-16T12:33:55.113Z" },
 ]
 
 [[package]]
@@ -3382,6 +3423,27 @@ wheels = [
 ]
 
 [[package]]
+name = "tbb"
+version = "2023.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "tcmlib", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/59/fd/8ca476c7b2513b1e64e08d3f5404c8ed19b34d0213000b5e23b3a91676c2/tbb-2023.2.0-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:7d80615b6e970f11671fa05b6eaa9483ac864fbfe525ac280271a78b37870b7c", size = 6864088, upload-time = "2026-10-16T12:38:06.333Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/41/2aeac799ab57e81898c8cc24f503fe301e12f19758bb1fe34d522764d3bb/tbb-2023.2.0-py3-none-win_amd64.whl", hash = "sha256:b39121cbdaff350fc61a448766cbb26807c523491d66e364838c9feeb3c6a0eb", size = 430857, upload-time = "2026-10-16T12:34:41.635Z" },
+]
+
+[[package]]
+name = "tcmlib"
+version = "1.6.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a4/95/d2616129c971d989c1f5ec2ea697a6885165570c69d9fa50bfbde8195d26/tcmlib-1.6.0-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:46c2491988bfd18c4733eeb08aca6a386706a497b92cc51d155f37ddea003c14", size = 2802717, upload-time = "2026-10-16T12:38:19.821Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/a5/996458475dcc65f20ec20c0e3d4bbc175c87750ff9bb703908c373b2497a/tcmlib-1.6.0-py2.py3-none-win_amd64.whl", hash = "sha256:7f65c0a6d56f2b1383b3022e873175f5025db00a5c7d0aaeb019300c25f5d482", size = 371933, upload-time = "2026-10-16T12:34:53.372Z" },
+]
+
+[[package]]
 name = "tinycss2"
 version = "1.5.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3460,6 +3522,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d9/68/f1b440335057bfce71b6e50a9d09445aa2ecbd08359a337976627b8409e7/tzdata-2026.5.tar.gz", hash = "sha256:8cc73c0a0bfca7dbfa59235d60b2eff82231dee33f53d206db1acd9173cfc0a7", size = 200404, upload-time = "2026-10-03T09:23:14.143Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/94/21/1e5995a1c920cce14e4bffae20c665ec10e7ed03ab25e006cd741092b718/tzdata-2026.5-py2.py3-none-any.whl", hash = "sha256:b683bd1b6659ddcd810ff02ad09ba821d4bf1065072805063eb35c49617905ac", size = 347996, upload-time = "2026-10-03T09:23:12.535Z" },
+]
+
+[[package]]
+name = "umf"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "tcmlib", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e9/98/4df9fdfac2af58f63652936c6f90c4dbf7c237f6aed2c4310c9583e177b0/umf-1.2.0-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:238d186fdd9e9c0fe1489da95b19b0b79045fe26c4aa98bd0a022a2a3603c195", size = 429931, upload-time = "2026-10-16T12:37:02.109Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/7c/f35fe9eaae40a31cb7eafdc5689c90f3ba267391b79d010b4bac9f832a4b/umf-1.2.0-py2.py3-none-win_amd64.whl", hash = "sha256:8aab76eb1404812e753fe916de45299ed3c460b227558a41df768c31a663c11e", size = 296227, upload-time = "2026-10-16T12:33:40.537Z" },
 ]
 
 [[package]]

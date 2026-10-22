@@ -15,6 +15,7 @@ import math
 
 import jax
 import jax.numpy as jnp
+import ngsolve as ngs
 import numpy as np
 import pytest
 import scipy.constants as const
@@ -22,6 +23,13 @@ import structured_meshes as sm
 from scipy.optimize import brentq
 
 import gfem
+from gfem._engine import eigen as engine_eigen
+from gfem._engine.driven import driven_operator
+from gfem._engine.eigen import projector
+from gfem._engine.runtime import task_manager
+from gfem._linalg import prepare
+from gfem._linalg.bddc import BddcHandle
+from gfem._linalg.direct import DirectHandle
 
 L, W, H = 10.0, 2.0, 1.0  # mm
 EPS = 4.0
@@ -246,6 +254,59 @@ def test_bddc_gmres_shift_solves_give_the_direct_modes(mesh):
     np.testing.assert_allclose(iterative.omega, direct.omega, rtol=1e-9)
 
 
+def _count_shift_prepares(monkeypatch) -> list[int]:
+    """Spy on the eigen operator's `prepare`: one entry per ``T(k)`` handle."""
+    calls = []
+
+    def spy(*args, **kwargs):
+        if kwargs["symmetry"] == "complex_symmetric":  # not the projector's H1
+            calls.append(1)
+        return prepare(*args, **kwargs)
+
+    monkeypatch.setattr(engine_eigen, "prepare", spy)
+    return calls
+
+
+def test_a_reshift_refactorizes_the_prepared_operator(mesh, monkeypatch):
+    # the second mode, far from the target, is refined at its own shift
+    model = _terminated(mesh, 1000.0)
+    problem = gfem.Eigenmode(target=8e9, n_modes=2)
+    calls = _count_shift_prepares(monkeypatch)
+    result = gfem.solve(model, problem)
+    assert len(calls) == 1
+    # a handle that cannot refactorize is prepared afresh at the new shift
+    monkeypatch.delattr(DirectHandle, "refactorize")
+    calls.clear()
+    fresh = gfem.solve(model, problem)
+    assert len(calls) == 2
+    np.testing.assert_allclose(result.omega, fresh.omega, rtol=1e-12)
+    np.testing.assert_allclose(result.q, fresh.q, rtol=1e-10)
+
+
+def test_a_bddc_reshift_sets_the_preconditioner_up_at_the_new_shift(mesh, monkeypatch):
+    # shift-invert solves start cold, so a reshift never solves on the
+    # preconditioner of the old shift: the modes are those of fresh handles
+    model = _terminated(mesh, 1000.0)
+    problem = gfem.Eigenmode(target=8e9, n_modes=2)
+    options = gfem.SolverOptions(linear_solver="bddc_gmres")
+    builds = []
+    build = ngs.Preconditioner
+
+    def spy(*args, **kwargs):
+        builds.append(1)
+        return build(*args, **kwargs)
+
+    monkeypatch.setattr(ngs, "Preconditioner", spy)
+    result = gfem.solve(model, problem, options=options)
+    assert len(builds) == 2
+    monkeypatch.delattr(BddcHandle, "refactorize")
+    builds.clear()
+    fresh = gfem.solve(model, problem, options=options)
+    assert len(builds) == 2
+    np.testing.assert_allclose(result.omega, fresh.omega, rtol=1e-12)
+    np.testing.assert_allclose(result.q, fresh.q, rtol=1e-10)
+
+
 # --- inductive ports -----------------------------------------------------------------
 
 
@@ -329,6 +390,30 @@ def test_unconverged_modes_raise_without_a_partial_result(mesh):
         gfem.EigenmodeConvergenceError, match=r"(?s)0 of the 1.*Remedies"
     ):
         gfem.solve(_terminated(mesh, 1000.0), gfem.Eigenmode(8e9), options=options)
+
+
+# --- the divergence-free projection ----------------------------------------------
+
+
+@pytest.mark.parametrize("order", [1, 2])
+def test_divfree_projection_matches_the_complex_product_bit_for_bit(tmp_path, order):
+    # the real G applied to the real and imaginary parts gives exactly what
+    # SciPy's complex product (G upcast to complex) gives; two layers in z
+    # leave free H1 nodes between the plates at order 1 too
+    path = tmp_path / "line.msh"
+    sm.write_msh22(path, sm.strip_line(L, W, H, (6, 1, 2)))
+    model = _line(gfem.Mesh.from_gmsh(path, length_unit="mm"))
+    with task_manager(1):
+        op = driven_operator(model, order)
+        project = projector(model, op)
+        g = project._g.astype(complex)
+        rng = np.random.default_rng(0)
+        x = rng.standard_normal(g.shape[0]) + 1j * rng.standard_normal(g.shape[0])
+        expected = x - g @ project._laplace.solve(g.T @ project.energy(x))
+        projected = project(x)
+        project.free()
+    assert np.linalg.norm(projected - x) > 0.1 * np.linalg.norm(x)
+    assert np.array_equal(projected, expected)
 
 
 # --- serialization -----------------------------------------------------------------
