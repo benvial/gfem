@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
 DOCS = Path(__file__).resolve().parents[2] / "docs"
-INK_DARK = (0xE6, 0xE8, 0xEB)
+INK_DARK = (0xEC, 0xEC, 0xEA)
 IMG = re.compile(r'<img class="(light|dark)-only" src="data:image/png;base64,([^"]+)"')
 
 
@@ -88,7 +88,7 @@ def test_the_figure_is_restored_after_rendering(gfem_figures, fig):
     gfem_figures.figure_html(figure)
 
     assert mpl.colors.to_hex(line.get_color()) == "#000000"
-    assert mpl.colors.to_hex(label.get_color()) == "#3a3f46"  # ink-2
+    assert mpl.colors.to_hex(label.get_color()) == "#3d3d3d"  # ink-2
 
 
 def test_a_colour_outside_the_table_is_reported_on_stderr(gfem_figures, fig, capsys):
@@ -134,8 +134,8 @@ def test_the_sensitivity_ramp_swaps_to_its_dark_colormap(gfem_figures, fig):
 
     images = renders(gfem_figures.figure_html(figure))
 
-    assert has_colour(images["light"], (0xFF, 0xFF, 0xFF))  # ground
-    assert has_colour(images["dark"], (0x11, 0x13, 0x17))  # ground-dark
+    assert has_colour(images["light"], (0xF2, 0xF2, 0xF2))  # ground
+    assert has_colour(images["dark"], (0x1B, 0x1B, 0x1B))  # ground-dark
 
 
 def test_figures_stay_paired_after_pyplot_resets_the_formatters(gfem_figures, fig):

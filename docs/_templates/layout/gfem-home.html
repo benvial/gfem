@@ -37,12 +37,15 @@
     </div>
 
     <figure class="grad" aria-labelledby="grad-cap">
+      {%- if front %}
+      <div class="readout" aria-hidden="true"><span><i>Design layer</i>{{ front.layer[0] }} × {{ front.layer[1] }} mm</span><span><i>Quantity</i>|∂J/∂ε<sub>r</sub>|, normalised</span><span><i>Start design</i>β = {{ front.beta0 }}</span><span class="scale">0 <b style="background:rgba(var(--accent-field),0)"></b><b style="background:rgba(var(--accent-field),.23)"></b><b style="background:rgba(var(--accent-field),.46)"></b><b style="background:rgba(var(--accent-field),.69)"></b><b style="background:rgba(var(--accent-field),.92)"></b> 1</span></div>
+      {%- endif %}
       <div class="plot">
         {%- if front %}<svg id="grad" role="img" aria-label="Top view of the design layer's tetrahedral mesh, each element shaded by the sensitivity of the band-stop objective to its permittivity at the start design"></svg><div class="tip" id="grad-tip" hidden></div>
         {%- else %}<p class="gfem-missing">The hero data is missing: run <code>just front-page-data</code>, then rebuild.</p>{% endif -%}
       </div>
       {%- if front %}
-      <div class="ports"><span class="wide">x = {{ front.x[0] }} mm, feed to port 1</span><span class="narrow">top row x = {{ front.x[0] }} to {{ front.x[1] }} mm, bottom row {{ front.x[1] }} to {{ front.x[2] }} mm</span><span class="scale" aria-label="Scale: normalised sensitivity from 0 to 1">0 <i style="background:rgba(var(--accent-field),0)"></i><i style="background:rgba(var(--accent-field),.23)"></i><i style="background:rgba(var(--accent-field),.46)"></i><i style="background:rgba(var(--accent-field),.69)"></i><i style="background:rgba(var(--accent-field),.92)"></i> 1</span><span class="wide">x = {{ front.x[2] }} mm, feed to port 2</span></div>
+      <div class="ports"><span class="wide">x = {{ front.x[0] }} mm, feed to port 1</span><span class="narrow">top row x = {{ front.x[0] }} to {{ front.x[1] }} mm, bottom row {{ front.x[1] }} to {{ front.x[2] }} mm</span><span class="sr">Scale: normalised sensitivity from 0 to 1, in five steps.</span><span class="wide">x = {{ front.x[2] }} mm, feed to port 2</span></div>
       {%- endif %}
       <div class="chain" aria-label="The differentiable chain">
         <span>ρ</span><span class="op">→</span><span>helmholtz_filter</span><span class="op">→</span><span>robust</span><span class="op">→</span><span>MaterialField</span><span class="op">→</span><span>gfem.solve</span><span class="op">→</span><span>S21</span><span class="op">→</span><span>J</span>
@@ -64,6 +67,7 @@
       </div>
       <div>
         {%- if front %}
+        <div class="readout" aria-hidden="true"><span><i>Optimiser</i>{{ front.steps }} Adam steps</span><span><i>Min. feature</i>{{ front.radius }} mm</span><span><i>Worst J</i>{{ front.worst }}</span></div>
         <div class="variants" role="list">
           {%- for name in ("eroded", "nominal", "dilated") %}
           <div class="row" role="listitem"><span class="name">{{ name }}</span><svg id="v-{{ name }}" role="img" aria-label="{{ name|capitalize }} design"></svg><span class="val"><b>{{ front.final[name] }}</b>J</span></div>
@@ -105,11 +109,14 @@
         <p class="src">The reference tier, <code>tests/reference/</code>, runs outside the default test selection: it needs the baselines in <code>GFEM_REFERENCE_DIR</code>.</p>
         <a class="more" href="{{ pathto('capabilities') }}">Reference problems on Capabilities</a>
       </div>
+      <div>
+      <div class="readout" aria-hidden="true"><span><i>Tier</i>tests/reference/</span><span><i>Problems</i>{{ caps.palace|selectattr("problem")|list|length }}</span><span><i>Runs</i>outside default CI</span></div>
       <ul class="status">
         {%- for row in caps.palace if row.problem %}
         <li><span class="p">{{ row.label }}<span>{{ row.detail }}</span></span><span class="tol">{{ row.text }}<span>{{ row.file.split('/')[-1] }}</span></span></li>
         {%- endfor %}
       </ul>
+      </div>
     </section>
 
     <section class="s" aria-labelledby="i-h">

@@ -7,7 +7,7 @@
   const ns = "http://www.w3.org/2000/svg";
 
   // Draw the design layer's top-face mesh into svgEl; value(i) is in [0, 1].
-  // mode "sens": the teal sensitivity ramp (alpha = min(.92, .95 v)); "design": ink density.
+  // mode "sens": the signal-red sensitivity ramp (alpha = min(.92, .95 v)); "design": ink density.
   // halves: the stacked two-row render (x split at the layer's middle) for narrow screens.
   function drawLayer(svgEl, data, value, opts) {
     const [x0, x1, y0, y1] = data.extent_mm;

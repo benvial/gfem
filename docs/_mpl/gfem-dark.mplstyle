@@ -1,6 +1,6 @@
 # gfem matplotlib style (dark): the same roles as gfem.mplstyle with the site's dark tokens.
-# Colour-blind-safe cycle (Okabe-Ito based): ink, vermillion, sky, reddish purple, orange,
-# yellow. Teal is reserved for the sensitivity colormap.
+# Series are ink and greys told apart by line style; the signal red is reserved for the
+# sensitivity colormap.
 # docs/_ext/gfem_figures.py reads it as the dark side of the recolour table.
 font.family: Barlow, DejaVu Sans
 font.size: 10.5
@@ -8,30 +8,30 @@ axes.titlesize: 11
 axes.titleweight: semibold  # the site's titles are 500; the Barlow TTFs ship 400 and 600
 axes.titlelocation: left
 axes.labelsize: 10.5
-axes.labelcolor: c4c8ce
-axes.edgecolor: 5a6069
+axes.labelcolor: c8c8c5
+axes.edgecolor: 5a5a57
 axes.linewidth: 0.7
 axes.spines.top: False
 axes.spines.right: False
 axes.grid: True
-grid.color: 2a2e35
+grid.color: 333333
 grid.linewidth: 0.6
-axes.prop_cycle: cycler('color', ['e6e8eb', 'd55e00', '56b4e9', 'cc79a7', 'e69f00', 'f0e442'])
+axes.prop_cycle: cycler('color', ['ececea', 'ececea', '9a9a96', '9a9a96', '7a7a76', 'ececea']) + cycler('linestyle', ['-', '--', '-', '--', '-', ':'])
 lines.linewidth: 1.5
-patch.edgecolor: e6e8eb
-xtick.color: 9aa1aa
-ytick.color: 9aa1aa
+patch.edgecolor: ececea
+xtick.color: 9a9a96
+ytick.color: 9a9a96
 xtick.labelsize: 9.5
 ytick.labelsize: 9.5
 xtick.major.size: 3
 ytick.major.size: 3
 legend.frameon: False
-legend.edgecolor: 2a2e35
+legend.edgecolor: 333333
 legend.fontsize: 9.5
 figure.facecolor: none
 figure.edgecolor: none
 axes.facecolor: none
 savefig.facecolor: none
 savefig.transparent: True
-text.color: e6e8eb
+text.color: ececea
 figure.dpi: 150

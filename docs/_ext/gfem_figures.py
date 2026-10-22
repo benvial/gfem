@@ -52,22 +52,23 @@ CSS_DPI = 96
 # The site's colour tokens (docs/_static/gfem.css, light -> dark) that the
 # styles do not name.
 TOKENS = {
-    "#ffffff": "#111317",  # ground; also white, as tutorials hard-code it
-    "#cdd0d5": "#353a42",  # mesh
-    "#007c6e": "#3cc4b0",  # accent
-    "#e2f2ef": "#12302b",  # accent-soft
+    "#ffffff": "#1b1b1b",  # white, as tutorials hard-code it
+    "#f2f2f2": "#1b1b1b",  # ground
+    "#c4c4c4": "#474747",  # mesh
+    "#b5262f": "#f0555a",  # accent (the signal red)
+    "#ecd5d6": "#4a2426",  # accent-soft
 }
 # Achromatic colours the tutorials hard-code: color="k" and color="gray".
 PLAIN = {
-    "#000000": "#e6e8eb",  # "k" -> ink-dark
-    "#808080": "#9aa1aa",  # "gray" -> muted-dark
+    "#000000": "#ececea",  # "k" -> ink-dark
+    "#808080": "#9a9a96",  # "gray" -> muted-dark
 }
 
-# The sensitivity ramp: one hue, from the ground to 0.92 * teal + 0.08 * ground,
+# The sensitivity ramp: one hue, from the ground to 0.92 * red + 0.08 * ground,
 # per theme.
 RAMPS = {
-    "gfem_sensitivity": ("#ffffff", "#007c6e"),
-    "gfem_sensitivity_dark": ("#111317", "#3cc4b0"),
+    "gfem_sensitivity": ("#f2f2f2", "#b5262f"),
+    "gfem_sensitivity_dark": ("#1b1b1b", "#d63038"),
 }
 CMAP_SWAP = {"gfem_sensitivity": "gfem_sensitivity_dark"}
 # Greyscale density maps are data: the same in both themes.

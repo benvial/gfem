@@ -1,51 +1,74 @@
-/* The gfem "Mesh" visual world on Shibuya 2026.7.12.
+/* The gfem "Instrument" visual world on Shibuya 2026.7.12: Dieter Rams / Braun functionalism.
+   A panel-grey ground, dark-grey ink, hairlines, one signal red. Indicator dots (LEDs) are the only
+   marks for status and location; small mono uppercase labels are printed on the panel like a scale.
    Layers: 1 tokens, 2 Shibuya variable mapping, 3 components, 4 responsive.
    Shibuya switches theme with html.light / html.dark (not prefers-color-scheme or [data-theme]),
    so every dark value is keyed on html.dark. */
 
 /* ---------------------------------------------------------------- 1. tokens */
 :root, html.light {
-  --ground: #ffffff; --ink: #16181d; --ink-2: #3a3f46; --muted: #61676f;
-  --hair: #e3e5e8; --mesh: #cdd0d5;
-  --accent: #007c6e; --accent-hover: #036e63; --accent-ink: #ffffff; --accent-soft: #e2f2ef;
-  --accent-field: 0, 124, 110; --ink-field: 22, 24, 29;
+  --ground: #f2f2f2; --panel: #fafafa; --ink: #262626; --ink-2: #3d3d3d; --muted: #6b6b6b;
+  --hair: #dcdcdc; --mesh: #c4c4c4;
+  /* the signal: the live control, "you are here", focus and the sensitivity ramp */
+  --accent: #b5262f; --accent-hover: #951c24; --accent-ink: #ffffff; --accent-soft: #ecd5d6;
+  --accent-fill: #b5262f; --accent-fill-hover: #951c24;   /* the primary button's ground */
+  --accent-field: 181, 38, 47; --ink-field: 38, 38, 38;
+  /* indicator hues: each one job, always beside a shape and a word */
+  --ok: #1a7354; --led-ok: #39c296;        /* FD-verified: the green LED (#39c296, the reference's trace green); text a deeper step of it for AA */
+  --bad: #a64600;                          /* raises: the struck ring */
+  --warn: #8a5a00;                         /* warning notes */
+  --chip: #e6e6e4;
+  /* the code panel: light on the light ground; syntax in the world's own hues: signal red keywords, trace-green strings */
+  --code-bg: var(--panel); --code-edge: var(--hair); --code-fg: #262626; --code-muted: #6b6b6b;
+  --syn-kw: #b5262f; --syn-str: #1a7354; --syn-num: #1d5a94; --syn-fn: #262626; --syn-mod: #3d3d3d;
+  --syn-builtin: #3d3d3d; --syn-op: #6b6b6b; --syn-comment: #6b6b67; --syn-err: #a64600;
+  --syn-hll: rgba(181, 38, 47, .07); --syn-mark: var(--accent);
   --measure: 720px;
   --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 64px; --s-9: 96px;
-  --f-text: "Barlow", system-ui, sans-serif; --f-mono: "JetBrains Mono", ui-monospace, monospace;
-  --t-display: 400 clamp(40px, 4.4vw, 60px)/1.03 var(--f-text);
-  --t-h1: 400 40px/1.1 var(--f-text);
-  --t-h2: 500 22px/1.3 var(--f-text);
+  --radius: 4px;   /* controls only: buttons, inputs, the copy button. Panels are square. */
+  --f-text: "Schibsted Grotesk", system-ui, sans-serif; --f-mono: "JetBrains Mono", ui-monospace, monospace;
+  --t-display: 500 clamp(40px, 4.6vw, 64px)/1.03 var(--f-text);
+  --t-h1: 500 40px/1.1 var(--f-text);
+  --t-h2: 500 24px/1.25 var(--f-text);
   --t-h3: 600 17px/1.4 var(--f-text);
-  --t-body: 400 17px/1.62 var(--f-text);
-  --t-small: 400 14.5px/1.5 var(--f-text);
-  --t-group: 600 13px/1.4 var(--f-text);
+  --t-body: 400 16.5px/1.62 var(--f-text);
+  --t-small: 400 14px/1.5 var(--f-text);
+  --t-label: 400 11.5px/1.4 var(--f-mono);   /* the printed panel label; uppercase via .gfem-label rules */
   --t-code: 400 13px/1.62 var(--f-mono);
   --t-data: 400 11.5px/1.4 var(--f-mono);
   --ease-out: cubic-bezier(.16, 1, .3, 1);
   color-scheme: light;
 }
 html.dark {
-  --ground: #111317; --ink: #e6e8eb; --ink-2: #c4c8ce; --muted: #9aa1aa;
-  --hair: #2a2e35; --mesh: #353a42;
-  --accent: #3cc4b0; --accent-hover: color-mix(in srgb, #3cc4b0 86%, #e6e8eb); --accent-ink: #0b1412; --accent-soft: #12302b;
-  --accent-field: 60, 196, 176; --ink-field: 230, 232, 235;
+  --ground: #1b1b1b; --panel: #232323; --ink: #ececea; --ink-2: #c8c8c5; --muted: #9a9a96;
+  --hair: #333333; --mesh: #474747;
+  /* dark: the same red. Text, LEDs and focus lift lightness only (4.5:1 on the ground);
+     the button and the ramp keep a saturated red. */
+  --accent: #f0555a; --accent-hover: #f47478; --accent-ink: #ffffff; --accent-soft: #4a2426;
+  --accent-fill: #c4303a; --accent-fill-hover: #d23a44;
+  --accent-field: 214, 48, 56; --ink-field: 236, 236, 234;
+  --ok: #39c296; --led-ok: #39c296; --bad: #f0904a; --warn: #e0a83a;
+  --chip: #2c2c2c;
+  --code-bg: #121212; --code-edge: #2a2a2a; --code-fg: #e6e6e3; --code-muted: #9a9a96;
+  --syn-kw: #f0555a; --syn-str: #39c296; --syn-num: #8fbdee; --syn-fn: #f2f2f0; --syn-mod: #c8c8c5;
+  --syn-builtin: #c8c8c5; --syn-op: #9a9a96; --syn-comment: #8a8a86; --syn-err: #f0904a;
+  --syn-hll: rgba(214, 48, 56, .16);
   color-scheme: dark;
 }
 
 /* ------------------------------------------------- 2. Shibuya variable mapping */
 html.light, html.dark {
-  /* Shibuya roles (theme.conf accent_color = "teal" picks the Radix scale; these pin it to gfem's) */
   --sy-c-background: var(--ground);
   --sy-c-background-dropback: var(--ground);
   --sy-c-text: var(--ink-2);
   --sy-c-light: var(--muted);
   --sy-c-bold: var(--ink);
   --sy-c-heading: var(--ink);
-  --sy-c-link: var(--accent);
-  --sy-c-link-hover: var(--ink);
+  --sy-c-link: var(--ink);
+  --sy-c-link-hover: var(--accent);
   --sy-c-border: var(--hair);
   --sy-c-divider: var(--hair);
-  --sy-c-surface: transparent;          /* hairlines separate, never grey fills */
+  --sy-c-surface: transparent;
   --sy-c-overlay: transparent;
   --sy-c-foot-background: var(--ground);
   --sy-c-foot-divider: var(--hair);
@@ -56,7 +79,7 @@ html.light, html.dark {
   --accent-a11: var(--accent); --color-surface-accent: transparent;
   /* yue (article typography) */
   --yue-c-text: var(--ink-2); --yue-c-heading: var(--ink); --yue-c-bold: var(--ink);
-  --yue-c-link-1: var(--ink); --yue-c-link-2: var(--ink); --yue-c-link-border: var(--hair);
+  --yue-c-link-1: var(--ink); --yue-c-link-2: var(--accent); --yue-c-link-border: var(--mesh);
   --yue-c-code-text: var(--ink); --yue-c-code-background: transparent;
   --yue-c-caption: var(--muted); --yue-c-hr: var(--hair);
   --yue-c-table-border: var(--hair); --yue-c-th-background: transparent; --yue-c-th-border: var(--ink);
@@ -64,17 +87,17 @@ html.light, html.dark {
   --yue-c-ul-marker: var(--muted); --yue-c-ol-marker: var(--muted);
   --yue-c-quote: var(--ink-2); --yue-c-quote-border: var(--hair); --yue-c-quote-symbol: var(--muted);
   /* code */
-  --code-block-background: transparent;
-  --code-block-highlight: var(--accent-soft);
+  --code-block-background: var(--code-bg);
+  --code-block-highlight: var(--syn-hll);
   --code-block-caption-background: transparent;
-  --syntax-text: var(--ink);
-  --syntax-comment: var(--muted);
-  /* API signatures: no teal names (teal is kept for links, actions and sensitivity) */
-  --sig-name: var(--ink); --sig-property: var(--muted); --sig-param: var(--ink-2); --sig-typehint: var(--ink-2);
-  /* MyST-NB: palette from the gfem tokens, in both modes */
-  --mystnb-source-bg-color: transparent;
-  --mystnb-source-border-color: var(--hair);
-  --mystnb-source-margin-color: var(--hair);
+  --syntax-text: var(--code-fg);
+  --syntax-comment: var(--syn-comment);
+  /* API signatures: ink names, the signature is a label row, not a highlight */
+  --sig-name: var(--ink); --sig-property: var(--muted); --sig-param: var(--ink); --sig-typehint: var(--ink-2);
+  /* MyST-NB */
+  --mystnb-source-bg-color: var(--code-bg);
+  --mystnb-source-border-color: var(--code-edge);
+  --mystnb-source-margin-color: var(--code-edge);
   --mystnb-source-border-radius: 0;
   --mystnb-stdout-bg-color: transparent;
   --mystnb-stdout-border-color: var(--hair);
@@ -95,34 +118,46 @@ body { background: var(--ground); color: var(--ink-2); font: var(--t-body); care
 a { text-underline-offset: 3px; }
 *, *::before, *::after { box-shadow: none !important; }  /* flat: no shadows anywhere */
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+/* the indicator: a 6px LED. Lit in the signal red for "you are here", unlit (transparent) elsewhere
+   so labels keep one alignment. */
+.globaltoc a::before, .localtoc a::before, .sy-head-links a[aria-current]::before {
+  content: ""; width: 6px; height: 6px; flex: none; border-radius: 50%; background: transparent; }
 
 /* ------------------------------------------------------------- 3b. header */
 .sy-head { background: var(--ground); border-bottom: 1px solid var(--hair); }
-.sy-head-blur { display: none; }                         /* no blur, no shadow: ground + hairline */
+.sy-head-blur { display: none; }
 .sy-head-inner { padding-left: var(--s-6); padding-right: var(--s-6); gap: var(--s-6); }
-.sy-head-brand img { height: 22px; width: auto; }        /* docs: 22px (the lockup) */
-/* the <strong>{{ project }}</strong> after the logo: Shibuya's own CSS already hides it
-   (.sy-head-brand img+strong { display:none }); nothing to add. */
+.sy-head-brand img { height: 21px; width: auto; }
 .sy-head-links { margin-left: 0; }
-.sy-head-links a, .sy-head-links button { font: 500 15px/1 var(--f-text); color: var(--muted); padding: 5px 0; }
-.sy-head-links ul { display: flex; gap: var(--s-5); }
-.sy-head-links a:hover { color: var(--ink); }
+/* nav: printed labels, mono uppercase; the current one carries the lit LED */
+.sy-head-links a, .sy-head-links button {
+  font: var(--t-label); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); padding: 5px 0; }
+.sy-head-links a { display: inline-flex; align-items: center; gap: 8px; position: relative; transition: color .2s var(--ease-out); }
+.sy-head-links ul { display: flex; gap: var(--s-6); }
+.sy-head-links a:hover { color: var(--accent); }
 .sy-head-links a[aria-current] { color: var(--ink); }
-.searchbox input { font: var(--t-small); background: none; border: 1px solid var(--hair); border-radius: 0; padding: 7px 12px; color: var(--ink); min-width: 220px; }
+.sy-head-links a[aria-current]::before { background: var(--accent); }
+.searchbox input { font: var(--t-small); background: var(--panel); border: 1px solid var(--hair); border-radius: var(--radius); padding: 7px 12px; color: var(--ink); min-width: 220px; }
 .searchbox input::placeholder { color: var(--muted); }
-.searchbox kbd { font: var(--t-small) !important; background: none !important; border: 0 !important; border-radius: 0; color: var(--muted); }
-/* utility buttons: theme switch, Menu */
+.searchbox kbd { font: var(--t-label) !important; background: none !important; border: 0 !important; border-radius: 0; color: var(--muted); }
+/* utility buttons: theme switch, Menu. A labelled key: mono uppercase, hairline, 4px corners. */
 .sy-head-actions { gap: var(--s-3); }
 .sy-head-actions button.theme-switch, .sy-head-actions button.gfem-menu {
-  height: auto; font: var(--t-small); color: var(--muted); background: none; border: 1px solid var(--hair);
-  border-radius: 0; padding: 6px 10px; cursor: pointer; transition: color .2s var(--ease-out), border-color .2s var(--ease-out); }
+  height: auto; font: var(--t-label); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2);
+  background: var(--panel); border: 1px solid var(--hair); border-radius: var(--radius); padding: 7px 10px; cursor: pointer;
+  transition: color .2s var(--ease-out), border-color .2s var(--ease-out); }
 .sy-head-actions button.theme-switch:hover, .sy-head-actions button.gfem-menu:hover { color: var(--ink); border-color: var(--ink); }
-.theme-switch > span { display: none; }
+.theme-switch > span { display: none; align-items: center; gap: 7px; }
 html[data-color-mode="auto"] .gfem-theme-auto, html:not([data-color-mode]) .gfem-theme-auto,
-html[data-color-mode="light"] .gfem-theme-light, html[data-color-mode="dark"] .gfem-theme-dark { display: inline; }
-.gfem-menu { display: none; color: var(--ink) !important; padding: 6px 12px !important; }
+html[data-color-mode="light"] .gfem-theme-light, html[data-color-mode="dark"] .gfem-theme-dark { display: inline-flex; }
+.theme-switch > span::before, .gfem-menu > span::before { content: ""; width: 14px; height: 14px; flex: none; }
+.gfem-theme-auto { --gi: var(--gi-sun-moon); } .gfem-theme-light { --gi: var(--gi-sun); } .gfem-theme-dark { --gi: var(--gi-moon); }
+.theme-switch > span::before, .gfem-menu > span::before { -webkit-mask: var(--gi) center / contain no-repeat; mask: var(--gi) center / contain no-repeat; background-color: currentColor; }
+.gfem-menu { display: none; color: var(--ink) !important; padding: 7px 12px !important; }
+.gfem-menu > span { display: inline-flex; align-items: center; gap: 7px; }
+.gfem-menu-closed { --gi: var(--gi-menu); } .gfem-menu-open { --gi: var(--gi-x); }
 .gfem-menu .gfem-menu-open, .gfem-menu[aria-expanded="true"] .gfem-menu-closed { display: none; }
-.gfem-menu[aria-expanded="true"] .gfem-menu-open { display: inline; }
+.gfem-menu[aria-expanded="true"] .gfem-menu-open { display: inline-flex; }
 .gfem-drawer-tree { display: none; }
 
 /* ------------------------------------------------------ 3c. sidebar + TOC */
@@ -131,30 +166,29 @@ html[data-color-mode="light"] .gfem-theme-light, html[data-color-mode="dark"] .g
   #lside .sy-scrollbar { padding: var(--s-6) var(--s-5) var(--s-6) var(--s-6); }
 }
 .globaltoc { font: var(--t-small); padding-bottom: 0; }
+/* group captions and "On this page": printed labels */
 .globaltoc .caption, .localtoc > h3, .sy-rside-inner > div > h3 {
-  font: var(--t-group) !important; color: var(--muted); text-transform: none !important; letter-spacing: 0 !important;
+  font: var(--t-label) !important; color: var(--muted); text-transform: uppercase !important; letter-spacing: .08em !important;
   border-top: 0; padding: 0; margin: 0 0 var(--s-2); }
-.globaltoc ul + .caption { margin-top: var(--s-5); }
+.globaltoc ul + .caption { margin-top: var(--s-6); }
 .globaltoc .caption + ul { margin-bottom: 0; }
 .globaltoc li { margin: 0; }
 .globaltoc li > ul, .globaltoc li.toctree-l1 > ul { margin-left: 0; border-left: 0; font-size: inherit; }
 .globaltoc li.toctree-l2 { border-left: 0; margin-left: 0; padding-left: var(--s-4); }
-.globaltoc li > button { display: none; }                 /* no expander chevrons */
+.globaltoc li > button { display: none; }
 .globaltoc a, .localtoc a {
-  display: flex; align-items: center; gap: var(--s-2); padding: 5px 0; text-decoration: none; color: var(--ink-2); }
-.localtoc a { padding: 4px 0; }
+  display: flex; align-items: center; gap: 10px; padding: 4px 0; text-decoration: none; color: var(--ink-2); }
+.globaltoc a::before, .localtoc a::before { margin-left: -16px; }   /* the LED hangs in the gutter */
+.globaltoc, .localtoc > ul { padding-left: 16px; }
+.globaltoc .caption { margin-left: -16px; }
 .globaltoc a:hover, .localtoc a:hover, .localtoc > ul li > a:hover { color: var(--ink); }
-/* you are here: one filled downward triangle (10x9), transparent on every other entry */
-.globaltoc a::before, .localtoc a::before {
-  content: ""; width: 10px; height: 9px; flex: none; background: transparent;
-  clip-path: polygon(0 0, 100% 0, 50% 100%); }
 .globaltoc a.current[href="#"] { color: var(--ink); font-weight: 500; }
 .globaltoc a.current[href="#"]::before { background: var(--accent); }
 .localtoc { font: var(--t-small); }
 .localtoc a { overflow-wrap: anywhere; }
 .localtoc > ul > li ul { padding-left: var(--s-4); }
 .localtoc > ul li { margin: 0; }
-.localtoc > ul li.active > a { color: var(--ink); }
+.localtoc > ul li.active > a { color: var(--ink); font-weight: 500; }
 .localtoc > ul li.active > a::before { background: var(--accent); }
 @media (min-width: 1100px) {
   #rside { width: 220px; }
@@ -164,64 +198,98 @@ html[data-color-mode="light"] .gfem-theme-light, html[data-color-mode="dark"] .g
 /* ------------------------------------------------------- 3d. article + type */
 .sy-main > .flex > div { padding: var(--s-6) var(--s-7) var(--s-8); max-width: none; }
 .yue { font: var(--t-body); color: var(--ink-2); }
-/* one measure: everything in the reading column but the page title sits on 720px */
 .yue section > :not(h1, section), .yue > :not(section) { max-width: var(--measure); }
-.yue h1 { font: var(--t-h1); letter-spacing: -.02em; color: var(--ink); margin: 0 0 var(--s-5); }
-.yue h2 { font: var(--t-h2); color: var(--ink); margin: var(--s-7) 0 var(--s-3); }
+.yue h1 { font: var(--t-h1); letter-spacing: -.025em; color: var(--ink); margin: 0 0 var(--s-5); text-wrap: balance; }
+/* h2: a panel division. A full-measure hairline above, the heading under it. */
+.yue h2 { font: var(--t-h2); letter-spacing: -.012em; color: var(--ink); margin: var(--s-8) 0 var(--s-3); padding-top: var(--s-4);
+  border-top: 1px solid var(--hair); max-width: var(--measure); }
 .yue h3 { font: var(--t-h3); color: var(--ink); margin: var(--s-6) 0 var(--s-2); }
 .yue p { margin: 0 0 var(--s-4); }
-.yue strong { color: var(--ink); }
-.yue a { color: var(--ink); font-weight: inherit; text-decoration-color: var(--hair); text-decoration-thickness: 1px; }
-.yue a:hover { color: var(--ink); text-decoration-color: var(--accent); text-decoration-thickness: 1px; }
-.yue code, .yue p > code, .yue li > code { font: .86em var(--f-mono); color: var(--ink); background: none; padding: 0; font-weight: 400; border-radius: 0; }
-.yue a.headerlink { color: var(--muted); font-family: var(--f-text); }
+.yue strong { color: var(--ink); font-weight: 600; }
+/* prose links: ink on a grey rule; the signal red appears on hover, the live state */
+.yue a { color: var(--ink); font-weight: 500; text-decoration-color: var(--mesh); text-decoration-thickness: 1px;
+  transition: color .2s var(--ease-out), text-decoration-color .2s var(--ease-out); }
+.yue a:hover { color: var(--accent); text-decoration-color: currentColor; }
+.yue code, .yue p > code, .yue li > code { font: .86em var(--f-mono); color: var(--ink); background: var(--chip); padding: .1em .32em; font-weight: 400; border-radius: 2px; }
+.yue a code { color: inherit; }
+.yue :is(h1, h2, h3, dt.sig, .tag, figcaption) code, .yue dt.sig code { background: none; padding: 0; }
+.yue a.headerlink { color: var(--muted); font-family: var(--f-mono); font-weight: 400; }
 .yue ul > li::marker { color: var(--muted); }
 .yue hr { border-color: var(--hair); }
 .yue table { font: var(--t-small); }
-.yue thead th { border-top: 1px solid var(--ink); font-weight: 500; color: var(--ink); }
-/* breadcrumbs: a quiet Label line above the title, no bar */
-.sy-breadcrumbs { position: static; padding: var(--s-6) var(--s-7) 0; display: block !important; }  /* Shibuya hides them from 1280px */
+/* tables: horizontal rules only, figures aligned */
+.yue table { border: 0; }
+.yue :is(.table-wrapper, .table-container) { border: 0 !important; border-radius: 0; }
+.yue table :is(th, td) { border-left: 0 !important; border-right: 0 !important; }
+.yue thead th { border-top: 1px solid var(--ink); font: var(--t-label); text-transform: uppercase; letter-spacing: .08em; color: var(--ink); }
+/* breadcrumbs: a quiet line above the title (titles may hold "gfem", so no uppercase here) */
+.sy-breadcrumbs { position: static; padding: var(--s-6) var(--s-7) 0; display: block !important; }
 .sy-breadcrumbs-inner { border-bottom: 0; padding: 0; }
-.sy-breadcrumbs ol { font: var(--t-small); color: var(--muted); }
+.sy-breadcrumbs ol { font: var(--t-data); color: var(--muted); }
 .sy-breadcrumbs ol a { color: var(--muted); text-decoration: underline; text-decoration-color: var(--hair); text-underline-offset: 3px; }
+.sy-breadcrumbs ol a:hover { color: var(--accent); }
 .sy-breadcrumbs ol strong { font-weight: 400; color: var(--muted); }
-.sy-breadcrumbs .md\:hidden, .sy-breadcrumbs .xl\:hidden { display: none !important; }  /* one Menu, no TOC drawer */
+.sy-breadcrumbs .md\:hidden, .sy-breadcrumbs .xl\:hidden { display: none !important; }
 .sy-breadcrumbs + .flex > div { padding-top: var(--s-3); }
 .back-to-top { display: none !important; }
 .copy-page-wrapper { display: none; }
 
-/* --------------------------------------------- 3e. code (hairlines, accent-soft highlight) */
+/* --------------------------------------------- 3e. code: a light panel in light mode, dark in dark */
 .highlight, .literal-block-wrapper { --margin: var(--s-5); --radius: 0; }
 .yue div[class^="highlight-"], .yue div.highlight-default { margin: var(--s-5) 0; position: relative; }
 .highlight > pre {
-  font: var(--t-code); border: 1px solid var(--hair); border-radius: 0; background: none;
-  padding: var(--s-4) var(--s-5); }
-.highlight .hll { background: var(--accent-soft); }
-/* monochrome syntax: ink text, keywords 500, strings and comments muted, comments italic */
+  font: var(--t-code); border: 1px solid var(--code-edge); border-radius: 0; background: var(--code-bg); color: var(--code-fg);
+  padding: var(--s-4) var(--s-5); scrollbar-color: var(--mesh) transparent; }
+.highlight ::selection { background: var(--accent-soft); color: var(--ink); }
+/* the decisive line: a 2px signal edge over a faint red wash, edge to edge */
+.highlight .hll { background: linear-gradient(90deg, var(--syn-mark) 0 2px, var(--syn-hll) 2px); }
 html.light .highlight span[class], html.dark .highlight span[class] { color: inherit; font-style: normal; font-weight: inherit; }
-html:is(.light,.dark) .highlight span:is(.k,.kn,.kd,.kc,.kr,.kp,.ow) { font-weight: 500; }
-html:is(.light,.dark) .highlight span[class^="s"][class] { color: var(--muted); }
-html:is(.light,.dark) .highlight span[class^="c"][class] { color: var(--muted); font-style: italic; }
-/* sphinx-copybutton as the worded utility "copy" button */
+html:is(.light,.dark) .highlight span:is(.k,.kn,.kd,.kr,.kp,.ow) { color: var(--syn-kw); font-weight: 500; }
+html:is(.light,.dark) .highlight span.gp { color: var(--code-muted); }
+html:is(.light,.dark) .highlight span:is(.kc,.bp,.m,.mi,.mf,.mh,.mo,.mb,.il) { color: var(--syn-num); }
+html:is(.light,.dark) .highlight span:is(.nn,.kt) { color: var(--syn-mod); }
+html:is(.light,.dark) .highlight span:is(.nf,.fm,.nc) { color: var(--syn-fn); font-weight: 600; }
+html:is(.light,.dark) .highlight span:is(.nd,.ne) { color: var(--syn-kw); }
+html:is(.light,.dark) .highlight span:is(.nb,.na,.nv,.vc,.nt) { color: var(--syn-builtin); }
+html:is(.light,.dark) .highlight span[class^="s"][class] { color: var(--syn-str); }
+html:is(.light,.dark) .highlight span:is(.se,.si) { color: var(--syn-kw); }
+html:is(.light,.dark) .highlight span.sd { font-style: italic; }
+html:is(.light,.dark) .highlight span.o { color: var(--syn-op); }
+html:is(.light,.dark) .highlight span:is(.p,.go) { color: var(--code-muted); }
+html:is(.light,.dark) .highlight span.err { color: var(--syn-err); }
+html:is(.light,.dark) .highlight span[class^="c"][class] { color: var(--syn-comment); font-style: italic; }
+/* sphinx-copybutton: a small labelled key on the panel */
 .yue button.copybtn {
   top: var(--s-2) !important; right: var(--s-2) !important; width: auto; height: auto; opacity: 1;
-  font: var(--t-small); color: var(--muted); background: var(--ground) !important;
-  border: 1px solid var(--hair) !important; border-radius: 0; padding: 2px 8px; }
+  display: inline-flex; align-items: center; gap: 6px;
+  font: var(--t-label); text-transform: uppercase; letter-spacing: .08em; color: var(--code-muted); background: var(--code-bg) !important;
+  border: 1px solid var(--code-edge) !important; border-radius: var(--radius); padding: 3px 8px;
+  transition: color .2s var(--ease-out), border-color .2s var(--ease-out); }
 .yue button.copybtn > svg { display: none; }
-.yue button.copybtn::before { content: "copy"; }
-.yue button.copybtn.success::before { content: "copied"; }
-.yue button.copybtn::after { display: none !important; }
-.yue button.copybtn:hover { color: var(--ink); border-color: var(--ink) !important; }
+.yue button.copybtn::before { content: ""; width: 13px; height: 13px; background-color: currentColor;
+  -webkit-mask: var(--gi-clipboard) center / contain no-repeat; mask: var(--gi-clipboard) center / contain no-repeat; }
+.yue button.copybtn.success::before { -webkit-mask-image: var(--gi-clipboard-check); mask-image: var(--gi-clipboard-check); }
+.yue button.copybtn::after { all: unset; content: "copy"; }
+.yue button.copybtn.success::after { content: "copied"; }
+.yue button.copybtn.success { color: var(--ok); }
+.yue button.copybtn:hover { color: var(--code-fg); border-color: var(--code-fg) !important; }
 
-/* ------------------------------------------------------------ 3f. notes */
+/* ------------------------------------------------------------ 3f. notes
+   A panel with a hairline edge; the title is a printed label led by an LED in the note's hue. */
 .yue .admonition {
-  display: block; border: 1px solid var(--hair); border-radius: 0; background: none; padding: var(--s-4) var(--s-5);
-  margin: var(--s-5) 0; font: var(--t-small); color: var(--ink-2); }
+  --hue: var(--muted);
+  display: block; border: 1px solid var(--hair); border-radius: 0; background: var(--panel);
+  padding: var(--s-4) var(--s-5); margin: var(--s-5) 0; font: var(--t-small); color: var(--ink-2); }
+.yue .admonition:is(.tip, .hint) { --hue: var(--led-ok); }
+.yue .admonition.important { --hue: var(--ink); }
+.yue .admonition:is(.warning, .caution, .attention) { --hue: var(--warn); }
+.yue .admonition:is(.danger, .error) { --hue: var(--bad); }
 .yue .admonition > p.admonition-title {
-  display: inline; float: left; margin: 0 .35em 0 0; padding: 0; background: none;
-  font: 600 14.5px/1.5 var(--f-text); color: var(--ink); }
-.yue .admonition::before, .yue .admonition::after, .yue .admonition > p.admonition-title::before { display: none !important; }
-.yue .admonition > p.admonition-title::after { content: "."; }
+  display: flex; align-items: center; gap: 10px; float: none; margin: 0 0 var(--s-2); padding: 0; background: none;
+  font: var(--t-label); text-transform: uppercase; letter-spacing: .08em; color: var(--ink); }
+.yue .admonition > p.admonition-title::before { content: ""; position: static; width: 7px; height: 7px; flex: none; border-radius: 50%;
+  background: var(--hue); -webkit-mask: none; mask: none; }
+.yue .admonition::before, .yue .admonition::after { display: none !important; }
 .yue .admonition > p:last-child { margin-bottom: 0; }
 
 /* ------------------------------------------------------------ 3g. status list */
@@ -229,33 +297,41 @@ html:is(.light,.dark) .highlight span[class^="c"][class] { color: var(--muted); 
 .yue ul.gfem-status > li { margin: 0; padding: 10px 0 10px 32px; border-bottom: 1px solid var(--hair); font: var(--t-small); position: relative; }
 .yue ul.gfem-status > li > p { margin: 0; display: flex; justify-content: space-between; align-items: baseline; gap: var(--s-3); }
 .yue ul.gfem-status .what { min-width: 0; }
-.yue ul.gfem-status .tag { font: var(--t-data); color: var(--muted); white-space: nowrap; text-align: right; }
+.yue ul.gfem-status .tag { font: var(--t-data); color: var(--ink); white-space: nowrap; text-align: right; }  /* Palace tolerances: ink, not a pass colour */
 .yue ul.gfem-status .tag code { font: inherit; color: inherit; }
-.yue ul.gfem-status .tag.raises { color: var(--ink); font-weight: 500; }
+.yue ul.gfem-status .tag.zero { color: var(--muted); font-weight: 400; }
+.yue ul.gfem-status .tag.raises { color: var(--bad); font-weight: 500; }
 .yue ul.gfem-status .what .gfem-detail { display: block; color: var(--muted); }
 
-/* status marks, the one implementation: dot (verified), dash (exact zero), struck ring (raises).
+/* status marks, the one implementation: the green LED (verified), a dash (exact zero), the struck ring
+   (raises). Tolerance rows carry an unlit LED: a ring in ink, never a pass colour.
    Drawn by a .gfem-glyph inside a .gfem-verified / .gfem-zero / .gfem-raises parent (the gradient
    matrix, the front page) and by the status list's li::before, keyed on its .tag. */
 .gfem-glyph, .yue ul.gfem-status > li::before {
-  flex: none; display: inline-block; box-sizing: border-box; width: 6px; height: 6px; border-radius: 50%; background: var(--ink); }
+  flex: none; display: inline-block; box-sizing: border-box; width: 8px; height: 8px; border-radius: 50%; background: var(--led-ok); }
+.yue ul.gfem-status > li::before { background: none; border: 1.5px solid var(--ink); }  /* a tolerance row: unlit */
 .gfem-zero .gfem-glyph, .yue ul.gfem-status > li:has(.tag.zero)::before {
-  width: 10px; height: 1px; border-radius: 0; background: var(--muted); }
+  width: 10px; height: 1px; border: 0; border-radius: 0; background: var(--muted); }
 .gfem-raises .gfem-glyph, .yue ul.gfem-status > li:has(.tag.raises)::before {
-  width: 12px; height: 12px; border-radius: 50%; border: 1.2px solid var(--ink);
-  background: linear-gradient(to top right, transparent calc(50% - .6px), var(--ink) calc(50% - .6px), var(--ink) calc(50% + .6px), transparent calc(50% + .6px)); }
-/* the status list's marks sit in its 20px left column */
-.yue ul.gfem-status > li::before { content: ""; position: absolute; left: 7px; top: calc(10px + .75em - 3px); }
+  width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--bad);
+  background: linear-gradient(to top right, transparent calc(50% - .75px), var(--bad) calc(50% - .75px), var(--bad) calc(50% + .75px), transparent calc(50% + .75px)); }
+.yue ul.gfem-status > li::before { content: ""; position: absolute; left: 6px; top: calc(10px + .75em - 4px); }
 .yue ul.gfem-status > li:has(.tag.raises)::before { left: 4px; top: calc(10px + .75em - 6px); }
 .yue ul.gfem-status > li:has(.tag.zero)::before { left: 5px; top: calc(10px + .75em); }
 
 /* gradient matrix (docs/_ext/gfem_capabilities.py): the status list's marks in a grid */
 .yue table.gfem-matrix th, .yue table.gfem-matrix td { vertical-align: top; text-align: left; }
+/* the matrix is the one element allowed past the measure: it takes the article's full width */
+.yue .table-wrapper.gfem-matrix { max-width: none; }
+.yue table.gfem-matrix { width: 100%; }
+.yue table.gfem-matrix tbody th { min-width: 9.5em; width: 24%; hyphens: manual; }
 .yue table.gfem-matrix tbody th { font-weight: 400; }
 .yue table.gfem-matrix .gfem-detail { display: block; color: var(--muted); }
-.yue table.gfem-matrix .gfem-mark { display: inline-flex; align-items: baseline; gap: 8px; color: var(--ink); white-space: nowrap; }
-.yue table.gfem-matrix .gfem-raises { font-weight: 500; }
-/* the matrix's marks sit on the text baseline */
+.yue table.gfem-matrix .gfem-mark { display: inline-flex; align-items: baseline; gap: 8px; color: var(--ink); white-space: nowrap; font: var(--t-data); }
+.yue table.gfem-matrix .gfem-verified { font-weight: 500; color: var(--ok); }
+.yue table.gfem-matrix .gfem-raises { font-weight: 500; color: var(--bad); }
+.yue table.gfem-matrix tbody th a { color: var(--ink); font-weight: 500; }
+.yue :is(table.gfem-matrix, ul.gfem-status) a { color: inherit; font-weight: inherit; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); }
 .yue table.gfem-matrix .gfem-glyph { transform: translateY(-1px); }
 .yue table.gfem-matrix .gfem-zero .gfem-glyph { transform: translateY(-4px); }
 .yue table.gfem-matrix .gfem-raises .gfem-glyph { transform: translateY(1px); }
@@ -265,43 +341,42 @@ html:is(.light,.dark) .highlight span[class^="c"][class] { color: var(--muted); 
 .yue figure.gfem-figure { margin: var(--s-6) 0; }
 .yue figure.gfem-figure picture, .yue figure.gfem-figure img { display: block; width: 100%; }
 .yue figure.gfem-figure figcaption, .yue figcaption, .yue .caption { font: var(--t-small); color: var(--muted); margin-top: var(--s-2); }
-/* theme-swapped figures use Shibuya's own .light-only / .dark-only classes: no rule needed here */
 
 /* ------------------------------------------------------------ 3i. pager */
 .navigation { border-top: 1px solid var(--hair); max-width: var(--measure); margin-top: var(--s-8); padding-top: 0; gap: var(--s-4); }
-.navigation a { padding: var(--s-4) 0; text-decoration: none; font: var(--t-small); color: var(--muted); display: block; }
-.navigation a > i { display: none; }
-.navigation .page-info > span { color: var(--muted); }
-.navigation .page-info .title { font: 500 17px/1.35 var(--f-text); color: var(--ink); transition: color .2s var(--ease-out); }
-.navigation a:hover, .navigation a:hover .title { color: var(--accent); }
-.navigation a:hover .page-info > span { color: var(--muted); }
+.navigation a { padding: var(--s-4) 0; text-decoration: none; font: var(--t-small); color: var(--muted); display: flex; align-items: center; gap: var(--s-3); }
+.navigation-next a { justify-content: flex-end; }
+.navigation a > i { flex: none; width: 18px; height: 18px; color: var(--muted); transition: transform .2s var(--ease-out), color .2s var(--ease-out); }
+.navigation i.chevron-left { --icon-url: var(--gi-arrow-left); } .navigation i.chevron-right { --icon-url: var(--gi-arrow-right); }
+.navigation-prev a:hover > i { transform: translateX(-3px); } .navigation-next a:hover > i { transform: translateX(3px); }
+.navigation .page-info > span { font: var(--t-label); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.navigation .page-info .title { font: 500 18px/1.35 var(--f-text); color: var(--ink); transition: color .2s var(--ease-out); }
+.navigation a:hover .title, .navigation a:hover > i { color: var(--accent); }
 
 /* ------------------------------------------------------------ 3j. MyST-NB cells */
-.yue div.cell div.cell_input { border: 1px solid var(--hair); border-left-width: 1px; border-radius: 0; background: none; }
+.yue div.cell div.cell_input { border: 1px solid var(--code-edge); border-left-width: 1px; border-radius: 0; background: var(--code-bg); }
 .yue div.cell div.cell_input .highlight > pre { border: 0; }
-.yue div.cell_output .output.stream, .yue div.cell_output .output.text_plain { border: 0; border-left: 1px solid var(--hair); padding-left: var(--s-4); }
+.yue div.cell_output .output.stream, .yue div.cell_output .output.text_plain { border: 0; border-left: 1px solid var(--mesh); padding-left: var(--s-4); }
 .yue div.cell_output pre { font: var(--t-code); color: var(--ink-2); background: none; }
 
 /* ------------------------------------------------------------ 3k. API (autoapi) */
-dt.sig { font: var(--t-code); border-radius: 0; border-top: 1px solid var(--hair); }
-dt.sig:hover { background: none; }
+dt.sig { font: var(--t-code); border-radius: 0; border-top: 1px solid var(--ink); background: var(--panel); }
+dt.sig:hover { background: var(--panel); }
 dt.sig .sig-name { font-weight: 500; }
 
 /* ------------------------------------------------------------ 3l. footer */
 .sy-foot.gfem-foot { border-top: 1px solid var(--hair); padding: var(--s-5) 0 var(--s-7); }
 .gfem-foot .sy-foot-inner { padding-left: var(--s-6); padding-right: var(--s-6); }
-.gfem-foot-row { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-5); font: var(--t-small); color: var(--muted); }
+.gfem-foot-row { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-5); font: var(--t-data); color: var(--muted); }
 .gfem-foot-row a { color: var(--ink-2); text-decoration: none; }
-.gfem-foot-row a:hover { color: var(--ink); }
+.gfem-foot-row a:hover { color: var(--accent); }
 .gfem-foot-end { margin-left: auto; }
 
 /* ------------------------------------------------------------ 3m. search (Pagefind Component UI)
    _templates/searchbox.html. Pagefind themes through --pf-* variables, set here on html.light /
    html.dark, which outrank its :root defaults. Its own rules carry three-ID specificity (the
    :is(*, #\#) trick) and every .pf-* element gets `all: revert`, so every declaration on a .pf-*
-   element below needs !important. The structural changes the Mesh world needs: no cards,
-   no rounded corners, no grey fills, no icons, a worded Close, the teal focus ring restored
-   (the flat rule above removes the box-shadow rings Pagefind uses for focus). */
+   element below needs !important. */
 html.light, html.dark {
   --pf-font: var(--f-text);
   --pf-text: var(--ink); --pf-text-secondary: var(--ink-2); --pf-text-muted: var(--muted);
@@ -311,44 +386,43 @@ html.light, html.dark {
   --pf-shadow-sm: none; --pf-shadow-md: none; --pf-shadow-lg: none;
   --pf-outline-focus: var(--accent); --pf-outline-width: 2px; --pf-outline-offset: 3px;
   --pf-border-radius: 0;
-  --pf-input-height: 36px; --pf-input-font-size: 17px;
-  --pf-summary-font-size: 14.5px; --pf-result-title-font-size: 17px; --pf-result-excerpt-font-size: 14.5px;
+  --pf-input-height: 36px; --pf-input-font-size: 16.5px;
+  --pf-summary-font-size: 14px; --pf-result-title-font-size: 16.5px; --pf-result-excerpt-font-size: 14px;
   --pf-results-gap: 0;
   --pf-modal-max-width: var(--measure); --pf-modal-top: 12dvh;
-  --pf-modal-backdrop: color-mix(in srgb, var(--ground) 86%, transparent);  /* a wash, not a dark scrim */
+  --pf-modal-backdrop: color-mix(in srgb, var(--ground) 86%, transparent);
 }
-/* the header trigger: the utility-button look of the fallback input it replaces */
 .gfem-search { display: flex; align-items: center; }
-.gfem-search:has(pagefind-modal-trigger:defined) > form.searchbox { display: none; }  /* Pagefind loaded */
-.gfem-search > pagefind-modal-trigger:not(:defined) { display: none; }               /* no index: the form */
+.gfem-search:has(pagefind-modal-trigger:defined) > form.searchbox { display: none; }
+.gfem-search > pagefind-modal-trigger:not(:defined) { display: none; }
 .gfem-search > pagefind-modal-trigger { min-width: 220px; color-scheme: inherit; }
 .gfem-search .pf-trigger-btn {
-  font: var(--t-small) !important; padding: 0 12px !important; gap: var(--s-3) !important;
+  font: var(--t-label) !important; text-transform: uppercase !important; letter-spacing: .08em !important;
+  padding: 0 12px !important; gap: var(--s-3) !important; background: var(--panel) !important; border-radius: var(--radius) !important;
   transition: color .2s var(--ease-out), border-color .2s var(--ease-out) !important; }
-.gfem-search .pf-trigger-icon { display: none !important; }
+.gfem-search .pf-trigger-icon { color: var(--muted) !important; }
 .gfem-search .pf-trigger-btn:hover .pf-trigger-text { color: var(--ink) !important; }
-.gfem-search .pf-trigger-key { font: var(--t-small) !important; color: var(--muted) !important; background: none !important;
+.gfem-search .pf-trigger-key { font: var(--t-label) !important; color: var(--muted) !important; background: none !important;
   border: 0 !important; border-radius: 0 !important; min-width: 0 !important; height: auto !important; padding: 0 !important; }
-/* the modal: ground, one hairline frame, an ink rule opening the result list, hairline rows */
-#gfem-search-modal { color-scheme: inherit; scrollbar-color: var(--mesh) transparent; }  /* undo all: initial on the host */
+#gfem-search-modal { color-scheme: inherit; scrollbar-color: var(--mesh) transparent; }
 #gfem-search-modal dialog.pf-modal { border: 1px solid var(--hair) !important; border-radius: 0 !important; }
 #gfem-search-modal pagefind-modal-header { padding: var(--s-3) var(--s-5) !important; border-bottom: 1px solid var(--ink) !important; }
 #gfem-search-modal pagefind-modal-body { padding: var(--s-2) var(--s-5) var(--s-5) !important; scrollbar-color: var(--mesh) transparent; }
-#gfem-search-modal pagefind-modal-footer { padding: var(--s-3) var(--s-5) !important; font: var(--t-small) !important; color: var(--muted) !important; }
-#gfem-search-modal .pf-input-wrapper::before { display: none !important; }              /* no magnifier icon */
-#gfem-search-modal .pf-input { padding-inline-start: 0 !important; font: var(--t-body) !important; caret-color: var(--accent) !important; }
-#gfem-search-modal .pf-input-clear { font: var(--t-small) !important; border-radius: 0 !important; }
-#gfem-search-modal .pf-summary { font: var(--t-small) !important; color: var(--muted) !important; margin: var(--s-2) 0 !important; }
+#gfem-search-modal pagefind-modal-footer { padding: var(--s-3) var(--s-5) !important; font: var(--t-data) !important; color: var(--muted) !important; }
+#gfem-search-modal .pf-input-wrapper::before { background-color: var(--muted) !important; }
+#gfem-search-modal .pf-input { font: var(--t-body) !important; caret-color: var(--accent) !important; }
+#gfem-search-modal .pf-input-clear { font: var(--t-label) !important; text-transform: uppercase !important; border-radius: var(--radius) !important; }
+#gfem-search-modal .pf-summary { font: var(--t-data) !important; color: var(--muted) !important; margin: var(--s-2) 0 !important; }
 #gfem-search-modal .pf-result { gap: 0 !important; border-bottom: 1px solid var(--hair) !important; padding: var(--s-3) 0 !important; }
 #gfem-search-modal .pf-result-card { border: 0 !important; border-radius: 0 !important; background: none !important; padding: 0 !important; }
-#gfem-search-modal .pf-result-title { font: 500 17px/1.35 var(--f-text) !important; }
+#gfem-search-modal .pf-result-title { font: 500 16.5px/1.35 var(--f-text) !important; }
 #gfem-search-modal .pf-result-excerpt { font: var(--t-small) !important; color: var(--ink-2) !important; margin-top: var(--s-1) !important; }
 #gfem-search-modal .pf-result-excerpt mark, #gfem-search-modal .pf-heading-excerpt mark { color: var(--ink) !important; font-weight: 600 !important; }
 #gfem-search-modal .pf-heading-chips { gap: 0 !important; padding-inline-start: var(--s-4) !important; margin-top: var(--s-2) !important; }
 #gfem-search-modal .pf-heading-chip { border: 0 !important; border-radius: 0 !important; background: none !important; padding: var(--s-1) 0 !important; }
 #gfem-search-modal .pf-heading-link { font: var(--t-small) !important; color: var(--ink-2) !important; }
 #gfem-search-modal .pf-heading-excerpt { font: var(--t-small) !important; color: var(--muted) !important; }
-/* hover and the keyboard-selected entry: teal like a pager title, plus an underline (colour is never alone) */
+/* hover and the keyboard-selected entry: the signal red plus an underline (colour is never alone) */
 #gfem-search-modal :is(.pf-result-link, .pf-heading-link):is(:hover, [data-pf-selected]) {
   color: var(--accent) !important; text-decoration: underline !important; text-decoration-thickness: 1px !important;
   text-underline-offset: 3px !important; }
@@ -356,15 +430,15 @@ html.light, html.dark {
 :is(.gfem-search, #gfem-search-modal) :is(.pf-input, .pf-input-clear, .pf-result-link, .pf-heading-link, .pf-trigger-btn, .pf-modal-close):focus-visible {
   outline: 2px solid var(--accent) !important; outline-offset: 3px !important; }
 #gfem-search-modal :is(.pf-key, .pf-keyboard-key, .pf-modal-footer-key) {
-  font: var(--t-small) !important; color: var(--muted) !important; background: none !important; border-radius: 0 !important; }
-#gfem-search-modal .pf-keyboard-hints { font: var(--t-small) !important; }
+  font: var(--t-data) !important; color: var(--muted) !important; background: none !important; border-radius: 0 !important; }
+#gfem-search-modal .pf-keyboard-hints { font: var(--t-data) !important; }
 #gfem-search-modal .pf-empty, #gfem-search-modal .pf-empty-text { font: var(--t-small) !important; color: var(--muted) !important; }
 .gfem-search-page { margin-left: auto; color: var(--ink-2); text-decoration: underline; text-decoration-color: var(--hair); text-underline-offset: 3px; }
-.gfem-search-page:hover { color: var(--ink); text-decoration-color: var(--accent); }
-/* the small-screen Close: a worded utility button, as Menu */
+.gfem-search-page:hover { color: var(--accent); text-decoration-color: currentColor; }
 #gfem-search-modal .pf-modal-close {
-  width: auto !important; height: auto !important; padding: 6px 10px !important; border: 1px solid var(--hair) !important;
-  border-radius: 0 !important; background: none !important; color: var(--muted) !important; font: var(--t-small) !important; }
+  width: auto !important; height: auto !important; padding: 7px 10px !important; border: 1px solid var(--hair) !important;
+  border-radius: var(--radius) !important; background: var(--panel) !important; color: var(--ink-2) !important;
+  font: var(--t-label) !important; text-transform: uppercase !important; letter-spacing: .08em !important; }
 #gfem-search-modal .pf-modal-close > svg { display: none; }
 #gfem-search-modal .pf-modal-close::before { content: "Close"; }
 #gfem-search-modal .pf-modal-close:hover { color: var(--ink) !important; border-color: var(--ink) !important; }
@@ -372,7 +446,7 @@ html.light, html.dark {
 /* ------------------------------------------------------------ 4. responsive
    TOC drops at 1100; Menu + drawer replace header nav AND sidebar at 900.
    Shibuya's compiled breakpoints are 768 (md) and 1280 (xl); these rules move them. */
-@media (min-width: 1100px) and (max-width: 1279px) {      /* keep the TOC column from 1100 */
+@media (min-width: 1100px) and (max-width: 1279px) {
   #rside { position: static; transform: none; width: 220px; padding: 0; background: none; z-index: auto; overflow: visible; }
   #rside .sy-rside-inner { position: sticky; }
   .rside-close, .rside-overlay { display: none !important; }
@@ -382,7 +456,7 @@ html.light, html.dark {
 @media (max-width: 1099px) { #rside, .rside-overlay { display: none !important; } }
 @media (max-width: 899px) {
   .gfem-menu { display: inline-block; }
-  #lside, .lside-overlay { display: none !important; }     /* its tree lives in the drawer */
+  #lside, .lside-overlay { display: none !important; }
   .sy-head-inner { padding-left: var(--s-4); padding-right: var(--s-4); gap: var(--s-3); }
   body[data-expanded*=head-nav] { overflow: hidden; }
   .sy-head-nav { display: none; position: fixed; top: var(--sy-s-offset-top); left: 0; right: 0; bottom: 0;
@@ -392,10 +466,10 @@ html.light, html.dark {
   .sy-head-links { margin: 0; order: 1; }
   .sy-head-links ul { display: block; }
   .sy-head-links .link { margin: 0; }
-  .sy-head-links a { display: flex; padding: 8px 0; font: var(--t-body); color: var(--ink-2); }
-  .gfem-drawer-tree { display: block; order: 2; margin-top: var(--s-4); font: var(--t-body); }
-  .gfem-drawer-tree .caption { margin-top: var(--s-4) !important; }
-  .gfem-drawer-tree a { padding: 8px 0; }
+  .sy-head-links a { display: flex; padding: 10px 0; font: 400 13px/1.4 var(--f-mono); }
+  .gfem-drawer-tree { display: block; order: 2; margin-top: var(--s-5); font: var(--t-body); }
+  .gfem-drawer-tree .caption { margin-top: var(--s-5) !important; }
+  .gfem-drawer-tree a { padding: 7px 0; }
   .sy-head-extra { order: 0; position: static; flex-direction: column; width: 100%; padding: 0 0 var(--s-4); }
   .sy-head-extra form.searchbox { position: static; width: 100%; }
   .searchbox input { box-sizing: border-box; }
@@ -405,6 +479,7 @@ html.light, html.dark {
   .gfem-search .pf-trigger-shortcut { display: none !important; }
   .sy-main > .flex > div, .sy-breadcrumbs { padding-left: var(--s-4); padding-right: var(--s-4); }
   .sy-main > .flex > div { padding-top: var(--s-5); padding-bottom: var(--s-7); }
+  .yue h1 { font-size: 32px; }
   .yue ul.gfem-status > li > p { display: block; }
   .yue ul.gfem-status .tag { display: block; text-align: left; white-space: normal; margin-top: 2px; }
   .gfem-foot .sy-foot-inner { padding-left: var(--s-4); padding-right: var(--s-4); }

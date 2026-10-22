@@ -1,17 +1,22 @@
-{#- gfem override of shibuya partials/webfonts.html: Barlow (every interface word) + JetBrains Mono
-    (code and data only), self-hosted from _static/fonts/ (SIL OFL, licences next to the files). -#}
+{#- gfem override of shibuya partials/webfonts.html: Schibsted Grotesk (every word a person reads) + JetBrains Mono
+    (code, data and the small instrument labels), self-hosted from _static/fonts/ (SIL OFL, licences next to the files).
+    Schibsted Grotesk ships as latin + latin-ext subsets (fontsource 5.2.8), split by unicode-range. -#}
 {%- set gfem_fonts = pathto('_static/fonts/', 1) %}
-<link rel="preload" href="{{ gfem_fonts }}Barlow-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="{{ gfem_fonts }}SchibstedGrotesk-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
 <style>
-@font-face { font-family: "Barlow"; font-style: normal; font-weight: 400; font-display: swap; src: url("{{ gfem_fonts }}Barlow-Regular.woff2") format("woff2"); }
-@font-face { font-family: "Barlow"; font-style: normal; font-weight: 500; font-display: swap; src: url("{{ gfem_fonts }}Barlow-Medium.woff2") format("woff2"); }
-@font-face { font-family: "Barlow"; font-style: normal; font-weight: 600; font-display: swap; src: url("{{ gfem_fonts }}Barlow-SemiBold.woff2") format("woff2"); }
+{%- for weight in (400, 500, 600) %}
+@font-face { font-family: "Schibsted Grotesk"; font-style: normal; font-weight: {{ weight }}; font-display: swap; src: url("{{ gfem_fonts }}SchibstedGrotesk-latin-{{ weight }}-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Schibsted Grotesk"; font-style: normal; font-weight: {{ weight }}; font-display: swap; src: url("{{ gfem_fonts }}SchibstedGrotesk-latin-ext-{{ weight }}-normal.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+{%- endfor %}
+@font-face { font-family: "Schibsted Grotesk"; font-style: italic; font-weight: 400; font-display: swap; src: url("{{ gfem_fonts }}SchibstedGrotesk-latin-400-italic.woff2") format("woff2"); }
 @font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400; font-display: swap; src: url("{{ gfem_fonts }}JetBrainsMono-Regular.woff2") format("woff2"); }
 @font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 500; font-display: swap; src: url("{{ gfem_fonts }}JetBrainsMono-Medium.woff2") format("woff2"); }
 @font-face { font-family: "JetBrains Mono"; font-style: italic; font-weight: 400; font-display: swap; src: url("{{ gfem_fonts }}JetBrainsMono-Italic.woff2") format("woff2"); }
 :root {
-  --sy-f-text: "Barlow", system-ui, var(--sy-f-cjk), sans-serif;
-  --sy-f-heading: "Barlow", system-ui, var(--sy-f-cjk), sans-serif;
+  --sy-f-text: "Schibsted Grotesk", system-ui, var(--sy-f-cjk), sans-serif;
+  --sy-f-heading: "Schibsted Grotesk", system-ui, var(--sy-f-cjk), sans-serif;
   --sy-f-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 </style>

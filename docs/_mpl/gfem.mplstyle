@@ -1,7 +1,7 @@
 # gfem matplotlib style (light), applied by `just notebooks` only (docs/_ext/gfem_figures.py).
-# Values are the site's colour tokens (docs/_static/gfem.css). Colour-blind-safe cycle
-# (Okabe-Ito based): ink, vermillion, blue, reddish purple, orange, sky. Teal is reserved
-# for the sensitivity colormap.
+# Values are the site's colour tokens (docs/_static/gfem.css). Series are ink and greys told
+# apart by line style, so no plot relies on hue (the Instrument world keeps hue for status;
+# the signal red is reserved for the sensitivity colormap).
 # docs/_ext/gfem_figures.py pairs every colour here with the same key in gfem-dark.mplstyle.
 font.family: Barlow, DejaVu Sans
 font.size: 10.5
@@ -9,30 +9,30 @@ axes.titlesize: 11
 axes.titleweight: semibold  # the site's titles are 500; the Barlow TTFs ship 400 and 600
 axes.titlelocation: left
 axes.labelsize: 10.5
-axes.labelcolor: 3a3f46
-axes.edgecolor: 9aa0a8
+axes.labelcolor: 3d3d3d
+axes.edgecolor: 9a9a96
 axes.linewidth: 0.7
 axes.spines.top: False
 axes.spines.right: False
 axes.grid: True
-grid.color: e3e5e8
+grid.color: dcdcdc
 grid.linewidth: 0.6
-axes.prop_cycle: cycler('color', ['16181d', 'd55e00', '0072b2', 'cc79a7', 'e69f00', '56b4e9'])
+axes.prop_cycle: cycler('color', ['262626', '262626', '6b6b6b', '6b6b6b', '8f8f8b', '262626']) + cycler('linestyle', ['-', '--', '-', '--', '-', ':'])
 lines.linewidth: 1.5
-patch.edgecolor: 16181d
-xtick.color: 61676f
-ytick.color: 61676f
+patch.edgecolor: 262626
+xtick.color: 6b6b6b
+ytick.color: 6b6b6b
 xtick.labelsize: 9.5
 ytick.labelsize: 9.5
 xtick.major.size: 3
 ytick.major.size: 3
 legend.frameon: False
-legend.edgecolor: e3e5e8
+legend.edgecolor: dcdcdc
 legend.fontsize: 9.5
 figure.facecolor: none
 figure.edgecolor: none
 axes.facecolor: none
 savefig.facecolor: none
 savefig.transparent: True
-text.color: 16181d
+text.color: 262626
 figure.dpi: 150
