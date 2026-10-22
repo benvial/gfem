@@ -27,9 +27,13 @@ from gfem._linalg.base import NgsHandle, host_bytes, same_pattern
 INVERSE = "sparsecholesky"
 #: NGSolve's MKL PARDISO wrapper and its flags: METIS ordering, and the
 #: symmetric matrix type (gfem stores the full matrix, so NGSolve would
-#: otherwise factor it as unsymmetric LU, with twice the fill).
+#: otherwise factor it as unsymmetric LU, with twice the fill), and no
+#: iterative refinement. NGSolve's wrapper asks for up to 16 refinement steps
+#: with no backward-error stop: they stagnate without lowering the residual
+#: and make a solve cost about 4.5 substitutions instead of one. 0 is MKL's
+#: default (two steps only after a perturbed pivot).
 PARDISO = "pardiso"
-PARDISO_FLAGS = {"ordering": "metis", "symmetric": True}
+PARDISO_FLAGS = {"ordering": "metis", "symmetric": True, "refinement": 0}
 
 
 @functools.cache
