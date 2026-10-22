@@ -11,7 +11,7 @@ from preconditioners import count_preconditioners
 import gfem
 from gfem._engine import quadrature
 from gfem._engine.mesh import to_ngsolve
-from gfem._linalg import Operator, factorize, low_rank_update, prepare
+from gfem._linalg import Operator, bddc, factorize, low_rank_update, prepare
 
 
 @pytest.fixture(scope="module")
@@ -278,6 +278,34 @@ def test_bddc_handle_without_reuse_sets_up_at_every_refactorization(built, monke
     fresh = prepare(operator(1.1 - 2j), symmetry="complex_symmetric", kind="bddc_gmres")
     fresh.solve(B, x0=previous)
     assert handle.iterations[2:] == fresh.iterations
+
+
+def test_a_bddc_solve_at_another_tolerance_never_sets_the_preconditioner_up_again(
+    built, monkeypatch
+):
+    # an adjoint at a much tighter tolerance takes more iterations than the
+    # rebuild rule allows at the prepared one: the next refactorization keeps
+    # the preconditioner all the same
+    def operator(shift):
+        return _laplace(built, complex_valued=True, shift=shift, order=4)[0]
+
+    builds = count_preconditioners(monkeypatch)
+    handle = prepare(
+        operator(1 - 2j),
+        symmetry="complex_symmetric",
+        kind="bddc_gmres",
+        tolerance=1e-1,
+    )
+    rng = np.random.default_rng(22)
+    B = rng.standard_normal((handle.ndof, 2)) + 0j
+    previous = handle.solve(B)
+    handle.refactorize(operator(1.1 - 2j))
+    handle.solve(B, x0=previous, tolerance=1e-12)
+    # past n_ref + Δ on the reused preconditioner, under its cap n_ref + 2Δ
+    assert min(handle.iterations[2:]) > max(handle.iterations[:2]) + bddc._slack(2)
+    handle.refactorize(operator(1.2 - 2j))
+    handle.solve(B, x0=previous)
+    assert len(builds) == 1
 
 
 class _Gate:

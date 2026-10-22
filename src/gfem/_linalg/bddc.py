@@ -166,13 +166,13 @@ class BddcHandle(NgsHandle):
         solve, of the iterations spent after that setup; a solve on a reused
         preconditioner never changes it. BDDC is set up again here instead
         when the handle does not reuse, when ``n_ref`` is unset, or when a
-        warm solve on the reused preconditioner went past ``n_ref + Δ``
-        iterations per column, with ``Δ`` `SETUP_ITERATIONS` shared by the
-        solve's columns. So every warm solve on a reused preconditioner is
-        capped (see `_warm`). A reused preconditioner serves warm GMRES
-        solves only; a solve without an initial guess sets it up again
-        first. The rule counts iterations, never times, so runs repeat
-        exactly.
+        warm solve on the reused preconditioner, at the prepared tolerance,
+        went past ``n_ref + Δ`` iterations per column, with ``Δ``
+        `SETUP_ITERATIONS` shared by the solve's columns. So every warm
+        solve on a reused preconditioner is capped (see `_warm`). A reused
+        preconditioner serves warm GMRES solves only; a solve without an
+        initial guess sets it up again first. The rule counts iterations,
+        never times, so runs repeat exactly.
         """
         form = operator.form
         with self._lock:
@@ -259,10 +259,10 @@ class BddcHandle(NgsHandle):
         On a reused preconditioner (see `refactorize`) each column stops at
         ``min(maxiter, n_ref + 2Δ)`` iterations; a column that stops there
         unconverged sets BDDC up again at this matrix and goes on from where
-        it stopped. The iterations spent on a fresh preconditioner set
-        ``n_ref`` when it is unset and ``measure`` is true; those spent on
-        the reused one decide the rebuild rule, when every column stayed on
-        it.
+        it stopped. Only a solve with ``measure`` true (at the prepared
+        tolerance) counts: the iterations spent on a fresh preconditioner
+        set ``n_ref`` when it is unset, and those spent on the reused one
+        decide the rebuild rule, when every column stayed on it.
         """
         cols, flat = self._columns(B)
         guesses, _ = self._columns(x0)
@@ -307,12 +307,14 @@ class BddcHandle(NgsHandle):
                 (stale if on_reused else fresh).append(int(solver.iterations))
                 out[:, j] = x.FV().NumPy()
             # n_ref only from a fresh preconditioner; the rebuild rule, by
-            # iteration count, only when the whole solve stayed reused
+            # iteration count, only when the whole solve stayed reused; both
+            # only at the prepared tolerance
             n_ref = self._reference_iterations
             if fresh and measure and n_ref is None:
                 self._reference_iterations = max(fresh)
             elif (
-                self._reused
+                measure
+                and self._reused
                 and n_ref is not None
                 and max(stale, default=0) > n_ref + slack
             ):
