@@ -83,9 +83,10 @@ class SolverOptions:
         frequency_workers: Processes a uniform `gfem.Driven` sweep spreads
             its frequencies over, in contiguous blocks, each with
             ``threads // frequency_workers`` threads (at least 1; with
-            ``threads=None``, of every logical CPU). It applies to uniform
-            driven sweeps only: adaptive sweeps, eigenmode and
-            electrostatic solves ignore it. Memory grows about
+            ``threads=None``, of the logical CPUs the process may run
+            on). It applies to uniform driven sweeps only: adaptive
+            sweeps, eigenmode and electrostatic solves ignore it. Memory
+            grows about
             ``frequency_workers`` times, one solve per worker. S agrees
             with one worker's to the solver precision (each block's
             iterative solves start cold). Not available with wave ports

@@ -107,6 +107,37 @@ def test_a_killed_worker_names_its_frequencies():
         workers.run(os._exit, [(1,)], ["4e+09 to 4.5e+09 Hz"], threads=1)
 
 
+@pytest.mark.skipif(
+    not Path("/proc/self/environ").exists(), reason="reads /proc (Linux)"
+)
+def test_a_worker_starts_with_its_share_of_threads(monkeypatch):
+    # NumPy and the BLAS read their thread variables when imported, before a
+    # pool initializer would run: the worker process must start with them
+    monkeypatch.setenv("OMP_NUM_THREADS", "7")
+    monkeypatch.delenv("MKL_NUM_THREADS", raising=False)
+    (environ,) = workers.run(
+        Path.read_bytes, [(Path("/proc/self/environ"),)], ["a probe"], threads=3
+    )
+    start = dict(v.split(b"=", 1) for v in environ.split(b"\0") if b"=" in v)
+    for name in (b"OMP_NUM_THREADS", b"MKL_NUM_THREADS", b"OPENBLAS_NUM_THREADS"):
+        assert start[name] == b"3"
+    # the parent's own environment is left as it was
+    assert os.environ["OMP_NUM_THREADS"] == "7"
+    assert "MKL_NUM_THREADS" not in os.environ
+
+
+def test_worker_threads_split_the_cpus_this_process_may_use(monkeypatch):
+    # an affinity mask (taskset, a container's cpuset) limits the CPUs
+    monkeypatch.setattr(os, "cpu_count", lambda: 64)
+    monkeypatch.setattr(os, "process_cpu_count", lambda: 6, raising=False)
+    assert workers.worker_threads(None, 2) == 3
+    monkeypatch.delattr(os, "process_cpu_count", raising=False)
+    monkeypatch.setattr(os, "sched_getaffinity", lambda _: {0, 1, 2, 3}, raising=False)
+    assert workers.worker_threads(None, 2) == 2
+    assert workers.worker_threads(None, 8) == 1
+    assert workers.worker_threads(12, 4) == 3  # given threads win
+
+
 def test_a_gradient_through_two_workers_matches_one(line):
     # p2 is not excited, so its S row takes an adjoint solve in the parent;
     # weights that differ per frequency catch blocks joined out of order
