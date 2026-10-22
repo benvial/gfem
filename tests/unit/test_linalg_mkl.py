@@ -9,6 +9,7 @@ import ast
 import importlib.metadata
 import platform
 import sys
+import types
 from pathlib import Path
 
 import ngsolve as ngs
@@ -93,6 +94,29 @@ def test_direct_handles_an_operator_without_free_dofs(built):
     none_free.Clear()
     handle = prepare(Operator(op.form, none_free), symmetry="hermitian", kind="direct")
     np.testing.assert_array_equal(handle.solve(np.ones(space.ndof)), 0)
+
+
+@pytest.fixture
+def no_detection_cache():
+    """Detect PARDISO afresh in the test, and again after it."""
+    direct.pardiso_available.cache_clear()
+    yield
+    direct.pardiso_available.cache_clear()
+
+
+@pytest.mark.usefixtures("no_detection_cache")
+def test_an_unknown_ngsolve_pardiso_wrapper_falls_back_to_sparse_cholesky(
+    built, monkeypatch
+):
+    # the wrapper's private attributes may move in another NGSolve version:
+    # direct solves keep working on sparse Cholesky, never raise
+    wrapper = types.ModuleType("ngsolve.solvers.mkl_pardiso")
+    monkeypatch.setitem(sys.modules, "ngsolve.solvers.mkl_pardiso", wrapper)
+    monkeypatch.setattr(ngs.solvers, "mkl_pardiso", wrapper, raising=False)
+    assert not direct.pardiso_available()
+    op, _ = _laplace(built)
+    handle = prepare(op, symmetry="hermitian", kind="direct")
+    assert type(handle._inverse).__name__.startswith("SparseCholesky")
 
 
 def test_direct_memory_counts_the_factors(built):

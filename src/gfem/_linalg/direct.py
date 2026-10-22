@@ -34,14 +34,18 @@ PARDISO_FLAGS = {"ordering": "metis", "symmetric": True}
 
 @functools.cache
 def pardiso_available() -> bool:
-    """Whether NGSolve found MKL PARDISO in a pip ``mkl`` (the ``mkl`` extra)."""
+    """Whether NGSolve found MKL PARDISO in a pip ``mkl`` (the ``mkl`` extra).
+
+    Reads private attributes of NGSolve's wrapper: if they are missing (another
+    NGSolve version), the direct solver stays sparse Cholesky.
+    """
     try:
         from ngsolve.solvers import mkl_pardiso
     except ImportError:
         return False
     return (
-        mkl_pardiso._pardiso is not None  # noqa: SLF001
-        and mkl_pardiso._mkl_free_buffers is not None  # noqa: SLF001
+        getattr(mkl_pardiso, "_pardiso", None) is not None
+        and getattr(mkl_pardiso, "_mkl_free_buffers", None) is not None
     )
 
 
