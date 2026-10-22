@@ -241,12 +241,19 @@ class BddcHandle(NgsHandle):
                 before = len(self.iterations)
                 out = self._map(solver, B, after=self._check)
                 # a cold solve runs on a fresh preconditioner
-                its = self.iterations[before:]
-                if measure and its and self._reference_iterations is None:
-                    self._reference_iterations = max(its)
+                self._set_reference(self.iterations[before:], measure=measure)
                 return out
             finally:
                 solver.tol = self.tolerance = prepared  # ty: ignore[invalid-assignment]
+
+    def _set_reference(self, iterations: list[int], *, measure: bool) -> None:
+        """Set ``n_ref`` to the most ``iterations`` of a column, when unset.
+
+        ``iterations`` ran on a fresh preconditioner, one entry per column.
+        Only a solve at the prepared tolerance (``measure``) sets ``n_ref``.
+        """
+        if measure and iterations and self._reference_iterations is None:
+            self._reference_iterations = max(iterations)
 
     def _warm(self, B: np.ndarray, x0: np.ndarray, *, measure: bool) -> np.ndarray:
         """GMRES from the initial guess ``x0``, to ``tolerance * |P b|``.
@@ -273,12 +280,14 @@ class BddcHandle(NgsHandle):
         stale: list[int] = []  # per column, on the reused preconditioner
         fresh: list[int] = []  # per column, after a setup at this matrix
         with self._lock:
+            # refactorize reuses a preconditioner only with n_ref set
+            n_ref = self._reference_iterations or 0
             for j in range(cols.shape[1]):
                 matrix, pre, form = self._held()
                 on_reused = self._reused
                 cap = self.maxiter
-                if on_reused and self._reference_iterations is not None:
-                    cap = min(cap, self._reference_iterations + 2 * slack)
+                if on_reused:
+                    cap = min(cap, n_ref + 2 * slack)
                 b.FV().NumPy()[:] = cols[:, j]
                 r.data = pre.mat * b
                 reference = ngs.Norm(r)
@@ -309,15 +318,8 @@ class BddcHandle(NgsHandle):
             # n_ref only from a fresh preconditioner; the rebuild rule, by
             # iteration count, only when the whole solve stayed reused; both
             # only at the prepared tolerance
-            n_ref = self._reference_iterations
-            if fresh and measure and n_ref is None:
-                self._reference_iterations = max(fresh)
-            elif (
-                measure
-                and self._reused
-                and n_ref is not None
-                and max(stale, default=0) > n_ref + slack
-            ):
+            self._set_reference(fresh, measure=measure)
+            if measure and self._reused and max(stale) > n_ref + slack:
                 self._rebuild = True
         return out[:, 0] if flat else out
 
