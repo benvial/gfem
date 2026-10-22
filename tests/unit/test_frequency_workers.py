@@ -98,13 +98,20 @@ def test_two_direct_workers_give_the_sequential_sweep(line, monkeypatch):
 
 
 def test_two_bddc_workers_agree_to_the_solver_tolerance(line):
-    problem = gfem.Driven(FREQUENCIES)
+    # a kept frequency in each block: the fields join in frequency order
+    problem = gfem.Driven(FREQUENCIES, keep_fields=(3.5e9, 4.5e9))
     one, _ = _forward(line, problem, linear_solver="bddc_gmres")
     two, _ = _forward(line, problem, linear_solver="bddc_gmres", frequency_workers=2)
     # each block's GMRES starts cold, so S moves within the tolerance
     np.testing.assert_allclose(two["s"], one["s"], rtol=0, atol=1e-6)
     assert len(two["iterations"]) == 4
     assert all(len(its) == 2 for its in two["iterations"])  # per excited port
+    assert two["e_field"].shape == one["e_field"].shape == (one["e_field"].shape[0], 4)
+    scale = np.abs(one["e_field"]).max()
+    # the kept fields too, to the solver tolerance (about 3e-6 of the largest)
+    np.testing.assert_allclose(
+        two["e_field"], one["e_field"], rtol=0, atol=1e-5 * scale
+    )
 
 
 def test_a_killed_worker_names_its_frequencies():
