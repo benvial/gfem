@@ -370,7 +370,7 @@ AGREEMENT = (
         ("TOLERANCE",),
         ("max |ΔS|",),
         "Driven, lumped ports",
-        "800 µm coplanar line on the IHP SG13G2 stack",
+        "800 µm coplanar line on the IHP SG13G2 stack, first-order absorbing boundary",
         "absolute",
     ),
     Agreement(

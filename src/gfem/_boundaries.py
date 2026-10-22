@@ -86,10 +86,11 @@ class Absorbing:
     order 2, (1 / (2ik)) ∮ mu_r^-1 (n · curl E)(n · curl v). Only the curl part of the
     second-order term is kept; the β ∇_t(∇ · E_t) part is dropped, as in
     Palace and COMSOL, because the tangential divergence of a Nédélec trace
-    is not square-integrable. Palace ≤ 0.18 uses the opposite sign of the
-    curl term, which reflects more than order 1; gfem uses the textbook
-    sign only, so on a tight air box the two codes differ at order 2 (they
-    agree at order 1 and on adequately sized boxes).
+    is not square-integrable. Palace up to v0.18.1 uses the opposite sign
+    of the curl term, which reflects more than order 1 (awslabs/palace#1070
+    changes it to this sign); gfem uses the textbook sign only, so on a
+    tight air box the two codes differ at order 2 (they agree at order 1
+    and on adequately sized boxes).
 
     Attributes:
         surface: The surface region's name.
