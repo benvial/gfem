@@ -6,6 +6,7 @@ import ngsolve as ngs
 import numpy as np
 import pytest
 import structured_meshes as sm
+from preconditioners import count_preconditioners
 
 import gfem
 from gfem._engine import quadrature
@@ -260,14 +261,7 @@ def test_bddc_handle_without_reuse_sets_up_at_every_refactorization(built, monke
     def operator(shift):
         return _laplace(built, complex_valued=True, shift=shift, order=4)[0]
 
-    builds = []
-    build = ngs.Preconditioner
-
-    def spy(*args, **kwargs):
-        builds.append(1)
-        return build(*args, **kwargs)
-
-    monkeypatch.setattr(ngs, "Preconditioner", spy)
+    builds = count_preconditioners(monkeypatch)
     handle = prepare(
         operator(1 - 2j),
         symmetry="complex_symmetric",

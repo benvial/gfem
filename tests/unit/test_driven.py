@@ -11,11 +11,11 @@ import cmath
 import math
 
 import jax
-import ngsolve as ngs
 import numpy as np
 import pytest
 import scipy.constants as const
 import structured_meshes as sm
+from preconditioners import count_preconditioners
 
 import gfem
 from gfem._engine import driven, terms
@@ -267,24 +267,11 @@ def test_a_direct_sweep_plans_once_and_matches_fresh_handles(line, monkeypatch, 
     np.testing.assert_allclose(result.s.values, s, rtol=0, atol=1e-12)
 
 
-def _count_preconditioners(monkeypatch) -> list[int]:
-    """Spy on BDDC setups: one entry per preconditioner built."""
-    calls = []
-    build = ngs.Preconditioner
-
-    def spy(*args, **kwargs):
-        calls.append(1)
-        return build(*args, **kwargs)
-
-    monkeypatch.setattr(ngs, "Preconditioner", spy)
-    return calls
-
-
 def test_a_bddc_sweep_keeps_its_preconditioner_and_matches_fresh_setups(
     line, monkeypatch
 ):
     problem = gfem.Driven(frequency=(3e9, 3.5e9, 4e9, 4.5e9))
-    builds = _count_preconditioners(monkeypatch)
+    builds = count_preconditioners(monkeypatch)
     s = np.asarray(_s(line, problem, linear_solver="bddc_gmres").s.values)
     assert len(builds) == 1
     # without refactorization, BDDC is set up afresh at each frequency
@@ -299,7 +286,7 @@ def test_a_wide_bddc_sweep_rebuilds_its_reused_preconditioner(line, monkeypatch)
     # a preconditioner from 1 GHz costs GMRES 3x its iterations at 15 GHz
     problem = gfem.Driven(frequency=np.linspace(1e9, 29e9, 8))
     direct = np.asarray(_s(line, problem).s.values)
-    builds = _count_preconditioners(monkeypatch)
+    builds = count_preconditioners(monkeypatch)
     s = np.asarray(_s(line, problem, linear_solver="bddc_gmres").s.values)
     assert 1 < len(builds) < 8
     # GMRES stops at 1e-6 of |P b|; a reused P measures the residual less well
@@ -310,7 +297,7 @@ def test_a_reused_solve_at_its_cap_rebuilds_and_converges(line, monkeypatch):
     # 1.5 GHz sets the reference; 30 GHz would take ~90 iterations per port
     problem = gfem.Driven(frequency=(1e9, 1.5e9, 30e9))
     direct = np.asarray(_s(line, problem).s.values)
-    builds = _count_preconditioners(monkeypatch)
+    builds = count_preconditioners(monkeypatch)
     s = np.asarray(_s(line, problem, linear_solver="bddc_gmres").s.values)
     # set up at 1 GHz, and again inside the 30 GHz solve (no later refactorization)
     assert len(builds) == 2
@@ -344,7 +331,7 @@ def test_a_bddc_sweep_caps_the_first_warm_solve_after_a_large_jump(
     model = request.getfixturevalue(model)
     problem = gfem.Driven(frequency=(1e9, 60e9))
     direct = np.asarray(_s(model, problem).s.values)
-    builds = _count_preconditioners(monkeypatch)
+    builds = count_preconditioners(monkeypatch)
     out = _bddc_forward(model, problem)
     np.testing.assert_allclose(out["s"], direct, rtol=0, atol=1e-5)
     assert len(builds) == 2
@@ -362,7 +349,7 @@ def test_a_bddc_adaptive_sweep_sets_bddc_up_at_every_sample(fine_line, monkeypat
     # preconditioner would mostly hit its cap, so each sample sets BDDC up
     problem = gfem.Driven(frequency=np.linspace(1e9, 60e9, 60), sweep="adaptive")
     direct = np.asarray(_s(fine_line, problem).s.values)
-    builds = _count_preconditioners(monkeypatch)
+    builds = count_preconditioners(monkeypatch)
     out = _bddc_forward(fine_line, problem)
     np.testing.assert_allclose(out["s"], direct, rtol=0, atol=1e-4)
     assert len(builds) == len(out["iterations"]) > 1

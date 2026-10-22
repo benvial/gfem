@@ -15,11 +15,11 @@ import math
 
 import jax
 import jax.numpy as jnp
-import ngsolve as ngs
 import numpy as np
 import pytest
 import scipy.constants as const
 import structured_meshes as sm
+from preconditioners import count_preconditioners
 from scipy.optimize import brentq
 
 import gfem
@@ -289,14 +289,7 @@ def test_a_bddc_reshift_sets_the_preconditioner_up_at_the_new_shift(mesh, monkey
     model = _terminated(mesh, 1000.0)
     problem = gfem.Eigenmode(target=8e9, n_modes=2)
     options = gfem.SolverOptions(linear_solver="bddc_gmres")
-    builds = []
-    build = ngs.Preconditioner
-
-    def spy(*args, **kwargs):
-        builds.append(1)
-        return build(*args, **kwargs)
-
-    monkeypatch.setattr(ngs, "Preconditioner", spy)
+    builds = count_preconditioners(monkeypatch)
     result = gfem.solve(model, problem, options=options)
     assert len(builds) == 2
     monkeypatch.delattr(BddcHandle, "refactorize")
