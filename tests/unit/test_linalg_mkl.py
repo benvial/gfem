@@ -72,6 +72,9 @@ def test_direct_is_pardiso_with_metis_exactly_when_mkl_is_installed(
         return
     assert type(inverse).__name__ == "MKLPardiso"
     assert inverse._params[1] == 2  # iparm[1] = 2: METIS nested dissection
+    # iparm[7] = 0: no iterative refinement (MKL's default), not the up to 16
+    # steps of NGSolve's defaults
+    assert inverse._params[7] == 0
     # the symmetric (LDL^T) matrix type, not the unsymmetric LU of NGSolve's
     # defaults for a fully stored matrix
     assert inverse._matrixtype[0] == matrix_type

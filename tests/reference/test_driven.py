@@ -15,7 +15,7 @@ take Palace's attributes.
 - Physics (``driven/r8_box150``, second-order absorbing on an air box 150 um
   wider and 300 um taller): the box-size-converged |S21| = -0.300 dB at
   100 GHz. gfem's textbook second-order form and Palace's opposite sign
-  agree here to about 0.001 dB.
+  agree here to about 0.01 dB.
 - Timing (``driven/r8``, ``driven/r4``, the gsim defaults): one frequency
   sample, both excitations, against Palace's per-sample linear solve.
   gfem's order 2 differs from Palace's on these tight boxes, by design:
