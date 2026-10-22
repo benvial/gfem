@@ -62,7 +62,7 @@ def _limit_threads(threads: int) -> None:
 def run(
     function: Callable[..., Any],
     arguments: Sequence[tuple],
-    blocks: Sequence[str],
+    labels: Sequence[str],
     *,
     threads: int,
 ) -> list[Any]:
@@ -71,7 +71,7 @@ def run(
     Args:
         function: A module-level function (it is pickled by name).
         arguments: One argument tuple per worker.
-        blocks: What each worker solves, for errors (e.g. its frequencies).
+        labels: What each worker solves, for errors (e.g. its frequencies).
         threads: Each worker's threads (`worker_threads`).
 
     Returns:
@@ -95,12 +95,12 @@ def run(
             )
             futures.append(pool.submit(function, *args))
         out = []
-        for future, block in zip(futures, blocks, strict=True):
+        for future, label in zip(futures, labels, strict=True):
             try:
                 out.append(future.result())
             except BrokenProcessPool as err:
                 raise RuntimeError(
-                    f"The frequency worker solving {block} stopped without a "
+                    f"The frequency worker solving {label} stopped without a "
                     "result: it was killed, most likely for lack of memory (each "
                     "worker holds one solve). Use fewer "
                     "SolverOptions.frequency_workers, or frequency_workers=1."

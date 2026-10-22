@@ -25,7 +25,7 @@ from gfem._engine.cache import discretization
 from gfem._engine.coefficients import coefficient, element_tensors
 from gfem._engine.domain import domain_key, h1_space, pec_surfaces
 from gfem._engine.driven import DrivenOperator, real_space
-from gfem._linalg import Operator, prepare
+from gfem._linalg import Handle, Operator, prepare
 from gfem.model import Model
 
 __all__ = [
@@ -64,9 +64,10 @@ def eigen_operator(
     def operator(k: complex) -> Operator:
         return Operator(op.form(k * const.c / scale), space.FreeDofs())
 
-    def shifted(operator: Operator):
+    def prepare_shift(t: Operator) -> Handle:
+        """Prepare ``t``: ``T(k)`` at one shift (`operator`)."""
         return prepare(
-            operator,
+            t,
             symmetry="complex_symmetric",
             kind=kind,
             device=device,
@@ -78,7 +79,7 @@ def eigen_operator(
     return EigenOperator(
         shift=sigma,
         operator=operator,
-        prepare=shifted,
+        prepare=prepare_shift,
         damping=(
             _linear_map(assemble(space, powers[1], matrix_free=True))
             if powers[1]

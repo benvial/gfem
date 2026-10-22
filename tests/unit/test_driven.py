@@ -285,18 +285,18 @@ def test_a_bddc_sweep_keeps_its_preconditioner_and_matches_fresh_setups(
     np.testing.assert_allclose(s, fresh, rtol=0, atol=1e-6)
 
 
-def test_a_wide_bddc_sweep_rebuilds_its_stale_preconditioner(line, monkeypatch):
+def test_a_wide_bddc_sweep_rebuilds_its_reused_preconditioner(line, monkeypatch):
     # a preconditioner from 1 GHz costs GMRES 3x its iterations at 15 GHz
     problem = gfem.Driven(frequency=np.linspace(1e9, 29e9, 8))
     direct = np.asarray(_s(line, problem).s.values)
     builds = _count_preconditioners(monkeypatch)
     s = np.asarray(_s(line, problem, linear_solver="bddc_gmres").s.values)
     assert 1 < len(builds) < 8
-    # GMRES stops at 1e-6 of |P b|; a stale P measures the residual less well
+    # GMRES stops at 1e-6 of |P b|; a reused P measures the residual less well
     np.testing.assert_allclose(s, direct, rtol=0, atol=1e-5)
 
 
-def test_a_stale_solve_at_its_cap_rebuilds_and_converges(line, monkeypatch):
+def test_a_reused_solve_at_its_cap_rebuilds_and_converges(line, monkeypatch):
     # 1.5 GHz sets the reference; 30 GHz would take ~90 iterations per port
     problem = gfem.Driven(frequency=(1e9, 1.5e9, 30e9))
     direct = np.asarray(_s(line, problem).s.values)

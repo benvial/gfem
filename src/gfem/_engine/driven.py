@@ -425,24 +425,24 @@ class DrivenRule:
             for block in indices
         ]
         parts = workers.model_parts(model)
-        blocks = workers.run(
+        results = workers.run(
             _solve_block,
             [(*parts, problem, options, keep) for problem in problems],
             [_describe(problem.frequency) for problem in problems],
             threads=threads,
         )
         outputs: dict[str, object] = {
-            "s": np.concatenate([b["s"] for b in blocks]),
-            "z_ref": np.concatenate([b["z_ref"] for b in blocks]),
-            "iterations": [its for b in blocks for its in b["iterations"]],
+            "s": np.concatenate([r["s"] for r in results]),
+            "z_ref": np.concatenate([r["z_ref"] for r in results]),
+            "iterations": [its for r in results for its in r["iterations"]],
         }
         if self.kept:
             outputs["e_field"] = np.concatenate(
-                [b["e_field"] for b in blocks if "e_field" in b], axis=1
+                [r["e_field"] for r in results if "e_field" in r], axis=1
             )
         entry = None
         if keep:
-            solution = np.concatenate([b["solution"] for b in blocks], axis=1)
+            solution = np.concatenate([r["solution"] for r in results], axis=1)
             entry = Entry(
                 physics=self.physics,
                 handle=_Handles(None),
