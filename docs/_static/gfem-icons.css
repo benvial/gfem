@@ -1,0 +1,28 @@
+/* gfem icons: Lucide (lucide-static 0.460.0, ISC licence, https://lucide.dev), only the functional
+   ones the Instrument world keeps (copy, theme, menu, pager arrows).
+   Each --gi-* is the icon's SVG as a mask; .gi and [data-icon] paint it in currentColor at 1em,
+   in Lucide's 2px stroke. Regenerate from the lucide-static SVGs; never hand-edit a value. */
+:root {
+  --gi-arrow-left: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23000%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22 %3E%3Cpath d=%22m12 19-7-7 7-7%22/%3E%3Cpath d=%22M19 12H5%22/%3E%3C/svg%3E");
+  --gi-arrow-right: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23000%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22 %3E%3Cpath d=%22M5 12h14%22/%3E%3Cpath d=%22m12 5 7 7-7 7%22/%3E%3C/svg%3E");
+  --gi-clipboard: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23000%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22 %3E%3Crect width=%228%22 height=%224%22 x=%228%22 y=%222%22 rx=%221%22 ry=%221%22/%3E%3Cpath d=%22M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2%22/%3E%3C/svg%3E");
+  --gi-clipboard-check: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23000%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22 %3E%3Crect width=%228%22 height=%224%22 x=%228%22 y=%222%22 rx=%221%22 ry=%221%22/%3E%3Cpath d=%22M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2%22/%3E%3Cpath d=%22m9 14 2 2 4-4%22/%3E%3C/svg%3E");
+  --gi-menu: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23000%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22 %3E%3Cline x1=%224%22 x2=%2220%22 y1=%2212%22 y2=%2212%22/%3E%3Cline x1=%224%22 x2=%2220%22 y1=%226%22 y2=%226%22/%3E%3Cline x1=%224%22 x2=%2220%22 y1=%2218%22 y2=%2218%22/%3E%3C/svg%3E");
+  --gi-moon: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23000%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22 %3E%3Cpath d=%22M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z%22/%3E%3C/svg%3E");
+  --gi-sun: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23000%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22 %3E%3Ccircle cx=%2212%22 cy=%2212%22 r=%224%22/%3E%3Cpath d=%22M12 2v2%22/%3E%3Cpath d=%22M12 20v2%22/%3E%3Cpath d=%22m4.93 4.93 1.41 1.41%22/%3E%3Cpath d=%22m17.66 17.66 1.41 1.41%22/%3E%3Cpath d=%22M2 12h2%22/%3E%3Cpath d=%22M20 12h2%22/%3E%3Cpath d=%22m6.34 17.66-1.41 1.41%22/%3E%3Cpath d=%22m19.07 4.93-1.41 1.41%22/%3E%3C/svg%3E");
+  --gi-sun-moon: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23000%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22 %3E%3Cpath d=%22M12 8a2.83 2.83 0 0 0 4 4 4 4 0 1 1-4-4%22/%3E%3Cpath d=%22M12 2v2%22/%3E%3Cpath d=%22M12 20v2%22/%3E%3Cpath d=%22m4.9 4.9 1.4 1.4%22/%3E%3Cpath d=%22m17.7 17.7 1.4 1.4%22/%3E%3Cpath d=%22M2 12h2%22/%3E%3Cpath d=%22M20 12h2%22/%3E%3Cpath d=%22m6.3 17.7-1.4 1.4%22/%3E%3Cpath d=%22m19.1 4.9-1.4 1.4%22/%3E%3C/svg%3E");
+  --gi-x: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23000%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22 %3E%3Cpath d=%22M18 6 6 18%22/%3E%3Cpath d=%22m6 6 12 12%22/%3E%3C/svg%3E");
+}
+.gi, [data-icon]::before {
+  -webkit-mask: var(--gi) center / contain no-repeat; mask: var(--gi) center / contain no-repeat;
+  background-color: currentColor; }
+.gi { display: inline-block; flex: none; width: 1em; height: 1em; vertical-align: -.125em; }
+[data-icon="arrow-left"], .gi-arrow-left { --gi: var(--gi-arrow-left); }
+[data-icon="arrow-right"], .gi-arrow-right { --gi: var(--gi-arrow-right); }
+[data-icon="clipboard"], .gi-clipboard { --gi: var(--gi-clipboard); }
+[data-icon="clipboard-check"], .gi-clipboard-check { --gi: var(--gi-clipboard-check); }
+[data-icon="menu"], .gi-menu { --gi: var(--gi-menu); }
+[data-icon="moon"], .gi-moon { --gi: var(--gi-moon); }
+[data-icon="sun"], .gi-sun { --gi: var(--gi-sun); }
+[data-icon="sun-moon"], .gi-sun-moon { --gi: var(--gi-sun-moon); }
+[data-icon="x"], .gi-x { --gi: var(--gi-x); }

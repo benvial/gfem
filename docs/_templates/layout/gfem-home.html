@@ -1,0 +1,145 @@
+{#- gfem custom layout: the front page, selected by `layout: gfem-home` in index.md's front matter
+    (Shibuya's page.html extends 'layout/' + meta.layout + '.html').
+    Header: the site-head partial fed the three-item front-page nav (gfem_nav_home in conf.py) by
+    re-binding theme_nav_links before the include; gfem_home drops the drawer's site tree.
+    Body: static copy in this template (conf.py's front-page block lists it); numbers from the build:
+      gfem_front         docs/_data/front-page.json (just front-page-data) and its model values, via conf.py
+      gfem_code_line     the tutorial's value_and_grad line, read from topology.ipynb by conf.py
+      gfem_install       the install line and its note (one conf.py value)
+      gfem_status        the version label, from gfem.__version__ (conf.py)
+      gfem_python        the Python floor, from requires-python in pyproject.toml (conf.py)
+      gfem_capabilities  the gradient matrix, its provenance and the Palace rows (docs/_ext/gfem_capabilities.py)
+    Status marks are gfem.css's .gfem-glyph inside a .gfem-verified / .gfem-zero / .gfem-raises parent. -#}
+{%- extends "layout.html" -%}
+{%- set front = gfem_front -%}
+{%- set caps = gfem_capabilities -%}
+
+{%- block extrahead %}
+  {{ super() }}
+  {% include "components/meta-opengraph.html" %}
+  <link rel="stylesheet" href="{{ pathto('_static/gfem-home.css', 1) }}">
+{%- endblock %}
+
+{%- block document -%}
+<div class="gfem-home">
+  {%- set theme_nav_links = gfem_nav_home -%}
+  {%- set gfem_home = True -%}
+  {% include "partials/site-head.html" with context %}
+  <main id="gfem-home" class="gfem-home-main sy-container mx-auto">
+    <div class="hero">
+      <h1>Electromagnetics you can differentiate.</h1>
+      <div>
+        <p class="lead">Gradients of full-wave FEM results with respect to your geometry and materials, in Python.</p>
+        <p class="scope">Driven, eigenmode and electrostatic problems, from microwave circuits to photonic waveguides, on NGSolve and JAX.</p>
+        <div class="line">{{ gfem_code_line.head|e }}<b>jax.value_and_grad</b>(<span class="arg">{{ gfem_code_line.args|e }}</span></div>
+        <div class="actions"><a class="btn" href="{{ pathto('tutorials/topology') }}">Run the topology tutorial</a><a class="btn quiet" href="{{ pathto('capabilities') }}">Capabilities</a></div>
+      </div>
+    </div>
+
+    <figure class="grad" aria-labelledby="grad-cap">
+      {%- if front %}
+      <div class="readout" aria-hidden="true"><span><i>Design layer</i>{{ front.layer[0] }} × {{ front.layer[1] }} mm</span><span><i>Quantity</i>|∂J/∂ε<sub>r</sub>|, normalised</span><span><i>Start design</i>β = {{ front.beta0 }}</span><span class="scale">0 <b style="background:rgba(var(--accent-field),0)"></b><b style="background:rgba(var(--accent-field),.23)"></b><b style="background:rgba(var(--accent-field),.46)"></b><b style="background:rgba(var(--accent-field),.69)"></b><b style="background:rgba(var(--accent-field),.92)"></b> 1</span></div>
+      {%- endif %}
+      <div class="plot">
+        {%- if front %}<svg id="grad" role="img" aria-label="Top view of the design layer's tetrahedral mesh, each element shaded by the sensitivity of the band-stop objective to its permittivity at the start design"></svg><div class="tip" id="grad-tip" hidden></div>
+        {%- else %}<p class="gfem-missing">The hero data is missing: run <code>just front-page-data</code>, then rebuild.</p>{% endif -%}
+      </div>
+      {%- if front %}
+      <div class="ports"><span class="wide">x = {{ front.x[0] }} mm, feed to port 1</span><span class="narrow">top row x = {{ front.x[0] }} to {{ front.x[1] }} mm, bottom row {{ front.x[1] }} to {{ front.x[2] }} mm</span><span class="sr">Scale: normalised sensitivity from 0 to 1, in five steps.</span><span class="wide">x = {{ front.x[2] }} mm, feed to port 2</span></div>
+      {%- endif %}
+      <div class="chain" aria-label="The differentiable chain">
+        <span>ρ</span><span class="op">→</span><span>helmholtz_filter</span><span class="op">→</span><span>robust</span><span class="op">→</span><span>MaterialField</span><span class="op">→</span><span>gfem.solve</span><span class="op">→</span><span>S21</span><span class="op">→</span><span>J</span>
+        <span class="back"><span class="op">←</span> <b>jax.value_and_grad</b> back to ρ</span>
+      </div>
+      {%- if front %}
+      <figcaption id="grad-cap"><span><code>grad</code> has one value per element. Here: |∂J/∂ε<sub>r</sub>|, normalised to its maximum, at the topology tutorial's start design (nominal, β = {{ front.beta0 }}), on the {{ front.layer[0] }} mm × {{ front.layer[1] }} mm design layer of a parallel-plate line. J = 1 − |S21({{ front.pass }} GHz)|² + |S21({{ front.stop }} GHz)|² is the power that misses a band-stop target. The line's field is uniform across its width, so the sensitivity varies only along x.</span><span>Computed from the tutorial's model</span></figcaption>
+      {%- endif %}
+    </figure>
+
+    <section class="s" id="tutorial" aria-labelledby="t-h">
+      <div class="claim">
+        <h2 id="t-h">Where that gradient leads</h2>
+        {%- if front %}
+        <p class="tut-q">Which ceramic pattern, with a {{ front.radius }} mm minimum feature, passes {{ front.pass }} GHz and blocks {{ front.stop }} GHz, and still does when over- or under-etched?</p>
+        <p>{{ front.steps }} Adam steps on the pixels, the projection sharpened every {{ front.steps_per_beta }}. The worst of the three etch variants ends at J = {{ front.worst }}, the missed-power fraction the tutorial minimises.</p>
+        {%- endif %}
+        <a class="more" href="{{ pathto('tutorials/topology') }}">Run the topology tutorial</a>
+      </div>
+      <div>
+        {%- if front %}
+        <div class="readout" aria-hidden="true"><span><i>Optimiser</i>{{ front.steps }} Adam steps</span><span><i>Min. feature</i>{{ front.radius }} mm</span><span><i>Worst J</i>{{ front.worst }}</span></div>
+        <div class="variants" role="list">
+          {%- for name in ("eroded", "nominal", "dilated") %}
+          <div class="row" role="listitem"><span class="name">{{ name }}</span><svg id="v-{{ name }}" role="img" aria-label="{{ name|capitalize }} design"></svg><span class="val"><b>{{ front.final[name] }}</b>J</span></div>
+          {%- endfor %}
+        </div>
+        <div class="figkey"><span><i class="c"></i>ceramic, ε<sub>r</sub> = {{ front.eps_r }}</span><span><i></i>air</span></div>
+        <p class="check">The line is lossless and both ports are matched, so for the nominal design the tutorial checks <code>|S11|² + |S21|² = 1</code> across its {{ front.sweep[0] }} to {{ front.sweep[1] }} GHz sweep: the largest deviation is <code>{{ front.balance }}</code>.</p>
+        {%- endif %}
+      </div>
+    </section>
+
+    <section class="s" id="capabilities" aria-labelledby="m-h">
+      <div class="claim">
+        <h2 id="m-h">What differentiates</h2>
+        <p>Every supported gradient is checked against finite differences. An unsupported one raises an error instead of returning zero; a zero means the physics never reads that input.</p>
+        <p class="src">{{ caps.provenance }}: <code>tests/verification/test_gradient_matrix.py</code>. Raises: <code>test_gradient_matrix_raise_table.py</code>.</p>
+        <a class="more" href="{{ pathto('capabilities') }}">Full matrix on Capabilities</a>
+      </div>
+      <div>
+        <table class="matrix">
+          <thead><tr><th scope="col">Problem</th>{% for col in caps.columns %}<th scope="col">{{ col.label }}</th>{% endfor %}</tr></thead>
+          <tbody>
+            {%- for row in caps.rows %}
+            <tr><th scope="row">{{ row.label }}<span>{{ row.detail }}</span></th>
+              {%- for col in caps.columns %}{% set cell = row.cells|selectattr("column", "equalto", col.key)|first %}
+              <td data-h="{{ col.label }}"><span class="mark gfem-{{ cell.status }}"><span class="gfem-glyph"></span>{{ cell.label }}</span></td>
+              {%- endfor %}</tr>
+            {%- endfor %}
+          </tbody>
+        </table>
+        <div class="legend"><span class="key gfem-verified"><span class="gfem-glyph"></span>checked against finite differences</span><span class="key gfem-zero"><span class="gfem-glyph"></span>exact zero: the physics never reads the input</span><span class="key gfem-raises"><span class="gfem-glyph"></span>raises <code>NonDifferentiableError</code> unless named</span></div>
+      </div>
+    </section>
+
+    <section class="s" aria-labelledby="p-h">
+      <div class="claim">
+        <h2 id="p-h">Checked against Palace</h2>
+        <p>On reference problems both codes discretize the same mesh at the same order. Each row is the tolerance its test asserts.</p>
+        <p class="src">The reference tier, <code>tests/reference/</code>, runs outside the default test selection: it needs the baselines in <code>GFEM_REFERENCE_DIR</code>.</p>
+        <a class="more" href="{{ pathto('capabilities') }}">Reference problems on Capabilities</a>
+      </div>
+      <div>
+      <div class="readout" aria-hidden="true"><span><i>Tier</i>tests/reference/</span><span><i>Problems</i>{{ caps.palace|selectattr("problem")|list|length }}</span><span><i>Runs</i>outside default CI</span></div>
+      <ul class="status">
+        {%- for row in caps.palace if row.problem %}
+        <li><span class="p">{{ row.label }}<span>{{ row.detail }}</span></span><span class="tol">{{ row.text }}<span>{{ row.file.split('/')[-1] }}</span></span></li>
+        {%- endfor %}
+      </ul>
+      </div>
+    </section>
+
+    <section class="s" aria-labelledby="i-h">
+      <div class="claim">
+        <h2 id="i-h">Install</h2>
+        <p>gfem is {{ gfem_status }}.{% if gfem_install.note %} {{ gfem_install.note }}{% endif %}</p>
+        <a class="more" href="{{ pathto('get-started') }}">Get started</a>
+      </div>
+      <div class="install">
+        <pre><button class="gfem-copy" type="button">copy</button>{{ gfem_install.line|e }}</pre>
+        <p>Linux x86_64, macOS arm64 and Windows x86_64; Python {{ gfem_python }} or later. Importing gfem turns on JAX double precision.</p>
+      </div>
+    </section>
+  </main>
+
+  {% include "partials/site-foot.html" with context %}
+</div>
+{%- endblock -%}
+
+{%- block scripts -%}
+  {{ super() }}
+  {%- if front %}
+  <script>window.TOPO = {{ front.topo_json }};</script>
+  {%- endif %}
+  <script src="{{ pathto('_static/front/front.js', 1) }}"></script>
+{%- endblock -%}

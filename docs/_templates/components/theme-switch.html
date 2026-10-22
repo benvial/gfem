@@ -1,0 +1,9 @@
+{#- gfem override of shibuya components/theme-switch.html: the switch states the mode in words.
+    Shibuya's JS still cycles auto/light/dark and sets aria-label from data-aria-*; the labels
+    start with the visible text (WCAG 2.5.3 label in name). -#}
+<button class="js-theme theme-switch flex items-center"
+data-aria-auto="Theme: auto. Switch to light"
+data-aria-light="Theme: light. Switch to dark"
+data-aria-dark="Theme: dark. Switch to auto">
+<span class="gfem-theme-auto">Theme: auto</span><span class="gfem-theme-light">Theme: light</span><span class="gfem-theme-dark">Theme: dark</span>
+</button>

@@ -346,7 +346,7 @@ class PortModeResult:
 
     @property
     def n_eff(self) -> jax.Array:
-        """Complex effective index ``gamma / (i k0)``: ``n' - i n''``."""
+        """Complex effective index ``gamma / (i k0)``, written ``n' - i n''``."""
         k0 = 2 * math.pi * self.frequency / scipy.constants.c
         return self.gamma / (1j * k0)
 
