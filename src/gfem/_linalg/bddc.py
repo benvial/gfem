@@ -123,8 +123,26 @@ class BddcHandle(NgsHandle):
                 maxiter=self.maxiter,
                 conjugate=self._complex,
             )
+        return self._gmres(matrix, pre, maxiter=self.maxiter)
+
+    def _gmres(
+        self,
+        matrix: ngs.BaseMatrix,
+        pre: ngs.Preconditioner,
+        *,
+        maxiter: int,
+        reference: float | None = None,
+    ):
+        """GMRES of ``matrix`` on ``pre``, to ``tolerance`` times ``reference``.
+
+        ``reference=None`` stops relative to the first residual instead.
+        """
+        if reference is None:
+            return ngs.solvers.GMResSolver(
+                matrix, pre.mat, tol=self.tolerance, maxiter=maxiter
+            )
         return ngs.solvers.GMResSolver(
-            matrix, pre.mat, tol=self.tolerance, maxiter=self.maxiter
+            matrix, pre.mat, atol=self.tolerance * reference, maxiter=maxiter
         )
 
     def refactorize(self, operator: Operator) -> None:
@@ -241,23 +259,18 @@ class BddcHandle(NgsHandle):
                 b_res.data = pre.mat * r
                 if ngs.Norm(b_res) >= reference:
                     x[:] = 0
-                solver = ngs.solvers.GMResSolver(
-                    matrix, pre.mat, atol=self.tolerance * reference, maxiter=cap
-                )
+                solver = self._gmres(matrix, pre, maxiter=cap, reference=reference)
                 solver.Solve(rhs=b, sol=x, initialize=False)
                 spent = 0
                 if cap < self.maxiter and not self._converged(solver, reference, cap):
                     # set up at this matrix, and go on from the partial iterate
-                    spent = int(solver.iterations)  # ty: ignore[unresolved-attribute]
+                    spent = int(solver.iterations)
                     self._build(form)
                     matrix, pre, _ = self._held()
                     r.data = pre.mat * b
                     reference = ngs.Norm(r)
-                    solver = ngs.solvers.GMResSolver(
-                        matrix,
-                        pre.mat,
-                        atol=self.tolerance * reference,
-                        maxiter=self.maxiter,
+                    solver = self._gmres(
+                        matrix, pre, maxiter=self.maxiter, reference=reference
                     )
                     solver.Solve(rhs=b, sol=x, initialize=False)
                 self._check(solver, reference, spent)

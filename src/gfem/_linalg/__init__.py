@@ -12,7 +12,8 @@ frequency of a sweep) and factorizes its values on the existing solver
 plan, so a sweep plans once. ``"direct"`` and ``"cudss"`` handles can;
 ``"bddc_gmres"`` keeps its preconditioner for the new operator instead, and
 sets it up again when reusing it costs more than a setup (preconditioner
-reuse).
+reuse). `refactorize_or_prepare` refactorizes a handle that can, and
+prepares a new one in place of any other.
 
 Vectors are NumPy arrays over all DOFs of the operator's space. ``solve``
 reads only the free rows of ``B`` and returns zeros in the fixed (Dirichlet)
@@ -47,6 +48,7 @@ auxiliary systems assembled outside NGSolve.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Callable
 from typing import Literal, Protocol, runtime_checkable
 
 import ngsolve as ngs
@@ -62,6 +64,7 @@ __all__ = [
     "factorize",
     "low_rank_update",
     "prepare",
+    "refactorize_or_prepare",
 ]
 
 Symmetry = Literal["complex_symmetric", "hermitian", "general"]
@@ -144,6 +147,30 @@ class Refactorable(Handle, Protocol):
             RuntimeError: The handle was freed.
         """
         ...
+
+
+def refactorize_or_prepare(
+    handle: Handle | None,
+    operator: Operator,
+    prepare_operator: Callable[[Operator], Handle],
+) -> Handle:
+    """A handle of ``operator`` that reuses ``handle``'s solver plan when it can.
+
+    A `Refactorable` ``handle`` refactorizes ``operator`` and is returned;
+    any other is freed, and ``prepare_operator(operator)`` is returned.
+
+    Args:
+        handle: The handle of the previous operator, or ``None``.
+        operator: The new operator (the handle's symmetry and free DOFs).
+        prepare_operator: Prepares a new handle (`prepare` with the
+            handle's options).
+    """
+    if isinstance(handle, Refactorable):
+        handle.refactorize(operator)
+        return handle
+    if handle is not None:
+        handle.free()
+    return prepare_operator(operator)
 
 
 def prepare(

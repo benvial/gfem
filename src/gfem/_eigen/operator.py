@@ -39,7 +39,7 @@ import numpy as np
 import scipy.constants as const
 
 from gfem._engine import terms
-from gfem._linalg import Handle, Operator, Refactorable
+from gfem._linalg import Handle, Operator, refactorize_or_prepare
 
 __all__ = ["EigenOperator", "LinearMap", "NonPolynomial", "Split", "split"]
 
@@ -190,13 +190,15 @@ class EigenOperator:
     def reshift(self, k: complex) -> None:
         """Refactorize at ``k``.
 
-        A prepared `gfem._linalg.Refactorable` handle factorizes ``T(k)`` on
-        its solver plan; any other is freed and prepared on next use.
+        A prepared handle factorizes ``T(k)`` on its solver plan when it can,
+        or is replaced by a new one
+        (`gfem._linalg.refactorize_or_prepare`); an operator not prepared
+        yet is prepared on first use.
         """
-        if isinstance(self._handle, Refactorable):
-            self._handle.refactorize(self.operator(k))
-        else:
-            self.free_handle()
+        if self._handle is not None:
+            self._handle = refactorize_or_prepare(
+                self._handle, self.operator(k), self.prepare
+            )
         self.shift = k
         self.shifts += 1
 

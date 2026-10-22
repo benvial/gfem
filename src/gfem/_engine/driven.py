@@ -80,9 +80,9 @@ from gfem._linalg import (
     KINDS,
     Handle,
     Operator,
-    Refactorable,
     low_rank_update,
     prepare,
+    refactorize_or_prepare,
 )
 from gfem._sweep.adaptive import AffineSystem, AffineTerm, adaptive_sweep
 from gfem.errors import PortGeometryError
@@ -1375,8 +1375,8 @@ class _SweepHandle:
 
     `at` gives a handle of the system operator ``A(ω) + W(ω)`` at each
     frequency. The first call prepares the base handle; later ones
-    refactorize it at the new ω when it can (`gfem._linalg.Refactorable`),
-    or else free it and prepare a new one. Wave ports wrap the base per
+    refactorize it at the new ω when it can, or else free it and prepare a
+    new one (`gfem._linalg.refactorize_or_prepare`). Wave ports wrap the base per
     frequency in a borrowing Woodbury update. A handle from `at` is valid
     until the next call. `free` (or leaving the ``with`` block) releases
     the base, also when the sweep raises.
@@ -1391,15 +1391,12 @@ class _SweepHandle:
     def at(self, omega: float) -> Handle:
         """A handle of ``A(ω) + W(ω)``, borrowing the sweep's base handle."""
         operator = self._ports.operator_at(omega)
-        base = self._base
-        if isinstance(base, Refactorable):
-            base.refactorize(operator)
-        else:
-            self.free()
-            base = self._base = prepare(
-                operator, symmetry="complex_symmetric", **self._options
-            )
-        return self._ports.system_handle(base, omega, borrow=True)
+        self._base = refactorize_or_prepare(self._base, operator, self._prepare)
+        return self._ports.system_handle(self._base, omega, borrow=True)
+
+    def _prepare(self, operator: Operator) -> Handle:
+        """A new base handle of ``operator``."""
+        return prepare(operator, symmetry="complex_symmetric", **self._options)
 
     def solve(
         self, omega: float, rhs: np.ndarray, *, x0: np.ndarray | None = None
