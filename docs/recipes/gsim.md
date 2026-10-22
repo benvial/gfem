@@ -97,8 +97,25 @@ model = gfem.Model(
 
 The conductor shells carry the `gfem.Conductor` surface impedance with Palace's
 thickness convention, face for face (see `gfem.conventions`), so a gsim layout
-gives the same discrete problem in both codes. gfem's reference tests build
-their models from gsim's Palace cases this way (`tests/reference/test_driven.py`).
+gives the same discrete problem in both codes, but for one term of the
+absorbing boundary, below. gfem's reference tests build their models from
+gsim's Palace cases this way (`tests/reference/test_driven.py`).
+
+gsim always writes a second-order {term}`absorbing boundary`, and the model
+above keeps it. gfem adds the second-order term with the textbook sign (see
+{py:obj}`gfem.Absorbing`); Palace up to v0.18.1 adds it with the opposite sign,
+which reflects more than the first-order boundary does.
+[awslabs/palace#1070](https://github.com/awslabs/palace/pull/1070) changes
+Palace to the textbook sign. Until your Palace includes that change, expect
+gfem's S to differ from gsim's Palace results: visibly on gsim's tight default
+{term}`air box`, most near deep notches of |S11|, and less as the air box grows.
+
+To compare the two codes on the same discrete problem, use the first-order
+absorbing boundary in both: `order=1` in `gfem.Absorbing` above, and a Palace
+configuration whose `Boundaries.Absorbing.Order` is 1. The
+[Capabilities](../capabilities.md) page lists, under Agreement with Palace, how
+closely gfem's reference tests require the two to agree. Keep the second order
+for your own results: at the textbook sign it reflects less than the first.
 
 ## 4. Solve and differentiate
 

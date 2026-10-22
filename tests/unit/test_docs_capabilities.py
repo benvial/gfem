@@ -229,6 +229,13 @@ def test_palace_rows_quote_the_reference_tolerances(derived):
     ]
 
 
+def test_the_driven_row_names_the_first_order_absorbing_boundary(derived):
+    # Its tolerance is asserted on the abc1 cases only: at order 2 gfem and
+    # Palace up to v0.18.1 use opposite signs of the curl term.
+    (driven,) = [r for r in derived["palace"] if r["label"] == "Driven, lumped ports"]
+    assert "first-order absorbing boundary" in driven["detail"]
+
+
 def _module(tmp_path, source):
     (tmp_path / "test_x.py").write_text(source)
     return tmp_path
