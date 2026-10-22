@@ -254,6 +254,38 @@ def test_bddc_refactorization_without_a_guess_solves_like_a_fresh_handle(built):
     np.testing.assert_allclose(X, ref, rtol=0, atol=1e-12 * np.abs(ref).max())
 
 
+def test_bddc_handle_without_reuse_sets_up_at_every_refactorization(built, monkeypatch):
+    # reuse off: refactorize sets BDDC up at the new operator, so a warm solve
+    # there is a fresh handle's warm solve
+    def operator(shift):
+        return _laplace(built, complex_valued=True, shift=shift, order=4)[0]
+
+    builds = []
+    build = ngs.Preconditioner
+
+    def spy(*args, **kwargs):
+        builds.append(1)
+        return build(*args, **kwargs)
+
+    monkeypatch.setattr(ngs, "Preconditioner", spy)
+    handle = prepare(
+        operator(1 - 2j),
+        symmetry="complex_symmetric",
+        kind="bddc_gmres",
+        reuse_preconditioner=False,
+    )
+    rng = np.random.default_rng(21)
+    B = rng.standard_normal((handle.ndof, 2)) + 0j
+    previous = handle.solve(B)
+    handle.refactorize(operator(1.1 - 2j))
+    handle.solve(B, x0=previous)
+    assert len(builds) == 2
+    monkeypatch.undo()
+    fresh = prepare(operator(1.1 - 2j), symmetry="complex_symmetric", kind="bddc_gmres")
+    fresh.solve(B, x0=previous)
+    assert handle.iterations[2:] == fresh.iterations
+
+
 class _Gate:
     """A reentrant lock that reports a thread waiting for it."""
 

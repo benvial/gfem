@@ -10,10 +10,11 @@ A handle may also refactorize (`Refactorable`): ``handle.refactorize(operator)``
 assembles another operator with the same sparsity pattern (the next
 frequency of a sweep) and factorizes its values on the existing solver
 plan, so a sweep plans once. ``"direct"`` and ``"cudss"`` handles can;
-``"bddc_gmres"`` keeps its preconditioner for the new operator instead, and
-sets it up again when reusing it costs more than a setup (preconditioner
-reuse). `refactorize_or_prepare` refactorizes a handle that can, and
-prepares a new one in place of any other.
+``"bddc_gmres"`` keeps its preconditioner for the new operator instead, caps
+each warm solve on it, and sets it up again when reusing it costs more than a
+setup (preconditioner reuse; ``prepare(..., reuse_preconditioner=False)`` sets
+it up at every refactorization). `refactorize_or_prepare` refactorizes a
+handle that can, and prepares a new one in place of any other.
 
 Vectors are NumPy arrays over all DOFs of the operator's space. ``solve``
 reads only the free rows of ``B`` and returns zeros in the fixed (Dirichlet)
@@ -183,6 +184,7 @@ def prepare(
     maxiter: int = MAXITER,
     width: int = 1,
     threads: int | None = None,
+    reuse_preconditioner: bool = True,
 ) -> Handle:
     """Assemble ``operator`` and set up the ``kind`` backend.
 
@@ -203,6 +205,9 @@ def prepare(
             host-side planning on one thread; otherwise it is multithreaded
             when the cuDSS threading library is installed. CPU backends
             ignore it.
+        reuse_preconditioner: Iterative backends: keep the preconditioner
+            across `refactorize` (preconditioner reuse); False sets it up
+            again at every refactorization. Direct backends ignore it.
 
     Raises:
         NotImplementedError: The backend is not available, or the GPU
@@ -233,7 +238,13 @@ def prepare(
     if kind == "bddc_gmres":
         from gfem._linalg.bddc import BddcHandle
 
-        return BddcHandle(operator, symmetry, tolerance=tolerance, maxiter=maxiter)
+        return BddcHandle(
+            operator,
+            symmetry,
+            tolerance=tolerance,
+            maxiter=maxiter,
+            reuse=reuse_preconditioner,
+        )
     raise NotImplementedError(
         f"linear_solver={kind!r} is not available in this version of gfem; use "
         f"one of {', '.join(repr(k) for k in KINDS)}."

@@ -20,7 +20,7 @@ import structured_meshes as sm
 import gfem
 from gfem._engine import driven, terms
 from gfem._engine.driven import DrivenRule
-from gfem._linalg import prepare
+from gfem._linalg import bddc, prepare
 from gfem._linalg.bddc import BddcHandle
 from gfem._linalg.direct import DirectHandle
 
@@ -31,19 +31,14 @@ R = 50.0
 ETA0 = const.mu_0 * const.c
 
 
-def _mesh(tmp, **kwargs):
+def _mesh(tmp, cells=(10, 1, 1), **kwargs):
     path = tmp / "line.msh"
-    sm.write_msh22(path, sm.strip_line(L, W, H, (10, 1, 1), **kwargs))
+    sm.write_msh22(path, sm.strip_line(L, W, H, cells, **kwargs))
     return gfem.Mesh.from_gmsh(path, length_unit="mm")
 
 
-@pytest.fixture(scope="module")
-def mesh(tmp_path_factory):
-    return _mesh(tmp_path_factory.mktemp("line"))
-
-
-@pytest.fixture(scope="module")
-def line(mesh):
+def _line(mesh):
+    """The strip line between PEC plates, a lumped port at each end."""
     return gfem.Model(
         mesh,
         materials={"dielectric": gfem.Material(eps_r=EPS)},
@@ -53,6 +48,21 @@ def line(mesh):
             gfem.LumpedPort("p2", "port2", "+z"),
         ],
     )
+
+
+@pytest.fixture(scope="module")
+def mesh(tmp_path_factory):
+    return _mesh(tmp_path_factory.mktemp("line"))
+
+
+@pytest.fixture(scope="module")
+def line(mesh):
+    return _line(mesh)
+
+
+@pytest.fixture(scope="module")
+def fine_line(tmp_path_factory):
+    return _line(_mesh(tmp_path_factory.mktemp("fine_line"), cells=(20, 2, 2)))
 
 
 def _abcd_line(f, length_m, eps=EPS):
@@ -315,6 +325,36 @@ def test_a_bddc_sweep_rebuilds_at_the_same_iterations_every_run(line):
     second, _ = rule.forward(line, keep=False)
     assert first["iterations"] == second["iterations"]
     assert max(map(max, first["iterations"])) > 45  # a capped solve, set up again
+
+
+def _bddc_forward(model, problem):
+    outputs, _ = DrivenRule(model, problem, gfem.SolverOptions()).forward(
+        model, keep=False
+    )
+    return outputs
+
+
+@pytest.mark.parametrize("model", ["line", "fine_line"])
+def test_a_bddc_sweep_caps_the_first_warm_solve_after_a_large_jump(
+    model, request, monkeypatch
+):
+    # BDDC set up at 1 GHz and reused at 60 GHz would need more than MAXITER
+    # GMRES iterations on the fine line: 60 GHz stops at n_ref + 2 delta, sets
+    # BDDC up, and goes on from the partial iterate
+    model = request.getfixturevalue(model)
+    problem = gfem.Driven(frequency=(1e9, 60e9))
+    direct = np.asarray(_s(model, problem).s.values)
+    builds = _count_preconditioners(monkeypatch)
+    out = _bddc_forward(model, problem)
+    np.testing.assert_allclose(out["s"], direct, rtol=0, atol=1e-5)
+    assert len(builds) == 2
+    monkeypatch.undo()
+    slack = bddc._slack(2)
+    cold = max(_bddc_forward(model, gfem.Driven(frequency=60e9))["iterations"][0])
+    # the capped stale part, then a fresh solve from the partial iterate, which
+    # may take a few more than a cold one
+    bound = max(out["iterations"][0]) + 2 * slack + cold + slack
+    assert max(out["iterations"][1]) <= bound
 
 
 def test_excite_selects_the_columns_of_s(line):

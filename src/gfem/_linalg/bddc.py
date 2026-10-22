@@ -8,7 +8,10 @@ operator: conjugate gradients for a Hermitian (real symmetric positive
 definite) operator, GMRES otherwise.
 
 Across a sweep the handle keeps its preconditioner (`BddcHandle.refactorize`)
-and sets it up again only when GMRES iterations grow past one setup's worth.
+once a solve on it measured a reference iteration count, caps every warm
+solve on the reused preconditioner from that count, and sets it up again
+when GMRES iterations grow past one setup's worth. A handle prepared without
+reuse sets BDDC up at each `BddcHandle.refactorize`.
 """
 
 from __future__ import annotations
@@ -51,8 +54,10 @@ class BddcHandle(NgsHandle):
     be the space's ``FreeDofs()`` (build the space with ``dirichlet=``).
 
     `refactorize` swaps in another operator and keeps the preconditioner
-    (preconditioner reuse across a sweep), setting it up again when reusing
-    it costs more than a setup: a `gfem._linalg.Refactorable` handle.
+    (preconditioner reuse across a sweep) when a solve on it measured a
+    reference iteration count, setting it up again when reusing it costs
+    more than a setup: a `gfem._linalg.Refactorable` handle. With
+    ``reuse=False`` it sets BDDC up at every refactorization.
 
     Attributes:
         iterations: Krylov iterations of every column solved so far.
@@ -67,8 +72,12 @@ class BddcHandle(NgsHandle):
         *,
         tolerance: float,
         maxiter: int,
+        reuse: bool = True,
     ) -> None:
-        """Register BDDC on the form, assemble, and set up the Krylov solver."""
+        """Register BDDC on the form, assemble, and set up the Krylov solver.
+
+        ``reuse=False`` sets BDDC up again at every `refactorize`.
+        """
         form = operator.form
         space = form.space
         free = np.array(list(operator.freedofs), dtype=bool)  # ty: ignore[invalid-argument-type]
@@ -83,6 +92,7 @@ class BddcHandle(NgsHandle):
         super().__init__(form.mat, operator.freedofs, symmetry, is_complex=is_complex)
         self.tolerance = tolerance
         self.maxiter = maxiter
+        self.reuse = reuse
         self.iterations: list[int] = []
         self._hold(form, preconditioner)
 
@@ -150,18 +160,24 @@ class BddcHandle(NgsHandle):
 
         Preconditioner reuse (see `gfem._linalg.Refactorable`): only the
         matrix is assembled, and the Krylov solver is rebuilt on it; the
-        preconditioner is reused. It is set up again here instead when a
-        warm solve on it went past ``n_ref + Δ`` iterations per column, with
-        ``n_ref`` the iterations per column of the first warm solve after
-        its setup and ``Δ`` `SETUP_ITERATIONS` shared by the solve's
-        columns. A reused preconditioner serves warm GMRES solves only (see
-        `_warm`); a solve without an initial guess sets it up again first.
-        The rule counts iterations, never times, so runs repeat exactly.
+        preconditioner is reused. ``n_ref`` is the most iterations per column
+        of the first solve on a fresh preconditioner (cold or warm, at the
+        prepared tolerance), or, after a capped column set BDDC up inside a
+        solve, of the iterations spent after that setup; a solve on a reused
+        preconditioner never changes it. BDDC is set up again here instead
+        when the handle does not reuse, when ``n_ref`` is unset, or when a
+        warm solve on the reused preconditioner went past ``n_ref + Δ``
+        iterations per column, with ``Δ`` `SETUP_ITERATIONS` shared by the
+        solve's columns. So every warm solve on a reused preconditioner is
+        capped (see `_warm`). A reused preconditioner serves warm GMRES
+        solves only; a solve without an initial guess sets it up again
+        first. The rule counts iterations, never times, so runs repeat
+        exactly.
         """
         form = operator.form
         with self._lock:
             _, pre, _ = self._held()
-            if self._rebuild:
+            if self._rebuild or not self.reuse or self._reference_iterations is None:
                 self._build(form)
                 return
             form.Assemble()
@@ -214,17 +230,25 @@ class BddcHandle(NgsHandle):
                 self._build(form)
             solver = self._solver
             prepared = self.tolerance
+            # only a solve at the prepared tolerance measures n_ref
+            measure = tolerance is None or tolerance == prepared
             if tolerance is not None:
                 # NGSolve's Krylov solvers read .tol on every Solve
                 solver.tol = self.tolerance = tolerance  # ty: ignore[invalid-assignment]
             try:
                 if x0 is not None and self.symmetry != "hermitian":
-                    return self._warm(B, x0)
-                return self._map(solver, B, after=self._check)
+                    return self._warm(B, x0, measure=measure)
+                before = len(self.iterations)
+                out = self._map(solver, B, after=self._check)
+                # a cold solve runs on a fresh preconditioner
+                its = self.iterations[before:]
+                if measure and its and self._reference_iterations is None:
+                    self._reference_iterations = max(its)
+                return out
             finally:
                 solver.tol = self.tolerance = prepared  # ty: ignore[invalid-assignment]
 
-    def _warm(self, B: np.ndarray, x0: np.ndarray) -> np.ndarray:
+    def _warm(self, B: np.ndarray, x0: np.ndarray, *, measure: bool) -> np.ndarray:
         """GMRES from the initial guess ``x0``, to ``tolerance * |P b|``.
 
         The stopping residual is relative to the preconditioned right-hand
@@ -233,22 +257,27 @@ class BddcHandle(NgsHandle):
         dropped.
 
         On a reused preconditioner (see `refactorize`) each column stops at
-        ``n_ref + 2Δ`` iterations; a column that does sets BDDC up again at
-        this matrix and goes on from where it stopped.
+        ``min(maxiter, n_ref + 2Δ)`` iterations; a column that stops there
+        unconverged sets BDDC up again at this matrix and goes on from where
+        it stopped. The iterations spent on a fresh preconditioner set
+        ``n_ref`` when it is unset and ``measure`` is true; those spent on
+        the reused one decide the rebuild rule, when every column stayed on
+        it.
         """
         cols, flat = self._columns(B)
         guesses, _ = self._columns(x0)
         matrix, _, _ = self._held()
         out = np.zeros(cols.shape, dtype=np.complex128 if self._complex else float)
         b, x, r = (matrix.CreateColVector() for _ in range(3))
-        before = len(self.iterations)
         slack = _slack(cols.shape[1])
-        reused = self._reused
+        stale: list[int] = []  # per column, on the reused preconditioner
+        fresh: list[int] = []  # per column, after a setup at this matrix
         with self._lock:
             for j in range(cols.shape[1]):
                 matrix, pre, form = self._held()
+                on_reused = self._reused
                 cap = self.maxiter
-                if self._reused and self._reference_iterations is not None:
+                if on_reused and self._reference_iterations is not None:
                     cap = min(cap, self._reference_iterations + 2 * slack)
                 b.FV().NumPy()[:] = cols[:, j]
                 r.data = pre.mat * b
@@ -262,7 +291,7 @@ class BddcHandle(NgsHandle):
                 solver = self._gmres(matrix, pre, maxiter=cap, reference=reference)
                 solver.Solve(rhs=b, sol=x, initialize=False)
                 spent = 0
-                if cap < self.maxiter and not self._converged(solver, reference, cap):
+                if on_reused and not self._converged(solver, reference, cap):
                     # set up at this matrix, and go on from the partial iterate
                     spent = int(solver.iterations)
                     self._build(form)
@@ -273,15 +302,21 @@ class BddcHandle(NgsHandle):
                         matrix, pre, maxiter=self.maxiter, reference=reference
                     )
                     solver.Solve(rhs=b, sol=x, initialize=False)
+                    on_reused = False
                 self._check(solver, reference, spent)
+                (stale if on_reused else fresh).append(int(solver.iterations))
                 out[:, j] = x.FV().NumPy()
-            # the rebuild rule, by iteration count (unless a cap set BDDC up)
-            its = self.iterations[before:]
-            if its and not (reused and not self._reused):
-                if self._reference_iterations is None:
-                    self._reference_iterations = max(its)
-                elif self._reused and max(its) > self._reference_iterations + slack:
-                    self._rebuild = True
+            # n_ref only from a fresh preconditioner; the rebuild rule, by
+            # iteration count, only when the whole solve stayed reused
+            n_ref = self._reference_iterations
+            if fresh and measure and n_ref is None:
+                self._reference_iterations = max(fresh)
+            elif (
+                self._reused
+                and n_ref is not None
+                and max(stale, default=0) > n_ref + slack
+            ):
+                self._rebuild = True
         return out[:, 0] if flat else out
 
     @property
