@@ -286,7 +286,8 @@ class DrivenRule:
         self.regions = tuple(r for r in mesh.volumes if active[mesh.elements(r)].any())
         #: The wave ports' names, in model port order.
         self.wave_ports = tuple(p.name for p in model.ports if isinstance(p, WavePort))
-        if self.wave_ports and options.frequency_workers > 1 and not self.adaptive:
+        workers_run = min(options.frequency_workers, len(problem.frequency)) > 1
+        if self.wave_ports and workers_run and not self.adaptive:
             # each worker would track the port modes over its own block only
             raise NotImplementedError(
                 f"WavePort {self.wave_ports[0]!r}: frequency workers cannot solve "

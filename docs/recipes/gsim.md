@@ -179,8 +179,8 @@ result = gfem.solve(model, problem, options=options)
 - S agrees with one worker's to the solver precision: with `bddc_gmres`, each
   block's first solve starts cold, so S moves within `SolverOptions.tolerance`.
 - Only uniform driven sweeps use it; adaptive sweeps, eigenmode and
-  electrostatic solves ignore it. Wave ports and GPU devices need
-  `frequency_workers=1`.
+  electrostatic solves ignore it. GPU devices, and wave ports on more than one
+  frequency, need `frequency_workers=1`.
 - The workers are spawned processes: a script that sets `frequency_workers`
   guards its entry point with `if __name__ == "__main__":`.
 - Gradients work as usual; the adjoint solves run in the main process.

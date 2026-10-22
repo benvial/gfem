@@ -86,11 +86,11 @@ class SolverOptions:
             ``threads=None``, of the logical CPUs the process may run
             on). It applies to uniform driven sweeps only: adaptive
             sweeps, eigenmode and electrostatic solves ignore it. Memory
-            grows about
-            ``frequency_workers`` times, one solve per worker. S agrees
-            with one worker's to the solver precision (each block's
-            iterative solves start cold). Not available with wave ports
-            (`NotImplementedError`) or a GPU device. The workers are
+            grows about ``frequency_workers`` times, one solve per worker.
+            S agrees with one worker's to the solver precision (each
+            block's iterative solves start cold). Not available with wave
+            ports on more than one frequency (`NotImplementedError`) or a
+            GPU device. The workers are
             spawned processes, so a script that sets it must guard its
             entry point with ``if __name__ == "__main__":``.
     """

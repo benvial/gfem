@@ -51,6 +51,11 @@ def test_wave_ports_need_one_worker():
     options = gfem.SolverOptions(order=1, frequency_workers=2)
     with pytest.raises(NotImplementedError, match="frequency_workers=1"):
         gfem.solve(model, gfem.Driven(FREQUENCIES), options=options)
+    # one frequency runs no worker, so it solves as with frequency_workers=1
+    one = gfem.SolverOptions(order=1)
+    s = gfem.solve(model, gfem.Driven(3e9), options=options).s.values
+    ref = gfem.solve(model, gfem.Driven(3e9), options=one).s.values
+    np.testing.assert_allclose(s, ref, rtol=0, atol=1e-9)
 
 
 def _forward(model, problem, *, keep=False, **options):
