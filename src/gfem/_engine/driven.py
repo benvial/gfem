@@ -4,15 +4,15 @@ At each frequency the operator ``A(ω) = Σ θ_k(ω) A_k`` (see
 `gfem._engine.terms`) is assembled and prepared once, and every excited
 port's right-hand side is solved in one handle call: GMRES + BDDC by
 default, each port starting from its solution at the previous frequency,
-or one sparse Cholesky factorization (``direct``). A sweep keeps one base
-handle (`_SweepHandle`): a direct solver plans at the first frequency and
+or one LDL^T factorization (``direct``: MKL PARDISO with the ``mkl`` extra,
+NGSolve sparse Cholesky otherwise). A sweep keeps one base handle
+(`_SweepHandle`): a direct solver plans at the first frequency and
 refactorizes at the others. With ``SolverOptions.frequency_workers`` above
 1, a uniform sweep splits into contiguous blocks of frequencies, each swept
 the same way in a frequency worker (`gfem._engine.workers`), joined in
 frequency order; the backward pass stays in this process. ``A`` is complex
-symmetric (A^T = A), and a
-port's excitation vector is proportional to its voltage functional, so S
-is symmetric to solver precision.
+symmetric (A^T = A), and a port's excitation vector is proportional to its
+voltage functional, so S is symmetric to solver precision.
 
 S is read from the port voltages: with the excited port fed 1 W incident
 power (incident voltage sqrt(2 R)), ``S_ij = V_i / sqrt(2 R_i) - δ_ij``,
