@@ -75,8 +75,9 @@ napoleon_use_ivar = True  # "Attributes:" as :ivar: fields
 # template overrides in _templates/ (five partials and components here, plus
 # layout/default.html and searchbox.html for search below; each Shibuya
 # 2026.7.12 original sits in _templates/upstream/, so an upgrade check is a
-# diff), _static/gfem.css (icons from _static/gfem-icons.css) or _static/gfem.js. The front page adds its own
-# layout, _templates/layout/gfem-home.html, with _static/gfem-home.css and
+# diff), _static/gfem.css (icons from _static/gfem-icons.css) or
+# _static/gfem.js. The front page adds its own layout,
+# _templates/layout/gfem-home.html, with _static/gfem-home.css and
 # _static/front/front.js.
 extensions += [
     "sphinx_copybutton",  # the worded "copy" button on code blocks
@@ -89,7 +90,8 @@ exclude_patterns += ["_templates"]  # upstream/ copies are for diffing, not page
 html_theme = "shibuya"
 templates_path = ["_templates"]
 html_static_path = ["_static"]
-html_css_files = ["gfem-icons.css", "gfem.css"]  # icons: Lucide masks, painted by gfem.css
+# icons: Lucide masks, painted by gfem.css
+html_css_files = ["gfem-icons.css", "gfem.css"]
 html_js_files = [("gfem.js", {"defer": "defer"})]
 html_favicon = "_static/logo/favicon.svg"  # ICO, apple-touch, manifest: extra-head.html
 html_permalinks_icon = "#"
