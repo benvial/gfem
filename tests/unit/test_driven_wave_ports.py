@@ -187,7 +187,7 @@ def test_a_direct_sweep_plans_once_and_matches_fresh_handles(
     s = np.asarray(gfem.solve(model, problem, options=options).s.values)
     assert len(calls) == 1
     # a handle that cannot refactorize is prepared afresh at each frequency
-    monkeypatch.delattr(DirectHandle, "refactor")
+    monkeypatch.delattr(DirectHandle, "refactorize")
     calls.clear()
     result = gfem.solve(model, problem, options=options)
     solved = len(F) if sweep == "uniform" else len(result.sweep.sampled_frequencies)

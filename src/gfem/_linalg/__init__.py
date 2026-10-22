@@ -6,7 +6,7 @@ and sets up a backend (a factorization, a preconditioner) into a `Handle`.
 needed: terminal solves, port solves and adjoint solves reuse the same
 factors. ``Handle.free()`` releases the backend's memory.
 
-A handle may also refactorize (`Refactorable`): ``handle.refactor(operator)``
+A handle may also refactorize (`Refactorable`): ``handle.refactorize(operator)``
 assembles another operator with the same sparsity pattern (the next
 frequency of a sweep) and factorizes its values on the existing solver
 plan, so a sweep plans once. ``"direct"`` and ``"cudss"`` handles can;
@@ -132,7 +132,7 @@ class Refactorable(Handle, Protocol):
     ``isinstance(handle, Refactorable)`` tells whether a handle can.
     """
 
-    def refactor(self, operator: Operator) -> None:
+    def refactorize(self, operator: Operator) -> None:
         """Assemble ``operator`` and factorize its values in place.
 
         The operator has the handle's symmetry and free DOFs (the same

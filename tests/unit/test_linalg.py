@@ -89,7 +89,7 @@ def test_direct_refactorization_solves_like_a_fresh_handle(built):
         kind="direct",
     )
     op, space = _laplace(built, complex_valued=True, shift=3 + 1j)
-    handle.refactor(op)
+    handle.refactorize(op)
     fresh = prepare(
         _laplace(built, complex_valued=True, shift=3 + 1j)[0],
         symmetry="complex_symmetric",
@@ -244,7 +244,7 @@ def test_bddc_refactorization_without_a_guess_solves_like_a_fresh_handle(built):
         prepare(operator(s), symmetry="complex_symmetric", kind="bddc_gmres")
         for s in (1 - 2j, -40 + 1j)
     )
-    handle.refactor(operator(-40 + 1j))
+    handle.refactorize(operator(-40 + 1j))
     rng = np.random.default_rng(14)
     B = rng.standard_normal((handle.ndof, 2)) + 0j
     X, ref = handle.solve(B), fresh.solve(B)

@@ -249,7 +249,7 @@ def test_a_direct_sweep_plans_once_and_matches_fresh_handles(line, monkeypatch, 
     s = np.asarray(_s(line, problem).s.values)
     assert len(calls) == 1
     # a handle that cannot refactorize is prepared afresh at each frequency
-    monkeypatch.delattr(DirectHandle, "refactor")
+    monkeypatch.delattr(DirectHandle, "refactorize")
     calls.clear()
     result = _s(line, problem)
     solved = 4 if sweep == "uniform" else len(result.sweep.sampled_frequencies)
@@ -278,7 +278,7 @@ def test_a_bddc_sweep_keeps_its_preconditioner_and_matches_fresh_setups(
     s = np.asarray(_s(line, problem, linear_solver="bddc_gmres").s.values)
     assert len(builds) == 1
     # without refactorization, BDDC is set up afresh at each frequency
-    monkeypatch.delattr(BddcHandle, "refactor")
+    monkeypatch.delattr(BddcHandle, "refactorize")
     builds.clear()
     fresh = np.asarray(_s(line, problem, linear_solver="bddc_gmres").s.values)
     assert len(builds) == 4
@@ -302,7 +302,7 @@ def test_a_stale_solve_at_its_cap_rebuilds_and_converges(line, monkeypatch):
     direct = np.asarray(_s(line, problem).s.values)
     builds = _count_preconditioners(monkeypatch)
     s = np.asarray(_s(line, problem, linear_solver="bddc_gmres").s.values)
-    # set up at 1 GHz, and again inside the 30 GHz solve (no later refactor)
+    # set up at 1 GHz, and again inside the 30 GHz solve (no later refactorization)
     assert len(builds) == 2
     np.testing.assert_allclose(s, direct, rtol=0, atol=1e-5)
 

@@ -54,7 +54,7 @@ class DirectHandle(NgsHandle):
     (``"hermitian"`` on a real space) or a complex symmetric one. Complex
     Hermitian and general operators are refused.
 
-    `refactor` factorizes another operator's values in place (NGSolve's
+    `refactorize` factorizes another operator's values in place (NGSolve's
     ``Update()``): a `gfem._linalg.Refactorable` handle.
     """
 
@@ -116,7 +116,7 @@ class DirectHandle(NgsHandle):
         )
         return cls(assembled, None, "hermitian", is_complex=False)
 
-    def refactor(self, operator: Operator) -> None:
+    def refactorize(self, operator: Operator) -> None:
         """Assemble ``operator`` and refactorize (see `gfem._linalg.Refactorable`).
 
         The new values are copied into the factored matrix, and NGSolve's

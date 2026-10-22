@@ -1393,7 +1393,7 @@ class _SweepHandle:
         operator = self._ports.operator_at(omega)
         base = self._base
         if isinstance(base, Refactorable):
-            base.refactor(operator)
+            base.refactorize(operator)
         else:
             self.free()
             base = self._base = prepare(

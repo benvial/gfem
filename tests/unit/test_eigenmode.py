@@ -275,7 +275,7 @@ def test_a_reshift_refactorizes_the_prepared_operator(mesh, monkeypatch):
     result = gfem.solve(model, problem)
     assert len(calls) == 1
     # a handle that cannot refactorize is prepared afresh at the new shift
-    monkeypatch.delattr(DirectHandle, "refactor")
+    monkeypatch.delattr(DirectHandle, "refactorize")
     calls.clear()
     fresh = gfem.solve(model, problem)
     assert len(calls) == 2
@@ -299,7 +299,7 @@ def test_a_bddc_reshift_sets_the_preconditioner_up_at_the_new_shift(mesh, monkey
     monkeypatch.setattr(ngs, "Preconditioner", spy)
     result = gfem.solve(model, problem, options=options)
     assert len(builds) == 2
-    monkeypatch.delattr(BddcHandle, "refactor")
+    monkeypatch.delattr(BddcHandle, "refactorize")
     builds.clear()
     fresh = gfem.solve(model, problem, options=options)
     assert len(builds) == 2

@@ -7,7 +7,7 @@ inverse, never NGSolve's UMFPACK default. The Krylov method follows the
 operator: conjugate gradients for a Hermitian (real symmetric positive
 definite) operator, GMRES otherwise.
 
-Across a sweep the handle keeps its preconditioner (`BddcHandle.refactor`)
+Across a sweep the handle keeps its preconditioner (`BddcHandle.refactorize`)
 and sets it up again only when GMRES iterations grow past one setup's worth.
 """
 
@@ -41,7 +41,7 @@ class BddcHandle(NgsHandle):
     BDDC reads the fixed DOFs from the space: the operator's free DOFs must
     be the space's ``FreeDofs()`` (build the space with ``dirichlet=``).
 
-    `refactor` swaps in another operator and keeps the preconditioner
+    `refactorize` swaps in another operator and keeps the preconditioner
     (preconditioner reuse across a sweep), setting it up again when it has
     gone stale: a `gfem._linalg.Refactorable` handle.
 
@@ -121,7 +121,7 @@ class BddcHandle(NgsHandle):
             matrix, pre.mat, tol=self.tolerance, maxiter=self.maxiter
         )
 
-    def refactor(self, operator: Operator) -> None:
+    def refactorize(self, operator: Operator) -> None:
         """Assemble ``operator`` and solve it on the held preconditioner.
 
         Preconditioner reuse (see `gfem._linalg.Refactorable`): only the
@@ -208,7 +208,7 @@ class BddcHandle(NgsHandle):
         A guess whose residual exceeds ``|P b|`` (worse than zero) is
         dropped.
 
-        On a stale preconditioner (see `refactor`) each column stops at
+        On a stale preconditioner (see `refactorize`) each column stops at
         ``n_ref + 2Δ`` iterations; a column that does sets BDDC up again at
         this matrix and goes on from where it stopped.
         """

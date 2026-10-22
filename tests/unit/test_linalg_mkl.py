@@ -112,7 +112,7 @@ def test_pardiso_refactorization_keeps_its_plan_and_solves_like_a_fresh_handle(
     )
     inverse = handle._inverse
     op, space = _laplace(built, complex_valued=True, shift=3 + 1j)
-    handle.refactor(op)
+    handle.refactorize(op)
     assert handle._inverse is inverse  # Update(): numeric factorization only
     fresh = prepare(
         _laplace(built, complex_valued=True, shift=3 + 1j)[0],

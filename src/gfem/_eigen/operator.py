@@ -194,7 +194,7 @@ class EigenOperator:
         its solver plan; any other is freed and prepared on next use.
         """
         if isinstance(self._handle, Refactorable):
-            self._handle.refactor(self.operator(k))
+            self._handle.refactorize(self.operator(k))
         else:
             self.free_handle()
         self.shift = k

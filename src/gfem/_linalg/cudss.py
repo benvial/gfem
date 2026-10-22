@@ -10,7 +10,7 @@ cuDSS solves a fixed number of right-hand-side columns per solver object, so
 the handle solves ``width`` columns at a time: wider blocks go in chunks,
 narrower ones are zero-padded. All of them reuse the same factors.
 
-`CudssHandle.refactor` factorizes another operator with the same pattern on
+`CudssHandle.refactorize` factorizes another operator with the same pattern on
 the handle's solver plan: the next frequency of a sweep gathers its values
 into the triangle and factorizes, without planning again.
 
@@ -35,7 +35,7 @@ _INT32_MAX = np.iinfo(np.int32).max
 class _NoResetWarning(logging.Filter):
     """Drop nvmath's warning at each reset of the matrix values.
 
-    It says a reset needs a new factorization; `CudssHandle.refactor`
+    It says a reset needs a new factorization; `CudssHandle.refactorize`
     factorizes right after, at every frequency of a sweep.
     """
 
@@ -136,7 +136,7 @@ class CudssHandle(NgsHandle):
     ``A = L D L^H``. ``"general"`` is refused. Precision is float64 /
     complex128.
 
-    `refactor` factorizes another operator's values on the same plan: a
+    `refactorize` factorizes another operator's values on the same plan: a
     `gfem._linalg.Refactorable` handle.
     """
 
@@ -206,7 +206,7 @@ class CudssHandle(NgsHandle):
         lower = sp.csr_matrix((values, indices, indptr), shape=(len(indptr) - 1,) * 2)
         return lower, gather
 
-    def refactor(self, operator: Operator) -> None:
+    def refactorize(self, operator: Operator) -> None:
         """Assemble ``operator`` and refactorize (see `gfem._linalg.Refactorable`).
 
         On the same pattern, gathers the new values into the triangle and

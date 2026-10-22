@@ -186,7 +186,7 @@ def test_refactorization_solves_like_a_fresh_handle_on_one_plan(built, plans, ca
     op, space = _maxwell(built, k=5.0)
     free = np.array(list(space.FreeDofs()))
     with caplog.at_level(logging.WARNING):
-        handle.refactor(op)
+        handle.refactorize(op)
     assert len(plans) == 1
     # nvmath warns at every reset of the matrix; a sweep resets it on purpose
     assert "Resetting the LHS" not in caplog.text
@@ -215,7 +215,7 @@ def test_a_changed_pattern_plans_again(built, plans, monkeypatch):
     )
     monkeypatch.setattr(cudss, "same_pattern", lambda *_: False)
     op, space = _maxwell(built, k=5.0)
-    handle.refactor(op)
+    handle.refactorize(op)
     assert len(plans) == 2
     free = np.array(list(space.FreeDofs()))
     B = _rhs(space.ndof, 1, seed=6)
@@ -253,7 +253,7 @@ def test_a_gpu_sweep_plans_once_and_matches_per_frequency_handles(
     s = np.asarray(gfem.solve(model, problem, options=options).s.values)
     assert len(plans) == 1
     # a handle that cannot refactorize is planned afresh at each frequency
-    monkeypatch.delattr(CudssHandle, "refactor")
+    monkeypatch.delattr(CudssHandle, "refactorize")
     plans.clear()
     result = gfem.solve(model, problem, options=options)
     assert len(plans) > 1
