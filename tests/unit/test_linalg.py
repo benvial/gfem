@@ -1,5 +1,7 @@
 """The solver-handle seam: prepare once, solve many right-hand sides, free."""
 
+import threading
+
 import ngsolve as ngs
 import numpy as np
 import pytest
@@ -250,6 +252,47 @@ def test_bddc_refactorization_without_a_guess_solves_like_a_fresh_handle(built):
     X, ref = handle.solve(B), fresh.solve(B)
     assert handle.iterations == fresh.iterations
     np.testing.assert_allclose(X, ref, rtol=0, atol=1e-12 * np.abs(ref).max())
+
+
+class _Gate:
+    """A reentrant lock that reports a thread waiting for it."""
+
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.waiting = threading.Event()
+
+    def __enter__(self):
+        if not self.lock.acquire(blocking=False):
+            self.waiting.set()
+            self.lock.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.lock.release()
+
+
+def test_bddc_refactorization_checks_the_handle_under_its_lock(built):
+    # a handle freed while a refactorization waits for the lock is not
+    # brought back: the refactorization reads the held state under the lock
+    op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
+    handle = prepare(op, symmetry="complex_symmetric", kind="bddc_gmres")
+    gate = handle._lock = _Gate()
+    raised = []
+
+    def refactorize():
+        try:
+            handle.refactorize(_laplace(built, complex_valued=True, shift=2j)[0])
+        except RuntimeError as err:
+            raised.append(err)
+
+    with gate:
+        worker = threading.Thread(target=refactorize)
+        worker.start()
+        assert gate.waiting.wait(timeout=30)
+        handle.free()
+    worker.join(timeout=30)
+    assert [str(err) for err in raised] == ["This solver handle was freed."]
+    assert handle.nbytes == 0
 
 
 def test_direct_ignores_the_initial_guess(built):

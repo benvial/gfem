@@ -140,9 +140,9 @@ class BddcHandle(NgsHandle):
         `_warm`); a solve without an initial guess sets it up again first.
         The rule counts iterations, never times, so runs repeat exactly.
         """
-        _, pre, _ = self._held()
         form = operator.form
         with self._lock:
+            _, pre, _ = self._held()
             if self._rebuild:
                 self._build(form)
                 return
