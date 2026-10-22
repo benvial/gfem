@@ -649,6 +649,32 @@ def test_gradient_matrix_degenerate_pair_is_labelled_as_one_cluster(designs):
     np.testing.assert_array_equal(np.asarray(result.cluster), [0, 0, 1])
 
 
+@pytest.mark.parametrize("overlap", [0.95, 0.999])
+def test_gradient_matrix_nearly_parallel_ritz_vectors_keep_the_pair(
+    designs, monkeypatch, overlap
+):
+    # ARPACK returns an arbitrary basis of a multiple eigenvalue's eigenspace:
+    # how parallel its two vectors are depends on round-off (process state)
+    import gfem._eigen.rule as eigen_rule
+
+    shift_invert = eigen_rule.shift_invert
+
+    def nearly_parallel(*args, **kwargs):
+        k, vectors = shift_invert(*args, **kwargs)
+        i, j = np.argsort(np.where(k.real > 0, k.real, np.inf))[:2]
+        assert abs(k[i] - k[j]) <= 1e-12 * abs(k[i])  # the pair
+        q = np.linalg.qr(vectors[:, [i, j]])[0]
+        vectors = vectors.copy()
+        vectors[:, i] = q[:, 0]
+        vectors[:, j] = overlap * q[:, 0] + np.sqrt(1 - overlap**2) * q[:, 1]
+        return k, vectors
+
+    monkeypatch.setattr(eigen_rule, "shift_invert", nearly_parallel)
+    cavity = designs.mirrored_cavity
+    result = _cavity_modes(cavity, _uniform(cavity), 3)
+    np.testing.assert_array_equal(np.asarray(result.cluster), [0, 0, 1])
+
+
 def test_gradient_matrix_cluster_sum_matches_central_differences(designs):
     cavity = designs.mirrored_cavity
 
