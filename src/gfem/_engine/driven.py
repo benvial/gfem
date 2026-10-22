@@ -1446,20 +1446,43 @@ class _Handles:
         self._handles: dict[int, Handle] = {}
         self._sweep: _SweepHandle | None = None
 
-    def get(self, n: int, omega: float, **options: Any) -> Handle:
-        """The handle of frequency ``n`` at ``ω`` (`_Ports.prepare` ``options``).
+    def get(
+        self,
+        n: int,
+        omega: float,
+        *,
+        kind: str,
+        device: str,
+        tolerance: float,
+        width: int,
+        threads: int | None = None,
+    ) -> Handle:
+        """The handle of frequency ``n`` at ``ω`` (the options as `_Ports.prepare`).
 
         On a GPU it is valid until the next call.
         """
         ports = self.ports
         if ports is None:  # pragma: no cover - the backward sets the ports
             raise RuntimeError("The adjoint handles have no port terms.")
-        if options["device"] != "cpu":
+        if device != "cpu":
             if self._sweep is None:
-                self._sweep = ports.sweep(**options)
+                self._sweep = ports.sweep(
+                    kind=kind,
+                    device=device,
+                    tolerance=tolerance,
+                    width=width,
+                    threads=threads,
+                )
             return self._sweep.at(omega)
         if n not in self._handles:
-            self._handles[n] = ports.prepare(omega, **options)
+            self._handles[n] = ports.prepare(
+                omega,
+                kind=kind,
+                device=device,
+                tolerance=tolerance,
+                width=width,
+                threads=threads,
+            )
         return self._handles[n]
 
     @property
