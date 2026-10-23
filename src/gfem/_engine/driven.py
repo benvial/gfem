@@ -1279,7 +1279,7 @@ class _Ports:
         return Operator(
             op.form(omega),
             op.space.FreeDofs(),
-            affine=PieceSum(self.pieces, weights),
+            piece_sum=PieceSum(self.pieces, weights),
         )
 
     def system_handle(self, base: Handle, omega: float, *, borrow: bool) -> Handle:

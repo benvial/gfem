@@ -552,7 +552,7 @@ def test_a_direct_sweep_by_piece_sums_matches_assembled_operators(
     operator_at = driven._Ports.operator_at
 
     def assembled(ports, omega):  # the operator without its piece sum
-        return dataclasses.replace(operator_at(ports, omega), affine=None)
+        return dataclasses.replace(operator_at(ports, omega), piece_sum=None)
 
     monkeypatch.setattr(driven._Ports, "operator_at", assembled)
     s = np.asarray(_s(line, problem).s.values)
@@ -585,8 +585,9 @@ def test_a_forward_holds_its_assembled_pieces_with_its_handles(
         assert entry is None or entry.handle.nbytes == vectors
         assert ports.nbytes == vectors
         return
-    # at least the values of the curl-curl and mass pieces, complex
-    assert ports.nbytes >= vectors + 2 * 16 * form.mat.nze
+    # at least the values of the curl-curl and mass pieces
+    values = form.mat.AsVector().FV().NumPy().nbytes
+    assert ports.nbytes >= vectors + 2 * values
     assert entry.handle.nbytes == ports.nbytes
     entry.free()
     assert ports.nbytes == vectors

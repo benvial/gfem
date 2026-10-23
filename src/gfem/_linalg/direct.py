@@ -13,6 +13,7 @@ Installing ``mkl`` switches NGSolve's process-wide default inverse to PARDISO
 from __future__ import annotations
 
 import functools
+from typing import Any
 
 import ngsolve as ngs
 import numpy as np
@@ -64,7 +65,7 @@ class DirectHandle(NgsHandle):
     (``"hermitian"`` on a real space) or a complex symmetric one. Complex
     Hermitian and general operators are refused.
 
-    An operator with a piece sum (``Operator.affine``) is summed, never
+    An operator with a piece sum (``Operator.piece_sum``) is summed, never
     assembled: into a new matrix at creation, into the handle's own matrix at
     `refactorize`.
 
@@ -106,14 +107,22 @@ class DirectHandle(NgsHandle):
         return matrix.Inverse(freedofs, inverse=inverse)
 
     def _gather_index(self, matrix, solver) -> np.ndarray | None:
-        """Where PARDISO's buffer reads ``matrix``'s values, or ``None``.
+        """Where PARDISO's buffer reads the factored matrix's values, or ``None``.
 
         NGSolve's wrapper factors the free-row, free-column upper triangle in
         CSR order (its ``get_csr``): these are that triangle's positions in
-        ``matrix``'s value vector. Checked once against the buffer the wrapper
-        analysed; ``None`` (refactorize by ``Update()``) on a mismatch or for
-        a solver without the wrapper's ``_data_np`` and ``_call_pardiso``.
+        the matrix's value vector. Checked once against the buffer the
+        wrapper planned on; ``None`` (refactorize by ``Update()``) on a
+        mismatch, for a solver without the wrapper's ``_data_np`` and
+        ``_call_pardiso``, or when reading the matrix or the wrapper fails:
+        it never raises.
         """
+        try:
+            return self._checked_gather_index(matrix, solver)
+        except Exception:  # noqa: BLE001 - any failure falls back to Update()
+            return None
+
+    def _checked_gather_index(self, matrix, solver) -> np.ndarray | None:
         buffer = getattr(solver, "_data_np", None)
         if not isinstance(buffer, np.ndarray) or not hasattr(solver, "_call_pardiso"):
             return None
@@ -123,7 +132,7 @@ class DirectHandle(NgsHandle):
         rows = np.repeat(np.arange(matrix.height), np.diff(rowptr))
         free = self._free
         index = np.flatnonzero(free[rows] & free[cols] & (cols >= rows))
-        index = index.astype(np.int32 if matrix.nze < 2**31 else np.int64)
+        index = index.astype(np.int32 if len(cols) < 2**31 else np.int64)
         if index.size != buffer.size or not np.array_equal(
             np.asarray(data)[index], buffer
         ):
@@ -134,7 +143,7 @@ class DirectHandle(NgsHandle):
     def from_operator(cls, operator: Operator, symmetry: Symmetry) -> DirectHandle:
         """Assemble and factorize (see `gfem._linalg.prepare`).
 
-        An operator with a piece sum (``operator.affine``) is summed into a
+        An operator with a piece sum (``operator.piece_sum``) is summed into a
         new matrix of its pieces' pattern instead of assembling its form.
         """
         form = operator.form
@@ -158,11 +167,11 @@ class DirectHandle(NgsHandle):
         The piece sum when the operator has one whose pieces share a
         pattern; otherwise the assembled form and ``None``.
         """
-        affine = operator.affine
-        if affine is not None:
-            matrix = affine.matrix()
+        piece_sum = operator.piece_sum
+        if piece_sum is not None:
+            matrix = piece_sum.matrix()
             if matrix is not None:
-                return matrix, affine.pattern
+                return matrix, piece_sum.pattern
         operator.form.Assemble()
         return operator.form.mat, None
 
@@ -183,40 +192,55 @@ class DirectHandle(NgsHandle):
         return cls(assembled, None, "hermitian", is_complex=False)
 
     def refactorize(self, operator: Operator) -> None:
-        """Assemble ``operator`` and refactorize (see `gfem._linalg.Refactorable`).
+        """Refactorize on ``operator``'s values (see `gfem._linalg.Refactorable`).
 
-        The new values land in the factored matrix (`apply` reads it): an
-        operator with a piece sum on the pattern this handle's matrix came
-        from is summed into it in place, any other is assembled and its
-        values copied. PARDISO gathers them into its buffer and factorizes
-        them again on its analysis (phase 22), as ``Update()`` would after
-        projecting the matrix and extracting its triangle once more;
+        An operator whose piece sum shares this handle's pieces is summed
+        into the factored matrix in place (`apply` reads it); any other
+        operator's piece sum is summed, or its form assembled, into a new
+        matrix whose values are copied in. The values are then factorized
+        on the same solver plan: PARDISO gathers them into its buffer and
+        runs its numeric factorization (phase 22), as ``Update()`` would
+        after projecting the matrix and extracting its triangle once more;
         without the gather index, ``Update()``. A changed pattern is
-        factorized anew.
+        planned anew.
+
+        Raises:
+            RuntimeError: The handle was freed.
         """
-        matrix = self._matrix
-        if self._solver is None or matrix is None:
-            raise RuntimeError("This solver handle was freed.")
-        affine = operator.affine
-        pattern = self._pattern
-        if affine is not None and pattern is not None and affine.pattern is pattern:
-            with self._lock:
-                affine.sum_into(matrix)
-                self._refactor_values(self._solver, matrix)
-            return
-        new, pattern = self._assemble(operator)
+        piece_sum = operator.piece_sum
+        # read outside the lock: the first read assembles the pieces
+        summed = None if piece_sum is None else piece_sum.pattern
         with self._lock:
+            matrix, solver = self._live()
+            pattern = self._pattern
+            if piece_sum is not None and pattern is not None and summed is pattern:
+                piece_sum.sum_into(matrix)
+                self._refactor_values(matrix, solver)
+                return
+        new, pattern = self._assemble(operator)  # assembly needs no lock
+        with self._lock:
+            matrix, solver = self._live()
             self._pattern = pattern
             if not same_pattern(matrix, new):
-                self._matrix = new
-                self._solver = self._factor(new, operator.freedofs)
-                self._gather = self._gather_index(new, self._solver)
+                solver = self._factor(new, operator.freedofs)
+                self._matrix, self._solver = new, solver
+                self._gather = self._gather_index(new, solver)
                 return
             matrix.AsVector().data = new.AsVector()
-            self._refactor_values(self._solver, matrix)
+            self._refactor_values(matrix, solver)
 
-    def _refactor_values(self, solver, matrix) -> None:
-        """Factorize the new values of ``solver``'s ``matrix`` on the same plan."""
+    def _live(self) -> tuple[ngs.BaseMatrix, Any]:
+        """The factored matrix and its solver; call under the lock.
+
+        Raises:
+            RuntimeError: The handle was freed.
+        """
+        if self._solver is None or self._matrix is None:
+            raise RuntimeError("This solver handle was freed.")
+        return self._matrix, self._solver
+
+    def _refactor_values(self, matrix, solver) -> None:
+        """Factorize ``matrix``'s new values on ``solver``'s plan; under the lock."""
         if self._gather is None:
             solver.Update()
             return
@@ -253,7 +277,11 @@ class DirectHandle(NgsHandle):
         return host_bytes(self._matrix) + factors + gather
 
     def free(self) -> None:
-        """Drop the backend, the matrix and the gather index."""
-        super().free()
-        self._gather = None
-        self._pattern = None
+        """Drop the backend, the matrix and the gather index.
+
+        Waits for a running solve or refactorization.
+        """
+        with self._lock:
+            super().free()
+            self._gather = None
+            self._pattern = None

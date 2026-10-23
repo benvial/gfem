@@ -16,7 +16,7 @@ setup (preconditioner reuse; ``prepare(..., reuse_preconditioner=False)`` sets
 it up at every refactorization). `refactorize_or_prepare` refactorizes a
 handle that can, and prepares a new one in place of any other.
 
-An operator may also carry its piece sum (``Operator.affine``, see
+An operator may also carry its piece sum (``Operator.piece_sum``, see
 `gfem._linalg.pieces`): pieces assembled once and their weights, which the
 ``direct`` backend sums instead of assembling the form.
 
@@ -93,7 +93,7 @@ class Operator:
         form: The NGSolve bilinear form, not yet assembled. Symmetric
             symmetries need ``BilinearForm(..., symmetric=True)``.
         freedofs: The DOFs solved for; the others are fixed (Dirichlet).
-        affine: The same operator as a piece sum ``Σ θ_k A_k`` of pieces
+        piece_sum: The same operator as a piece sum ``Σ θ_k A_k`` of pieces
             assembled once (`gfem._linalg.pieces`), or ``None``. A backend
             may sum it instead of assembling ``form`` (``"direct"`` does);
             the others assemble ``form``.
@@ -101,7 +101,7 @@ class Operator:
 
     form: ngs.BilinearForm
     freedofs: ngs.BitArray
-    affine: PieceSum | None = None
+    piece_sum: PieceSum | None = None
 
 
 class Handle(Protocol):
@@ -152,7 +152,7 @@ class Refactorable(Handle, Protocol):
     def refactorize(self, operator: Operator) -> None:
         """Assemble ``operator`` and factorize its values in place.
 
-        A backend may sum the operator's piece sum (``operator.affine``)
+        A backend may sum the operator's piece sum (``operator.piece_sum``)
         instead of assembling its form. The operator has the handle's
         symmetry and free DOFs (the same space). A changed sparsity pattern
         is planned again, never refused. Later solves use the new operator.

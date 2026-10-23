@@ -16,11 +16,13 @@ positions in the full pattern, and is added there.
 from __future__ import annotations
 
 import dataclasses
+import threading
 from collections.abc import Callable, Sequence
 from typing import Any
 
 import ngsolve as ngs
 import numpy as np
+from numpy.typing import ArrayLike
 
 from gfem._linalg.base import host_bytes, same_pattern
 
@@ -43,6 +45,8 @@ class AssembledPieces:
         self._built = False
         self._template: ngs.BaseMatrix | None = None
         self._parts: list[tuple[Any, np.ndarray | None]] = []
+        #: Serializes the first use (assembled once) and `free`.
+        self._lock = threading.Lock()
 
     @property
     def pattern(self) -> ngs.BaseMatrix | None:
@@ -51,9 +55,7 @@ class AssembledPieces:
         ``None`` when a piece couples DOFs that the full pattern does not:
         the pieces cannot be summed, the operator must be assembled.
         """
-        if not self._built:
-            self._build()
-        return self._template
+        return self._assembled()[0]
 
     def matrix(self, weights: Sequence[complex]) -> ngs.BaseMatrix | None:
         """A new matrix of `pattern` holding ``Σ θ_k A_k``; ``None`` without one."""
@@ -66,45 +68,54 @@ class AssembledPieces:
 
     def sum_into(self, weights: Sequence[complex], matrix: ngs.BaseMatrix) -> None:
         """Overwrite the values of ``matrix`` (of `pattern`) with ``Σ θ_k A_k``."""
-        if self.pattern is None:  # pragma: no cover - callers check the pattern
+        template, parts = self._assembled()
+        if template is None:  # pragma: no cover - callers check the pattern
             raise ValueError("These pieces have no common sparsity pattern.")
         weights = [complex(w) for w in weights]
         target = matrix.AsVector()
-        full = [
-            (w, v)
-            for w, (v, at) in zip(weights, self._parts, strict=True)
-            if at is None
-        ]
+        full = [(w, v) for w, (v, at) in zip(weights, parts, strict=True) if at is None]
         (w0, v0), *rest = full
         target.data = w0 * v0
         for w, values in rest:
             target.data += w * values
         out = target.FV().NumPy()
-        for w, (values, at) in zip(weights, self._parts, strict=True):
+        for w, (values, at) in zip(weights, parts, strict=True):
             if at is not None:
                 out[at] += w * values
 
     @property
     def nbytes(self) -> int:
         """Host memory of the assembled pieces, in bytes (0 before first use)."""
-        if self._template is None:
+        with self._lock:
+            template, parts = self._template, self._parts
+        if template is None:
             return 0
         # the template's own values are in its matrix; the other full pieces'
-        # are copies of the same size
-        full = sum(at is None for _, at in self._parts)
-        held = host_bytes(self._template) + 16 * self._template.nze * (full - 1)
-        for values, at in self._parts:
-            if at is not None:
+        # are copies
+        held = host_bytes(template)
+        for values, at in parts:
+            if at is None:
+                held += int(values.FV().NumPy().nbytes)
+            else:
                 held += int(values.nbytes) + int(at.nbytes)
-        return held
+        return held - int(template.AsVector().FV().NumPy().nbytes)
 
     def free(self) -> None:
         """Drop the assembled pieces."""
-        self._built = False
-        self._template = None
-        self._parts = []
+        with self._lock:
+            self._built = False
+            self._template = None
+            self._parts = []
+
+    def _assembled(self) -> tuple[ngs.BaseMatrix | None, list]:
+        """The template and the parts, assembled once on first use."""
+        with self._lock:
+            if not self._built:
+                self._build()
+            return self._template, self._parts
 
     def _build(self) -> None:
+        """Assemble each piece and place its values in the full pattern."""
         u, v = self._space.TnT()
         matrices = []
         for integrand in self._integrands:
@@ -114,8 +125,6 @@ class AssembledPieces:
             matrices.append(form.mat)
         template = max(matrices, key=lambda m: m.nze)
         _, cols, rowptr = template.CSR()
-        cols = np.asarray(cols)
-        rowptr = np.asarray(rowptr).astype(np.int64)
         parts: list[tuple[Any, np.ndarray | None]] = []
         for m in matrices:
             if m is template:
@@ -127,7 +136,7 @@ class AssembledPieces:
                 parts.append((values, None))
             else:
                 data, c, r = m.CSR()
-                at = _positions(rowptr, cols, np.asarray(r), np.asarray(c))
+                at = _positions(rowptr, cols, r, c)
                 if at is None:
                     self._built = True
                     return
@@ -136,15 +145,19 @@ class AssembledPieces:
 
 
 def _positions(
-    rowptr: np.ndarray, cols: np.ndarray, sub_rowptr: np.ndarray, sub_cols: np.ndarray
+    rowptr: ArrayLike, cols: ArrayLike, sub_rowptr: ArrayLike, sub_cols: ArrayLike
 ) -> np.ndarray | None:
     """The positions of a sub-pattern's entries in the CSR value vector of a pattern.
 
-    Reads only the pattern's rows that the sub-pattern touches. Columns are
-    sorted within each row (NGSolve's graphs are). ``None`` when an entry is
-    not in the pattern.
+    Takes CSR index arrays of any integer type (NGSolve's are unsigned) and
+    computes in int64. Reads only the pattern's rows that the sub-pattern
+    touches. Columns are sorted within each row (NGSolve's graphs are).
+    ``None`` when an entry is not in the pattern.
     """
-    counts = np.diff(sub_rowptr.astype(np.int64))
+    rowptr, cols, sub_rowptr, sub_cols = (
+        np.asarray(a).astype(np.int64) for a in (rowptr, cols, sub_rowptr, sub_cols)
+    )
+    counts = np.diff(sub_rowptr)
     rows = np.flatnonzero(counts)
     starts = rowptr[rows]
     lengths = rowptr[rows + 1] - starts

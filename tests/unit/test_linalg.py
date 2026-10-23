@@ -108,7 +108,7 @@ def test_direct_refactorization_solves_like_a_fresh_handle(built):
 
 
 def _pieces(built, integrands, weights):
-    """Complex H1 pieces as a form and as a piece sum (`Operator.affine`)."""
+    """Complex H1 pieces as a form and as a piece sum (`Operator.piece_sum`)."""
     space = ngs.H1(built.mesh, order=2, dirichlet="bottom|top", complex=True)
     u, v = space.TnT()
     form = ngs.BilinearForm(space, symmetric=True)
@@ -136,9 +136,9 @@ def test_a_direct_handle_sums_a_piece_sum_instead_of_assembling(built):
         _ = op.form.mat
     weights = (1.0, -1 + 1j, 0.5)
     op, _ = _pieces(built, integrands, weights)
-    handle.refactorize(dataclasses.replace(op, affine=PieceSum(pieces, weights)))
+    handle.refactorize(dataclasses.replace(op, piece_sum=PieceSum(pieces, weights)))
     fresh = prepare(
-        dataclasses.replace(op, affine=None),
+        dataclasses.replace(op, piece_sum=None),
         symmetry="complex_symmetric",
         kind="direct",
     )
@@ -147,6 +147,28 @@ def test_a_direct_handle_sums_a_piece_sum_instead_of_assembling(built):
     assert np.abs(handle.apply(np.eye(n)) - A).max() <= 1e-14 * np.abs(A).max()
     B = np.random.default_rng(3).standard_normal(n) + 0j
     np.testing.assert_allclose(handle.solve(B), fresh.solve(B), rtol=1e-12)
+
+
+@pytest.mark.parametrize("summed", [True, False])
+def test_a_handle_freed_during_refactorization_raises_freed(built, summed):
+    # another thread frees the handle while refactorize reads the piece sum
+    integrands = (*VOLUME, _on("side"))
+    op, _ = _pieces(built, integrands, (1.0, 2 - 1j, 3j))
+    handle = prepare(op, symmetry="complex_symmetric", kind="direct")
+
+    class FreedOnRead:
+        def __init__(self, piece_sum):
+            self._piece_sum = piece_sum
+
+        def __getattr__(self, name):
+            handle.free()
+            return getattr(self._piece_sum, name)
+
+    # the handle's pieces are summed into its matrix; others are summed anew
+    other = op if summed else _pieces(built, integrands, (1.0, 2 - 1j, 3j))[0]
+    piece_sum = FreedOnRead(other.piece_sum)
+    with pytest.raises(RuntimeError, match="This solver handle was freed"):
+        handle.refactorize(dataclasses.replace(op, piece_sum=piece_sum))
 
 
 def test_pieces_without_a_common_pattern_leave_the_form_to_assemble(built):

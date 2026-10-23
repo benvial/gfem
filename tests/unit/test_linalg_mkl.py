@@ -236,6 +236,64 @@ def test_a_pardiso_wrapper_gfem_cannot_gather_into_refactorizes_by_update(
 
 
 @needs_mkl
+@pytest.mark.parametrize(
+    "failure", ["a matrix without CSR", "a failing CSR", "a failing wrapper buffer"]
+)
+def test_a_gather_index_gfem_cannot_build_leaves_refactorization_to_update(
+    built, monkeypatch, failure
+):
+    # building the gather index never raises: without one, PARDISO stays and
+    # refactorizes through Update()
+    from ngsolve.solvers import mkl_pardiso
+
+    def from_gfem():
+        return sys._getframe(2).f_globals.get("__name__", "").startswith("gfem.")
+
+    form = _laplace(built, complex_valued=True)[0].form
+    form.Assemble()
+    matrix_type = type(form.mat)
+    csr = matrix_type.CSR
+
+    def failing_csr(self):
+        if not from_gfem():
+            return csr(self)
+        if failure == "a matrix without CSR":
+            raise AttributeError("CSR")
+        raise RuntimeError("no CSR of this matrix")
+
+    class FailingBuffer(mkl_pardiso.MKLPardiso):
+        def __getattribute__(self, name):
+            if name == "_data_np" and from_gfem():
+                raise RuntimeError("no buffer")
+            return super().__getattribute__(name)
+
+    ngs.la.RegisterInverseType("gfem_failing_buffer_pardiso", FailingBuffer)
+    if failure == "a failing wrapper buffer":
+        monkeypatch.setattr(direct, "PARDISO", "gfem_failing_buffer_pardiso")
+    else:
+        monkeypatch.setattr(matrix_type, "CSR", failing_csr)
+    handle = prepare(
+        _laplace(built, complex_valued=True, shift=1 - 2j)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+    )
+    assert handle._gather is None
+    monkeypatch.undo()
+    assert isinstance(handle._inverse, mkl_pardiso.MKLPardiso)
+    op, space = _laplace(built, complex_valued=True, shift=3 + 1j)
+    handle.refactorize(op)
+    fresh = prepare(
+        _laplace(built, complex_valued=True, shift=3 + 1j)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+    )
+    rng = np.random.default_rng(6)
+    B = rng.standard_normal(space.ndof) + 1j * rng.standard_normal(space.ndof)
+    X, ref = handle.solve(B), fresh.solve(B)
+    assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
+
+
+@needs_mkl
 def test_pardiso_memory_counts_the_gather_index(built):
     op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
     handle = prepare(op, symmetry="complex_symmetric", kind="direct")
