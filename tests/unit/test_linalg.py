@@ -1,5 +1,6 @@
 """The solver-handle seam: prepare once, solve many right-hand sides, free."""
 
+import dataclasses
 import threading
 
 import ngsolve as ngs
@@ -12,6 +13,7 @@ import gfem
 from gfem._engine import quadrature
 from gfem._engine.mesh import to_ngsolve
 from gfem._linalg import Operator, bddc, factorize, low_rank_update, prepare
+from gfem._linalg.pieces import AssembledPieces, PieceSum
 
 
 @pytest.fixture(scope="module")
@@ -103,6 +105,63 @@ def test_direct_refactorization_solves_like_a_fresh_handle(built):
     X, ref = handle.solve(B), fresh.solve(B)
     assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
     np.testing.assert_allclose(handle.apply(X), fresh.apply(X), rtol=1e-14)
+
+
+def _pieces(built, integrands, weights):
+    """Complex H1 pieces as a form and as a piece sum (`Operator.affine`)."""
+    space = ngs.H1(built.mesh, order=2, dirichlet="bottom|top", complex=True)
+    u, v = space.TnT()
+    form = ngs.BilinearForm(space, symmetric=True)
+    for w, integrand in zip(weights, integrands, strict=True):
+        form += w * integrand(u, v)
+    pieces = AssembledPieces(space, integrands)
+    return Operator(form, space.FreeDofs(), PieceSum(pieces, weights)), pieces
+
+
+VOLUME = (
+    lambda u, v: ngs.grad(u) * ngs.grad(v) * quadrature.dx(2),
+    lambda u, v: u * v * quadrature.dx(2),
+)
+
+
+def _on(surface):
+    return lambda u, v: u * v * ngs.ds(surface)
+
+
+def test_a_direct_handle_sums_a_piece_sum_instead_of_assembling(built):
+    integrands = (*VOLUME, _on("side"))
+    op, pieces = _pieces(built, integrands, (1.0, 2 - 1j, 3j))
+    handle = prepare(op, symmetry="complex_symmetric", kind="direct")
+    with pytest.raises(Exception, match="assemble"):  # the form is not assembled
+        _ = op.form.mat
+    weights = (1.0, -1 + 1j, 0.5)
+    op, _ = _pieces(built, integrands, weights)
+    handle.refactorize(dataclasses.replace(op, affine=PieceSum(pieces, weights)))
+    fresh = prepare(
+        dataclasses.replace(op, affine=None),
+        symmetry="complex_symmetric",
+        kind="direct",
+    )
+    n = handle.ndof
+    A = fresh.apply(np.eye(n))
+    assert np.abs(handle.apply(np.eye(n)) - A).max() <= 1e-14 * np.abs(A).max()
+    B = np.random.default_rng(3).standard_normal(n) + 0j
+    np.testing.assert_allclose(handle.solve(B), fresh.solve(B), rtol=1e-12)
+
+
+def test_pieces_without_a_common_pattern_leave_the_form_to_assemble(built):
+    # neither surface's graph holds the other's DOFs
+    op, pieces = _pieces(built, (_on("bottom"), _on("side")), (1.0, 1.0))
+    assert pieces.pattern is None
+    laplace = _laplace(built, complex_valued=True, shift=1j)[0]
+    handle = prepare(
+        dataclasses.replace(op, form=laplace.form),
+        symmetry="complex_symmetric",
+        kind="direct",
+    )
+    fresh = prepare(laplace, symmetry="complex_symmetric", kind="direct")
+    n = handle.ndof
+    np.testing.assert_array_equal(handle.apply(np.eye(n)), fresh.apply(np.eye(n)))
 
 
 def test_wrong_shape_raises(built):

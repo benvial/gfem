@@ -8,6 +8,7 @@ the discretization's dispersion error.
 """
 
 import cmath
+import dataclasses
 import math
 
 import jax
@@ -21,6 +22,7 @@ import gfem
 from gfem._engine import driven, terms
 from gfem._engine.driven import DrivenRule
 from gfem._linalg import bddc, prepare
+from gfem._linalg.base import same_pattern
 from gfem._linalg.bddc import BddcHandle
 from gfem._linalg.direct import DirectHandle
 
@@ -459,6 +461,135 @@ def test_operator_pieces_sum_to_the_driven_operator(line):
     assert names[:2] == ["curl_curl", "mass"]
     assert "port p1 R" in names
     assert all(callable(p.theta) for p in op.pieces)
+
+
+def _every_piece_kind(tmp):
+    """A line with a piece of every kind: volume, boundary, sheet and port terms.
+
+    A conductive region, a first- and second-order absorbing side, a one-sided
+    conductor plate, an interior impedance sheet with a fill, a lumped R/L/C
+    port and a wave port (its Robin piece).
+    """
+    eps = 1e-9 * L
+
+    def volume(c):
+        return "left" if c[0] < L / 2 else "right"
+
+    def surface(c):
+        for x, name in ((0.0, "port1"), (L, "port2"), (L / 2, "sheet")):
+            if abs(c[0] - x) < eps:
+                return name
+        if abs(c[2]) < eps:
+            return "bottom"
+        if abs(c[2] - H) < eps:
+            return "top"
+        return "side"
+
+    edges = (np.linspace(0, L, 11), np.linspace(0, W, 3), np.linspace(0, H, 2))
+    path = sm.write_msh22(tmp / "sheet.msh", sm.structured(edges, volume, surface))
+    mesh = gfem.Mesh.from_gmsh(path, length_unit="mm")
+    fill = gfem.SheetField(np.linspace(0.2, 1.0, len(mesh.elements("sheet"))))
+    rlc = {"resistance": R, "inductance": 1e-9, "capacitance": 1e-13}
+    return gfem.Model(
+        mesh,
+        materials={
+            "left": gfem.Material(eps_r=EPS),
+            "right": gfem.Material(eps_r=2.0, conductivity=1.0),
+        },
+        boundaries=[
+            gfem.PEC("top"),
+            gfem.Conductor("bottom", 1e3, 5e-6),
+            gfem.Absorbing("side", order=2),
+            gfem.Impedance("sheet", **rlc, fill=fill),
+        ],
+        ports=[
+            gfem.LumpedPort("p1", "port1", "+z", **rlc),
+            gfem.WavePort("p2", "port2"),
+        ],
+    )
+
+
+def test_a_direct_handle_sums_the_pieces_into_the_assembled_operator(tmp_path):
+    model = _every_piece_kind(tmp_path)
+    frequencies = (4e9, 5e9)
+    options = gfem.SolverOptions(linear_solver="direct")
+    rule = DrivenRule(model, gfem.Driven(frequencies), options)
+    ports = rule._ports(model)
+    names = {p.name for p in ports.operator.pieces}
+    assert {
+        "conductivity",
+        "absorbing",
+        "absorbing order 2",
+        "conductor bottom (one-sided)",
+        "impedance sheet C",
+        "port p1 L",
+        "waveport p2",
+    } <= names
+    handle = None
+    for f in frequencies:
+        omega = 2 * math.pi * f
+        operator = ports.operator_at(omega)
+        if handle is None:
+            handle = DirectHandle.from_operator(operator, "complex_symmetric")
+        else:
+            handle.refactorize(operator)
+        with pytest.raises(Exception, match="assemble"):  # the form is not assembled
+            _ = operator.form.mat
+        form = ports.operator.form(omega)
+        form.Assemble()
+        assert same_pattern(handle._matrix, form.mat)
+        summed = handle._matrix.AsVector().FV().NumPy()
+        assembled = form.mat.AsVector().FV().NumPy()
+        assert np.abs(summed - assembled).max() <= 1e-14 * np.abs(assembled).max()
+
+
+@pytest.mark.parametrize("sweep", ["uniform", "adaptive"])
+def test_a_direct_sweep_by_piece_sums_matches_assembled_operators(
+    line, monkeypatch, sweep
+):
+    problem = gfem.Driven(frequency=(3e9, 4e9, 5e9, 6e9), sweep=sweep)
+    summed = np.asarray(_s(line, problem).s.values)
+    operator_at = driven._Ports.operator_at
+
+    def assembled(ports, omega):  # the operator without its piece sum
+        return dataclasses.replace(operator_at(ports, omega), affine=None)
+
+    monkeypatch.setattr(driven._Ports, "operator_at", assembled)
+    s = np.asarray(_s(line, problem).s.values)
+    np.testing.assert_allclose(summed, s, rtol=0, atol=1e-12)
+
+
+@pytest.mark.parametrize("kind", ["direct", "bddc_gmres"])
+@pytest.mark.parametrize("keep", [True, False])
+def test_a_forward_holds_its_assembled_pieces_with_its_handles(
+    line, monkeypatch, kind, keep
+):
+    options = gfem.SolverOptions(linear_solver=kind)
+    rule = DrivenRule(line, gfem.Driven(frequency=(4e9, 5e9)), options)
+    built = []
+    make_ports = rule._ports
+
+    def spy(model):
+        built.append(make_ports(model))
+        return built[-1]
+
+    monkeypatch.setattr(rule, "_ports", spy)
+    _, entry = rule.forward(line, keep=keep)
+    (ports,) = built
+    system = ports.system
+    vectors = sum(t.vectors.nbytes for t in (*system.excitation, *system.outputs))
+    form = ports.operator.form(1.0)
+    form.Assemble()
+    if not (kind == "direct" and keep):
+        # BDDC assembles forms; a forward that keeps nothing drops its pieces
+        assert entry is None or entry.handle.nbytes == vectors
+        assert ports.nbytes == vectors
+        return
+    # at least the values of the curl-curl and mass pieces, complex
+    assert ports.nbytes >= vectors + 2 * 16 * form.mat.nze
+    assert entry.handle.nbytes == ports.nbytes
+    entry.free()
+    assert ports.nbytes == vectors
 
 
 # --- what the driven problem refuses ---------------------------------------------

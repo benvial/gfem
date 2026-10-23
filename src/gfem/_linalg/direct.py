@@ -64,6 +64,10 @@ class DirectHandle(NgsHandle):
     (``"hermitian"`` on a real space) or a complex symmetric one. Complex
     Hermitian and general operators are refused.
 
+    An operator with a piece sum (``Operator.affine``) is summed, never
+    assembled: into a new matrix at creation, into the handle's own matrix at
+    `refactorize`.
+
     `refactorize` factorizes another operator's values in place: a
     `gfem._linalg.Refactorable` handle. PARDISO gathers them straight into
     its wrapper's buffer and runs its numeric factorization (phase 22);
@@ -87,6 +91,8 @@ class DirectHandle(NgsHandle):
         super().__init__(matrix, freedofs, symmetry, is_complex=is_complex)
         self._solver = self._factor(matrix, freedofs)
         self._gather = self._gather_index(matrix, self._solver)
+        #: The pattern of the pieces whose sums ``matrix`` holds, if summed.
+        self._pattern: ngs.BaseMatrix | None = None
 
     @staticmethod
     def _factor(matrix: ngs.BaseMatrix, freedofs: ngs.BitArray | None):
@@ -126,18 +132,39 @@ class DirectHandle(NgsHandle):
 
     @classmethod
     def from_operator(cls, operator: Operator, symmetry: Symmetry) -> DirectHandle:
-        """Assemble and factorize (see `gfem._linalg.prepare`)."""
+        """Assemble and factorize (see `gfem._linalg.prepare`).
+
+        An operator with a piece sum (``operator.affine``) is summed into a
+        new matrix of its pieces' pattern instead of assembling its form.
+        """
         form = operator.form
         if symmetry == "general" or (symmetry == "hermitian" and form.space.is_complex):
             # refuse before paying for the assembly
             cls._refuse(symmetry)
-        form.Assemble()
-        return cls(
-            form.mat,
+        matrix, pattern = cls._assemble(operator)
+        handle = cls(
+            matrix,
             operator.freedofs,
             symmetry,
             is_complex=bool(form.space.is_complex),
         )
+        handle._pattern = pattern
+        return handle
+
+    @staticmethod
+    def _assemble(operator: Operator) -> tuple[ngs.BaseMatrix, ngs.BaseMatrix | None]:
+        """A new matrix of ``operator`` and the pattern of its pieces, if summed.
+
+        The piece sum when the operator has one whose pieces share a
+        pattern; otherwise the assembled form and ``None``.
+        """
+        affine = operator.affine
+        if affine is not None:
+            matrix = affine.matrix()
+            if matrix is not None:
+                return matrix, affine.pattern
+        operator.form.Assemble()
+        return operator.form.mat, None
 
     @classmethod
     def from_scipy(cls, matrix: sp.sparray | sp.spmatrix) -> DirectHandle:
@@ -158,34 +185,47 @@ class DirectHandle(NgsHandle):
     def refactorize(self, operator: Operator) -> None:
         """Assemble ``operator`` and refactorize (see `gfem._linalg.Refactorable`).
 
-        The new values are copied into the factored matrix (`apply` reads
-        it). PARDISO gathers them into its buffer and factorizes them again
-        on its analysis (phase 22), as ``Update()`` would after projecting
-        the matrix and extracting its triangle once more; without the
-        gather index, ``Update()``. A changed pattern is factorized anew.
+        The new values land in the factored matrix (`apply` reads it): an
+        operator with a piece sum on the pattern this handle's matrix came
+        from is summed into it in place, any other is assembled and its
+        values copied. PARDISO gathers them into its buffer and factorizes
+        them again on its analysis (phase 22), as ``Update()`` would after
+        projecting the matrix and extracting its triangle once more;
+        without the gather index, ``Update()``. A changed pattern is
+        factorized anew.
         """
         matrix = self._matrix
         if self._solver is None or matrix is None:
             raise RuntimeError("This solver handle was freed.")
-        form = operator.form
-        form.Assemble()
+        affine = operator.affine
+        pattern = self._pattern
+        if affine is not None and pattern is not None and affine.pattern is pattern:
+            with self._lock:
+                affine.sum_into(matrix)
+                self._refactor_values(self._solver, matrix)
+            return
+        new, pattern = self._assemble(operator)
         with self._lock:
-            if not same_pattern(matrix, form.mat):
-                self._matrix = form.mat
-                self._solver = self._factor(form.mat, operator.freedofs)
-                self._gather = self._gather_index(form.mat, self._solver)
+            self._pattern = pattern
+            if not same_pattern(matrix, new):
+                self._matrix = new
+                self._solver = self._factor(new, operator.freedofs)
+                self._gather = self._gather_index(new, self._solver)
                 return
-            matrix.AsVector().data = form.mat.AsVector()
-            if self._gather is None:
-                self._solver.Update()
-                return
-            solver = self._solver
-            # the index is in range (checked at creation); "clip" writes
-            # straight into the buffer, "raise" through a temporary copy
-            buffer = solver._data_np  # noqa: SLF001
-            values = np.asarray(form.mat.CSR()[0])
-            np.take(values, self._gather, out=buffer, mode="clip")
-            solver._call_pardiso(22)  # noqa: SLF001
+            matrix.AsVector().data = new.AsVector()
+            self._refactor_values(self._solver, matrix)
+
+    def _refactor_values(self, solver, matrix) -> None:
+        """Factorize the new values of ``solver``'s ``matrix`` on the same plan."""
+        if self._gather is None:
+            solver.Update()
+            return
+        # the index is in range (checked at creation); "clip" writes straight
+        # into the buffer, "raise" through a temporary copy
+        buffer = solver._data_np  # noqa: SLF001
+        values = np.asarray(matrix.CSR()[0])
+        np.take(values, self._gather, out=buffer, mode="clip")
+        solver._call_pardiso(22)  # noqa: SLF001
 
     @staticmethod
     def _refuse(symmetry: Symmetry) -> None:
@@ -216,3 +256,4 @@ class DirectHandle(NgsHandle):
         """Drop the backend, the matrix and the gather index."""
         super().free()
         self._gather = None
+        self._pattern = None
