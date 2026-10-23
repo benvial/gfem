@@ -23,8 +23,19 @@ Surfaces: "signal_wall" (the signal's two sidewalls, y = +-25), "signal"
 "side" (y = +-300), "ends" (x = 0 and 1500 outside the gaps), and the
 port gaps "p1a" / "p1b" (x = 0, y > 0 / y < 0) and "p2a" / "p2b"
 (x = 1500).
+
+``bend.msh`` (um): a slab model of a 90 degree waveguide bend, x and y in
+[-2.5, 2.5] and 0 < z < 0.1 (one cell thick). Volumes "design" (|x|, |y| <
+1.5), "core" (the input arm x < -1.5, |y| <= 0.275, and the output arm
+y < -1.5, |x| <= 0.275) and "cladding" (the rest). Surfaces "plates"
+(z = 0 and 0.1), "port1" (x = -2.5, |y| <= 1.1), "port2" (y = -2.5,
+|x| <= 1.1) and "outer" (every other side face). ``bend_7um.msh`` (um): the
+same in a 7 x 7 um box, x and y in [-3.5, 3.5]; inside |x|, |y| < 2.5 its
+nodes and tetrahedra are those of ``bend.msh``.
 """
 
+import itertools
+import math
 import sys
 from pathlib import Path
 
@@ -120,9 +131,57 @@ def cpw():
     return sm.structured(edges, volume, surface)
 
 
+BEND_CORE, BEND_DESIGN, BEND_PORT = 0.275, 1.5, 1.1  # half-widths (um)
+BEND_H = 0.1  # cell size and slab thickness (um)
+
+
+def bend(half=2.5):
+    """The bend mesh in |x|, |y| <= ``half``, as `structured` returns it."""
+    # +-2.5 stays a grid line so a larger box keeps the 5 x 5 um mesh inside
+    lines = {BEND_CORE, BEND_PORT, BEND_DESIGN, 2.5, half}
+    pts = sorted({-x for x in lines} | lines)
+    xy = np.concatenate(
+        [[pts[0]]]
+        + [
+            np.linspace(a, b, math.ceil((b - a) / BEND_H - 1e-9) + 1)[1:]
+            for a, b in itertools.pairwise(pts)
+        ]
+    )
+    edges = (xy, xy, np.array([0.0, BEND_H]))
+    eps = 1e-9
+
+    def volume(c):
+        x, y, _ = c
+        if abs(x) < BEND_DESIGN and abs(y) < BEND_DESIGN:
+            return "design"
+        if (x < -BEND_DESIGN and abs(y) <= BEND_CORE) or (
+            y < -BEND_DESIGN and abs(x) <= BEND_CORE
+        ):
+            return "core"
+        return "cladding"
+
+    def surface(c):
+        x, y, z = c
+        if abs(z) < eps or abs(z - BEND_H) < eps:
+            return "plates"
+        if abs(x + half) < eps:
+            return "port1" if abs(y) < BEND_PORT else "outer"
+        if abs(y + half) < eps:
+            return "port2" if abs(x) < BEND_PORT else "outer"
+        if abs(x - half) < eps or abs(y - half) < eps:
+            return "outer"
+        if abs(x) < half - eps and abs(y) < half - eps and eps < z < BEND_H - eps:
+            return ""  # the region interfaces carry no boundary
+        raise ValueError(f"unclassified exterior face at {c}")
+
+    return sm.structured(edges, volume, surface)
+
+
 if __name__ == "__main__":
     out = Path(sys.argv[1])
     out.mkdir(parents=True, exist_ok=True)
     print(sm.write_msh22(out / "line.msh", line()))
     print(sm.write_msh22(out / "cpw.msh", cpw()))
     print(sm.write_msh22(out / "sheet_line.msh", sheet_line()))
+    print(sm.write_msh22(out / "bend.msh", bend()))
+    print(sm.write_msh22(out / "bend_7um.msh", bend(half=3.5)))
