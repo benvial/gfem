@@ -89,3 +89,13 @@ def test_straight_guide_reductions():
         == "straight3d_h0.1_half_ymirror_L3.2.msh"
     )
     assert bm.mesh_name(0.07, half=False, box=3.5) == "bend3d_h0.07_full_box3.5.msh"
+
+
+def test_larger_box_keeps_the_5um_mesh_inside(half):
+    nodes, tets, tet_names, _, _ = bm.bend3d(H, half=True, box=3.5)
+    assert np.ptp(nodes[:, 0]) == pytest.approx(7.0)
+
+    def inside(p):
+        return bool((np.abs(p[:, :2]) <= bm.BOX + 1e-12).all())
+
+    assert _cells(nodes, tets, tet_names, keep=inside) == _cells(*half[:3])
