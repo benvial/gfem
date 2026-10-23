@@ -6,6 +6,7 @@ to the 3D discretization error.
 """
 
 import dataclasses
+import itertools
 import math
 from pathlib import Path
 
@@ -13,6 +14,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import structured_meshes as sm
 
 import gfem
 from gfem._engine import driven
@@ -307,3 +309,79 @@ def test_a_uniform_guide_matches_its_hybrid_mode(hybrid_guide):
     assert np.abs(s[:, 1, 1]).max() < 1e-4
     np.testing.assert_allclose(s[:, 1, 0], np.exp(-gamma * HYBRID_LENGTH), atol=1e-4)
     np.testing.assert_allclose(s[:, 0, 1], s[:, 1, 0], atol=1e-8)
+
+
+# --- an open dielectric guide: an absorbing boundary --------------------------
+
+N_CLAD, N_CORE = 1.444, 2.25
+CORE_W, GUIDE_L, HALF_BOX, HALF_PORT = 0.55, 2.0, 1.5, 1.1  # um
+SLAB_H = 0.15  # um: the slab thickness and the mesh size
+F0 = C0 / 1.55e-6
+N_EFF_SLAB = 2.057557  # fundamental mode of the 0.55 um slab, analytic
+
+
+def _grid(lines, h):
+    """Points on ``lines`` with spacing at most ``h`` in between."""
+    pts = sorted(lines)
+    steps = [np.array(pts[:1])]
+    for a, b in itertools.pairwise(pts):
+        steps.append(np.linspace(a, b, math.ceil((b - a) / h - 1e-9) + 1)[1:])
+    return np.concatenate(steps)
+
+
+@pytest.fixture(scope="module")
+def dielectric_guide(tmp_path_factory):
+    # a straight n 2.25 core in n 1.444 cladding between PEC plates, open to
+    # the sides through a second-order absorbing boundary; the port windows
+    # stop short of the box and close their edges with PEC
+    edges = (
+        _grid((-GUIDE_L / 2, GUIDE_L / 2), SLAB_H),
+        _grid(
+            (-HALF_BOX, -HALF_PORT, -CORE_W / 2, CORE_W / 2, HALF_PORT, HALF_BOX),
+            SLAB_H,
+        ),
+        np.array([0.0, SLAB_H]),
+    )
+    eps = 1e-9
+
+    def volume(c):
+        return "core" if abs(c[1]) <= CORE_W / 2 else "cladding"
+
+    def surface(c):
+        x, y, z = c
+        if abs(z) < eps or abs(z - SLAB_H) < eps:
+            return "plates"
+        for x0, name in ((-GUIDE_L / 2, "port1"), (GUIDE_L / 2, "port2")):
+            if abs(x - x0) < eps:
+                return name if abs(y) < HALF_PORT else "outer"
+        return "outer" if abs(abs(y) - HALF_BOX) < eps else ""
+
+    path = tmp_path_factory.mktemp("guide") / "guide.msh"
+    sm.write_msh22(path, sm.structured(edges, volume, surface))
+    model = gfem.Model(
+        gfem.Mesh.from_gmsh(path, length_unit="um"),
+        materials={
+            "cladding": gfem.Material(eps_r=N_CLAD**2),
+            "core": gfem.Material(eps_r=N_CORE**2),
+        },
+        boundaries=[gfem.PEC("plates"), gfem.Absorbing("outer", order=2)],
+        ports=[
+            gfem.WavePort("p1", "port1", pec_edges=("outer",)),
+            gfem.WavePort("p2", "port2", pec_edges=("outer",)),
+        ],
+    )
+    options = gfem.SolverOptions(order=2, linear_solver="direct")
+    return gfem.solve(model, gfem.Driven(F0, excite=None), options=options)
+
+
+def test_an_open_dielectric_guide_transmits_its_fundamental_mode(dielectric_guide):
+    s = np.asarray(dielectric_guide.s.values)[0]
+    s11, s21, s12 = s[0, 0], s[1, 0], s[0, 1]
+    assert abs(s21) ** 2 > 0.999
+    assert abs(s11) ** 2 < 1e-4
+    assert abs(s11) ** 2 + abs(s21) ** 2 <= 1 + 1e-6  # passive
+    assert abs(s12 - s21) < 1e-8  # reciprocal
+    n_eff = float(np.real(np.asarray(dielectric_guide.port_modes["p1"].n_eff)[0]))
+    assert abs(n_eff - N_EFF_SLAB) < 1e-4
+    beta = 2 * math.pi * F0 / C0 * n_eff
+    assert abs(np.angle(s21 * np.exp(1j * beta * GUIDE_L * 1e-6))) < 0.02
