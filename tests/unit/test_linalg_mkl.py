@@ -152,6 +152,99 @@ def test_pardiso_refactorization_keeps_its_plan_and_solves_like_a_fresh_handle(
     assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
 
 
+@needs_mkl
+def test_pardiso_refactorization_gathers_the_new_values_into_the_wrapper_buffer(
+    built, monkeypatch
+):
+    handle = prepare(
+        _laplace(built, complex_valued=True, shift=1 - 2j)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+    )
+    inverse = handle._inverse
+
+    def no_extraction(self):  # noqa: ARG001
+        raise AssertionError("the wrapper extracted the upper triangle again")
+
+    monkeypatch.setattr(type(inverse), "get_csr", no_extraction)
+    op, _ = _laplace(built, complex_valued=True, shift=3 + 1j)
+    handle.refactorize(op)
+    monkeypatch.undo()
+    fresh = prepare(
+        _laplace(built, complex_valued=True, shift=3 + 1j)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+    )
+    # the fresh wrapper's buffer is its own extraction of the new values
+    np.testing.assert_array_equal(inverse._data_np, fresh._inverse._data_np)
+    # the full matrix stays current: `apply` reads it
+    X = np.ones(handle.ndof, complex)
+    np.testing.assert_array_equal(handle.apply(X), fresh.apply(X))
+
+
+@needs_mkl
+@pytest.mark.parametrize("change", ["no phase call", "another buffer order"])
+def test_a_pardiso_wrapper_gfem_cannot_gather_into_refactorizes_by_update(
+    built, monkeypatch, change
+):
+    # another NGSolve version may name its PARDISO call otherwise, or order
+    # its buffer otherwise: PARDISO stays, and refactorizes through Update()
+    from ngsolve.solvers import mkl_pardiso
+
+    factors = []
+
+    class Older(mkl_pardiso.MKLPardiso):
+        def __getattribute__(self, name):
+            caller = sys._getframe(1).f_globals.get("__name__")
+            value = super().__getattribute__(name)
+            if caller == mkl_pardiso.__name__:
+                return value
+            if change == "no phase call" and name == "_call_pardiso":
+                raise AttributeError(name)
+            if change == "another buffer order" and name == "_data_np":
+                return value[::-1]
+            return value
+
+        def Factor(self):  # noqa: N802 (NGSolve's name)
+            factors.append(self)
+            super().Factor()
+
+    ngs.la.RegisterInverseType("gfem_older_pardiso", Older)
+    monkeypatch.setattr(direct, "PARDISO", "gfem_older_pardiso")
+    handle = prepare(
+        _laplace(built, complex_valued=True, shift=1 - 2j)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+    )
+    inverse = handle._inverse
+    assert type(inverse) is Older
+    factors.clear()
+    op, space = _laplace(built, complex_valued=True, shift=3 + 1j)
+    handle.refactorize(op)
+    assert handle._inverse is inverse
+    assert factors == [inverse]  # Update(): the wrapper's own Factor
+    monkeypatch.undo()
+    fresh = prepare(
+        _laplace(built, complex_valued=True, shift=3 + 1j)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+    )
+    rng = np.random.default_rng(5)
+    B = rng.standard_normal(space.ndof) + 1j * rng.standard_normal(space.ndof)
+    X, ref = handle.solve(B), fresh.solve(B)
+    assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
+
+
+@needs_mkl
+def test_pardiso_memory_counts_the_gather_index(built):
+    op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
+    handle = prepare(op, symmetry="complex_symmetric", kind="direct")
+    index = handle._gather
+    held = handle.nbytes
+    handle._gather = None
+    assert held - handle.nbytes == index.nbytes > 0
+
+
 # --- no reliance on NGSolve's default inverse ---------------------------------------
 
 
