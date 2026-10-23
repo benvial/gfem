@@ -20,6 +20,7 @@ get-started
 
 tutorials/topology
 tutorials/shape
+tutorials/bend
 ```
 
 ```{toctree}
