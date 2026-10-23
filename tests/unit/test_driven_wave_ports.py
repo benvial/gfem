@@ -311,7 +311,7 @@ def test_a_uniform_guide_matches_its_hybrid_mode(hybrid_guide):
     np.testing.assert_allclose(s[:, 0, 1], s[:, 1, 0], atol=1e-8)
 
 
-# --- an open dielectric guide: absorbing sides --------------------------------
+# --- an open dielectric guide: an absorbing boundary --------------------------
 
 N_CLAD, N_CORE = 1.444, 2.25
 CORE_W, GUIDE_L, HALF_BOX, HALF_PORT = 0.55, 2.0, 1.5, 1.1  # um
@@ -332,8 +332,8 @@ def _grid(lines, h):
 @pytest.fixture(scope="module")
 def dielectric_guide(tmp_path_factory):
     # a straight n 2.25 core in n 1.444 cladding between PEC plates, open to
-    # the sides through second-order absorbing walls; the port windows stop
-    # short of the box and close their edges with PEC
+    # the sides through a second-order absorbing boundary; the port windows
+    # stop short of the box and close their edges with PEC
     edges = (
         _grid((-GUIDE_L / 2, GUIDE_L / 2), SLAB_H),
         _grid(
