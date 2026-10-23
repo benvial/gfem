@@ -61,7 +61,7 @@ def _laplace(built, complex_valued=False, shift=0.0):
     ("complex_valued", "symmetry", "matrix_type"),
     [(False, "hermitian", -2), (True, "complex_symmetric", 6)],
 )
-def test_direct_is_pardiso_with_metis_exactly_when_mkl_is_installed(
+def test_direct_is_pardiso_with_parallel_metis_exactly_when_mkl_is_installed(
     built, complex_valued, symmetry, matrix_type
 ):
     op, space = _laplace(built, complex_valued, shift=1 - 2j if complex_valued else 0)
@@ -71,7 +71,7 @@ def test_direct_is_pardiso_with_metis_exactly_when_mkl_is_installed(
         assert type(inverse).__name__.startswith("SparseCholesky")
         return
     assert type(inverse).__name__ == "MKLPardiso"
-    assert inverse._params[1] == 2  # iparm[1] = 2: METIS nested dissection
+    assert inverse._params[1] == 3  # iparm[1] = 3: OpenMP parallel METIS
     # iparm[7] = 0: no iterative refinement (MKL's default), not the up to 16
     # steps of NGSolve's defaults
     assert inverse._params[7] == 0
