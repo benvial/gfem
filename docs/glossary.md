@@ -101,6 +101,21 @@ Air box
   The truncated exterior region between the device and the
   {term}`absorbing boundary`.
 
+Slab model
+  A {term}`model` one element thick between PEC plates, whose field is normal to
+  the plates and uniform through the thickness, so it solves a 2D TM problem;
+  how gfem poses top-view (effective-index) photonic and parallel-plate problems.
+
+Mirror half model
+  A {term}`model` cut on a symmetry plane of the stack and design, with a PMC or
+  PEC on the plane chosen by the parity of the wanted mode; it solves half the
+  volume for the same S-matrix.
+
+TE-like mode
+TM-like mode
+  A guided mode of a strip waveguide whose transverse electric field lies mostly
+  parallel to the wafer (TE-like) or normal to it (TM-like).
+
 Port
   A named excitation and measurement surface, lumped or wave, whose order in the
   {term}`model` fixes the order of the network parameters.
@@ -129,6 +144,11 @@ Job
 Field
   A solution quantity (electric field, potential) on the model's mesh, carried
   by a result with its quantity, unit, space, order and support.
+
+Run record
+  The committed outputs of a run too costly for CI (its solver outputs,
+  settings, environment and the hash of the script that produced them), which a
+  docs page reads instead of solving.
 
 Reference impedance
   The impedance per {term}`port` that S-parameters are normalized to: the port
