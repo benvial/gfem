@@ -8,6 +8,7 @@ tutorials' outputs and the front page's hero data are committed, and
 
 import json
 import os
+import shutil
 import sys
 import tomllib
 from pathlib import Path
@@ -62,6 +63,9 @@ nb_output_stderr = "warn"  # stray stderr is a warning, so -W fails on it
 # every figure a text/html light/dark pair next to its plain image/png
 # (docs/_ext/gfem_figures.py). MyST-NB's HTML priority puts text/html before
 # image/png, so the site shows the pair and Jupyter or GitHub the plain PNG.
+# PyVista plotters take the same route (docs/_ext/gfem_scenes.py): their
+# text/html is an iframe of trame-vtk's offline vtk.js viewer on a committed
+# scene, _static/scenes/*.vtksz; setup() below copies the viewer to _static/.
 # --- end figure pipeline -------------------------------------------------------
 
 # --- Docstrings: gfem uses Google style ----------------------------------------
@@ -355,7 +359,8 @@ def setup(app):
     """Fail a strict build (GFEM_DOCS_STRICT=1) that lacks the hero data.
 
     Raised from config-inited, not while conf.py runs, so Sphinx prints the
-    message instead of a crash report.
+    message instead of a crash report. After an HTML build, also copy the
+    offline viewer of the tutorials' 3D scenes to _static/.
     """
 
     def require_front(_app, config) -> None:
@@ -369,3 +374,13 @@ def setup(app):
             raise ConfigError(msg)
 
     app.connect("config-inited", require_front)
+
+    def copy_scene_viewer(app, exception) -> None:
+        """Put trame-vtk's offline viewer next to the scenes it opens."""
+        if exception is not None or app.builder.format != "html":
+            return
+        from trame_vtk.tools.vtksz2html import HTML_VIEWER_PATH
+
+        shutil.copy(HTML_VIEWER_PATH, Path(app.outdir) / "_static")
+
+    app.connect("build-finished", copy_scene_viewer)

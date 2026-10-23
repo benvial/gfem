@@ -1,7 +1,8 @@
 # gfem matplotlib style (light), applied by `just notebooks` only (docs/_ext/gfem_figures.py).
-# Values are the site's colour tokens (docs/_static/gfem.css). Series are ink and greys told
-# apart by line style, so no plot relies on hue (the Instrument world keeps hue for status;
-# the signal red is reserved for the sensitivity colormap).
+# Values are the site's colour tokens (docs/_static/gfem.css). Series take categorical hues
+# (blue, orange, aqua, yellow, magenta, violet; checked for colour-vision deficiency on the
+# light ground) and a line style each, so no plot relies on hue alone. No series is green
+# (the FD-verified status) or red (the signal red is reserved for the sensitivity colormap).
 # docs/_ext/gfem_figures.py pairs every colour here with the same key in gfem-dark.mplstyle.
 font.family: Barlow, DejaVu Sans
 font.size: 10.5
@@ -17,7 +18,7 @@ axes.spines.right: False
 axes.grid: True
 grid.color: dcdcdc
 grid.linewidth: 0.6
-axes.prop_cycle: cycler('color', ['262626', '262626', '6b6b6b', '6b6b6b', '8f8f8b', '262626']) + cycler('linestyle', ['-', '--', '-', '--', '-', ':'])
+axes.prop_cycle: cycler('color', ['2a78d6', 'eb6834', '1baf7a', 'eda100', 'e87ba4', '6250d6']) + cycler('linestyle', ['-', '--', ':', '-.', '-', '--'])
 lines.linewidth: 1.5
 patch.edgecolor: 262626
 xtick.color: 6b6b6b

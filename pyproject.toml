@@ -57,8 +57,14 @@ xarray = ["xarray>=2024.10"]
 [dependency-groups]
 dev = [{ include-group = "lint" }, { include-group = "test" }]
 # Running the tutorial notebooks (docs/tutorials): an external optimizer, plots,
-# and a headless notebook runner.
-docs = ["ipykernel>=6.29", "matplotlib>=3.9", "nbconvert>=7.16", "optax>=0.2.4"]
+# 3D views and a headless notebook runner.
+docs = [
+  "ipykernel>=6.29",
+  "matplotlib>=3.9",
+  "nbconvert>=7.16",
+  "optax>=0.2.4",
+  "pyvista>=0.44",
+]
 lint = ["ruff>=0.14", "ty==0.0.85"]
 # Building the docs site (docs/conf.py), on top of `docs`. Python >= 3.13 only
 # ([tool.uv.dependency-groups] below): Sphinx 9.2 does not support 3.12.
@@ -71,6 +77,10 @@ site = [
   "sphinx-autoapi~=3.8",
   "sphinx-copybutton==0.5.2",
   "sphinxext-opengraph",
+  # The tutorials' 3D scenes: exported by `just notebooks` (trame-pyvista),
+  # opened on the site by trame-vtk's offline vtk.js viewer.
+  "trame-pyvista",
+  "trame-vtk",
 ]
 test = ["pytest>=8.3", "pytest-cov>=6.0", "xarray>=2024.10"]
 

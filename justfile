@@ -6,12 +6,16 @@ set shell := ["bash", "-eo", "pipefail", "-c"]
 
 docs_env := "uv run --python 3.13 --group docs --group site"
 
+# The tutorials' 3D views (PyVista) render off-screen, with no display server.
+export VTK_DEFAULT_OPENGL_WINDOW := "vtkOSOpenGLRenderWindow"
+
 # List the recipes.
 default:
     @just --list
 
 # Re-execute docs/tutorials/*.ipynb in place with the docs IPython profile (gfem style, light/dark figure pairs).
 notebooks:
+    rm -rf docs/_static/scenes  # the 3D scenes the run exports (gfem_scenes.py)
     IPYTHONDIR="{{ justfile_directory() }}/docs/_ipython" JAX_PLATFORMS=cpu \
     {{ docs_env }} jupyter nbconvert --to notebook --execute --inplace \
         --ExecutePreprocessor.timeout=1800 --ExecutePreprocessor.record_timing=False \

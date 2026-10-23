@@ -73,6 +73,7 @@ jobs:
     - name: Execute every tutorial end to end
       env:
         JAX_PLATFORMS: cpu
+        VTK_DEFAULT_OPENGL_WINDOW: vtkOSOpenGLRenderWindow
       run: >-
         uv run --group docs jupyter nbconvert --to notebook --execute
         --ExecutePreprocessor.timeout=1800 --output-dir "$RUNNER_TEMP"
