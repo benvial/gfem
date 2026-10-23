@@ -71,7 +71,9 @@ figure.grad figcaption span:last-child { white-space: nowrap; font: var(--t-data
 .tip { position: absolute; font: var(--t-data); background: var(--ink); color: var(--ground); padding: 5px 8px; pointer-events: none; white-space: nowrap; border-radius: 2px; }
 
 /* sections share one grammar: heading + claim left, proof right */
-section.s { border-top: 1px solid var(--hair); padding: var(--s-8) 0; display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: var(--s-7); }
+section.s { padding: var(--s-8) 0; display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: var(--s-7); }
+/* bands: the sections alternate paper and the grey ground, full-bleed past the 1320px container */
+section.s:nth-of-type(odd) { border-image: conic-gradient(var(--paper) 0 0) fill 0 / / 0 100vmax; }  /* outset paint: no layout, no scroll */
 section.s h2 { font: 500 36px/1.1 var(--f-text); letter-spacing: -.025em; color: var(--ink); margin: 0 0 var(--s-5); text-wrap: balance; }
 section.s .claim p { color: var(--ink-2); max-width: 44ch; margin: 0 0 var(--s-4); }
 section.s .claim .src { font: var(--t-small); color: var(--muted); }

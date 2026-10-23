@@ -7,7 +7,7 @@
 
 /* ---------------------------------------------------------------- 1. tokens */
 :root, html.light {
-  --ground: #f2f2f2; --panel: #fafafa; --ink: #262626; --ink-2: #3d3d3d; --muted: #6b6b6b;
+  --ground: #f2f2f2; --paper: #ffffff; --panel: #fafafa; --ink: #262626; --ink-2: #3d3d3d; --muted: #6b6b6b;
   --hair: #dcdcdc; --mesh: #c4c4c4;
   /* the signal: the live control, "you are here", focus and the sensitivity ramp */
   --accent: #b5262f; --accent-hover: #951c24; --accent-ink: #ffffff; --accent-soft: #ecd5d6;
@@ -40,7 +40,7 @@
   color-scheme: light;
 }
 html.dark {
-  --ground: #1b1b1b; --panel: #232323; --ink: #ececea; --ink-2: #c8c8c5; --muted: #9a9a96;
+  --ground: #1b1b1b; --paper: #232323; --panel: #232323; --ink: #ececea; --ink-2: #c8c8c5; --muted: #9a9a96;
   --hair: #333333; --mesh: #474747;
   /* dark: the same red. Text, LEDs and focus lift lightness only (4.5:1 on the ground);
      the button and the ramp keep a saturated red. */
@@ -196,6 +196,8 @@ html[data-color-mode="light"] .gfem-theme-light, html[data-color-mode="dark"] .g
 }
 
 /* ------------------------------------------------------- 3d. article + type */
+/* the reading column: paper on the grey ground the header and sidebars sit on */
+.sy-main { background: var(--paper); }
 .sy-main > .flex > div { padding: var(--s-6) var(--s-7) var(--s-8); max-width: none; }
 .yue { font: var(--t-body); color: var(--ink-2); }
 .yue section > :not(h1, section), .yue > :not(section) { max-width: var(--measure); }
@@ -223,7 +225,7 @@ html[data-color-mode="light"] .gfem-theme-light, html[data-color-mode="dark"] .g
 .yue table :is(th, td) { border-left: 0 !important; border-right: 0 !important; }
 .yue thead th { border-top: 1px solid var(--ink); font: var(--t-label); text-transform: uppercase; letter-spacing: .08em; color: var(--ink); }
 /* breadcrumbs: a quiet line above the title (titles may hold "gfem", so no uppercase here) */
-.sy-breadcrumbs { position: static; padding: var(--s-6) var(--s-7) 0; display: block !important; }
+.sy-breadcrumbs { position: static; background: none; padding: var(--s-6) var(--s-7) 0; display: block !important; }
 .sy-breadcrumbs-inner { border-bottom: 0; padding: 0; }
 .sy-breadcrumbs ol { font: var(--t-data); color: var(--muted); }
 .sy-breadcrumbs ol a { color: var(--muted); text-decoration: underline; text-decoration-color: var(--hair); text-underline-offset: 3px; }

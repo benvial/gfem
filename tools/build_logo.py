@@ -59,9 +59,13 @@ TEXT_FONT = FONTS / "Barlow-Regular.ttf"
 
 RATIO = 0.78  # height / width of the nabla
 
-# Ink colours. Ink only: the accent belongs to the site, not the logo.
-INK_LIGHT_BG = "#16181d"  # mark on light backgrounds
-INK_DARK_BG = "#e6e8eb"  # mark on dark backgrounds
+# Ink colours: the wordmark and the social card's headline.
+INK_LIGHT_BG = "#16181d"  # text on light backgrounds
+INK_DARK_BG = "#e6e8eb"  # text on dark backgrounds
+# Mark colours: the nabla is the site's signal red (gfem.css --accent on light; on
+# dark, --accent-field, which keeps the hue and clears 3:1 on the dark ground).
+MARK_LIGHT_BG = "#b5262f"
+MARK_DARK_BG = "#d63038"
 GROUND = "#ffffff"
 
 # Social card (Open Graph, GitHub social preview).
@@ -368,11 +372,16 @@ def master(p, N=2400):
 
 # --- build ------------------------------------------------------------------
 
-THEMES = {  # file suffix: fill
-    "": "currentColor",  # one colour, inherits; for inline SVG and CSS mask use
-    "-light": INK_LIGHT_BG,  # dark ink, for light backgrounds
-    "-dark": INK_DARK_BG,  # light ink, for dark backgrounds
+THEMES = {  # file suffix: (text fill, mark fill)
+    "": ("currentColor", "currentColor"),  # one colour, inherits; inline SVG, CSS mask
+    "-light": (INK_LIGHT_BG, MARK_LIGHT_BG),  # dark ink, for light backgrounds
+    "-dark": (INK_DARK_BG, MARK_DARK_BG),  # light ink, for dark backgrounds
 }
+
+
+def mark_fill(fill):
+    """Return the attribute that paints the mark in a group filled for the text."""
+    return "" if fill == "currentColor" else f' fill="{fill}"'
 
 
 def social_card(lockup_body, lockup_view, text_font):
@@ -427,12 +436,12 @@ def build(out, font, text_font):
     x0, y0, x1, y1 = path_bounds(d)
     d = shift(d, -x0, -y0)
     mw, mh = fmt(x1 - x0), fmt(y1 - y0)
-    for suf, fill in THEMES.items():
-        write(f"gfem-mark{suf}.svg", svg((0, 0, mw, mh), f'<path d="{d}"/>', fill=fill))
+    for suf, (_, mark) in THEMES.items():
+        write(f"gfem-mark{suf}.svg", svg((0, 0, mw, mh), f'<path d="{d}"/>', fill=mark))
 
     # wordmark: font units, y down, baseline at 0; tight viewBox
     wd, (wx0, wy0, wx1, wy1), cap = wordmark(font)
-    for suf, fill in THEMES.items():
+    for suf, (fill, _) in THEMES.items():
         view = (wx0, wy0, wx1 - wx0, wy1 - wy0)
         write(f"gfem-wordmark{suf}.svg", svg(view, f'<path d="{wd}"/>', fill=fill))
 
@@ -443,13 +452,16 @@ def build(out, font, text_font):
     s = (cap + over) / mh
     gap = 150
     lw = mw * s + gap
-    body = (
-        f'<path transform="translate(0 {-cap}) scale({s:.4f})" d="{d}"/>'
-        f'<path transform="translate({lw:.1f} 0)" d="{wd}"/>'
-    )
+    def lockup(mark):
+        return (
+            f'<path{mark_fill(mark)} transform="translate(0 {-cap}) scale({s:.4f})"'
+            f' d="{d}"/>'
+            f'<path transform="translate({lw:.1f} 0)" d="{wd}"/>'
+        )
+
     lockup_view = (0, -cap, round(lw + wx1), round(wy1 + cap))
-    for suf, fill in THEMES.items():
-        write(f"gfem-lockup{suf}.svg", svg(lockup_view, body, fill=fill))
+    for suf, (fill, mark) in THEMES.items():
+        write(f"gfem-lockup{suf}.svg", svg(lockup_view, lockup(mark), fill=fill))
 
     # favicon.svg: small master, adapts to the browser's colour scheme
     fd = master(SMALL)
@@ -458,32 +470,32 @@ def build(out, font, text_font):
     write(
         "favicon.svg",
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
-        f"<style>path{{fill:{INK_LIGHT_BG}}}@media (prefers-color-scheme:dark)"
-        f"{{path{{fill:{INK_DARK_BG}}}}}</style>"
+        f"<style>path{{fill:{MARK_LIGHT_BG}}}@media (prefers-color-scheme:dark)"
+        f"{{path{{fill:{MARK_DARK_BG}}}}}</style>"
         f'<path d="{fd}"/></svg>\n',
     )
-    small = svg((0, 0, 100, 100), f'<path d="{fd}"/>', fill=INK_LIGHT_BG)
+    small = svg((0, 0, 100, 100), f'<path d="{fd}"/>', fill=MARK_LIGHT_BG)
     centred = f"translate({(100 - mw) / 2:.2f} {(100 - mh) / 2:.2f})"
     big = svg(
-        (0, 0, 100, 100), f'<path transform="{centred}" d="{d}"/>', fill=INK_LIGHT_BG
+        (0, 0, 100, 100), f'<path transform="{centred}" d="{d}"/>', fill=MARK_LIGHT_BG
     )
 
     # rasters: 16 px hand-tuned, 32 and 48 from the small master, larger from the
     # large master. The 16/32/48 PNGs only feed the ICO, so they stay temporary.
     for z in (192, 512):
         png(out / f"icon-{z}.png", rasterize(big, z, z))
-    # apple-touch-icon: opaque ink tile, light mark at about 62 % width, raised
+    # apple-touch-icon: opaque white tile, red mark at about 62 % width, raised
     k = 62 / mw
     tile = (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
-        f'<rect width="100" height="100" fill="{INK_LIGHT_BG}"/>'
-        f'<path fill="{INK_DARK_BG}" transform="translate({(100 - mw * k) / 2:.2f} '
+        f'<rect width="100" height="100" fill="{GROUND}"/>'
+        f'<path fill="{MARK_LIGHT_BG}" transform="translate({(100 - mw * k) / 2:.2f} '
         f'{(100 - mh * k) / 2 - 2:.2f}) scale({k:.4f})" d="{d}"/></svg>'
     )
     png(out / "apple-touch-icon.png", rasterize(tile, 180, 180))
     with tempfile.TemporaryDirectory() as tmp:
         t = Path(tmp)
-        alpha_png(alpha_map(FAVICON_16), INK_LIGHT_BG).save(t / "favicon-16.png")
+        alpha_png(alpha_map(FAVICON_16), MARK_LIGHT_BG).save(t / "favicon-16.png")
         png(t / "favicon-32.png", rasterize(small, 32, 32))
         png(t / "favicon-48.png", rasterize(small, 48, 48))
         sizes = [str(t / f"favicon-{z}.png") for z in (16, 32, 48)]
@@ -491,7 +503,7 @@ def build(out, font, text_font):
 
     # social card: opaque, 2:1
     W, H = OG_SIZE
-    card = social_card(body, lockup_view, text_font)
+    card = social_card(lockup(MARK_LIGHT_BG), lockup_view, text_font)
     png(out / "gfem-og.png", rasterize(card, W, H, bg=GROUND))
 
 
