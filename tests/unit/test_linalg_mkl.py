@@ -61,7 +61,7 @@ def _laplace(built, complex_valued=False, shift=0.0):
     ("complex_valued", "symmetry", "matrix_type"),
     [(False, "hermitian", -2), (True, "complex_symmetric", 6)],
 )
-def test_direct_is_pardiso_with_metis_exactly_when_mkl_is_installed(
+def test_direct_is_pardiso_with_parallel_metis_exactly_when_mkl_is_installed(
     built, complex_valued, symmetry, matrix_type
 ):
     op, space = _laplace(built, complex_valued, shift=1 - 2j if complex_valued else 0)
@@ -71,7 +71,7 @@ def test_direct_is_pardiso_with_metis_exactly_when_mkl_is_installed(
         assert type(inverse).__name__.startswith("SparseCholesky")
         return
     assert type(inverse).__name__ == "MKLPardiso"
-    assert inverse._params[1] == 2  # iparm[1] = 2: METIS nested dissection
+    assert inverse._params[1] == 3  # iparm[1] = 3: OpenMP parallel METIS
     # iparm[7] = 0: no iterative refinement (MKL's default), not the up to 16
     # steps of NGSolve's defaults
     assert inverse._params[7] == 0
@@ -150,6 +150,157 @@ def test_pardiso_refactorization_keeps_its_plan_and_solves_like_a_fresh_handle(
     B = rng.standard_normal(space.ndof) + 1j * rng.standard_normal(space.ndof)
     X, ref = handle.solve(B), fresh.solve(B)
     assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
+
+
+@needs_mkl
+def test_pardiso_refactorization_gathers_the_new_values_into_the_wrapper_buffer(
+    built, monkeypatch
+):
+    handle = prepare(
+        _laplace(built, complex_valued=True, shift=1 - 2j)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+    )
+    inverse = handle._inverse
+
+    def no_extraction(self):  # noqa: ARG001
+        raise AssertionError("the wrapper extracted the upper triangle again")
+
+    monkeypatch.setattr(type(inverse), "get_csr", no_extraction)
+    op, _ = _laplace(built, complex_valued=True, shift=3 + 1j)
+    handle.refactorize(op)
+    monkeypatch.undo()
+    fresh = prepare(
+        _laplace(built, complex_valued=True, shift=3 + 1j)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+    )
+    # the fresh wrapper's buffer is its own extraction of the new values
+    np.testing.assert_array_equal(inverse._data_np, fresh._inverse._data_np)
+    # the full matrix stays current: `apply` reads it
+    X = np.ones(handle.ndof, complex)
+    np.testing.assert_array_equal(handle.apply(X), fresh.apply(X))
+
+
+@needs_mkl
+@pytest.mark.parametrize("change", ["no phase call", "another buffer order"])
+def test_a_pardiso_wrapper_gfem_cannot_gather_into_refactorizes_by_update(
+    built, monkeypatch, change
+):
+    # another NGSolve version may name its PARDISO call otherwise, or order
+    # its buffer otherwise: PARDISO stays, and refactorizes through Update()
+    from ngsolve.solvers import mkl_pardiso
+
+    factors = []
+
+    class Older(mkl_pardiso.MKLPardiso):
+        def __getattribute__(self, name):
+            caller = sys._getframe(1).f_globals.get("__name__")
+            value = super().__getattribute__(name)
+            if caller == mkl_pardiso.__name__:
+                return value
+            if change == "no phase call" and name == "_call_pardiso":
+                raise AttributeError(name)
+            if change == "another buffer order" and name == "_data_np":
+                return value[::-1]
+            return value
+
+        def Factor(self):  # noqa: N802 (NGSolve's name)
+            factors.append(self)
+            super().Factor()
+
+    ngs.la.RegisterInverseType("gfem_older_pardiso", Older)
+    monkeypatch.setattr(direct, "PARDISO", "gfem_older_pardiso")
+    handle = prepare(
+        _laplace(built, complex_valued=True, shift=1 - 2j)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+    )
+    inverse = handle._inverse
+    assert type(inverse) is Older
+    factors.clear()
+    op, space = _laplace(built, complex_valued=True, shift=3 + 1j)
+    handle.refactorize(op)
+    assert handle._inverse is inverse
+    assert factors == [inverse]  # Update(): the wrapper's own Factor
+    monkeypatch.undo()
+    fresh = prepare(
+        _laplace(built, complex_valued=True, shift=3 + 1j)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+    )
+    rng = np.random.default_rng(5)
+    B = rng.standard_normal(space.ndof) + 1j * rng.standard_normal(space.ndof)
+    X, ref = handle.solve(B), fresh.solve(B)
+    assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
+
+
+@needs_mkl
+@pytest.mark.parametrize(
+    "failure", ["a matrix without CSR", "a failing CSR", "a failing wrapper buffer"]
+)
+def test_a_gather_index_gfem_cannot_build_leaves_refactorization_to_update(
+    built, monkeypatch, failure
+):
+    # building the gather index never raises: without one, PARDISO stays and
+    # refactorizes through Update()
+    from ngsolve.solvers import mkl_pardiso
+
+    def from_gfem():
+        return sys._getframe(2).f_globals.get("__name__", "").startswith("gfem.")
+
+    form = _laplace(built, complex_valued=True)[0].form
+    form.Assemble()
+    matrix_type = type(form.mat)
+    csr = matrix_type.CSR
+
+    def failing_csr(self):
+        if not from_gfem():
+            return csr(self)
+        if failure == "a matrix without CSR":
+            raise AttributeError("CSR")
+        raise RuntimeError("no CSR of this matrix")
+
+    class FailingBuffer(mkl_pardiso.MKLPardiso):
+        def __getattribute__(self, name):
+            if name == "_data_np" and from_gfem():
+                raise RuntimeError("no buffer")
+            return super().__getattribute__(name)
+
+    ngs.la.RegisterInverseType("gfem_failing_buffer_pardiso", FailingBuffer)
+    if failure == "a failing wrapper buffer":
+        monkeypatch.setattr(direct, "PARDISO", "gfem_failing_buffer_pardiso")
+    else:
+        monkeypatch.setattr(matrix_type, "CSR", failing_csr)
+    handle = prepare(
+        _laplace(built, complex_valued=True, shift=1 - 2j)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+    )
+    assert handle._gather is None
+    monkeypatch.undo()
+    assert isinstance(handle._inverse, mkl_pardiso.MKLPardiso)
+    op, space = _laplace(built, complex_valued=True, shift=3 + 1j)
+    handle.refactorize(op)
+    fresh = prepare(
+        _laplace(built, complex_valued=True, shift=3 + 1j)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+    )
+    rng = np.random.default_rng(6)
+    B = rng.standard_normal(space.ndof) + 1j * rng.standard_normal(space.ndof)
+    X, ref = handle.solve(B), fresh.solve(B)
+    assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
+
+
+@needs_mkl
+def test_pardiso_memory_counts_the_gather_index(built):
+    op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
+    handle = prepare(op, symmetry="complex_symmetric", kind="direct")
+    index = handle._gather
+    held = handle.nbytes
+    handle._gather = None
+    assert held - handle.nbytes == index.nbytes > 0
 
 
 # --- no reliance on NGSolve's default inverse ---------------------------------------

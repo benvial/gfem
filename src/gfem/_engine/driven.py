@@ -7,10 +7,13 @@ default, each port starting from its solution at the previous frequency,
 or one LDL^T factorization (``direct``: MKL PARDISO with the ``mkl`` extra,
 NGSolve sparse Cholesky otherwise). A sweep keeps one base handle
 (`_SweepHandle`): a direct solver plans at the first frequency and
-refactorizes at the others. With ``SolverOptions.frequency_workers`` above
-1, a uniform sweep splits into contiguous blocks of frequencies, each swept
-the same way in a frequency worker (`gfem._engine.workers`), joined in
-frequency order; the backward pass stays in this process. ``A`` is complex
+refactorizes at the others, and sums each frequency's matrix from the
+pieces ``A_k`` assembled once per forward (the piece sum, kept with the
+port terms `_Ports` for the backward pass) instead of assembling it.
+With ``SolverOptions.frequency_workers`` above 1, a uniform sweep splits
+into contiguous blocks of frequencies, each swept the same way in a
+frequency worker (`gfem._engine.workers`), joined in frequency order; the
+backward pass stays in this process. ``A`` is complex
 symmetric (A^T = A), and a port's excitation vector is proportional to its
 voltage functional, so S is symmetric to solver precision.
 
@@ -84,6 +87,7 @@ from gfem._linalg import (
     prepare,
     refactorize_or_prepare,
 )
+from gfem._linalg.pieces import AssembledPieces, PieceSum
 from gfem._sweep.adaptive import AffineSystem, AffineTerm, adaptive_sweep
 from gfem.errors import PortGeometryError
 from gfem.mesh import Mesh
@@ -380,6 +384,8 @@ class DrivenRule:
                         np.asarray(t.coefficients(omega)) @ (t.vectors.T @ x)
                         for t in ports.system.outputs
                     )
+        if not keep:  # no backward pass will prepare from the pieces
+            ports.release()
         outputs = {
             "s": ports.scattering(s),
             "z_ref": ports.z_ref,
@@ -609,6 +615,7 @@ class DrivenRule:
                     else [frequencies.index(f) for f in samples],
                     z_scale=z_scale,
                 )
+        ports.release()  # the backward pass solves the reduced model only
         outputs: dict[str, object] = {
             "s": ports.scattering(sweep.outputs),
             "z_ref": ports.z_ref,
@@ -1240,6 +1247,14 @@ class _Ports:
     waves: list[WavePortCoupling]
     columns: list[int]
     z_ref: np.ndarray
+    #: The operator's pieces, assembled at the first direct prepare (the
+    #: piece sum); a backward pass reuses them, `release` drops them.
+    pieces: AssembledPieces = dataclasses.field(init=False)
+
+    def __post_init__(self) -> None:
+        self.pieces = AssembledPieces(
+            self.operator.space, [piece.integrand for piece in self.operator.pieces]
+        )
 
     def update(self, omega: float) -> tuple[np.ndarray, np.ndarray]:
         """``W(ω) = U C Uᵀ``: ``U`` ``(ndof, 2 n_wave)``, ``C`` block diagonal.
@@ -1255,9 +1270,17 @@ class _Ports:
         return np.concatenate(columns, axis=1), np.diag(np.concatenate(diagonal))
 
     def operator_at(self, omega: float) -> Operator:
-        """``A(ω)``, the operator without the modal corrections, to prepare."""
+        """``A(ω)``, the operator without the modal corrections, to prepare.
+
+        Its form, and its piece sum over `pieces` for the direct backend.
+        """
         op = self.operator
-        return Operator(op.form(omega), op.space.FreeDofs())
+        weights = tuple(complex(piece.theta(omega)) for piece in op.pieces)
+        return Operator(
+            op.form(omega),
+            op.space.FreeDofs(),
+            piece_sum=PieceSum(self.pieces, weights),
+        )
 
     def system_handle(self, base: Handle, omega: float, *, borrow: bool) -> Handle:
         """A handle of ``A(ω) + W(ω)`` from a handle ``base`` of ``A(ω)``.
@@ -1373,10 +1396,15 @@ class _Ports:
 
     @property
     def nbytes(self) -> int:
-        """Host memory held by the full-length port vectors, in bytes."""
+        """Host memory held by the full-length port vectors and the pieces, in bytes."""
         terms_ = [*self.system.excitation, *self.system.outputs]
         terms_ += list(self.system.corrections)
-        return sum(int(t.vectors.nbytes) for t in terms_)
+        held = sum(int(t.vectors.nbytes) for t in terms_)
+        return held + self.pieces.nbytes
+
+    def release(self) -> None:
+        """Drop the assembled pieces (a later direct prepare assembles them again)."""
+        self.pieces.free()
 
 
 class _SweepHandle:
@@ -1510,6 +1538,8 @@ class _Handles:
         if self._sweep is not None:
             self._sweep.free()
         self._sweep = None
+        if self.ports is not None:
+            self.ports.release()
         self.ports = None
 
 
