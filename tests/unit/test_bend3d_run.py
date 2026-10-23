@@ -6,7 +6,7 @@ import bend3d_run as run
 import numpy as np
 import pytest
 
-# The run record's solver outputs (ticket 05 Q11), typed here, not read back
+# The run record's solver outputs, typed here, not read back
 # from the script, so a drift in either is a failure.
 NPZ_KEYS = [
     *("t_history", "core_history", "beta_history", "seconds_history"),
@@ -137,3 +137,74 @@ def test_hand_drawn_designs_cover_their_drawn_area(grid):
     for design in (arc, corner):
         assert design[30, 0] == design[0, 30] == 1.0
         assert design[59, 59] == 0.0
+
+
+def test_bddc_applies_to_the_box_only(tmp_path, monkeypatch):
+    box = run.Stage("box", tmp_path, "smoke", bddc=True)
+    assert box.solver().linear_solver == "bddc_gmres"
+    assert box.options["linear_solver"] == "bddc_gmres"
+    with pytest.raises(SystemExit):
+        run.main(["optimize", "--out", str(tmp_path), "--bddc"])
+    commands = []
+    monkeypatch.setattr(run.subprocess, "run", lambda c, **_: commands.append(c))
+    run.main(["all", "--out", str(tmp_path), "--profile", "smoke", "--bddc"])
+    assert [c[2] for c in commands] == [*run.STAGES, "merge"]
+    assert [c[2] for c in commands if "--bddc" in c] == ["box"]
+
+
+def _check(default_pmc=(), shape=(60, 60), unsampled=0, *, all_sampled=True):
+    from types import SimpleNamespace
+
+    sampled = np.ones(shape, bool)
+    sampled.flat[:unsampled] = False
+    run.check_mesh(
+        "m",
+        SimpleNamespace(default_pmc=default_pmc),
+        SimpleNamespace(shape=shape, sampled=sampled),
+        all_sampled=all_sampled,
+    )
+
+
+def test_mesh_checks_refuse_a_default_pmc_a_wrong_grid_or_unsampled_pixels():
+    _check()
+    _check(unsampled=5, all_sampled=False)  # the smoke profile's coarse meshes
+    with pytest.raises(RuntimeError, match="PMC"):
+        _check(default_pmc=("side",))
+    with pytest.raises(RuntimeError, match="60, 60"):
+        _check(shape=(59, 60))
+    with pytest.raises(RuntimeError, match="5 of 3600"):
+        _check(unsampled=5)
+
+
+def _info(**environment):
+    env = {
+        "versions": {"gfem": "1.0"},
+        "pardiso_available": True,
+        "os": "Linux",
+        "kernel": "6.1",
+        "cpu_model": "cpu",
+        "physical_cores": 16,
+        "threads": 16,
+        "memory_limit_bytes": 64,
+        "host": "a",
+    }
+    return {
+        "commit": "c",
+        "dirty": [],
+        "sha256": {"s": "h"},
+        "profile": "full",
+        "environment": env | environment,
+    }
+
+
+def test_a_stage_rerun_in_another_container_of_the_same_machine_merges():
+    first, hashes = _info(), {"s": "h"}
+    assert run.mismatches(_info(host="b", kernel="6.2"), first, "c", hashes) == []
+    assert run.mismatches(first, first, "d", hashes) == ["commit 'c', not 'd'"]
+    (problem,) = run.mismatches(_info(threads=8), first, "c", hashes)
+    assert problem.startswith("machine")
+
+
+def test_command_line_is_the_rerun_command():
+    argv = ["/abs/checkout/tools/bend3d_run.py", "fine", "--out", "/w d"]
+    assert run.command_line(argv) == "python tools/bend3d_run.py fine --out '/w d'"

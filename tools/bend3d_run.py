@@ -8,8 +8,9 @@ The 2D bend tutorial's recipe (docs/tutorials/bend.ipynb) on a real stack: a
 the mirror half model z >= 0 with a PMC at z = 0, |S21|^2 of the TE0 mode at
 1.55 um. The run needs a 16-core / 64 GiB Linux machine and the ``mkl``
 extra (about 1 h); the docs page ``docs/tutorials/bend3d.ipynb`` reads its
-record and solves nothing (ADR 0022). ``just bend3d-data`` runs, in
-``uv run --extra mkl --group docs``::
+record and solves nothing, and refuses a record whose script hashes differ
+from these files', so editing either forces a rerun. ``just bend3d-data``
+runs, in ``uv run --extra mkl --group docs``::
 
     python tools/bend3d_run.py all --out WORK
     python tools/bend3d_run.py merge --out WORK --record docs/tutorials/data
@@ -27,12 +28,14 @@ predecessors', so a failed stage reruns alone:
 - ``spectrum``: ``final`` over 13 wavelengths, 1.2 to 1.8 um.
 - ``full``: ``final`` on the full stack (about 53 GB).
 - ``box``: ``final`` in a 7 x 7 um box (about 50 GB; ``--bddc`` if it does
-  not fit).
+  not fit, the one stage the flag applies to: ``all --bddc`` passes it to
+  ``box`` only).
 - ``fine``: ``final`` on the h = 0.07 um mesh, BDDC + GMRES at 1e-6.
 - ``merge``: the run record, ``bend3d.json`` (provenance, settings,
   observations; no result) and ``bend3d.npz`` (every solver output), into
   ``--record`` (default ``DIR``). It refuses a record over 1 MB, or one whose
-  stages ran at another commit, with other scripts, on another machine, or
+  stages ran at another commit, with other scripts or packages, on another
+  machine (a rerun in another container of the same machine merges), or
   with ``src/`` or ``tools/`` uncommitted.
 
 ``--profile smoke`` runs every stage at h = 0.4 um (``fine`` at 0.25 um),
@@ -144,8 +147,16 @@ class Profile:
 
 
 PROFILES = {
-    "full": Profile(0.1, 0.07, (1.0, 2.0, 4.0, 8.0, 16.0, 32.0), 7, 13),
-    "smoke": Profile(0.4, 0.25, (1.0, 2.0), 1, 3),
+    "full": Profile(
+        h=0.1,
+        h_fine=0.07,
+        betas=(1.0, 2.0, 4.0, 8.0, 16.0, 32.0),
+        steps_per_beta=7,
+        n_wavelengths=13,
+    ),
+    "smoke": Profile(
+        h=0.4, h_fine=0.25, betas=(1.0, 2.0), steps_per_beta=1, n_wavelengths=3
+    ),
 }
 
 
@@ -193,9 +204,14 @@ def density_filter(grid):
     return design.helmholtz_filter(grid, radius=FILTER_RADIUS)
 
 
+def filtered(rho, blur):
+    """Design parameters -> filtered density: mirror about y = x, filter."""
+    return blur(0.5 * (rho + rho.T))
+
+
 def physical(rho, beta, blur):
     """Design parameters -> physical density: mirror about y = x, filter, project."""
-    return design.project(blur(0.5 * (rho + rho.T)), beta)
+    return design.project(filtered(rho, blur), beta)
 
 
 def material(density, grid):
@@ -256,15 +272,17 @@ def corner_design(grid):
 
 def straight_design(grid):
     """The straight guide's core through the design square, |y| < 0.4 um."""
-    return area_fraction(lambda x, y: np.abs(y) + 0 * x <= GUIDE, grid)
+    return area_fraction(lambda _, y: np.abs(y) <= GUIDE, grid)
 
 
 # --- measurements on a kept field --------------------------------------------
 
 CUT_STEP = 0.025 * um
 #: Sample centres across the 5 um box (x and y) and up the half stack (z).
-CUT_ALONG = (-bm.BOX + 0.025 * (np.arange(round(2 * bm.BOX / 0.025)) + 0.5)) * um
-CUT_HEIGHT = 0.025 * (np.arange(round(bm.Z_TOP / 0.025)) + 0.5) * um
+CUT_ALONG = -bm.BOX * um + CUT_STEP * (
+    np.arange(round(2 * bm.BOX * um / CUT_STEP)) + 0.5
+)
+CUT_HEIGHT = CUT_STEP * (np.arange(round(bm.Z_TOP * um / CUT_STEP)) + 0.5)
 CUT_IN_X = CUT_OUT_Y = -2.0 * um  # across each arm, between port and design
 FLUX_UP_Z = 1.7 * um  # 0.1 um under the top face
 
@@ -326,8 +344,10 @@ def field_maps(result):
 def gmres_iterations():
     """Collect NGSolve's GMRES iterations, one entry per solved column.
 
-    It counts every NGSolve ``GMResSolver`` solve in the block, which is how
-    BDDC + GMRES solves each right-hand side.
+    It counts every NGSolve ``GMResSolver`` solve in the block: one per
+    right-hand side that BDDC + GMRES solves on the operator without the
+    wave ports' low-rank term, so each column of that term (Woodbury) as
+    well as each excitation: more entries than excited ports.
     """
     import ngsolve.solvers
 
@@ -349,11 +369,49 @@ def gmres_iterations():
 # --- the stages ---------------------------------------------------------------
 
 
+#: The stages ``--bddc`` applies to: the 7 um box, if its direct solve does
+#: not fit (``fine`` always runs BDDC + GMRES).
+BDDC_STAGES = ("box",)
+BDDC = gfem.SolverOptions(linear_solver="bddc_gmres", tolerance=1e-6)
+
+
+def check_mesh(name, bend, grid, *, all_sampled):
+    """Refuse a mesh whose model or design pixels are not the run's.
+
+    Raises:
+        RuntimeError: An exterior face of ``bend`` has no boundary condition
+            (a default PMC), the layer grid is not 60 x 60, or, with
+            ``all_sampled``, a pixel is sampled by no element.
+    """
+    if bend.default_pmc:
+        raise RuntimeError(f"{name}: default PMC on {bend.default_pmc}")
+    if tuple(grid.shape) != (60, 60):
+        raise RuntimeError(f"{name}: layer grid {tuple(grid.shape)}, not (60, 60)")
+    dead = int((~np.asarray(grid.sampled)).sum())
+    if all_sampled and dead:
+        raise RuntimeError(f"{name}: {dead} of {grid.sampled.size} pixels unsampled")
+
+
+def solve_design(bend, grid, density, options, *, frequency=F0, keep=False):
+    """``bend`` with ``density`` in its design volume, both ports excited."""
+    return gfem.solve(
+        bend.with_material("design", material(density, grid)),
+        gfem.Driven(frequency=frequency, excite=None, keep_fields=keep),
+        options=options,
+    )
+
+
 class Stage:
     """One stage's run: its work directory, profile and what it records."""
 
     def __init__(self, name, out, profile, *, bddc=False):
-        """Stage ``name`` in work directory ``out``, with ``PROFILES[profile]``."""
+        """Stage ``name`` in work directory ``out``, with ``PROFILES[profile]``.
+
+        Raises:
+            ValueError: ``bddc`` for a stage not in `BDDC_STAGES`.
+        """
+        if bddc and name not in BDDC_STAGES:
+            raise ValueError(f"--bddc applies to {', '.join(BDDC_STAGES)} only")
         self.name, self.out, self.profile_name = name, Path(out), profile
         self.profile, self.bddc = PROFILES[profile], bddc
         self.meshes, self.options, self.observations = {}, {}, {}
@@ -377,15 +435,24 @@ class Stage:
         }
         return mesh, path.stem
 
+    def design_mesh(self, h, *, half=True, **kwargs):
+        """``(model, layer grid, name)`` on a `mesh`, after `check_mesh`.
+
+        Every pixel must be sampled on the full profile only: the smoke
+        profile's coarse cells leave most unsampled.
+        """
+        mesh, name = self.mesh(h, half=half, **kwargs)
+        bend, grid = model(mesh, half=half), layer_grid(mesh)
+        check_mesh(name, bend, grid, all_sampled=self.profile_name == "full")
+        return bend, grid, name
+
     def dof(self, name, result):
         """Record the DOF of mesh ``name`` from a solve that kept its fields."""
         self.meshes[name]["dof"] = int(result.e_fields[0].coefficients.shape[0])
 
     def solver(self):
         """This stage's `solver_options` (BDDC + GMRES at 1e-6 with ``--bddc``)."""
-        options = solver_options(self.name)
-        if self.bddc:
-            options = gfem.SolverOptions(linear_solver="bddc_gmres", tolerance=1e-6)
+        options = BDDC if self.bddc else solver_options(self.name)
         self.options = dataclasses.asdict(options)
         return options
 
@@ -399,19 +466,15 @@ class Stage:
             )
         return arrays
 
+    def final(self):
+        """The optimization's thresholded design ``final``, as floats."""
+        return self.load("optimize")["final"].astype(float)
 
-def solve_final(stage, mesh_kwargs, *, half=True):
+
+def solve_final(stage, h, *, half=True, **mesh_kwargs):
     """``final`` re-solved on another mesh (fields kept, for its DOF)."""
-    final = stage.load("optimize")["final"].astype(float)
-    mesh, name = stage.mesh(**mesh_kwargs)
-    grid = layer_grid(mesh)
-    if grid.shape != final.shape:
-        raise RuntimeError(f"{name}: layer grid {grid.shape}, not {final.shape}")
-    result = gfem.solve(
-        model(mesh, half=half).with_material("design", material(final, grid)),
-        gfem.Driven(frequency=F0, excite=None, keep_fields=True),
-        options=stage.solver(),
-    )
+    bend, grid, name = stage.design_mesh(h, half=half, **mesh_kwargs)
+    result = solve_design(bend, grid, stage.final(), stage.solver(), keep=True)
     stage.dof(name, result)
     return s_matrix(result.s)[0]
 
@@ -421,10 +484,9 @@ def optimize(stage):
     import optax  # the docs group's, as in the 2D tutorial
 
     profile = stage.profile
-    mesh, _ = stage.mesh(profile.h, half=True)
-    bend, grid = model(mesh, half=True), layer_grid(mesh)
+    bend, grid, _ = stage.design_mesh(profile.h)
     blur = density_filter(grid)
-    stage.solver()
+    stage.solver()  # records solver_options("optimize"), which missed_power uses
     value_and_grad = jax.jit(
         jax.value_and_grad(missed_power(bend, grid, blur), has_aux=True)
     )
@@ -468,31 +530,20 @@ def optimize(stage):
 def half(stage):
     """Forward re-solves on the optimization's mesh, the mirror half model."""
     profile, opt = stage.profile, stage.load("optimize")
-    mesh, name = stage.mesh(profile.h, half=True)
-    bend, grid = model(mesh, half=True), layer_grid(mesh)
+    bend, grid, name = stage.design_mesh(profile.h)
     blur = density_filter(grid)
     options = stage.solver()
-
-    def solve(density, *, keep=False, bent=bend, pixels=grid):
-        return gfem.solve(
-            bent.with_material("design", material(density, pixels)),
-            gfem.Driven(frequency=F0, excite=None, keep_fields=keep),
-            options=options,
-        )
-
     rho = jnp.asarray(opt["rho_final"])
-    variants = design.robust(
-        blur(0.5 * (rho + rho.T)), beta=ROBUST_BETA, delta=ROBUST_DELTA
-    )
+    variants = design.robust(filtered(rho, blur), beta=ROBUST_BETA, delta=ROBUST_DELTA)
     arc, corner = arc_design(grid), corner_design(grid)
     out = {}
-    trust = solve(opt["final"].astype(float), keep=True)
-    stage.dof(name, trust)
-    maps = field_maps(trust)
+    final_result = solve_design(bend, grid, stage.final(), options, keep=True)
+    stage.dof(name, final_result)
+    maps = field_maps(final_result)
     out |= {
-        "s_final": s_matrix(trust.s)[0],
+        "s_final": s_matrix(final_result.s)[0],
         "n_eff": np.array(
-            [complex(np.asarray(trust.port_modes[p].n_eff)[0]) for p in PORTS]
+            [complex(np.asarray(final_result.port_modes[p].n_eff)[0]) for p in PORTS]
         ),
         "cut_top_final": maps["cut_top"],
         "cut_out_final": maps["cut_out"],
@@ -500,8 +551,8 @@ def half(stage):
         "flux_in": np.float64(maps["flux_in"]),
         "flux_up": np.float64(maps["flux_up"]),
     }
-    del trust
-    arc_result = solve(arc, keep=True)
+    del final_result
+    arc_result = solve_design(bend, grid, arc, options, keep=True)
     maps = field_maps(arc_result)
     out |= {
         "s_arc": s_matrix(arc_result.s)[0],
@@ -517,14 +568,16 @@ def half(stage):
         "corner": corner,
     }
     for key, density in designs.items():
-        out[f"s_{key}"] = s_matrix(solve(density).s)[0]
-    straight_mesh, straight_name = stage.mesh(profile.h, half=True, kind="straight")
-    straight_grid = layer_grid(straight_mesh)
-    straight = solve(
+        out[f"s_{key}"] = s_matrix(solve_design(bend, grid, density, options).s)[0]
+    straight_bend, straight_grid, straight_name = stage.design_mesh(
+        profile.h, kind="straight"
+    )
+    straight = solve_design(
+        straight_bend,
+        straight_grid,
         straight_design(straight_grid),
+        options,
         keep=True,
-        bent=model(straight_mesh, half=True),
-        pixels=straight_grid,
     )
     stage.dof(straight_name, straight)
     out["s_straight"] = s_matrix(straight.s)[0]
@@ -542,13 +595,11 @@ def half(stage):
 
 def spectrum(stage):
     """``final`` over the band, both ports excited at every wavelength."""
-    profile, final = stage.profile, stage.load("optimize")["final"].astype(float)
-    mesh, _ = stage.mesh(profile.h, half=True)
-    grid = layer_grid(mesh)
-    result = gfem.solve(
-        model(mesh, half=True).with_material("design", material(final, grid)),
-        gfem.Driven(frequency=c / profile.wavelengths, excite=None),
-        options=stage.solver(),
+    profile = stage.profile
+    bend, grid, _ = stage.design_mesh(profile.h)
+    frequency = c / profile.wavelengths
+    result = solve_design(
+        bend, grid, stage.final(), stage.solver(), frequency=frequency
     )
     return {
         "spectrum_wavelengths": profile.wavelengths,
@@ -558,23 +609,18 @@ def spectrum(stage):
 
 def full(stage):
     """``final`` on the full stack: checks the mirror half model."""
-    return {
-        "s_final_full": solve_final(
-            stage, {"h": stage.profile.h, "half": False}, half=False
-        )
-    }
+    return {"s_final_full": solve_final(stage, stage.profile.h, half=False)}
 
 
 def box(stage):
     """``final`` in the 7 x 7 um box: bounds the in-plane cladding margin."""
-    kwargs = {"h": stage.profile.h, "half": True, "box": BOX_7UM}
-    return {"s_final_box7": solve_final(stage, kwargs)}
+    return {"s_final_box7": solve_final(stage, stage.profile.h, box=BOX_7UM)}
 
 
 def fine(stage):
     """``final`` on the finer mesh: the quoted mesh error."""
     with gmres_iterations() as counts:
-        s = solve_final(stage, {"h": stage.profile.h_fine, "half": True})
+        s = solve_final(stage, stage.profile.h_fine)
     stage.observations["gmres_iterations"] = counts
     return {"s_final_h007": s}
 
@@ -801,6 +847,11 @@ def load_stage(out, stage):
         return json.loads(info_path.read_text()), {k: npz[k] for k in npz.files}
 
 
+def command_line(argv):
+    """The command that reruns ``argv`` (``sys.argv``) from the repository root."""
+    return shlex.join(["python", "tools/bend3d_run.py", *argv[1:]])
+
+
 def run_stage(name, out, profile, *, bddc=False):
     """Run one stage and save its arrays and record in ``out/stages``."""
     memory, start, tic = PeakMemory(), _utc(), time.perf_counter()
@@ -812,7 +863,7 @@ def run_stage(name, out, profile, *, bddc=False):
     info = {
         "stage": name,
         "profile": profile,
-        "command": shlex.join(sys.orig_argv),
+        "command": command_line(sys.argv),
         "start_utc": start,
         "end_utc": _utc(),
         "commit": commit,
@@ -831,9 +882,10 @@ def run_stage(name, out, profile, *, bddc=False):
     with npz_path.open("wb") as f:
         np.savez_compressed(f, **arrays)
     info_path.write_text(json.dumps(info, indent=1) + "\n")
-    seen = info["observations"]
+    observed = info["observations"]
     print(
-        f"{name}: {seen['wall_s']} s, peak RSS {seen['peak_rss_bytes'] / 2**30:.2f} GiB"
+        f"{name}: {observed['wall_s']} s, "
+        f"peak RSS {observed['peak_rss_bytes'] / 2**30:.2f} GiB"
     )
 
 
@@ -841,6 +893,8 @@ def run_stage(name, out, profile, *, bddc=False):
 
 RECORD = ("bend3d.json", "bend3d.npz")
 #: The caps on the run record: both files together, and each one (bytes).
+#: With these values the first binds; the second is the tutorial data's
+#: per-file cap, kept so lowering it alone still refuses.
 MAX_RECORD_BYTES = 1_000_000
 MAX_FILE_BYTES = 3_000_000
 
@@ -1007,31 +1061,54 @@ def write_record(record, arrays, dest):
         (dest / name).write_bytes(payload)
 
 
+#: What `merge` compares across stages: the environment but the host label
+#: and the kernel, which change from one container of a machine to the next.
+MACHINE_KEYS = (
+    "versions",
+    "pardiso_available",
+    "os",
+    "cpu_model",
+    "physical_cores",
+    "threads",
+    "memory_limit_bytes",
+)
+
+
+def mismatches(info, first, commit, hashes):
+    """How a stage's ``info`` differs from the run `merge` writes: [] if not.
+
+    The run is at ``commit`` with scripts of sha256 ``hashes``, the profile
+    and machine (`MACHINE_KEYS`) of the optimization's ``first``.
+    """
+    machine = {k: first["environment"][k] for k in MACHINE_KEYS}
+    return [
+        f"{what} {got!r}, not {wanted!r}"
+        for what, got, wanted in (
+            ("commit", info["commit"], commit),
+            ("uncommitted", info["dirty"], []),
+            ("scripts", info["sha256"], hashes),
+            ("profile", info["profile"], first["profile"]),
+            ("machine", {k: info["environment"][k] for k in MACHINE_KEYS}, machine),
+        )
+        if got != wanted
+    ]
+
+
 def merge(out, dest):
     """Write the run record from the stages saved in ``out``, into ``dest``.
 
     Raises:
         RuntimeError: ``src/`` or ``tools/`` is uncommitted, or a stage ran
             at another commit, with other scripts, another profile or on
-            another machine or environment than the optimization.
+            another machine or package versions than the optimization (see
+            `mismatches`).
     """
     loaded = {stage: load_stage(out, stage) for stage in STAGES}
     infos = {stage: info for stage, (info, _) in loaded.items()}
     commit, hashes = clean_commit(ROOT), sha256s()
     first = infos["optimize"]
     for stage, info in infos.items():
-        problems = [
-            f"{what} {info[key]!r}, not {wanted!r}"
-            for what, key, wanted in (
-                ("commit", "commit", commit),
-                ("uncommitted", "dirty", []),
-                ("scripts", "sha256", hashes),
-                ("profile", "profile", first["profile"]),
-                ("environment", "environment", first["environment"]),
-            )
-            if info[key] != wanted
-        ]
-        if problems:
+        if problems := mismatches(info, first, commit, hashes):
             raise RuntimeError(f"rerun {stage}: it ran with {'; '.join(problems)}")
     arrays = {}
     for _, stage_arrays in loaded.values():
@@ -1057,29 +1134,33 @@ def merge(out, dest):
 
 def main(argv=None):
     """Run a stage, the merge, or ``all`` of them in order (one process each)."""
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("stage", choices=(*STAGES, "merge", "all"))
-    ap.add_argument("--out", type=Path, required=True, help="the work directory")
-    ap.add_argument("--profile", choices=tuple(PROFILES), default="full")
-    ap.add_argument(
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("stage", choices=(*STAGES, "merge", "all"))
+    parser.add_argument("--out", type=Path, required=True, help="the work directory")
+    parser.add_argument("--profile", choices=tuple(PROFILES), default="full")
+    parser.add_argument(
         "--record", type=Path, help="merge: the record's directory (default --out)"
     )
-    ap.add_argument(
+    parser.add_argument(
         "--bddc",
         action="store_true",
-        help="solve with BDDC + GMRES at 1e-6, for a direct solve that does not fit",
+        help="box (all: box only): BDDC + GMRES at 1e-6, if the direct solve "
+        "does not fit",
     )
-    a = ap.parse_args(argv)
-    if a.stage == "all":
-        extra = ["--record", str(a.record)] if a.record else []
-        extra += ["--bddc"] if a.bddc else []
+    args = parser.parse_args(argv)
+    if args.bddc and args.stage not in (*BDDC_STAGES, "all"):
+        parser.error(f"--bddc applies to {', '.join(BDDC_STAGES)} (or all) only")
+    if args.stage == "all":
+        record = ["--record", str(args.record)] if args.record else []
         for stage in (*STAGES, "merge"):
-            command = [sys.executable, __file__, stage, "--out", str(a.out)]
-            subprocess.run([*command, "--profile", a.profile, *extra], check=True)
-    elif a.stage == "merge":
-        merge(a.out, a.record or a.out)
+            command = [sys.executable, __file__, stage, "--out", str(args.out)]
+            command += ["--profile", args.profile, *record]
+            command += ["--bddc"] if args.bddc and stage in BDDC_STAGES else []
+            subprocess.run(command, check=True)
+    elif args.stage == "merge":
+        merge(args.out, args.record or args.out)
     else:
-        run_stage(a.stage, a.out, a.profile, bddc=a.bddc)
+        run_stage(args.stage, args.out, args.profile, bddc=args.bddc)
 
 
 if __name__ == "__main__":
