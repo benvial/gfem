@@ -25,7 +25,7 @@ def _record():
     record = {
         "profile": "smoke",
         "provenance": dict.fromkeys(run.PROVENANCE_KEYS, ""),
-        "settings": dict.fromkeys(run.SETTINGS_KEYS, ""),
+        "settings": run.settings(run.PROFILES["smoke"], {}),
         "observations": {
             stage: dict.fromkeys(run.observation_keys(stage), 0.0)
             for stage in run.STAGES
@@ -51,6 +51,35 @@ def test_record_holds_exactly_the_listed_keys(tmp_path):
     assert "gmres_iterations" in loaded["observations"]["fine"]
     with np.load(tmp_path / "bend3d.npz") as npz:
         assert sorted(npz.files) == sorted(NPZ_KEYS)
+
+
+def test_settings_give_the_plane_positions_as_numbers():
+    settings = run.settings(run.PROFILES["smoke"], {})
+    assert set(settings) == set(run.SETTINGS_KEYS)
+    assert settings["geometry"]["port_window_half_width_um"] == 2.0
+    assert settings["cuts"]["cut_in_x_um"] == pytest.approx(-2.0)
+    assert settings["cuts"]["cut_out_y_um"] == pytest.approx(-2.0)
+    assert settings["fluxes"]["flux_in_x_um"] == pytest.approx(-2.0)
+    assert settings["fluxes"]["flux_up_z_um"] == pytest.approx(1.7)
+    json.dumps(settings)  # the record's JSON holds them
+
+
+@pytest.mark.parametrize(
+    ("where", "key"),
+    [
+        ("geometry", "port_window_half_width_um"),
+        ("cuts", "cut_in_x_um"),
+        ("cuts", "cut_out_y_um"),
+        ("fluxes", "flux_in_x_um"),
+        ("fluxes", "flux_up_z_um"),
+    ],
+)
+def test_record_without_a_plane_position_is_refused(tmp_path, where, key):
+    record, arrays = _record()
+    del record["settings"][where][key]
+    with pytest.raises(ValueError, match=key):
+        run.write_record(record, arrays, tmp_path)
+    assert not list(tmp_path.iterdir())
 
 
 def test_record_with_a_missing_or_extra_array_is_refused(tmp_path):

@@ -931,6 +931,12 @@ SETTINGS_KEYS = (
     "cuts",
     "fluxes",
 )
+#: The numeric plane positions (um) the page reads, by settings entry.
+PLANE_KEYS = {
+    "geometry": ("port_window_half_width_um",),
+    "cuts": ("cut_in_x_um", "cut_out_y_um"),
+    "fluxes": ("flux_in_x_um", "flux_up_z_um"),
+}
 NPZ_KEYS = (
     *("t_history", "core_history", "beta_history", "seconds_history"),
     *("rho_start", "rho_final", "snapshots", "snapshot_iterations", "last", "final"),
@@ -947,6 +953,11 @@ def observation_keys(stage):
     """The observations recorded for ``stage``: wall time, peak memory, ..."""
     keys = ("wall_s", "peak_rss_bytes")
     return (*keys, "gmres_iterations") if stage == "fine" else keys
+
+
+def _um(length):
+    """A length in m as a number of um, rounded off its float noise."""
+    return round(length / um, 9)
 
 
 def settings(profile, infos):
@@ -975,6 +986,7 @@ def settings(profile, infos):
             "box_7um_half_width_um": BOX_7UM,
             "design_half_width_um": bm.DESIGN,
             "guides": "input |y| < 0.4 along x < -1.5, output |x| < 0.4 along y < -1.5",
+            "port_window_half_width_um": bm.PORT,
             "port_windows": "p1 x = -2.5, |y| < 2.0; p2 y = -2.5, |x| < 2.0; "
             "|z| < 1.8 (z >= 0 on the mirror half model)",
             "straight_guide_length_um": 2 * bm.BOX,
@@ -1004,6 +1016,8 @@ def settings(profile, infos):
             "quantity": "|E| (MV/m, float16), p1 fed with 1 W incident, mirror "
             "half model (z >= 0)",
             "step_um": CUT_STEP / um,
+            "cut_in_x_um": _um(CUT_IN_X),
+            "cut_out_y_um": _um(CUT_OUT_Y),
             "axes": "cut_x, cut_y across the box, cut_z up the stack (m, centres)",
             "top": {"plane": "z = 0 (core mid-plane)", "shape": ["y", "x"]},
             "out": {"plane": f"y = {CUT_OUT_Y / um:g} um", "shape": ["x", "z"]},
@@ -1015,6 +1029,8 @@ def settings(profile, infos):
             "in": {**plane, "plane": f"x = {CUT_IN_X / um:g} um", "towards": "+x"},
             "up": {**plane, "plane": f"z = {FLUX_UP_Z / um:g} um", "towards": "+z"},
             "extent": "the cut points of cut_in (y, z) and of the box (x, y)",
+            "flux_in_x_um": _um(CUT_IN_X),
+            "flux_up_z_um": _um(FLUX_UP_Z),
         },
     }
 
@@ -1038,6 +1054,9 @@ def write_record(record, arrays, dest):
     _same_keys("record", record, RECORD_KEYS)
     _same_keys("provenance", record["provenance"], PROVENANCE_KEYS)
     _same_keys("settings", record["settings"], SETTINGS_KEYS)
+    for entry, keys in PLANE_KEYS.items():
+        if missing := [k for k in keys if k not in record["settings"][entry]]:
+            raise ValueError(f"settings {entry}: missing {missing}")
     _same_keys("observations", record["observations"], STAGES)
     for stage, seen in record["observations"].items():
         _same_keys(f"observations of {stage}", seen, observation_keys(stage))
