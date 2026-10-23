@@ -1,6 +1,6 @@
 """The 3D bend mesh builder (tools/bend3d_mesh.py): geometry only, no solve."""
 
-import bend3d_mesh as b3
+import bend3d_mesh as bm
 import numpy as np
 import pytest
 
@@ -9,17 +9,17 @@ H = 0.4  # um: the coarsest in-plane cell, a few thousand tetrahedra
 
 @pytest.fixture(scope="module")
 def half():
-    return b3.bend3d(H, half=True)
+    return bm.bend3d(H, half=True)
 
 
 @pytest.fixture(scope="module")
 def full():
-    return b3.bend3d(H, half=False)
+    return bm.bend3d(H, half=False)
 
 
 @pytest.fixture(scope="module")
 def straight():
-    return b3.bend3d(H, half=True, kind="straight")
+    return bm.bend3d(H, half=True, kind="straight")
 
 
 def test_region_and_surface_names(half, full, straight):
@@ -74,3 +74,18 @@ def test_half_mesh_is_the_full_meshs_upper_part(half, full):
     assert _cells(nodes, tris[named], np.array(tri_names)[named].tolist()) == _cells(
         full[0], *full[3:], keep=above
     )
+
+
+def test_straight_guide_reductions():
+    nodes, _, _, _, tri_names = bm.bend3d(H, half=True, kind="straight", ymirror=True)
+    assert "ywall" in tri_names
+    assert nodes[:, 1].min() == pytest.approx(0.0)
+    short = bm.bend3d(H, half=True, kind="straight", length=3.2)[0]
+    assert np.ptp(short[:, 0]) == pytest.approx(3.2)
+    with pytest.raises(ValueError, match="straight"):
+        bm.bend3d(H, half=True, ymirror=True)
+    assert (
+        bm.mesh_name(0.1, half=True, kind="straight", ymirror=True, length=3.2)
+        == "straight3d_h0.1_half_ymirror_L3.2.msh"
+    )
+    assert bm.mesh_name(0.07, half=False, box=3.5) == "bend3d_h0.07_full_box3.5.msh"

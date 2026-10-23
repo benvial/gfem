@@ -177,18 +177,26 @@ def mesh_name(h, *, half, kind="bend", box=BOX, ymirror=False, length=None):
 
 def main(argv=None):
     """Write one `bend3d` mesh into OUTDIR and print its path."""
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("outdir", type=Path, help="the directory to write into")
-    ap.add_argument("--h", type=float, required=True, help="in-plane cell (um)")
-    ap.add_argument("--half", action="store_true", help="z >= 0, mirror at z = 0")
-    ap.add_argument("--kind", default="bend", choices=("bend", "straight"))
-    ap.add_argument("--box", type=float, default=BOX, help="box half-width (um)")
-    ap.add_argument("--ymirror", action="store_true", help="straight: y >= 0")
-    ap.add_argument("--length", type=float, help="straight: port to port (um)")
-    a = ap.parse_args(argv)
-    opts = dict(half=a.half, kind=a.kind, box=a.box, ymirror=a.ymirror, length=a.length)
-    a.outdir.mkdir(parents=True, exist_ok=True)
-    path = sm.write_msh22(a.outdir / mesh_name(a.h, **opts), bend3d(a.h, **opts))
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("outdir", type=Path, help="the directory to write into")
+    parser.add_argument("--h", type=float, required=True, help="in-plane cell (um)")
+    parser.add_argument("--half", action="store_true", help="z >= 0, mirror at z = 0")
+    parser.add_argument("--kind", default="bend", choices=("bend", "straight"))
+    parser.add_argument("--box", type=float, default=BOX, help="box half-width (um)")
+    parser.add_argument("--ymirror", action="store_true", help="straight: y >= 0")
+    parser.add_argument("--length", type=float, help="straight: port to port (um)")
+    args = parser.parse_args(argv)
+    opts = dict(
+        half=args.half,
+        kind=args.kind,
+        box=args.box,
+        ymirror=args.ymirror,
+        length=args.length,
+    )
+    args.outdir.mkdir(parents=True, exist_ok=True)
+    path = sm.write_msh22(
+        args.outdir / mesh_name(args.h, **opts), bend3d(args.h, **opts)
+    )
     print(path)
     return path
 
