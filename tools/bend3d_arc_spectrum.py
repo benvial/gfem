@@ -2,7 +2,7 @@
 
 Usage::
 
-    python tools/bend3d_arc_spectrum.py --out DIR [--profile full|smoke]
+    python tools/bend3d_arc_spectrum.py --out DIR --work DIR [--profile full|smoke]
 
 ``tools/bend3d_run.py``'s ``spectrum`` stage sweeps ``final`` over the band; this
 script sweeps the hand-drawn arc (``arc_design``) the same way: the same mesh
@@ -80,14 +80,15 @@ def write(record, arrays, dest):
 
 
 def main(argv=None):
-    """Sweep the arc and write its record into ``--out``."""
+    """Sweep the arc and write its record into ``--out``, its meshes into ``--work``."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, required=True, help="record directory")
+    parser.add_argument("--work", type=Path, required=True, help="mesh directory")
     parser.add_argument("--profile", default="full", choices=tuple(run.PROFILES))
     args = parser.parse_args(argv)
     commit = run.clean_commit(run.ROOT)
     memory, start, tic = run.PeakMemory(), _utc(), time.perf_counter()
-    stage = run.Stage("spectrum", args.out / "work", args.profile)
+    stage = run.Stage("spectrum", args.work, args.profile)
     settings, arrays = sweep(stage)
     provenance = {
         "commit": commit,
