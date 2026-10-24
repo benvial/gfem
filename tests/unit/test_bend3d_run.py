@@ -28,8 +28,7 @@ def _record():
         "provenance": dict.fromkeys(run.PROVENANCE_KEYS, ""),
         "settings": run.settings(run.PROFILES["smoke"], {}),
         "observations": {
-            stage: dict.fromkeys(run.observation_keys(stage), 0.0)
-            for stage in run.STAGES
+            stage: dict.fromkeys(run.OBSERVATION_KEYS, 0.0) for stage in run.STAGES
         },
     }
     arrays = {key: np.zeros(3) for key in NPZ_KEYS}
@@ -49,7 +48,8 @@ def test_record_holds_exactly_the_listed_keys(tmp_path):
         "box",
         "fine",
     }
-    assert "gmres_iterations" in loaded["observations"]["fine"]
+    # every stage is direct: no GMRES iterations to observe
+    assert set(loaded["observations"]["fine"]) == {"wall_s", "peak_rss_bytes"}
     with np.load(tmp_path / "bend3d.npz") as npz:
         assert sorted(npz.files) == sorted(NPZ_KEYS)
 
@@ -110,36 +110,50 @@ def test_settings_record_the_soi_stack_and_recipe():
     assert len(smoke["spectrum_wavelengths_um"]) == 3
 
 
-@pytest.mark.parametrize(
-    "stage", ["optimize", "half", "spectrum", "full", "box", "fine"]
-)
-def test_every_stage_solves_direct_with_a_10_gib_budget(stage):
-    options = run.solver_options(stage)
-    assert options.linear_solver == "direct"
-    assert options.retain_memory == 10 * 2**30
+def test_every_stage_solves_direct_with_a_10_gib_budget():
+    assert run.DIRECT.linear_solver == "direct"
+    assert run.DIRECT.retain_memory == 10 * 2**30
+    assert not hasattr(run, "gmres_iterations")
+
+
+def test_a_target_on_a_grid_line_takes_the_cell_below_it():
+    # The arms' target, -2.0 um, is a grid line: the two cells either side
+    # tie, and float noise in the target must not pick the design side.
+    edges = np.array([-2.5, -2.25, -2.0, -1.75, -1.5])
+    for target in (-2.0, -2.0 + 1e-15, -2.0 - 1e-15):
+        assert run._mid_cell(edges, target) == pytest.approx(-2.125)
+
+
+#: Sample positions across the arm (m), symmetric about 0; the outer pair,
+#: |x| = 2.45 um, lies outside the 2 um port window.
+TE_X = (np.arange(8) - 3.5) * 0.7e-6
 
 
 def _te_fields():
-    """TE1-type (E_x, B_z odd in x) and TE0-type (even) fields on a cut.
+    """TE1-like (E_x, B_z odd in x) and TE0-like (even) fields on a cut.
 
-    Samples (x, z, 3) at x symmetric about 0; both carry power along -y.
+    Samples (x, z, 3) at ``TE_X``; both carry power along -y.
     """
-    x = (np.arange(8) - 3.5)[:, None] * np.ones((1, 3))
+    x = (TE_X / 0.7e-6)[:, None] * np.ones((1, 3))
     g, zero = np.exp(-(x**2) / 8), np.zeros_like(x)
     te1 = np.stack([x * g, zero, zero], -1), np.stack([zero, zero, x * g], -1)
     te0 = np.stack([g, zero, zero], -1), np.stack([zero, zero, g], -1)
     return te1, te0
 
 
-def test_te1_flux_takes_the_odd_part_only():
+def test_te1_flux_takes_the_odd_part_inside_the_port_window_only():
     (e1, b1), (e0, b0) = _te_fields()
-    # by hand: outgoing -S_y = E_x H_z - E_z H_x, here 0.5 E_x B_z / mu_0
-    odd = 0.5 * float((e1[..., 0] * b1[..., 2]).sum()) / run.mu_0 * run.CUT_STEP**2
+    # by hand: outgoing -S_y = E_x H_z - E_z H_x, here 0.5 E_x B_z / mu_0,
+    # over |x| < 2 um only
+    inside = np.abs(TE_X) < 2e-6
+    assert inside.sum() == 6
+    s = e1[inside][..., 0] * b1[inside][..., 2]
+    odd = 0.5 * float(s.sum()) / run.mu_0 * run.CUT_STEP**2
     assert odd > 0
-    assert run.odd_flux(e1, b1) == pytest.approx(odd)
-    assert run.odd_flux(e0, b0) == pytest.approx(0.0, abs=1e-30)
+    assert run.odd_flux(e1, b1, TE_X) == pytest.approx(odd)
+    assert run.odd_flux(e0, b0, TE_X) == pytest.approx(0.0, abs=1e-30)
     # the even part and the even-odd cross power drop out of a mix
-    assert run.odd_flux(e0 + e1, b0 + b1) == pytest.approx(odd)
+    assert run.odd_flux(e0 + e1, b0 + b1, TE_X) == pytest.approx(odd)
 
 
 @pytest.mark.parametrize(

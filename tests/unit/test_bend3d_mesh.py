@@ -114,6 +114,6 @@ def test_soi_stack_grid():
         assert int(np.sum(np.abs(z) < 0.11 + 1e-9)) - 1 == cells
 
 
-def test_h015_half_mesh_size():
-    # spec 1.2: 38 x 38 in-plane cells x 10 z cells x 6 tetrahedra
+def test_h015_half_model_size():
+    # 38 x 38 in-plane cells x 10 z cells x 6 tetrahedra
     assert len(bm.bend3d(0.15, half=True)[1]) == 86_640
