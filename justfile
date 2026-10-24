@@ -25,7 +25,7 @@ notebooks:
 front-page-data:
     {{ docs_env }} python tools/front_page_data.py
 
-# Rerun the 3D bend and rewrite its run record, docs/tutorials/data/bend3d.{json,npz} (tools/bend3d_run.py): about 1 h on 16 cores / 64 GiB with the mkl extra.
+# Rerun the 3D bend and rewrite its run record, docs/tutorials/data/bend3d.{json,npz} (tools/bend3d_run.py): about 2.7 h on 16 cores / 96 GiB with the mkl extra.
 bend3d-data work="/tmp/bend3d-run":
     JAX_PLATFORMS=cpu uv run --extra mkl --group docs python tools/bend3d_run.py all --out "{{ work }}"
     JAX_PLATFORMS=cpu uv run --extra mkl --group docs python tools/bend3d_run.py merge --out "{{ work }}" --record docs/tutorials/data

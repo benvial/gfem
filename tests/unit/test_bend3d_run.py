@@ -12,8 +12,9 @@ NPZ_KEYS = [
     *("t_history", "core_history", "beta_history", "seconds_history"),
     *("rho_start", "rho_final", "snapshots", "snapshot_iterations", "last", "final"),
     *("eroded", "nominal", "dilated", "arc", "corner"),
-    *("s_last", "s_final", "s_final_full", "s_final_h007", "s_final_box7"),
-    *("s_eroded", "s_nominal", "s_dilated", "s_arc", "s_corner", "s_straight"),
+    *("s_last", "s_final", "s_final_full", "s_final_h01", "s_final_fine"),
+    *("s_final_box7", "s_eroded", "s_nominal", "s_dilated", "s_arc", "s_corner"),
+    *("s_straight", "te1_final", "te1_arc"),
     *("n_eff", "spectrum_wavelengths", "spectrum_s", "flux_in", "flux_up"),
     *("cut_top_final", "cut_top_arc", "cut_out_final", "cut_out_arc"),
     *("cut_in_final", "cut_x", "cut_y", "cut_z"),
@@ -57,11 +58,88 @@ def test_settings_give_the_plane_positions_as_numbers():
     settings = run.settings(run.PROFILES["smoke"], {})
     assert set(settings) == set(run.SETTINGS_KEYS)
     assert settings["geometry"]["port_window_half_width_um"] == 2.0
-    assert settings["cuts"]["cut_in_x_um"] == pytest.approx(-2.0)
-    assert settings["cuts"]["cut_out_y_um"] == pytest.approx(-2.0)
-    assert settings["fluxes"]["flux_in_x_um"] == pytest.approx(-2.0)
-    assert settings["fluxes"]["flux_up_z_um"] == pytest.approx(1.7)
+    # smoke h = 0.4: the 0.5 um segments either side of -2.0 um are 2 cells
+    # of 0.25 um; the top oxide cell (0.1453 um) spans 0.9647 to 1.11 um
+    assert settings["cuts"]["cut_in_x_um"] == pytest.approx(-2.125)
+    assert settings["cuts"]["cut_out_y_um"] == pytest.approx(-2.125)
+    assert settings["fluxes"]["flux_in_x_um"] == pytest.approx(-2.125)
+    assert settings["fluxes"]["flux_up_z_um"] == pytest.approx(1.0373, abs=1e-4)
     json.dumps(settings)  # the record's JSON holds them
+
+
+@pytest.mark.parametrize("h", [0.4, 0.25, 0.15, 0.1, 0.07, 0.06])
+def test_flux_and_cut_planes_sit_mid_cell_inside_the_stack(h):
+    # On the mesh the fields live on (the half model at h): no node on the
+    # plane, which sits half a cell from the grid planes either side.
+    nodes = run.bm.bend3d(h, half=True)[0]
+    planes = run.planes(h)
+    for axis, value, low, high in (
+        (0, planes.cut_in_x, -2.5, -1.5),  # the input arm, port to design
+        (1, planes.cut_out_y, -2.5, -1.5),  # the output arm
+        (2, planes.flux_up_z, 0.11, 1.11),  # the oxide above the core
+    ):
+        at = value / 1e-6
+        assert low < at < high
+        lines = np.unique(np.round(nodes[:, axis], 9))
+        below, above = lines[lines < at].max(), lines[lines > at].min()
+        assert at - below == pytest.approx(above - at)
+
+
+def test_settings_record_the_soi_stack_and_recipe():
+    settings = run.settings(run.PROFILES["full"], {})
+    core, cladding = settings["indices"]["core"], settings["indices"]["cladding"]
+    assert core["material"] == "Si"
+    assert core["n"] == 3.4757
+    assert "Li" in core["source"]
+    assert "1980" in core["source"]
+    assert core["sellmeier"] is None  # a tabulated constant, no formula
+    assert cladding["n"] == pytest.approx(1.444024, abs=1e-6)
+    assert settings["filter_radius_um"] == pytest.approx(0.2)
+    assert settings["spectrum_wavelengths_um"] == pytest.approx(
+        [1.45 + 0.02 * k for k in range(11)]
+    )
+    geometry = settings["geometry"]
+    assert geometry["core_width_um"] == 0.5
+    assert geometry["core_thickness_um"] == 0.22
+    assert geometry["z_um"] == pytest.approx([-1.11, 1.11])
+    assert "|y| < 0.25" in geometry["guides"]
+    assert "|z| < 1.11" in geometry["port_windows"]
+    assert settings["profile_h_um"] == {"h": 0.07, "h_fine": 0.06, "h_check": 0.1}
+    smoke = run.settings(run.PROFILES["smoke"], {})
+    assert smoke["profile_h_um"] == {"h": 0.4, "h_fine": 0.25, "h_check": 0.4}
+    assert len(smoke["spectrum_wavelengths_um"]) == 3
+
+
+@pytest.mark.parametrize(
+    "stage", ["optimize", "half", "spectrum", "full", "box", "fine"]
+)
+def test_every_stage_solves_direct_with_a_10_gib_budget(stage):
+    options = run.solver_options(stage)
+    assert options.linear_solver == "direct"
+    assert options.retain_memory == 10 * 2**30
+
+
+def _te_fields():
+    """TE1-type (E_x, B_z odd in x) and TE0-type (even) fields on a cut.
+
+    Samples (x, z, 3) at x symmetric about 0; both carry power along -y.
+    """
+    x = (np.arange(8) - 3.5)[:, None] * np.ones((1, 3))
+    g, zero = np.exp(-(x**2) / 8), np.zeros_like(x)
+    te1 = np.stack([x * g, zero, zero], -1), np.stack([zero, zero, x * g], -1)
+    te0 = np.stack([g, zero, zero], -1), np.stack([zero, zero, g], -1)
+    return te1, te0
+
+
+def test_te1_flux_takes_the_odd_part_only():
+    (e1, b1), (e0, b0) = _te_fields()
+    # by hand: outgoing -S_y = E_x H_z - E_z H_x, here 0.5 E_x B_z / mu_0
+    odd = 0.5 * float((e1[..., 0] * b1[..., 2]).sum()) / run.mu_0 * run.CUT_STEP**2
+    assert odd > 0
+    assert run.odd_flux(e1, b1) == pytest.approx(odd)
+    assert run.odd_flux(e0, b0) == pytest.approx(0.0, abs=1e-30)
+    # the even part and the even-odd cross power drop out of a mix
+    assert run.odd_flux(e0 + e1, b0 + b1) == pytest.approx(odd)
 
 
 @pytest.mark.parametrize(
@@ -155,13 +233,13 @@ def grid():
 
 
 def test_hand_drawn_designs_cover_their_drawn_area(grid):
-    # Areas in um^2 by hand: a quarter ring of radii 1.1 and 1.9 about
-    # (-1.5, -1.5) um; an L of two 0.8 um arms, 1.9 um long, sharing a square.
+    # Areas in um^2 by hand: a quarter ring of radii 1.25 and 1.75 about
+    # (-1.5, -1.5) um; an L of two 0.5 um arms, 1.75 um long, sharing a square.
     arc, corner = run.arc_design(grid), run.corner_design(grid)
     pixel = 0.05**2
     assert arc.shape == corner.shape == (60, 60)
-    assert arc.sum() * pixel == pytest.approx(np.pi / 4 * (1.9**2 - 1.1**2), rel=2e-3)
-    assert corner.sum() * pixel == pytest.approx(2 * 1.9 * 0.8 - 0.8**2, rel=1e-9)
+    assert arc.sum() * pixel == pytest.approx(np.pi / 4 * (1.75**2 - 1.25**2), rel=2e-3)
+    assert corner.sum() * pixel == pytest.approx(2 * 1.75 * 0.5 - 0.5**2, rel=1e-9)
     # rows are y, columns x: both designs start at both arms
     for design in (arc, corner):
         assert design[30, 0] == design[0, 30] == 1.0

@@ -3,29 +3,29 @@
 Usage: python tools/bend3d_mesh.py OUTDIR --h H [--half] [--kind bend|straight]
 [--box B] [--ymirror] [--length L]
 
-The stack (um): a 0.8 x 0.4 Si3N4 strip in SiO2, with 1.6 of oxide above and
-below it (|z| <= 1.8), in the 2D tutorial's 5 x 5 layout (x and y in
-[-2.5, 2.5]). The meshes are 4.5 to 56 MB, so none is committed; the run
-builds them in seconds.
+The stack (um): a 0.5 x 0.22 Si strip in SiO2, with 1.0 of oxide above and
+below it (|z| <= 1.11), in the 2D tutorial's 5 x 5 layout (x and y in
+[-2.5, 2.5]). The meshes are a few to tens of MB (the h = 0.07 half model is
+18.8 MB), so none is committed; the run builds them in seconds.
 
-Volumes: "design" (|x|, |y| < 1.5 through the core, |z| < 0.2), "core" (the
-input arm x < -1.5, |y| < 0.4, and the output arm y < -1.5, |x| < 0.4, both
-|z| < 0.2) and "cladding" (the rest). Surfaces: "port1" (x = -2.5,
+Volumes: "design" (|x|, |y| < 1.5 through the core, |z| < 0.11), "core" (the
+input arm x < -1.5, |y| < 0.25, and the output arm y < -1.5, |x| < 0.25, both
+|z| < 0.11) and "cladding" (the rest). Surfaces: "port1" (x = -2.5,
 |y| < 2.0, the full height), "port2" (y = -2.5, |x| < 2.0), "outer" (every
-other box face, the top and bottom z = +-1.8 included) and, on the mirror
+other box face, the top and bottom z = +-1.11 included) and, on the mirror
 half model only, "mirror" (z = 0, for ``PMC("mirror")``).
 
 ``kind="straight"``: the core runs straight along x through the box, x in
 [-length / 2, length / 2] (default the box), and "port2" is x = +length / 2,
-|y| < 2.0. "design" keeps its footprint (fill it with core along |y| < 0.4
+|y| < 2.0. "design" keeps its footprint (fill it with core along |y| < 0.25
 for the straight-guide check). ``ymirror`` keeps y >= 0 with the surface
 "ywall" at y = 0 (the TE0 y mirror, for ``PEC("ywall")``).
 
-The grid: in-plane lines at {+-0.4, +-1.5, +-2.0, +-box} um (and +-2.5 for a
+The grid: in-plane lines at {+-0.25, +-1.5, +-2.0, +-box} um (and +-2.5 for a
 larger box, so its mesh holds the 5 x 5 um one), each segment cut into
 ceil(L / h) equal cells, the same in x and y. In z, ``n_core`` (even) cells
 through the core, then cells growing geometrically by ``growth`` through the
-oxide up to ``hz_max``, then equal cells to 1.8 um. The full stack is
+oxide up to ``hz_max``, then equal cells to 1.11 um. The full stack is
 symmetric under z -> -z; the half is exactly its z >= 0 part.
 """
 
@@ -37,9 +37,17 @@ from pathlib import Path
 import numpy as np
 import structured_meshes as sm
 
-CORE_W, CORE_T = 0.8, 0.4  # um
+CORE_W, CORE_T = 0.5, 0.22  # um
 DESIGN, PORT, BOX = 1.5, 2.0, 2.5  # half-widths (um)
-Z_TOP = CORE_T / 2 + 1.6  # 1.8 um
+Z_TOP = CORE_T / 2 + 1.0  # 1.11 um
+
+
+def grid_lines(box=BOX):
+    """The in-plane grid lines' positive half (um), the same in x and y.
+
+    +-2.5 stays a grid line so a larger box keeps the 5 x 5 um mesh inside.
+    """
+    return {CORE_W / 2, DESIGN, PORT, BOX, box}
 
 
 def axis(lines, h):
@@ -52,13 +60,13 @@ def axis(lines, h):
 
 
 def z_edges(h, *, half, n_core=None, hz_max=None, growth=1.25):
-    """The z grid: ``n_core`` (even) core cells, then graded oxide to 1.8 um.
+    """The z grid: ``n_core`` (even) core cells, then graded oxide to 1.11 um.
 
     Args:
         h: The in-plane cell size (um), which sets the defaults.
         half: Return z >= 0 only.
         n_core: Cells through the full core, even; default
-            max(4, 2 ceil(0.2 / h)).
+            max(4, 2 ceil(0.11 / h)): 4 at h >= 0.06, 6 at h = 0.05.
         hz_max: The largest oxide cell (um); default min(0.2, 2 h).
         growth: The ratio of successive oxide cells while they grow.
     """
@@ -112,8 +120,7 @@ def bend3d(
         raise ValueError("length is a straight-guide option only")
     if ymirror and kind != "straight":
         raise ValueError("ymirror is a straight-guide reduction only")
-    # +-2.5 stays a grid line so a larger box keeps the 5 x 5 um mesh inside
-    lines = {CORE_W / 2, DESIGN, PORT, BOX, box}
+    lines = grid_lines(box)
     xh = box if length is None else length / 2
     xl = lines if length is None else {v for v in lines if v < xh - 1e-9} | {xh}
     x = axis({-v for v in xl} | xl, h)
@@ -158,7 +165,7 @@ def bend3d(
         raise ValueError(f"unclassified exterior face at {c}")
 
     if half:
-        # built on z in [-1.8, 0] and reflected, so the half is exactly the
+        # built on z in [-1.11, 0] and reflected, so the half is exactly the
         # z >= 0 part of the full mesh (built with the z mirror)
         return sm.structured(
             (x, y, -z[::-1]), volume, surface, lambda p: p * [1.0, 1.0, -1.0]
