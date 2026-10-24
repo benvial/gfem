@@ -1,0 +1,75 @@
+{
+ "profile": "full",
+ "provenance": {
+  "commit": "251ab7cdef43791d167608bd8bac691b2c86a3b3",
+  "sha256": {
+   "tools/bend3d_arc_spectrum.py": "b2df1f12c2d827d2a8e221217f146c874d9d2feeab849ab4cba4f693945ff3d1",
+   "tools/bend3d_run.py": "a01553f928cbb547cb943a84befbab657224f6b01e73a4a858c91e1b8b4dec90",
+   "tools/bend3d_mesh.py": "d25bc4f5bdd06308adc1d5c9cdc53eaa261e7ad2256aa88b201dbe0e91cf2cdb"
+  },
+  "versions": {
+   "gfem": "0.1.0.dev0",
+   "python": "3.12.10",
+   "ngsolve": "6.2.2608",
+   "jax": "0.12.0",
+   "jaxlib": "0.12.0",
+   "numpy": "2.5.4",
+   "optax": null,
+   "mkl": "2026.2.0"
+  },
+  "pardiso_available": true,
+  "os": "Debian GNU/Linux 12 (bookworm)",
+  "kernel": "4.19.0-gvisor",
+  "cpu_model": "AMD EPYC 7V73X 64-Core Processor",
+  "physical_cores": 16,
+  "threads": 16,
+  "memory_limit_bytes": 103079215104,
+  "host": "modal",
+  "start_utc": "2026-10-24T20:55:54+00:00",
+  "end_utc": "2026-10-24T21:16:02+00:00",
+  "command": "python tools/bend3d_arc_spectrum.py --profile full --out /vol/arc_record --work /vol/arc_record/work",
+  "wall_s": 1207.7,
+  "peak_rss_bytes": 56505176064
+ },
+ "settings": {
+  "design": "arc_design of tools/bend3d_run.py",
+  "wavelengths_um": [
+   1.45,
+   1.47,
+   1.49,
+   1.51,
+   1.53,
+   1.55,
+   1.57,
+   1.59,
+   1.61,
+   1.63,
+   1.65
+  ],
+  "mesh": {
+   "name": "bend3d_h0.07_half",
+   "h_um": 0.07,
+   "half": true,
+   "kind": "bend",
+   "box_um": 2.5,
+   "tets": 381216
+  },
+  "solver_options": {
+   "order": 2,
+   "linear_solver": "direct",
+   "tolerance": 1e-06,
+   "device": "cpu",
+   "threads": null,
+   "adaptive_tolerance": 0.001,
+   "adaptive_max_samples": 20,
+   "adaptive_memory": 2,
+   "port_mode_tolerance": 1e-06,
+   "retain_memory": 10737418240,
+   "adjoint_tolerance": null,
+   "eigen_tolerance": 1e-10,
+   "cluster_rtol": 1e-06,
+   "max_refine_iterations": 50,
+   "frequency_workers": 1
+  }
+ }
+}
