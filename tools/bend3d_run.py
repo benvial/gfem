@@ -8,7 +8,7 @@ The 2D bend tutorial's recipe (docs/tutorials/bend.ipynb) on a real stack: a
 tools/bend3d_mesh.py), solved on the mirror half model z >= 0 with a PMC at
 z = 0, |S21|^2 of the TE0 mode at 1.55 um. Every stage is a direct (PARDISO)
 solve. The run needs a 16-core / 96 GiB Linux machine and the ``mkl`` extra
-(about 2.7 h; peaks of about 70 GiB in ``optimize`` and 78 GiB in
+(about 2.7 h; peaks of 62-72 GiB in ``optimize`` and 78 GiB in
 ``fine``); the docs page ``docs/tutorials/bend3d.ipynb`` reads its
 record and solves nothing, and refuses a record whose script hashes differ
 from these files', so editing either forces a rerun. ``just bend3d-data``
@@ -25,9 +25,9 @@ predecessors', so a failed stage reruns alone:
   (2.49M DOF, one factorization and about 145 s per iteration, a peak of
   62-72 GiB); the history, snapshots and designs.
 - ``half``: forward re-solves on that mesh: the last iterate, ``final``
-  (fields kept: field cuts, fluxes, TE1 fraction, port n_eff), the eroded,
-  nominal and dilated variants, the arc (fields kept: cuts, TE1 fraction)
-  and corner designs, and the straight guide.
+  (fields kept: field cuts, fluxes, TE1-like fraction, port n_eff), the
+  eroded, nominal and dilated variants, the arc (fields kept: cuts, TE1-like
+  fraction) and corner designs, and the straight guide.
 - ``spectrum``: ``final`` over 11 wavelengths, 1.45 to 1.65 um.
 - ``full``: ``final`` on the h_check = 0.1 um meshes: the full stack (2.02M
   DOF, about 50 GiB) and the half model (``s_final_h01``, the reference of
@@ -199,14 +199,11 @@ def model(mesh, *, half=True):
     )
 
 
-def solver_options(stage):  # noqa: ARG001 (the same for every stage)
-    """The solver of each stage: direct (PARDISO), the same for every stage.
-
-    The direct solve keeps 10 GiB for the gradient: at 2.49M DOF (h = 0.07)
-    one solve's retained entry is about 4.2 GB, and a smaller budget evicts
-    it, so the backward pass would factorize again.
-    """
-    return gfem.SolverOptions(linear_solver="direct", retain_memory=10 * 2**30)
+#: The solver of every stage: direct (PARDISO), keeping 10 GiB for the
+#: gradient. At 2.49M DOF (h = 0.07) one solve's retained entry is about
+#: 4.2 GB, and a smaller budget evicts it, so the backward pass would
+#: factorize again.
+DIRECT = gfem.SolverOptions(linear_solver="direct", retain_memory=10 * 2**30)
 
 
 def layer_grid(mesh):
@@ -237,7 +234,7 @@ def material(density, grid):
 def missed_power(bend, grid, blur):
     """``loss(rho, beta)``: 1 - |S21|^2 at 1.55 um, aux (|S21|^2, core fraction)."""
     problem = gfem.Driven(frequency=F0, excite=None)
-    options = solver_options("optimize")
+    options = DIRECT
 
     def loss(rho, beta):
         density = physical(rho, beta, blur)
@@ -304,14 +301,18 @@ class Planes(typing.NamedTuple):
     """The cut and flux planes on the mesh of one in-plane cell (m)."""
 
     cut_in_x: float  #: across the input arm (cut_in, flux_in)
-    cut_out_y: float  #: across the output arm (cut_out, the TE1 fraction)
+    cut_out_y: float  #: across the output arm (cut_out, the TE1-like fraction)
     flux_up_z: float  #: over the whole box, under the top face (flux_up)
 
 
 def _mid_cell(edges, target):
-    """The centre of the ``edges`` cell nearest ``target`` (the lower on a tie)."""
+    """The centre of the ``edges`` cell nearest ``target`` (the lower on a tie).
+
+    Distances are rounded to 1e-9 so a target on a grid line ties exactly,
+    whatever its float noise, and the first (lower) cell wins.
+    """
     centres = 0.5 * (edges[1:] + edges[:-1])
-    return float(centres[np.argmin(np.abs(centres - target))])
+    return float(centres[np.argmin(np.round(np.abs(centres - target), 9))])
 
 
 def planes(h):
@@ -319,10 +320,11 @@ def planes(h):
 
     Each plane sits mid-cell, half a cell off the mesh's grid planes: a field
     sampled on an element face has a discontinuous B = curl E there, which
-    biases a sampled flux by 4-8 % (ticket 08). The arms' planes take the cell
-    nearest the middle of each arm's straight run, between its port and the
-    design square (x or y = -2.0 um, a grid line); ``flux_up_z`` takes the
-    cell nearest 0.1 um under the top face.
+    biases a sampled flux by several percent (4-8 % measured on this bend).
+    The arms' planes take the cell nearest the middle of each arm's straight
+    run, between its port and the design square (x or y = -2.0 um, a grid
+    line: the cell on the port side); ``flux_up_z`` takes the cell nearest
+    0.1 um under the top face.
     """
     lines = bm.grid_lines()
     across = bm.axis({-v for v in lines} | lines, h)
@@ -366,39 +368,45 @@ def _flux(field, points, axis):
     return _poynting(_sample(field, points), _sample(field.b(), points), axis)
 
 
-#: The mirror x -> -x on E's components (B, a pseudovector, takes the minus).
-_MIRROR_X = np.array([1.0, -1.0, -1.0])
+#: Per component, +1 where the TE1-like part of E is odd in x (E_x) and -1
+#: where it is even (E_y, E_z); B's parities are the reverse.
+_E_ODD_IN_X = np.array([1.0, -1.0, -1.0])
+#: The cut's extent across the arm for the TE1-like flux: the port window.
+TE1_HALF_WIDTH = bm.PORT * um
 
 
-def odd_flux(e, b):
+def odd_flux(e, b, x):
     """The outgoing (-y) power of the field part odd across the output arm (W).
 
     ``e`` and ``b`` are sampled (x, z, 3) on a cut y = const across the arm,
-    at x symmetric about 0. The odd part is the TE1-type one, E_x odd in x
-    and E_y, E_z even (TE0 has E_x even); its flux is measure (a) of ticket
-    08's "TE1 at the arc's output". The even-odd cross power integrates to
-    zero on the symmetric cut.
+    at the positions ``x`` (m), symmetric about 0; only |x| < 2 um, the port
+    window, counts. The odd part is the TE1-like one, E_x odd in x and E_y,
+    E_z even (TE0 has E_x even). The even-odd cross power integrates to zero
+    on the symmetric cut.
     """
-    e_odd = 0.5 * (e - _MIRROR_X * e[::-1])
-    b_odd = 0.5 * (b + _MIRROR_X * b[::-1])
+    inside = np.abs(np.asarray(x)) < TE1_HALF_WIDTH
+    e, b = e[inside], b[inside]
+    e_odd = 0.5 * (e - _E_ODD_IN_X * e[::-1])
+    b_odd = 0.5 * (b + _E_ODD_IN_X * b[::-1])
     return -_poynting(e_odd, b_odd, 1)
 
 
-def field_maps(result, where):
+def field_maps(result, cut_planes):
     """The cuts and fluxes of a kept solve, port p1 fed (mirror half model).
 
     |E| (MV/m, float16) on the core mid-plane z = 0 (rows y, columns x), on
-    the output arm's cross-section y = ``where.cut_out_y`` and on the input
-    arm's x = ``where.cut_in_x`` (rows across, columns z); the Poynting flux
-    through x = ``where.cut_in_x`` (+x) and through z = ``where.flux_up_z``
-    over the whole box (+z); the TE1 power, `odd_flux` across the output arm
-    (``where``: the solve's mesh's `planes`).
+    the output arm's cross-section y = ``cut_planes.cut_out_y`` and on the
+    input arm's x = ``cut_planes.cut_in_x`` (rows across, columns z); the
+    Poynting flux through x = ``cut_planes.cut_in_x`` (+x) and through
+    z = ``cut_planes.flux_up_z`` over the whole box (+z); the TE1-like power,
+    `odd_flux` across the output arm (``cut_planes``: the solve's mesh's
+    `planes`).
     """
     e = result.e_field(F0, excite="p1")
     top = _plane(2, 0.0, CUT_ALONG, CUT_ALONG)[..., [1, 0, 2]]  # rows y, columns x
-    out = _plane(1, where.cut_out_y, CUT_ALONG, CUT_HEIGHT)
-    into = _plane(0, where.cut_in_x, CUT_ALONG, CUT_HEIGHT)
-    up = _plane(2, where.flux_up_z, CUT_ALONG, CUT_ALONG)
+    out = _plane(1, cut_planes.cut_out_y, CUT_ALONG, CUT_HEIGHT)
+    into = _plane(0, cut_planes.cut_in_x, CUT_ALONG, CUT_HEIGHT)
+    up = _plane(2, cut_planes.flux_up_z, CUT_ALONG, CUT_ALONG)
     e_out = _sample(e, out)
     return {
         "cut_top": _magnitude(_sample(e, top)),
@@ -406,34 +414,8 @@ def field_maps(result, where):
         "cut_in": _magnitude(_sample(e, into)),
         "flux_in": _flux(e, into, 0),
         "flux_up": _flux(e, up, 2),
-        "te1": odd_flux(e_out, _sample(e.b(), out)),
+        "te1": odd_flux(e_out, _sample(e.b(), out), CUT_ALONG),
     }
-
-
-@contextlib.contextmanager
-def gmres_iterations():
-    """Collect NGSolve's GMRES iterations, one entry per solved column.
-
-    It counts every NGSolve ``GMResSolver`` solve in the block: one per
-    right-hand side that BDDC + GMRES solves on the operator without the
-    wave ports' low-rank term, so each column of that term (Woodbury) as
-    well as each excitation: more entries than excited ports.
-    """
-    import ngsolve.solvers
-
-    counts, base = [], ngsolve.solvers.GMResSolver
-
-    class Counted(base):
-        def Solve(self, *args, **kwargs):  # noqa: N802 (NGSolve's name)
-            out = super().Solve(*args, **kwargs)
-            counts.append(int(self.iterations))
-            return out
-
-    ngsolve.solvers.GMResSolver = Counted
-    try:
-        yield counts
-    finally:
-        ngsolve.solvers.GMResSolver = base
 
 
 # --- the stages ---------------------------------------------------------------
@@ -484,7 +466,7 @@ class Stage:
             raise ValueError(f"--bddc applies to {', '.join(BDDC_STAGES)} only")
         self.name, self.out, self.profile_name = name, Path(out), profile
         self.profile, self.bddc = PROFILES[profile], bddc
-        self.meshes, self.options, self.observations = {}, {}, {}
+        self.meshes, self.options = {}, {}
 
     def mesh(self, h, **kwargs):
         """``(mesh, name)`` of a `bend3d_mesh.bend3d` mesh, built once per DIR."""
@@ -521,8 +503,8 @@ class Stage:
         self.meshes[name]["dof"] = int(result.e_fields[0].coefficients.shape[0])
 
     def solver(self):
-        """This stage's `solver_options` (BDDC + GMRES at 1e-6 with ``--bddc``)."""
-        options = BDDC if self.bddc else solver_options(self.name)
+        """This stage's solver: `DIRECT`, or `BDDC` with ``--bddc``."""
+        options = BDDC if self.bddc else DIRECT
         self.options = dataclasses.asdict(options)
         return options
 
@@ -556,7 +538,7 @@ def optimize(stage):
     profile = stage.profile
     bend, grid, _ = stage.design_mesh(profile.h)
     blur = density_filter(grid)
-    stage.solver()  # records solver_options("optimize"), which missed_power uses
+    stage.solver()  # records DIRECT, which missed_power uses
     value_and_grad = jax.jit(
         jax.value_and_grad(missed_power(bend, grid, blur), has_aux=True)
     )
@@ -601,7 +583,7 @@ def half(stage):
     """Forward re-solves on the optimization's mesh, the mirror half model."""
     profile, opt = stage.profile, stage.load("optimize")
     bend, grid, name = stage.design_mesh(profile.h)
-    where = planes(profile.h)
+    cut_planes = planes(profile.h)
     blur = density_filter(grid)
     options = stage.solver()
     rho = jnp.asarray(opt["rho_final"])
@@ -610,7 +592,7 @@ def half(stage):
     out = {}
     final_result = solve_design(bend, grid, stage.final(), options, keep=True)
     stage.dof(name, final_result)
-    maps = field_maps(final_result, where)
+    maps = field_maps(final_result, cut_planes)
     out |= {
         "s_final": s_matrix(final_result.s)[0],
         "n_eff": np.array(
@@ -625,7 +607,7 @@ def half(stage):
     }
     del final_result
     arc_result = solve_design(bend, grid, arc, options, keep=True)
-    maps = field_maps(arc_result, where)
+    maps = field_maps(arc_result, cut_planes)
     out |= {
         "s_arc": s_matrix(arc_result.s)[0],
         "cut_top_arc": maps["cut_top"],
@@ -703,14 +685,8 @@ def box(stage):
 
 
 def fine(stage):
-    """``final`` on the finer mesh: the quoted mesh error.
-
-    It counts NGSolve's GMRES iterations, none with the direct solve.
-    """
-    with gmres_iterations() as counts:
-        s = solve_final(stage, stage.profile.h_fine)
-    stage.observations["gmres_iterations"] = counts
-    return {"s_final_fine": s}
+    """``final`` on the finer mesh: the quoted mesh error."""
+    return {"s_final_fine": solve_final(stage, stage.profile.h_fine)}
 
 
 RUNS = {
@@ -963,7 +939,6 @@ def run_stage(name, out, profile, *, bddc=False):
         "observations": {
             "wall_s": round(time.perf_counter() - tic, 1),
             "peak_rss_bytes": memory.peak_bytes,
-            **stage.observations,
         },
     }
     npz_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1039,10 +1014,8 @@ NPZ_KEYS = (
 )
 
 
-def observation_keys(stage):
-    """The observations recorded for ``stage``: wall time, peak memory, ..."""
-    keys = ("wall_s", "peak_rss_bytes")
-    return (*keys, "gmres_iterations") if stage == "fine" else keys
+#: The observations recorded for every stage: wall time, peak memory.
+OBSERVATION_KEYS = ("wall_s", "peak_rss_bytes")
 
 
 def _um(length):
@@ -1059,8 +1032,7 @@ def settings(profile, infos):
             merged.update(entry)
             merged["stages"].append(stage)
     plane = {"step_um": CUT_STEP / um, "rule": "midpoint"}
-    where = planes(profile.h)
-    cut_in, cut_out, flux_up = (_um(v) for v in where)
+    cut_in, cut_out, flux_up = (_um(v) for v in planes(profile.h))
     w, top = bm.CORE_W / 2, bm.Z_TOP
     return {
         "f0_hz": F0,
@@ -1093,7 +1065,7 @@ def settings(profile, infos):
             "h_check": profile.h_check,
         },
         "meshes": meshes,
-        "order": solver_options("optimize").order,
+        "order": DIRECT.order,
         "solver_options": {
             stage: info["solver_options"] for stage, info in infos.items()
         },
@@ -1133,7 +1105,8 @@ def settings(profile, infos):
                 **plane,
                 "plane": f"y = {cut_out:g} um",
                 "towards": "-y",
-                "part": "odd in x (E_x odd; E_y, E_z even), TE1-type",
+                "part": "odd in x (E_x odd; E_y, E_z even), TE1-like",
+                "across": f"|x| < {bm.PORT:g} um, the port window",
                 "arrays": "te1_final, te1_arc: fraction of the incident power",
             },
             "extent": "the cut points of cut_in and cut_out (across, z) and of "
@@ -1168,7 +1141,7 @@ def write_record(record, arrays, dest):
             raise ValueError(f"settings {entry}: missing {missing}")
     _same_keys("observations", record["observations"], STAGES)
     for stage, seen in record["observations"].items():
-        _same_keys(f"observations of {stage}", seen, observation_keys(stage))
+        _same_keys(f"observations of {stage}", seen, OBSERVATION_KEYS)
     _same_keys("arrays", arrays, NPZ_KEYS)
     text = (json.dumps(record, indent=1) + "\n").encode()
     buffer = io.BytesIO()
