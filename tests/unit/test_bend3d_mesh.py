@@ -99,3 +99,21 @@ def test_larger_box_keeps_the_5um_mesh_inside(half):
         return bool((np.abs(p[:, :2]) <= bm.BOX + 1e-12).all())
 
     assert _cells(nodes, tets, tet_names, keep=inside) == _cells(*half[:3])
+
+
+def test_soi_stack_grid():
+    # The 0.22 x 0.5 um Si core with 1.0 um of oxide above and below: core
+    # lines at +-0.25 in plane and +-0.11 in z, the box top at 1.11 um.
+    nodes = bm.bend3d(H, half=False)[0]
+    assert {0.25, -0.25} <= set(np.round(nodes[:, 0], 9))
+    assert {0.11, -0.11} <= set(np.round(nodes[:, 2], 9))
+    assert nodes[:, 2].max() == pytest.approx(1.11)
+    # 4 core cells (0.055 um) at h >= 0.06, 6 at h = 0.05
+    for h, cells in ((0.1, 4), (0.07, 4), (0.06, 4), (0.05, 6)):
+        z = bm.z_edges(h, half=False)
+        assert int(np.sum(np.abs(z) < 0.11 + 1e-9)) - 1 == cells
+
+
+def test_h015_half_mesh_size():
+    # spec 1.2: 38 x 38 in-plane cells x 10 z cells x 6 tetrahedra
+    assert len(bm.bend3d(0.15, half=True)[1]) == 86_640
