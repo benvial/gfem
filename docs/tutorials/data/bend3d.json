@@ -1,7 +1,7 @@
 {
  "profile": "full",
  "provenance": {
-  "commit": "bc1dae936e8fb0d4435f3ee87bd1f462c9fd5d3e",
+  "commit": "006314c258c122c3851b6a1b2cbf21dfaef6e362",
   "versions": {
    "gfem": "0.1.0.dev0",
    "python": "3.12.10",
@@ -18,78 +18,67 @@
   "cpu_model": "AMD EPYC 7V73X 64-Core Processor",
   "physical_cores": 16,
   "threads": 16,
-  "memory_limit_bytes": 68719476736,
-  "host": "modal eu-west ta-01M5N17MV6N5J3R3AW7GN0QR3R",
+  "memory_limit_bytes": 103079215104,
+  "host": "modal uk ta-01M5PRX8H9F5YHMTPQXG95YN9R",
   "stages": {
    "optimize": {
-    "start_utc": "2026-10-23T18:44:13+00:00",
-    "end_utc": "2026-10-23T19:17:14+00:00",
+    "start_utc": "2026-10-24T10:57:12+00:00",
+    "end_utc": "2026-10-24T12:39:52+00:00",
     "command": "python tools/bend3d_run.py optimize --out work --profile full"
    },
    "half": {
-    "start_utc": "2026-10-23T19:17:24+00:00",
-    "end_utc": "2026-10-23T19:23:21+00:00",
+    "start_utc": "2026-10-24T12:39:56+00:00",
+    "end_utc": "2026-10-24T12:57:32+00:00",
     "command": "python tools/bend3d_run.py half --out work --profile full"
    },
    "spectrum": {
-    "start_utc": "2026-10-23T19:23:25+00:00",
-    "end_utc": "2026-10-23T19:30:23+00:00",
+    "start_utc": "2026-10-24T13:07:01+00:00",
+    "end_utc": "2026-10-24T13:27:31+00:00",
     "command": "python tools/bend3d_run.py spectrum --out work --profile full"
    },
    "full": {
-    "start_utc": "2026-10-23T19:30:27+00:00",
-    "end_utc": "2026-10-23T19:33:53+00:00",
+    "start_utc": "2026-10-24T13:01:57+00:00",
+    "end_utc": "2026-10-24T13:05:22+00:00",
     "command": "python tools/bend3d_run.py full --out work --profile full"
    },
    "box": {
-    "start_utc": "2026-10-23T19:34:01+00:00",
-    "end_utc": "2026-10-23T19:35:57+00:00",
+    "start_utc": "2026-10-24T13:05:25+00:00",
+    "end_utc": "2026-10-24T13:06:55+00:00",
     "command": "python tools/bend3d_run.py box --out work --profile full"
    },
    "fine": {
-    "start_utc": "2026-10-23T19:36:01+00:00",
-    "end_utc": "2026-10-23T19:56:13+00:00",
+    "start_utc": "2026-10-24T12:57:43+00:00",
+    "end_utc": "2026-10-24T13:01:54+00:00",
     "command": "python tools/bend3d_run.py fine --out work --profile full"
    }
   },
   "sha256": {
-   "tools/bend3d_run.py": "04b6b1f415557418edcb0a0c31bc6de8a4c05cffa84adfc9b9f2cfbce42530f6",
-   "tools/bend3d_mesh.py": "a8980051b9baa73eb46d44a4e76087358d89928847b78205e6d790f2bfafcfed"
+   "tools/bend3d_run.py": "a01553f928cbb547cb943a84befbab657224f6b01e73a4a858c91e1b8b4dec90",
+   "tools/bend3d_mesh.py": "d25bc4f5bdd06308adc1d5c9cdc53eaa261e7ad2256aa88b201dbe0e91cf2cdb"
   }
  },
  "settings": {
   "f0_hz": 193414489032258.06,
   "wavelength_um": 1.55,
   "spectrum_wavelengths_um": [
-   1.2,
-   1.25,
-   1.3,
-   1.35,
-   1.4,
    1.45,
-   1.5,
+   1.47,
+   1.49,
+   1.51,
+   1.53,
    1.55,
-   1.6,
-   1.65,
-   1.7,
-   1.75,
-   1.8
+   1.57,
+   1.59,
+   1.61,
+   1.63,
+   1.65
   ],
   "indices": {
    "core": {
-    "material": "Si3N4",
-    "n": 1.9962797317138814,
-    "source": "Luke et al., Opt. Lett. 40, 4823 (2015)",
-    "sellmeier": [
-     [
-      3.0249,
-      0.1353406
-     ],
-     [
-      40314.0,
-      1239.842
-     ]
-    ]
+    "material": "Si",
+    "n": 3.4757,
+    "source": "H. H. Li, J. Phys. Chem. Ref. Data 9, 561 (1980)",
+    "sellmeier": null
    },
    "cladding": {
     "material": "SiO2",
@@ -112,46 +101,62 @@
    }
   },
   "geometry": {
-   "core_width_um": 0.8,
-   "core_thickness_um": 0.4,
-   "oxide_above_and_below_um": 1.6,
+   "core_width_um": 0.5,
+   "core_thickness_um": 0.22,
+   "oxide_above_and_below_um": 1.0,
    "z_um": [
-    -1.8,
-    1.8
+    -1.11,
+    1.11
    ],
    "box_half_width_um": 2.5,
    "box_7um_half_width_um": 3.5,
    "design_half_width_um": 1.5,
-   "guides": "input |y| < 0.4 along x < -1.5, output |x| < 0.4 along y < -1.5",
+   "guides": "input |y| < 0.25 along x < -1.5, output |x| < 0.25 along y < -1.5",
    "port_window_half_width_um": 2.0,
-   "port_windows": "p1 x = -2.5, |y| < 2.0; p2 y = -2.5, |x| < 2.0; |z| < 1.8 (z >= 0 on the mirror half model)",
+   "port_windows": "p1 x = -2.5, |y| < 2; p2 y = -2.5, |x| < 2; |z| < 1.11 (z >= 0 on the mirror half model)",
    "straight_guide_length_um": 5.0,
    "mirror_half_model": "z >= 0, PMC on z = 0"
   },
+  "profile_h_um": {
+   "h": 0.07,
+   "h_fine": 0.06,
+   "h_check": 0.1
+  },
   "meshes": {
-   "bend3d_h0.1_half": {
+   "bend3d_h0.07_half": {
     "stages": [
      "optimize",
      "half",
      "spectrum"
     ],
+    "h_um": 0.07,
+    "half": true,
+    "kind": "bend",
+    "box_um": 2.5,
+    "tets": 381216,
+    "dof": 2489174
+   },
+   "straight3d_h0.07_half": {
+    "stages": [
+     "half"
+    ],
+    "h_um": 0.07,
+    "half": true,
+    "kind": "straight",
+    "box_um": 2.5,
+    "tets": 381216,
+    "dof": 2489174
+   },
+   "bend3d_h0.1_half": {
+    "stages": [
+     "full"
+    ],
     "h_um": 0.1,
     "half": true,
     "kind": "bend",
     "box_um": 2.5,
-    "tets": 165000,
-    "dof": 1081222
-   },
-   "straight3d_h0.1_half": {
-    "stages": [
-     "half"
-    ],
-    "h_um": 0.1,
-    "half": true,
-    "kind": "straight",
-    "box_um": 2.5,
-    "tets": 165000,
-    "dof": 1081222
+    "tets": 156060,
+    "dof": 1024814
    },
    "bend3d_h0.1_full": {
     "stages": [
@@ -161,8 +166,8 @@
     "half": false,
     "kind": "bend",
     "box_um": 2.5,
-    "tets": 330000,
-    "dof": 2137244
+    "tets": 312120,
+    "dof": 2023414
    },
    "bend3d_h0.1_half_box3.5": {
     "stages": [
@@ -172,19 +177,19 @@
     "half": true,
     "kind": "bend",
     "box_um": 3.5,
-    "tets": 323400,
-    "dof": 2112902
+    "tets": 302460,
+    "dof": 1980494
    },
-   "bend3d_h0.07_half": {
+   "bend3d_h0.06_half": {
     "stages": [
      "fine"
     ],
-    "h_um": 0.07,
+    "h_um": 0.06,
     "half": true,
     "kind": "bend",
     "box_um": 2.5,
-    "tets": 554496,
-    "dof": 3594224
+    "tets": 544968,
+    "dof": 3548406
    }
   },
   "order": 2,
@@ -199,7 +204,7 @@
     "adaptive_max_samples": 20,
     "adaptive_memory": 2,
     "port_mode_tolerance": 1e-06,
-    "retain_memory": 4294967296,
+    "retain_memory": 10737418240,
     "adjoint_tolerance": null,
     "eigen_tolerance": 1e-10,
     "cluster_rtol": 1e-06,
@@ -216,7 +221,7 @@
     "adaptive_max_samples": 20,
     "adaptive_memory": 2,
     "port_mode_tolerance": 1e-06,
-    "retain_memory": 4294967296,
+    "retain_memory": 10737418240,
     "adjoint_tolerance": null,
     "eigen_tolerance": 1e-10,
     "cluster_rtol": 1e-06,
@@ -233,7 +238,7 @@
     "adaptive_max_samples": 20,
     "adaptive_memory": 2,
     "port_mode_tolerance": 1e-06,
-    "retain_memory": 4294967296,
+    "retain_memory": 10737418240,
     "adjoint_tolerance": null,
     "eigen_tolerance": 1e-10,
     "cluster_rtol": 1e-06,
@@ -250,7 +255,7 @@
     "adaptive_max_samples": 20,
     "adaptive_memory": 2,
     "port_mode_tolerance": 1e-06,
-    "retain_memory": 4294967296,
+    "retain_memory": 10737418240,
     "adjoint_tolerance": null,
     "eigen_tolerance": 1e-10,
     "cluster_rtol": 1e-06,
@@ -267,7 +272,7 @@
     "adaptive_max_samples": 20,
     "adaptive_memory": 2,
     "port_mode_tolerance": 1e-06,
-    "retain_memory": 4294967296,
+    "retain_memory": 10737418240,
     "adjoint_tolerance": null,
     "eigen_tolerance": 1e-10,
     "cluster_rtol": 1e-06,
@@ -276,7 +281,7 @@
    },
    "fine": {
     "order": 2,
-    "linear_solver": "bddc_gmres",
+    "linear_solver": "direct",
     "tolerance": 1e-06,
     "device": "cpu",
     "threads": null,
@@ -284,7 +289,7 @@
     "adaptive_max_samples": 20,
     "adaptive_memory": 2,
     "port_mode_tolerance": 1e-06,
-    "retain_memory": null,
+    "retain_memory": 10737418240,
     "adjoint_tolerance": null,
     "eigen_tolerance": 1e-10,
     "cluster_rtol": 1e-06,
@@ -312,7 +317,7 @@
    "start": 0.5,
    "loss": "1 - |S21|^2 at f0"
   },
-  "filter_radius_um": 0.3,
+  "filter_radius_um": 0.2,
   "pitch_um": 0.05,
   "symmetry": "y = x, 0.5 * (rho + rho.T)",
   "threshold": 0.5,
@@ -323,8 +328,8 @@
   "cuts": {
    "quantity": "|E| (MV/m, float16), p1 fed with 1 W incident, mirror half model (z >= 0)",
    "step_um": 0.025,
-   "cut_in_x_um": -2.0,
-   "cut_out_y_um": -2.0,
+   "cut_in_x_um": -2.03125,
+   "cut_out_y_um": -2.03125,
    "axes": "cut_x, cut_y across the box, cut_z up the stack (m, centres)",
    "top": {
     "plane": "z = 0 (core mid-plane)",
@@ -334,14 +339,14 @@
     ]
    },
    "out": {
-    "plane": "y = -2 um",
+    "plane": "y = -2.03125 um",
     "shape": [
      "x",
      "z"
     ]
    },
    "in": {
-    "plane": "x = -2 um",
+    "plane": "x = -2.03125 um",
     "shape": [
      "y",
      "z"
@@ -350,55 +355,57 @@
   },
   "fluxes": {
    "quantity": "0.5 Re(E x conj(B) / mu_0) (W), p1 fed with 1 W incident, mirror half model value (z >= 0)",
+   "planes": "mid-cell, half a cell off the grid planes of the h mesh",
    "in": {
     "step_um": 0.025,
     "rule": "midpoint",
-    "plane": "x = -2 um",
+    "plane": "x = -2.03125 um",
     "towards": "+x"
    },
    "up": {
     "step_um": 0.025,
     "rule": "midpoint",
-    "plane": "z = 1.7 um",
+    "plane": "z = 1.04964 um",
     "towards": "+z"
    },
-   "extent": "the cut points of cut_in (y, z) and of the box (x, y)",
-   "flux_in_x_um": -2.0,
-   "flux_up_z_um": 1.7
+   "te1": {
+    "step_um": 0.025,
+    "rule": "midpoint",
+    "plane": "y = -2.03125 um",
+    "towards": "-y",
+    "part": "odd in x (E_x odd; E_y, E_z even), TE1-like",
+    "across": "|x| < 2 um, the port window",
+    "arrays": "te1_final, te1_arc: fraction of the incident power"
+   },
+   "extent": "the cut points of cut_in and cut_out (across, z) and of the box (x, y)",
+   "flux_in_x_um": -2.03125,
+   "flux_up_z_um": 1.049638672
   }
  },
  "observations": {
   "optimize": {
-   "wall_s": 1981.4,
-   "peak_rss_bytes": 31967469568
+   "wall_s": 6160.0,
+   "peak_rss_bytes": 73326686208
   },
   "half": {
-   "wall_s": 357.4,
-   "peak_rss_bytes": 23771967488
+   "wall_s": 1056.1,
+   "peak_rss_bytes": 57623465984
   },
   "spectrum": {
-   "wall_s": 417.9,
-   "peak_rss_bytes": 23322488832
+   "wall_s": 1229.1,
+   "peak_rss_bytes": 56499298304
   },
   "full": {
-   "wall_s": 205.6,
-   "peak_rss_bytes": 56722018304
+   "wall_s": 204.1,
+   "peak_rss_bytes": 52489576448
   },
   "box": {
-   "wall_s": 115.6,
-   "peak_rss_bytes": 45923860480
+   "wall_s": 90.2,
+   "peak_rss_bytes": 41659285504
   },
   "fine": {
-   "wall_s": 1212.8,
-   "peak_rss_bytes": 34641502208,
-   "gmres_iterations": [
-    133,
-    133,
-    133,
-    133,
-    133,
-    133
-   ]
+   "wall_s": 251.4,
+   "peak_rss_bytes": 83890970624
   }
  }
 }
