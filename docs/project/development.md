@@ -31,3 +31,13 @@ tutorial, regenerate them and commit the result:
 just notebooks        # re-execute docs/tutorials/*.ipynb in place, docs figure style
 just front-page-data  # rerun the topology tutorial for the front page's hero data
 ```
+
+The 3D bend tutorial solves nothing: it reads a committed run record,
+`docs/tutorials/data/bend3d.json` and `bend3d.npz`, written by
+`tools/bend3d_run.py`. The page stops when that script or `tools/bend3d_mesh.py`
+no longer matches the hashes in the record. After changing either, rerun the
+script and commit the new record:
+
+```bash
+just bend3d-data      # about 2.7 h on 16 cores / 96 GiB, with the mkl extra
+```
