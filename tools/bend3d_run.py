@@ -4,10 +4,12 @@ Usage: python tools/bend3d_run.py STAGE --out DIR [--profile full|smoke]
 [--record DIR] [--bddc]
 
 The 2D bend tutorial's recipe (docs/tutorials/bend.ipynb) on a real stack: a
-0.8 x 0.4 um Si3N4 strip in SiO2 (meshes: tools/bend3d_mesh.py), solved on
-the mirror half model z >= 0 with a PMC at z = 0, |S21|^2 of the TE0 mode at
-1.55 um. The run needs a 16-core / 64 GiB Linux machine and the ``mkl``
-extra (about 1 h); the docs page ``docs/tutorials/bend3d.ipynb`` reads its
+0.5 x 0.22 um silicon strip in SiO2, 220 nm silicon on oxide (meshes:
+tools/bend3d_mesh.py), solved on the mirror half model z >= 0 with a PMC at
+z = 0, |S21|^2 of the TE0 mode at 1.55 um. Every stage is a direct (PARDISO)
+solve. The run needs a 16-core / 96 GiB Linux machine and the ``mkl`` extra
+(about 2.7 h; peaks of about 70 GiB in ``optimize`` and 78 GiB in
+``fine``); the docs page ``docs/tutorials/bend3d.ipynb`` reads its
 record and solves nothing, and refuses a record whose script hashes differ
 from these files', so editing either forces a rerun. ``just bend3d-data``
 runs, in ``uv run --extra mkl --group docs``::
@@ -19,18 +21,21 @@ Each stage runs in its own process (``all`` runs them in order, each as a
 subprocess), saves its outputs in ``DIR/stages`` and reads its
 predecessors', so a failed stage reruns alone:
 
-- ``optimize``: 42 Adam iterations on the h = 0.1 um mirror half model
-  (PARDISO, about 23-28 GB); the history, snapshots and designs.
+- ``optimize``: 42 Adam iterations on the h = 0.07 um mirror half model
+  (2.49M DOF, one factorization and about 145 s per iteration, a peak of
+  62-72 GiB); the history, snapshots and designs.
 - ``half``: forward re-solves on that mesh: the last iterate, ``final``
-  (fields kept: field cuts and fluxes, port n_eff), the eroded, nominal and
-  dilated variants, the arc (fields kept) and corner designs, and the
-  straight guide.
-- ``spectrum``: ``final`` over 13 wavelengths, 1.2 to 1.8 um.
-- ``full``: ``final`` on the full stack (about 53 GB).
-- ``box``: ``final`` in a 7 x 7 um box (about 50 GB; ``--bddc`` if it does
-  not fit, the one stage the flag applies to: ``all --bddc`` passes it to
-  ``box`` only).
-- ``fine``: ``final`` on the h = 0.07 um mesh, BDDC + GMRES at 1e-6.
+  (fields kept: field cuts, fluxes, TE1 fraction, port n_eff), the eroded,
+  nominal and dilated variants, the arc (fields kept: cuts, TE1 fraction)
+  and corner designs, and the straight guide.
+- ``spectrum``: ``final`` over 11 wavelengths, 1.45 to 1.65 um.
+- ``full``: ``final`` on the h_check = 0.1 um meshes: the full stack (2.02M
+  DOF, about 50 GiB) and the half model (``s_final_h01``, the reference of
+  ``full`` and ``box`` and a third mesh point).
+- ``box``: ``final`` in a 7 x 7 um box at h_check (about 45 GiB; ``--bddc``
+  if it does not fit, the one stage the flag applies to: ``all --bddc``
+  passes it to ``box`` only).
+- ``fine``: ``final`` on the h = 0.06 um mesh (3.55M DOF, about 78 GiB).
 - ``merge``: the run record, ``bend3d.json`` (provenance, settings,
   observations; no result) and ``bend3d.npz`` (every solver output), into
   ``--record`` (default ``DIR``). It refuses a record over 1 MB, or one whose
@@ -39,7 +44,7 @@ predecessors', so a failed stage reruns alone:
   with ``src/`` or ``tools/`` uncommitted.
 
 ``--profile smoke`` runs every stage at h = 0.4 um (``fine`` at 0.25 um),
-with 2 iterations and 3 wavelengths: a complete record in minutes on a
+with 2 iterations and 3 wavelengths over 1.45-1.65 um: a complete record in minutes on a
 laptop, for development only.
 
 The commit comes from ``git`` in a checkout, else from the
@@ -61,6 +66,7 @@ import subprocess
 import sys
 import threading
 import time
+import typing
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -93,23 +99,25 @@ def sellmeier(wavelength_um, terms):
     return float(np.sqrt(1 + sum(b * l2 / (l2 - cc**2) for b, cc in terms)))
 
 
-#: Sellmeier terms: LPCVD Si3N4 (Luke et al., Opt. Lett. 40, 4823 (2015)) and
-#: fused silica (Malitson, J. Opt. Soc. Am. 55, 1205 (1965)).
-SI3N4_TERMS = ((3.0249, 0.1353406), (40314.0, 1239.842))
+#: Crystalline silicon at 1.55 um and 293 K, from a tabulated, critically
+#: evaluated index (H. H. Li, J. Phys. Chem. Ref. Data 9, 561 (1980)): a
+#: constant, with no dispersion formula.
+N_CORE = 3.4757
+#: Sellmeier terms of fused silica (Malitson, J. Opt. Soc. Am. 55, 1205 (1965)).
 SIO2_TERMS = ((0.6961663, 0.0684043), (0.4079426, 0.1162414), (0.8974794, 9.896161))
-N_CORE = sellmeier(WAVELENGTH / um, SI3N4_TERMS)  # 1.996280
 N_CLADDING = sellmeier(WAVELENGTH / um, SIO2_TERMS)  # 1.444024
-CORE = gfem.Material(eps_r=N_CORE**2, name="Si3N4")
+CORE = gfem.Material(eps_r=N_CORE**2, name="Si")
 CLADDING = gfem.Material(eps_r=N_CLADDING**2, name="SiO2")
+#: By region: (material, n at 1.55 um, source, Sellmeier terms or None).
 INDICES = {
-    "core": ("Si3N4", N_CORE, "Luke et al., Opt. Lett. 40, 4823 (2015)", SI3N4_TERMS),
+    "core": ("Si", N_CORE, "H. H. Li, J. Phys. Chem. Ref. Data 9, 561 (1980)", None),
     "cladding": ("SiO2", N_CLADDING, "Malitson, JOSA 55, 1205 (1965)", SIO2_TERMS),
 }
 
 # --- the recipe (the 2D tutorial's) -----------------------------------------
 
 PITCH = 0.05 * um  # 60 x 60 pixels over the 3 x 3 um design square
-FILTER_RADIUS = 0.3 * um
+FILTER_RADIUS = 0.2 * um
 LEARNING_RATE = 0.1
 THRESHOLD = 0.5
 ROBUST_BETA, ROBUST_DELTA = 64.0, 0.1
@@ -121,16 +129,19 @@ class Profile:
     """The size of a run.
 
     Attributes:
-        h: The in-plane cell (um) of the optimization and of every re-solve
-            but ``fine``.
+        h: The in-plane cell (um) of the optimization and of the ``half``
+            and ``spectrum`` re-solves.
         h_fine: The in-plane cell (um) of the ``fine`` re-solve.
+        h_check: The in-plane cell (um) of the ``full`` and ``box``
+            re-solves and of their half-model reference ``s_final_h01``.
         betas: The projection sharpness of each continuation step.
         steps_per_beta: The Adam iterations per beta.
-        n_wavelengths: The spectrum's wavelengths, uniform over 1.2-1.8 um.
+        n_wavelengths: The spectrum's wavelengths, uniform over 1.45-1.65 um.
     """
 
     h: float
     h_fine: float
+    h_check: float
     betas: tuple[float, ...]
     steps_per_beta: int
     n_wavelengths: int
@@ -143,25 +154,31 @@ class Profile:
     @property
     def wavelengths(self):
         """The spectrum's wavelengths (m)."""
-        return np.linspace(1.2, 1.8, self.n_wavelengths) * um
+        return np.linspace(1.45, 1.65, self.n_wavelengths) * um
 
 
 PROFILES = {
     "full": Profile(
-        h=0.1,
-        h_fine=0.07,
+        h=0.07,
+        h_fine=0.06,
+        h_check=0.1,
         betas=(1.0, 2.0, 4.0, 8.0, 16.0, 32.0),
         steps_per_beta=7,
-        n_wavelengths=13,
+        n_wavelengths=11,
     ),
     "smoke": Profile(
-        h=0.4, h_fine=0.25, betas=(1.0, 2.0), steps_per_beta=1, n_wavelengths=3
+        h=0.4,
+        h_fine=0.25,
+        h_check=0.4,
+        betas=(1.0, 2.0),
+        steps_per_beta=1,
+        n_wavelengths=3,
     ),
 }
 
 
 def model(mesh, *, half=True):
-    """The bend on the stack: SiO2, the two Si3N4 arms, the design volume.
+    """The bend on the stack: SiO2, the two Si arms, the design volume.
 
     A second-order absorbing boundary on every outer face, the top and bottom
     included; on the mirror half model a PMC on the plane z = 0, where the
@@ -182,16 +199,14 @@ def model(mesh, *, half=True):
     )
 
 
-def solver_options(stage):
-    """The solver of each stage: direct (PARDISO), or BDDC + GMRES on h = 0.07.
+def solver_options(stage):  # noqa: ARG001 (the same for every stage)
+    """The solver of each stage: direct (PARDISO), the same for every stage.
 
-    The direct solve keeps 4 GiB for the gradient: at 1.1M DOF one solve's
-    retained entry is about 1.8 GB, and a smaller budget evicts it, so the
-    backward pass would factorize again.
+    The direct solve keeps 10 GiB for the gradient: at 2.49M DOF (h = 0.07)
+    one solve's retained entry is about 4.2 GB, and a smaller budget evicts
+    it, so the backward pass would factorize again.
     """
-    if stage == "fine":
-        return gfem.SolverOptions(linear_solver="bddc_gmres", tolerance=1e-6)
-    return gfem.SolverOptions(linear_solver="direct", retain_memory=4 * 2**30)
+    return gfem.SolverOptions(linear_solver="direct", retain_memory=10 * 2**30)
 
 
 def layer_grid(mesh):
@@ -200,7 +215,7 @@ def layer_grid(mesh):
 
 
 def density_filter(grid):
-    """The Helmholtz filter of radius 0.3 um on the pixels."""
+    """The Helmholtz filter of radius 0.2 um on the pixels."""
     return design.helmholtz_filter(grid, radius=FILTER_RADIUS)
 
 
@@ -215,7 +230,7 @@ def physical(rho, beta, blur):
 
 
 def material(density, grid):
-    """The design volume's permittivity: 0 is SiO2, 1 is Si3N4, linear between."""
+    """The design volume's permittivity: 0 is SiO2, 1 is Si, linear between."""
     return gfem.MaterialField.interpolate(grid.to_elements(density), CLADDING, CORE)
 
 
@@ -235,7 +250,7 @@ def missed_power(bend, grid, blur):
 
 # --- the hand-drawn designs --------------------------------------------------
 
-GUIDE = bm.CORE_W / 2 * um  # the guides' half-width, 0.4 um
+GUIDE = bm.CORE_W / 2 * um  # the guides' half-width, 0.25 um
 EDGE = -bm.DESIGN * um  # the arms enter the design square at -1.5 um
 
 
@@ -250,7 +265,7 @@ def area_fraction(inside, grid, samples=8):
 
 
 def arc_design(grid):
-    """A quarter ring 0.8 um wide, radius 1.5 um about (-1.5, -1.5) um."""
+    """A quarter ring as wide as the guides, radius 1.5 um about (-1.5, -1.5) um."""
 
     def inside(x, y):
         r = np.hypot(x - EDGE, y - EDGE)
@@ -271,7 +286,7 @@ def corner_design(grid):
 
 
 def straight_design(grid):
-    """The straight guide's core through the design square, |y| < 0.4 um."""
+    """The straight guide's core through the design square, |y| < 0.25 um."""
     return area_fraction(lambda _, y: np.abs(y) <= GUIDE, grid)
 
 
@@ -283,8 +298,37 @@ CUT_ALONG = -bm.BOX * um + CUT_STEP * (
     np.arange(round(2 * bm.BOX * um / CUT_STEP)) + 0.5
 )
 CUT_HEIGHT = CUT_STEP * (np.arange(round(bm.Z_TOP * um / CUT_STEP)) + 0.5)
-CUT_IN_X = CUT_OUT_Y = -2.0 * um  # across each arm, between port and design
-FLUX_UP_Z = 1.7 * um  # 0.1 um under the top face
+
+
+class Planes(typing.NamedTuple):
+    """The cut and flux planes on the mesh of one in-plane cell (m)."""
+
+    cut_in_x: float  #: across the input arm (cut_in, flux_in)
+    cut_out_y: float  #: across the output arm (cut_out, the TE1 fraction)
+    flux_up_z: float  #: over the whole box, under the top face (flux_up)
+
+
+def _mid_cell(edges, target):
+    """The centre of the ``edges`` cell nearest ``target`` (the lower on a tie)."""
+    centres = 0.5 * (edges[1:] + edges[:-1])
+    return float(centres[np.argmin(np.abs(centres - target))])
+
+
+def planes(h):
+    """The cut and flux planes of the bend mesh of in-plane cell ``h`` (um).
+
+    Each plane sits mid-cell, half a cell off the mesh's grid planes: a field
+    sampled on an element face has a discontinuous B = curl E there, which
+    biases a sampled flux by 4-8 % (ticket 08). The arms' planes take the cell
+    nearest the middle of each arm's straight run, between its port and the
+    design square (x or y = -2.0 um, a grid line); ``flux_up_z`` takes the
+    cell nearest 0.1 um under the top face.
+    """
+    lines = bm.grid_lines()
+    across = bm.axis({-v for v in lines} | lines, h)
+    arm = _mid_cell(across, -(bm.BOX + bm.DESIGN) / 2) * um
+    up = _mid_cell(bm.z_edges(h, half=True), bm.Z_TOP - 0.1) * um
+    return Planes(cut_in_x=arm, cut_out_y=arm, flux_up_z=up)
 
 
 def s_matrix(s):
@@ -311,32 +355,58 @@ def _magnitude(e):
     return (np.linalg.norm(e, axis=-1) / 1e6).astype(np.float16)  # |E|, MV/m
 
 
-def _flux(field, points, axis):
+def _poynting(e, b, axis):
     """Midpoint-rule time-averaged Poynting flux along +``axis`` (W)."""
-    e, b = _sample(field, points), _sample(field.b(), points)
     s = 0.5 * np.real(np.cross(e, np.conj(b / mu_0)))[..., axis]
     return float(s.sum() * CUT_STEP**2)
 
 
-def field_maps(result):
+def _flux(field, points, axis):
+    """The Poynting flux of ``field`` through ``points`` along +``axis`` (W)."""
+    return _poynting(_sample(field, points), _sample(field.b(), points), axis)
+
+
+#: The mirror x -> -x on E's components (B, a pseudovector, takes the minus).
+_MIRROR_X = np.array([1.0, -1.0, -1.0])
+
+
+def odd_flux(e, b):
+    """The outgoing (-y) power of the field part odd across the output arm (W).
+
+    ``e`` and ``b`` are sampled (x, z, 3) on a cut y = const across the arm,
+    at x symmetric about 0. The odd part is the TE1-type one, E_x odd in x
+    and E_y, E_z even (TE0 has E_x even); its flux is measure (a) of ticket
+    08's "TE1 at the arc's output". The even-odd cross power integrates to
+    zero on the symmetric cut.
+    """
+    e_odd = 0.5 * (e - _MIRROR_X * e[::-1])
+    b_odd = 0.5 * (b + _MIRROR_X * b[::-1])
+    return -_poynting(e_odd, b_odd, 1)
+
+
+def field_maps(result, where):
     """The cuts and fluxes of a kept solve, port p1 fed (mirror half model).
 
     |E| (MV/m, float16) on the core mid-plane z = 0 (rows y, columns x), on
-    the output arm's cross-section y = -2.0 um and on the input arm's
-    x = -2.0 um (rows across, columns z); the Poynting flux through x = -2.0
-    um (+x) and through z = 1.7 um over the whole box (+z).
+    the output arm's cross-section y = ``where.cut_out_y`` and on the input
+    arm's x = ``where.cut_in_x`` (rows across, columns z); the Poynting flux
+    through x = ``where.cut_in_x`` (+x) and through z = ``where.flux_up_z``
+    over the whole box (+z); the TE1 power, `odd_flux` across the output arm
+    (``where``: the solve's mesh's `planes`).
     """
     e = result.e_field(F0, excite="p1")
     top = _plane(2, 0.0, CUT_ALONG, CUT_ALONG)[..., [1, 0, 2]]  # rows y, columns x
-    out = _plane(1, CUT_OUT_Y, CUT_ALONG, CUT_HEIGHT)
-    into = _plane(0, CUT_IN_X, CUT_ALONG, CUT_HEIGHT)
-    up = _plane(2, FLUX_UP_Z, CUT_ALONG, CUT_ALONG)
+    out = _plane(1, where.cut_out_y, CUT_ALONG, CUT_HEIGHT)
+    into = _plane(0, where.cut_in_x, CUT_ALONG, CUT_HEIGHT)
+    up = _plane(2, where.flux_up_z, CUT_ALONG, CUT_ALONG)
+    e_out = _sample(e, out)
     return {
         "cut_top": _magnitude(_sample(e, top)),
-        "cut_out": _magnitude(_sample(e, out)),
+        "cut_out": _magnitude(e_out),
         "cut_in": _magnitude(_sample(e, into)),
         "flux_in": _flux(e, into, 0),
         "flux_up": _flux(e, up, 2),
+        "te1": odd_flux(e_out, _sample(e.b(), out)),
     }
 
 
@@ -370,7 +440,7 @@ def gmres_iterations():
 
 
 #: The stages ``--bddc`` applies to: the 7 um box, if its direct solve does
-#: not fit (``fine`` always runs BDDC + GMRES).
+#: not fit (a fallback; every stage runs direct by default).
 BDDC_STAGES = ("box",)
 BDDC = gfem.SolverOptions(linear_solver="bddc_gmres", tolerance=1e-6)
 
@@ -531,6 +601,7 @@ def half(stage):
     """Forward re-solves on the optimization's mesh, the mirror half model."""
     profile, opt = stage.profile, stage.load("optimize")
     bend, grid, name = stage.design_mesh(profile.h)
+    where = planes(profile.h)
     blur = density_filter(grid)
     options = stage.solver()
     rho = jnp.asarray(opt["rho_final"])
@@ -539,7 +610,7 @@ def half(stage):
     out = {}
     final_result = solve_design(bend, grid, stage.final(), options, keep=True)
     stage.dof(name, final_result)
-    maps = field_maps(final_result)
+    maps = field_maps(final_result, where)
     out |= {
         "s_final": s_matrix(final_result.s)[0],
         "n_eff": np.array(
@@ -550,14 +621,16 @@ def half(stage):
         "cut_in_final": maps["cut_in"],
         "flux_in": np.float64(maps["flux_in"]),
         "flux_up": np.float64(maps["flux_up"]),
+        "te1_final": np.float64(maps["te1"]),
     }
     del final_result
     arc_result = solve_design(bend, grid, arc, options, keep=True)
-    maps = field_maps(arc_result)
+    maps = field_maps(arc_result, where)
     out |= {
         "s_arc": s_matrix(arc_result.s)[0],
         "cut_top_arc": maps["cut_top"],
         "cut_out_arc": maps["cut_out"],
+        "te1_arc": np.float64(maps["te1"]),
     }
     del arc_result
     designs = {
@@ -608,21 +681,36 @@ def spectrum(stage):
 
 
 def full(stage):
-    """``final`` on the full stack: checks the mirror half model."""
-    return {"s_final_full": solve_final(stage, stage.profile.h, half=False)}
+    """``final`` on the h_check meshes: the full stack and the half model.
+
+    The full stack checks the mirror half model against the half model on
+    the same cell, ``s_final_h01``, which is also `box`'s reference and a
+    third mesh point of ``final`` beside `half`'s and `fine`'s.
+    """
+    h = stage.profile.h_check
+    return {
+        "s_final_h01": solve_final(stage, h),
+        "s_final_full": solve_final(stage, h, half=False),
+    }
 
 
 def box(stage):
-    """``final`` in the 7 x 7 um box: bounds the in-plane cladding margin."""
-    return {"s_final_box7": solve_final(stage, stage.profile.h, box=BOX_7UM)}
+    """``final`` in the 7 x 7 um box at h_check: bounds the in-plane margin.
+
+    Its reference is ``s_final_h01``, the 5 x 5 um box on the same cell.
+    """
+    return {"s_final_box7": solve_final(stage, stage.profile.h_check, box=BOX_7UM)}
 
 
 def fine(stage):
-    """``final`` on the finer mesh: the quoted mesh error."""
+    """``final`` on the finer mesh: the quoted mesh error.
+
+    It counts NGSolve's GMRES iterations, none with the direct solve.
+    """
     with gmres_iterations() as counts:
         s = solve_final(stage, stage.profile.h_fine)
     stage.observations["gmres_iterations"] = counts
-    return {"s_final_h007": s}
+    return {"s_final_fine": s}
 
 
 RUNS = {
@@ -919,6 +1007,7 @@ SETTINGS_KEYS = (
     "spectrum_wavelengths_um",
     "indices",
     "geometry",
+    "profile_h_um",
     "meshes",
     "order",
     "solver_options",
@@ -941,8 +1030,9 @@ NPZ_KEYS = (
     *("t_history", "core_history", "beta_history", "seconds_history"),
     *("rho_start", "rho_final", "snapshots", "snapshot_iterations", "last", "final"),
     *("eroded", "nominal", "dilated", "arc", "corner"),
-    *("s_last", "s_final", "s_final_full", "s_final_h007", "s_final_box7"),
-    *("s_eroded", "s_nominal", "s_dilated", "s_arc", "s_corner", "s_straight"),
+    *("s_last", "s_final", "s_final_full", "s_final_h01", "s_final_fine"),
+    *("s_final_box7", "s_eroded", "s_nominal", "s_dilated", "s_arc", "s_corner"),
+    *("s_straight", "te1_final", "te1_arc"),
     *("n_eff", "spectrum_wavelengths", "spectrum_s", "flux_in", "flux_up"),
     *("cut_top_final", "cut_top_arc", "cut_out_final", "cut_out_arc"),
     *("cut_in_final", "cut_x", "cut_y", "cut_z"),
@@ -969,6 +1059,9 @@ def settings(profile, infos):
             merged.update(entry)
             merged["stages"].append(stage)
     plane = {"step_um": CUT_STEP / um, "rule": "midpoint"}
+    where = planes(profile.h)
+    cut_in, cut_out, flux_up = (_um(v) for v in where)
+    w, top = bm.CORE_W / 2, bm.Z_TOP
     return {
         "f0_hz": F0,
         "wavelength_um": WAVELENGTH / um,
@@ -985,12 +1078,19 @@ def settings(profile, infos):
             "box_half_width_um": bm.BOX,
             "box_7um_half_width_um": BOX_7UM,
             "design_half_width_um": bm.DESIGN,
-            "guides": "input |y| < 0.4 along x < -1.5, output |x| < 0.4 along y < -1.5",
+            "guides": f"input |y| < {w:g} along x < -{bm.DESIGN:g}, "
+            f"output |x| < {w:g} along y < -{bm.DESIGN:g}",
             "port_window_half_width_um": bm.PORT,
-            "port_windows": "p1 x = -2.5, |y| < 2.0; p2 y = -2.5, |x| < 2.0; "
-            "|z| < 1.8 (z >= 0 on the mirror half model)",
+            "port_windows": f"p1 x = -{bm.BOX:g}, |y| < {bm.PORT:g}; "
+            f"p2 y = -{bm.BOX:g}, |x| < {bm.PORT:g}; "
+            f"|z| < {top:g} (z >= 0 on the mirror half model)",
             "straight_guide_length_um": 2 * bm.BOX,
             "mirror_half_model": "z >= 0, PMC on z = 0",
+        },
+        "profile_h_um": {
+            "h": profile.h,
+            "h_fine": profile.h_fine,
+            "h_check": profile.h_check,
         },
         "meshes": meshes,
         "order": solver_options("optimize").order,
@@ -1016,21 +1116,30 @@ def settings(profile, infos):
             "quantity": "|E| (MV/m, float16), p1 fed with 1 W incident, mirror "
             "half model (z >= 0)",
             "step_um": CUT_STEP / um,
-            "cut_in_x_um": _um(CUT_IN_X),
-            "cut_out_y_um": _um(CUT_OUT_Y),
+            "cut_in_x_um": cut_in,
+            "cut_out_y_um": cut_out,
             "axes": "cut_x, cut_y across the box, cut_z up the stack (m, centres)",
             "top": {"plane": "z = 0 (core mid-plane)", "shape": ["y", "x"]},
-            "out": {"plane": f"y = {CUT_OUT_Y / um:g} um", "shape": ["x", "z"]},
-            "in": {"plane": f"x = {CUT_IN_X / um:g} um", "shape": ["y", "z"]},
+            "out": {"plane": f"y = {cut_out:g} um", "shape": ["x", "z"]},
+            "in": {"plane": f"x = {cut_in:g} um", "shape": ["y", "z"]},
         },
         "fluxes": {
             "quantity": "0.5 Re(E x conj(B) / mu_0) (W), p1 fed with 1 W "
             "incident, mirror half model value (z >= 0)",
-            "in": {**plane, "plane": f"x = {CUT_IN_X / um:g} um", "towards": "+x"},
-            "up": {**plane, "plane": f"z = {FLUX_UP_Z / um:g} um", "towards": "+z"},
-            "extent": "the cut points of cut_in (y, z) and of the box (x, y)",
-            "flux_in_x_um": _um(CUT_IN_X),
-            "flux_up_z_um": _um(FLUX_UP_Z),
+            "planes": "mid-cell, half a cell off the grid planes of the h mesh",
+            "in": {**plane, "plane": f"x = {cut_in:g} um", "towards": "+x"},
+            "up": {**plane, "plane": f"z = {flux_up:g} um", "towards": "+z"},
+            "te1": {
+                **plane,
+                "plane": f"y = {cut_out:g} um",
+                "towards": "-y",
+                "part": "odd in x (E_x odd; E_y, E_z even), TE1-type",
+                "arrays": "te1_final, te1_arc: fraction of the incident power",
+            },
+            "extent": "the cut points of cut_in and cut_out (across, z) and of "
+            "the box (x, y)",
+            "flux_in_x_um": cut_in,
+            "flux_up_z_um": flux_up,
         },
     }
 
