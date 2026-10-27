@@ -339,12 +339,13 @@ def _front(path: Path) -> dict | None:
         "n_si": f"{params['n_si']:.2f}",
         "n_sio2": f"{params['n_sio2']:.2f}",
         "t_final": f"{results['t_final']:.4f}",
-        "t_arc": f"{results['t_arc']:.4f}",
         "db_final": f"{results['db_final']:.3f}",
-        "db_arc": f"{results['db_arc']:.3f}",
         "reciprocity": f"{results['reciprocity']:.1e}",
         "balance": f"{results['balance']:.4f}",
-        "beats": [_num(v) for v in results["beats_arc_um"]],
+        "band_min": {
+            "um": _num(results["band_min"]["um"]),
+            "t": f"{results['band_min']['t']:.4f}",
+        },
         "band": [_num(v) for v in results["band_um"]],
         "vmax": f"{data['field']['vmax']:.2f}",
         "snapshots": [

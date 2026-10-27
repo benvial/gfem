@@ -1,5 +1,5 @@
-// gfem front page (layout/gfem-home.html): draws the hero's two field maps and the
-// four design snapshots from window.BEND, which conf.py inlines from
+// gfem front page (layout/gfem-home.html): draws the hero's design and field map and
+// the four design snapshots from window.BEND, which conf.py inlines from
 // docs/_data/front-page.json (tools/front_page_data.py, the 3D bend's run record).
 // Shibuya owns the theme switch (html.light / html.dark) and the menu; the figures
 // redraw, without the fade-in, when the theme class or the width changes.
@@ -38,17 +38,17 @@
 
   // |E| on the core mid-plane: the field in the signal red, the silicon edge in ink,
   // the design square dashed.
-  function drawField(svgEl, data, name, animate) {
+  function drawField(svgEl, data, animate) {
     const ext = data.extent_um, d = data.design_um, style = css();
     frame(svgEl, ext);
     const image = el("image", {
-      href: raster(bytes(data.field[name]), data.field.shape, style.getPropertyValue("--accent-field").trim(),
+      href: raster(bytes(data.field.final), data.field.shape, style.getPropertyValue("--accent-field").trim(),
         (v) => Math.min(0.92, 0.95 * v)),
       x: ext[0], y: -ext[3], width: ext[1] - ext[0], height: ext[3] - ext[2], preserveAspectRatio: "none",
     });
     svgEl.appendChild(image);
     svgEl.appendChild(el("rect", { x: -d, y: -d, width: 2 * d, height: 2 * d, class: "square" }));
-    for (const pts of data.edge[name]) svgEl.appendChild(el("path", { d: line(pts), class: "edge" }));
+    for (const pts of data.edge) svgEl.appendChild(el("path", { d: line(pts), class: "edge" }));
     if (animate && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
       image.style.opacity = 0;
       image.style.transition = "opacity .9s cubic-bezier(.16,1,.3,1)";
@@ -56,8 +56,9 @@
     }
   }
 
-  // A design snapshot over the whole box: the guides, then the design square's density in ink.
-  function drawDesign(svgEl, data, k) {
+  // A design over the whole box: the guides, then the design square's density
+  // (base64 uint8, data.snapshots.shape) in ink.
+  function drawDesign(svgEl, data, density) {
     const ext = data.extent_um, d = data.design_um, w = data.guide_um, style = css();
     const ink = style.getPropertyValue("--ink-field").trim();
     frame(svgEl, ext);
@@ -65,15 +66,15 @@
     svgEl.appendChild(el("rect", { x: ext[0], y: -w, width: ext[0] * -1 - d, height: 2 * w, fill }));
     svgEl.appendChild(el("rect", { x: -w, y: d, width: 2 * w, height: -ext[2] - d, fill }));
     svgEl.appendChild(el("image", {
-      href: raster(bytes(data.snapshots.density[k]), data.snapshots.shape, ink, (v) => 0.88 * v),
+      href: raster(bytes(density), data.snapshots.shape, ink, (v) => 0.88 * v),
       x: -d, y: -d, width: 2 * d, height: 2 * d, preserveAspectRatio: "none", class: "pixels",
     }));
     svgEl.appendChild(el("rect", { x: -d, y: -d, width: 2 * d, height: 2 * d, class: "square" }));
   }
 
   // Pointer move or tap over a field shows |E| / input-guide peak there.
-  function readout(svgEl, tip, data, name) {
-    const values = bytes(data.field[name]);
+  function readout(svgEl, tip, data) {
+    const values = bytes(data.field.final);
     const [ny, nx] = data.field.shape;
     const show = (e) => {
       const r = svgEl.getBoundingClientRect(), box = tip.parentElement.getBoundingClientRect();
@@ -92,12 +93,11 @@
   }
 
   function drawFront(data, first) {
-    for (const name of ["arc", "final"]) {
-      const svgEl = document.getElementById("f-" + name);
-      drawField(svgEl, data, name, first && name === "final");
-      if (first) readout(svgEl, document.getElementById("grad-tip"), data, name);
-    }
-    data.snapshots.density.forEach((_, k) => drawDesign(document.getElementById("s-" + k), data, k));
+    drawDesign(document.getElementById("d-final"), data, data.final);
+    const field = document.getElementById("f-final");
+    drawField(field, data, first);
+    if (first) readout(field, document.getElementById("grad-tip"), data);
+    data.snapshots.density.forEach((d, k) => drawDesign(document.getElementById("s-" + k), data, d));
   }
 
   if (window.BEND) {

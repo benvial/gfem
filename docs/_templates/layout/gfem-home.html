@@ -42,8 +42,8 @@
       {%- endif %}
       <div class="plot">
         {%- if front %}
-        <div class="pane"><div class="pane-h"><span>Circular arc</span><span>|S21|² <b>{{ front.t_arc }}</b></span></div><svg id="f-arc" role="img" aria-label="Field magnitude on the core mid-plane of a circular-arc bend, with the silicon edge drawn as a line"></svg></div>
-        <div class="pane"><div class="pane-h"><span>Optimized, <code>final</code></span><span>|S21|² <b>{{ front.t_final }}</b></span></div><svg id="f-final" role="img" aria-label="Field magnitude on the core mid-plane of the optimized bend, with the silicon edge drawn as a line"></svg></div>
+        <div class="pane"><div class="pane-h"><span>Design, <code>final</code></span><span>{{ front.thickness }} nm Si in SiO<sub>2</sub></span></div><svg id="d-final" role="img" aria-label="Top view of the optimized bend: silicon in ink, oxide blank"></svg></div>
+        <div class="pane"><div class="pane-h"><span>|E|, core mid-plane</span><span>|S21|² <b>{{ front.t_final }}</b></span></div><svg id="f-final" role="img" aria-label="Field magnitude on the core mid-plane of the optimized bend, with the silicon edge drawn as a line"></svg></div>
         <div class="tip" id="grad-tip" hidden></div>
         {%- else %}<p class="gfem-missing">The hero data is missing: run <code>just front-page-data</code>, then rebuild.</p>{% endif -%}
       </div>
@@ -55,7 +55,7 @@
         <span class="back"><span class="op">←</span> <b>jax.value_and_grad</b> back to ρ</span>
       </div>
       {%- if front %}
-      <figcaption id="grad-cap"><span>A 90° bend between two {{ front.width }} µm guides of {{ front.thickness }} nm silicon in oxide, solved in 3D at {{ front.wavelength }} µm with 1 W incident in the fundamental TE-like mode at p1. |E| on the core mid-plane, normalised to its peak in the input guide; the line is the silicon edge, the dashed square the {{ front.square }} µm × {{ front.square }} µm design region. Left, a circular arc; right, <code>final</code>, the pattern {{ front.steps }} gradient steps found there, each one driven solve of {{ front.dof }} unknowns and its gradient.</span><span>From the 3D bend's run record</span></figcaption>
+      <figcaption id="grad-cap"><span>A 90° bend between two {{ front.width }} µm guides of {{ front.thickness }} nm silicon in oxide, solved in 3D at {{ front.wavelength }} µm with 1 W incident in the fundamental TE-like mode at p1. |E| on the core mid-plane, normalised to its peak in the input guide; the line is the silicon edge, the dashed square the {{ front.square }} µm × {{ front.square }} µm design region. Left, <code>final</code>, the pattern {{ front.steps }} gradient steps found there, each one driven solve of {{ front.dof }} unknowns and its gradient; right, its field. {{ front.t_final }} of the power reaches the output guide's fundamental mode.</span><span>From the 3D bend's run record</span></figcaption>
       {%- endif %}
     </figure>
 
@@ -64,8 +64,8 @@
         <h2 id="t-h">Where that gradient leads</h2>
         {%- if front %}
         <p class="tut-q">Which pattern of silicon and oxide, in the {{ front.square }} µm square where the two guides meet, carries the most {{ front.wavelength }} µm light round the turn?</p>
-        <p>{{ front.steps }} Adam steps on {{ front.pixels[0] }} × {{ front.pixels[1] }} pixels of {{ front.pitch }} µm, from {{ front.start }} everywhere, the projection sharpened every {{ front.steps_per_beta }}; one step took a median {{ front.median_s }} s on {{ front.cores }} cores. <code>final</code> carries {{ front.t_final }} of the power into the output guide's fundamental mode ({{ front.db_final }} dB), against {{ front.t_arc }} ({{ front.db_arc }} dB) for the arc.</p>
-        <p>Optimized at {{ front.wavelength }} µm only, it beats the arc from {{ front.beats[0] }} to {{ front.beats[1] }} µm, not across {{ front.band[0] }} to {{ front.band[1] }} µm: the tutorial shows the spectrum.</p>
+        <p>{{ front.steps }} Adam steps on {{ front.pixels[0] }} × {{ front.pixels[1] }} pixels of {{ front.pitch }} µm, from {{ front.start }} everywhere, the projection sharpened every {{ front.steps_per_beta }}; one step took a median {{ front.median_s }} s on {{ front.cores }} cores. <code>final</code> carries {{ front.t_final }} of the power into the output guide's fundamental mode, a loss of {{ front.db_final }} dB.</p>
+        <p>It was optimized at {{ front.wavelength }} µm only: over {{ front.band[0] }} to {{ front.band[1] }} µm, <span class="nw">|S21|²</span> falls to {{ front.band_min.t }} at {{ front.band_min.um }} µm. The tutorial shows the spectrum.</p>
         {%- endif %}
         <a class="more" href="{{ pathto('tutorials/bend3d') }}">Read the 3D bend tutorial</a>
       </div>

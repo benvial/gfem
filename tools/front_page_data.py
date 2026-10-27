@@ -5,17 +5,17 @@ The data comes from the 3D bend tutorial's committed run record,
 ``tools/bend3d_run.py``): this script solves nothing, it only resamples and
 quotes the record. The JSON holds:
 
-- |E| on the core mid-plane z = 0 for the arc design and for ``final``, with
-  1 W incident in the fundamental mode at p1, each normalised to its peak in
-  the input guide (as the tutorial's field figure), quantised to 0..255 of
-  the larger maximum of the two and base64-encoded, rows from y = +2.5 um down;
-- the core edge (density 0.5) of each design over the whole box, as polylines
-  in um;
-- the physical density at the tutorial's four snapshot iterations, inside the
-  design square, quantised and base64-encoded the same way;
-- the numbers the front page quotes: |S21|^2 of ``final``, the arc and the
-  corner, the schedule, the mesh, the solve time, reciprocity, power balance
-  and the wavelengths where ``final`` beats the arc.
+- |E| on the core mid-plane z = 0 for ``final``, with 1 W incident in the
+  fundamental mode at p1, normalised to its peak in the input guide (as the
+  tutorial's field figure), quantised to 0..255 of its maximum and
+  base64-encoded, rows from y = +2.5 um down;
+- ``final`` itself and the physical density at the tutorial's four snapshot
+  iterations, inside the design square, quantised and base64-encoded the
+  same way, and the core edge (density 0.5) of ``final`` over the whole box,
+  as polylines in um;
+- the numbers the front page quotes: |S21|^2 of ``final``, the schedule, the
+  mesh, the solve time, reciprocity, power balance and the spectrum's
+  minimum.
 
 ``docs/conf.py`` inlines the JSON into the front page; regenerate it whenever
 the run record changes::
@@ -57,8 +57,6 @@ def build() -> dict:
     record = json.loads((DATA / "bend3d.json").read_text())
     with np.load(DATA / "bend3d.npz") as npz:
         out = {key: npz[key] for key in npz.files}
-    with np.load(DATA / "bend3d_arc.npz") as npz:
-        arc_band = _t(npz["spectrum_s"])
     settings, geometry = record["settings"], record["settings"]["geometry"]
     half, square = geometry["box_half_width_um"], geometry["design_half_width_um"]
     guide, pitch = geometry["core_width_um"] / 2, settings["pitch_um"]
@@ -77,18 +75,16 @@ def build() -> dict:
         return [line.round(4).tolist() for line in lines]
 
     cut_x = out["cut_x"] / um
-    fields = {}
-    for name in ("arc", "final"):
-        cut = out[f"cut_top_{name}"].astype(float)
-        fields[name] = cut / cut[:, cut_x < -square].max()  # input-guide peak
-    vmax = max(field.max() for field in fields.values())
+    cut = out["cut_top_final"].astype(float)
+    field = cut / cut[:, cut_x < -square].max()  # input-guide peak
+    vmax = field.max()
 
-    t_final, t_arc = float(_t(out["s_final"])), float(_t(out["s_arc"]))
+    t_final = float(_t(out["s_final"]))
     s = out["s_final"]
     r11 = float(np.abs(s[0, 0]) ** 2)
     wavelengths = np.round(out["spectrum_wavelengths"] / um, 3)
     t_band = _t(out["spectrum_s"])
-    beats = wavelengths[t_band > arc_band]
+    low = int(np.argmin(t_band))
     seconds = out["seconds_history"][1:]  # iteration 0 includes the JIT compilation
     mesh = next(m for m in settings["meshes"].values() if "optimize" in m["stages"])
     snapshot_at = out["snapshot_iterations"]
@@ -99,11 +95,12 @@ def build() -> dict:
         "design_um": square,
         "guide_um": guide,
         "field": {
-            "shape": list(fields["final"].shape),
+            "shape": list(field.shape),
             "vmax": round(float(vmax), 4),
-            **{name: _bytes(field, vmax) for name, field in fields.items()},
+            "final": _bytes(field, vmax),
         },
-        "edge": {name: edge(out[name]) for name in ("arc", "final")},
+        "final": _bytes(out["final"], 1.0),
+        "edge": edge(out["final"]),
         "snapshots": {
             "shape": list(out["snapshots"].shape[1:]),
             "iterations": snapshot_at.tolist(),
@@ -132,14 +129,11 @@ def build() -> dict:
         },
         "results": {
             "t_final": t_final,
-            "t_arc": t_arc,
-            "t_corner": float(_t(out["s_corner"])),
             "db_final": _db(t_final),
-            "db_arc": _db(t_arc),
             "core_fraction": float(out["final"].mean()),
             "reciprocity": float(np.abs(s[0, 1] - s[1, 0])),
             "balance": r11 + t_final,
-            "beats_arc_um": [float(beats.min()), float(beats.max())],
+            "band_min": {"um": float(wavelengths[low]), "t": float(t_band[low])},
             "band_um": [float(wavelengths.min()), float(wavelengths.max())],
         },
     }
