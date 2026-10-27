@@ -65,10 +65,7 @@ def _check_read(eps, names: list[str]) -> None:
 
     Call after the solve, with the options still in the database.
     """
-    PETSc = _petsc.require_petsc()
-    database = PETSc.Options()
-    prefix = eps.getOptionsPrefix()
-    unread = [n for n in names if not database.used(f"{prefix}{n}")]
+    unread = _petsc.unread(eps.getOptionsPrefix(), names)
     if not unread:
         return
     keys = ", ".join(f"SolverOptions.petsc_options[{n!r}]" for n in unread)

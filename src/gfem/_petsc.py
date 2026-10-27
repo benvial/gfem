@@ -39,6 +39,7 @@ __all__ = [
     "require_petsc",
     "require_slepc",
     "scoped_options",
+    "unread",
     "unwrap",
 ]
 
@@ -179,6 +180,15 @@ def scoped_options(prefix: str, pairs: PetscOptions) -> Generator[None]:
         finally:
             for name in names:
                 options.delValue(name)
+
+
+def unread(prefix: str, names: list[str]) -> list[str]:
+    """The ``names`` PETSc's options database holds unread under ``prefix``.
+
+    Call inside `scoped_options`, after the object has read its options.
+    """
+    database = require_petsc().Options()
+    return [name for name in names if not database.used(f"{prefix}{name}")]
 
 
 def unwrap(err: BaseException) -> BaseException:

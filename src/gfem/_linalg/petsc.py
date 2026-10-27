@@ -139,9 +139,7 @@ class PetscHandle(NgsHandle):
 
         Call after the first set-up, with the options still in the database.
         """
-        PETSc = _petsc.require_petsc()
-        database = PETSc.Options()
-        unread = [n for n in names if not database.used(f"{self._prefix}{n}")]
+        unread = _petsc.unread(self._prefix, names)
         if not unread:
             return
         keys = ", ".join(f"SolverOptions.petsc_options[{n!r}]" for n in unread)
