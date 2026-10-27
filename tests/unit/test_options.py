@@ -5,6 +5,7 @@ import pickle
 
 import numpy as np
 import pytest
+from petsc_recipe import SOLVER_OPTIONS
 
 import gfem
 from gfem.options import split_petsc_options
@@ -174,3 +175,12 @@ def test_slepc_takes_the_krylov_schur_or_arnoldi_eps_type():
             eigen_solver="slepc", petsc_options={"eps_type": eps_type}
         )
         assert o.petsc_options == (("eps_type", eps_type),)
+
+
+@pytest.mark.parametrize("snippet", list(SOLVER_OPTIONS))
+def test_the_petsc_recipes_options_are_accepted(snippet):
+    # every SolverOptions that docs/recipes/petsc-slepc.md builds passes the
+    # namespace and reserved-option rules, without PETSc installed
+    kwargs = SOLVER_OPTIONS[snippet]
+    options = gfem.SolverOptions(**kwargs)
+    assert dict(options.petsc_options) == kwargs.get("petsc_options", {})

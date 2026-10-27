@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import structured_meshes as sm
+from petsc_recipe import SOLVER_OPTIONS
 
 import gfem
 
@@ -71,12 +72,9 @@ def test_job_round_trips_model_problem_and_options(model, tmp_path):
 
 
 def test_job_round_trips_petsc_options(model, tmp_path):
-    # PETSc is not needed to write or read the job, only to run it
-    options = gfem.SolverOptions(
-        linear_solver="petsc",
-        eigen_solver="slepc",
-        petsc_options={"pc_type": "lu", "ksp_view": None},
-    )
+    # PETSc is not needed to write or read the job, only to run it; the
+    # options are the job file the PETSc and SLEPc recipe shows
+    options = gfem.SolverOptions(**SOLVER_OPTIONS["job"])
     path = gfem.Job(model, PROBLEM, options).to_json(tmp_path / "job.json")
     doc = json.loads(path.read_text())
     written = doc["job"]["options"]

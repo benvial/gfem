@@ -14,6 +14,7 @@ import ngsolve as ngs
 import numpy as np
 import pytest
 import structured_meshes as sm
+from petsc_recipe import KSP_VIEW, MUMPS_LU
 
 import gfem
 from gfem import _petsc
@@ -471,6 +472,38 @@ def test_an_option_petsc_reads_is_honoured(built):
     # read again by a new pattern's MUMPS instance
     handle.refactorize(_on_the_side(built, False))
     assert handle._ksp.getPC().getFactorMatrix().getMumpsIcntl(14) == 55
+
+
+def _recipe(built, options):
+    """A complex symmetric operator, solved with one of the recipe's dicts."""
+    op, space = _laplace(built, complex_valued=True, shift=1 - 2j)
+    pairs = tuple(options.items())
+    handle = prepare(
+        op, symmetry="complex_symmetric", kind="petsc", petsc_options=pairs
+    )
+    direct = prepare(
+        _laplace(built, True, 1 - 2j)[0], symmetry="complex_symmetric", kind="direct"
+    )
+    rng = np.random.default_rng(3)
+    b = rng.standard_normal(space.ndof) + 1j * rng.standard_normal(space.ndof)
+    return handle, handle.solve(b), direct.solve(b)
+
+
+def test_the_recipes_mumps_lu_options_give_mumps_more_workspace(built):
+    handle, x, direct = _recipe(built, MUMPS_LU)
+    pc = handle._ksp.getPC()
+    assert (pc.getType(), pc.getFactorSolverType()) == ("lu", "mumps")
+    assert pc.getFactorMatrix().getMumpsIcntl(14) == 50
+    np.testing.assert_allclose(x, direct, rtol=1e-10)
+
+
+def test_the_recipes_ksp_view_prints_the_solver(built, capfd):
+    capfd.readouterr()
+    _, x, direct = _recipe(built, KSP_VIEW)
+    printed = capfd.readouterr().out
+    assert "type: preonly" in printed
+    assert "MUMPS" in printed
+    np.testing.assert_allclose(x, direct, rtol=1e-10)
 
 
 @pytest.mark.parametrize(

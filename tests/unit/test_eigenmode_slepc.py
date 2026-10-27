@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 from eigen_cases import EPS, F1, conductor_line, line, line_mesh, terminated_line
 from gradient_cases import MIRRORED_TARGET, mirrored_cavity
+from petsc_recipe import SLEPC_SUBSPACE
 
 import gfem
 
@@ -176,10 +177,13 @@ def test_slepc_seed_solves_through_the_rule_handle(mesh, solved_eps):
         assert eps["st"] == "shift"  # no KSP of SLEPc's own
 
 
-def test_eps_ncv_reaches_the_eps(mesh, solved_eps):
-    options = gfem.SolverOptions(eigen_solver="slepc", petsc_options={"eps_ncv": 24})
+def test_eps_ncv_reaches_the_eps(mesh, solved_eps, capfd):
+    # the recipe's options: a larger subspace, and SLEPc's monitor
+    options = gfem.SolverOptions(eigen_solver="slepc", petsc_options=SLEPC_SUBSPACE)
+    capfd.readouterr()
     gfem.solve(terminated_line(mesh, 1000.0), gfem.Eigenmode(8e9), options=options)
-    assert [eps["dimensions"][1] for eps in solved_eps] == [24]
+    assert [eps["dimensions"][1] for eps in solved_eps] == [40]
+    assert "EPS nconv=" in capfd.readouterr().out
 
 
 def test_a_non_integer_eps_ncv_is_refused(mesh):

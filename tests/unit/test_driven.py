@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 import scipy.constants as const
 import structured_meshes as sm
+from petsc_recipe import SOLVER_OPTIONS
 from preconditioners import count_preconditioners
 
 import gfem
@@ -277,6 +278,27 @@ def test_an_exact_sweep_plans_once_and_matches_fresh_handles(
     solved = 4 if sweep == "uniform" else len(result.sweep.sampled_frequencies)
     assert len(calls) == solved > 1
     np.testing.assert_allclose(result.s.values, s, rtol=0, atol=1e-12)
+
+
+@pytest.mark.petsc
+def test_petsc_gmres_on_the_first_frequencys_factors_matches_direct(line):
+    # the recipe's Krylov example: one MUMPS factorization, at the first
+    # frequency, preconditions GMRES at every frequency of a uniform sweep
+    from gfem import _petsc
+
+    PETSc = _petsc.require_petsc()
+    PETSc.Log.begin()
+    factorizations = PETSc.Log.Event("MatCholFctrNum")
+    problem = gfem.Driven(frequency=(3e9, 3.5e9, 4e9, 4.5e9))
+    direct = np.asarray(_s(line, problem).s.values)
+    rule = DrivenRule(
+        line, problem, gfem.SolverOptions(**SOLVER_OPTIONS["krylov_reuse"])
+    )
+    before = factorizations.getPerfInfo()["count"]
+    outputs, _ = rule.forward(line, keep=False)
+    assert factorizations.getPerfInfo()["count"] - before == 1
+    assert all(its for its in outputs["iterations"])  # GMRES ran at each frequency
+    np.testing.assert_allclose(outputs["s"], direct, atol=1e-6)  # tolerance 1e-6
 
 
 def test_a_bddc_sweep_keeps_its_preconditioner_and_matches_fresh_setups(
