@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import weakref
 from pathlib import Path
 
 import jax
@@ -18,6 +19,8 @@ LENGTH_UNITS = {"m": 1.0, "cm": 1e-2, "mm": 1e-3, "um": 1e-6, "nm": 1e-9}
 
 # Local face k of a tetrahedron is the one opposite its vertex k.
 _TET_FACES = np.array([[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]])
+# Local vertex pairs of a tetrahedron's six edges.
+_TET_EDGES = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -305,6 +308,28 @@ class Mesh:
         -1 means outside the mesh.
         """
         return self._topology.tri_neighbours
+
+
+# Per tetrahedron, its shortest edge, by mesh topology (`_shortest_edges`).
+_SHORTEST_EDGES: weakref.WeakKeyDictionary[_Topology, np.ndarray] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _shortest_edges(mesh: Mesh) -> np.ndarray:
+    """The shortest edge (m) of each tetrahedron on the imported nodes.
+
+    Cached per mesh topology: moved nodes do not change it.
+    """
+    topology = mesh._topology  # noqa: SLF001
+    h = _SHORTEST_EDGES.get(topology)
+    if h is None:
+        x = mesh.imported_nodes[mesh.tetrahedra]
+        sq = np.full(len(x), np.inf)
+        for i, j in _TET_EDGES:
+            sq = np.minimum(sq, np.sum((x[:, i] - x[:, j]) ** 2, axis=1))
+        h = _SHORTEST_EDGES[topology] = readonly(np.sqrt(sq))
+    return h
 
 
 def _regions(raw: meshio.Mesh) -> tuple[Region, ...]:

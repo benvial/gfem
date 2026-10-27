@@ -223,7 +223,12 @@ class SolverOptions:
             PETSc stack the "PETSc and SLEPc" recipe builds; never chosen by
             ``"auto"``). A solver this Python cannot use raises
             `gfem.SolverUnavailableError` when the solve starts.
-        tolerance: Relative residual of iterative solves.
+        tolerance: Relative preconditioned residual of iterative solves:
+            for BDDC + GMRES ``|P(b - Ax)| / |P b|`` as GMRES estimates it,
+            for BDDC + conjugate gradients the P-norm of the residual over
+            its first value. S and fields are accurate to about this size;
+            the unpreconditioned residual ``|b - Ax| / |b|`` can be orders
+            larger at low frequency and does not measure the error.
         device: Where the direct solver runs: ``"cpu"``, ``"cuda"`` or
             ``"cuda:N"`` (the N-th GPU). A GPU needs
             ``linear_solver="direct"`` (NVIDIA cuDSS, from the ``cuda12`` or
@@ -244,8 +249,8 @@ class SolverOptions:
             an exact port mode solve replaces it.
         retain_memory: Bytes of solver factorizations kept for gradients;
             ``None`` is half of the physical memory, 0 always recomputes.
-        adjoint_tolerance: Relative residual of adjoint solves; ``None`` is
-            ``tolerance``.
+        adjoint_tolerance: Relative preconditioned residual of adjoint
+            solves, as ``tolerance``; ``None`` is ``tolerance``.
         eigen_tolerance: Backward error accepted for an eigenmode, as
             Palace defines it (``Eigenmode.Tol``: the residual over
             ``|K| + |omega| |C| + |omega|^2 |M|``), shared by the Arnoldi

@@ -1,15 +1,19 @@
-"""Count BDDC setups in a test.
+"""Count BDDC setups and Krylov iterations in a test.
 
 Usage::
 
-    from preconditioners import count_preconditioners
+    from preconditioners import count_iterations, count_preconditioners
 
     builds = count_preconditioners(monkeypatch)
+    iterations = count_iterations(monkeypatch)
     ...  # solves
     assert len(builds) == 2
+    assert max(iterations) < 60
 """
 
 import ngsolve as ngs
+
+from gfem._linalg.bddc import BddcHandle
 
 
 def count_preconditioners(monkeypatch) -> list[int]:
@@ -22,4 +26,17 @@ def count_preconditioners(monkeypatch) -> list[int]:
         return build(*args, **kwargs)
 
     monkeypatch.setattr(ngs, "Preconditioner", spy)
+    return calls
+
+
+def count_iterations(monkeypatch) -> list[int]:
+    """Spy on BDDC Krylov solves: one entry per converged right-hand side."""
+    calls = []
+    finish = BddcHandle._finish
+
+    def spy(self, *args, **kwargs):
+        finish(self, *args, **kwargs)
+        calls.append(self.iterations[-1])
+
+    monkeypatch.setattr(BddcHandle, "_finish", spy)
     return calls

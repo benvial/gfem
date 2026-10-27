@@ -461,6 +461,63 @@ def test_bddc_raises_when_it_does_not_converge(built):
         handle.solve(np.random.default_rng(6).standard_normal(handle.ndof))
 
 
+def _break_down(monkeypatch, solver, *, times):
+    """Stop the first ``times`` solves of ``solver`` after two residual checks.
+
+    As NGSolve 6.2.2608's GMRES leaves on an Arnoldi breakdown: before its
+    stopping test, with the residual estimate above the tolerance (the
+    iterate here is right). Returns each solve's iterations.
+    """
+    original = solver._SolveImpl
+    iterations = []
+
+    def solve(self, rhs, sol):
+        maxiter = self.maxiter
+        if len(iterations) < times:
+            self.maxiter = min(2, maxiter)
+        try:
+            original(self, rhs=rhs, sol=sol)
+        finally:
+            self.maxiter = maxiter
+        iterations.append(self.iterations)
+
+    monkeypatch.setattr(solver, "_SolveImpl", solve)
+    return iterations
+
+
+@pytest.mark.parametrize(
+    ("symmetry", "warm"),
+    [("complex_symmetric", False), ("complex_symmetric", True), ("hermitian", False)],
+)
+def test_bddc_gmres_does_not_accept_a_breakdown_above_the_tolerance(
+    built, monkeypatch, symmetry, warm
+):
+    # an early stop restarts once from its iterate, then meets the usual test
+    shift = 1 - 2j if symmetry == "complex_symmetric" else 0.0
+    krylov = ngs.solvers.GMResSolver if shift else ngs.solvers.CGSolver
+
+    def operator():
+        return _laplace(built, complex_valued=bool(shift), shift=shift, order=4)[0]
+
+    handle = prepare(operator(), symmetry=symmetry, kind="bddc_gmres", tolerance=1e-10)
+    rng = np.random.default_rng(15)
+    B = rng.standard_normal(handle.ndof) * (1 + 1j if shift else 1)
+    x0 = np.zeros_like(B) if warm else None
+    exact = prepare(operator(), symmetry=symmetry, kind="direct").solve(B)
+    with monkeypatch.context() as patch:
+        iterations = _break_down(patch, krylov, times=1)
+        X = handle.solve(B, x0=x0)
+    np.testing.assert_allclose(X, exact, atol=1e-8 * np.abs(exact).max())
+    assert len(iterations) == 2  # the short stop and its restart
+    assert iterations[0] == 2
+    assert handle.iterations[-1] == sum(iterations)
+    # a restart that stops short too raises
+    _break_down(monkeypatch, krylov, times=2)
+    with pytest.raises(RuntimeError, match="converge") as raised:
+        handle.solve(B, x0=x0)
+    assert "stopped short of the tolerance after 4 iterations" in str(raised.value)
+
+
 def test_freed_bddc_handle_refuses_to_solve(built):
     handle = prepare(_laplace(built)[0], symmetry="hermitian", kind="bddc_gmres")
     handle.free()

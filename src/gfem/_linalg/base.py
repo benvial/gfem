@@ -89,7 +89,11 @@ class NgsHandle:
         return (B[:, None], True) if B.ndim == 1 else (B, False)
 
     def _map(self, op, B: np.ndarray, after=None) -> np.ndarray:
-        """``op`` applied to each column of ``B``; ``after(op)`` checks each."""
+        """``op`` applied to each column of ``B``.
+
+        ``after(op, x, y)`` checks each column's ``y = op * x``, and may
+        change ``y`` in place.
+        """
         cols, flat = self._columns(B)
         dtype = np.complex128 if self._complex else np.float64
         out = np.zeros(cols.shape, dtype=dtype)
@@ -103,7 +107,7 @@ class NgsHandle:
                 x.FV().NumPy()[:] = cols[:, j]
                 y.data = op * x
                 if after is not None:
-                    after(op)
+                    after(op, x, y)
                 out[:, j] = y.FV().NumPy()
         return out[:, 0] if flat else out
 

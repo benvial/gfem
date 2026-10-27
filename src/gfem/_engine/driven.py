@@ -56,6 +56,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import math
+import warnings
 from collections.abc import Mapping
 from typing import Any, Self
 
@@ -91,8 +92,8 @@ from gfem._linalg import (
 )
 from gfem._linalg.pieces import AssembledPieces, PieceSum
 from gfem._sweep.adaptive import AffineSystem, AffineTerm, adaptive_sweep
-from gfem.errors import PortGeometryError
-from gfem.mesh import Mesh
+from gfem.errors import LowFrequencyWarning, PortGeometryError
+from gfem.mesh import Mesh, _shortest_edges
 from gfem.model import Model
 from gfem.options import PetscOptions, PetscValue, SolverOptions
 from gfem.problems import Driven
@@ -108,6 +109,7 @@ from gfem.results import (
 
 __all__ = [
     "DEFAULT_SOLVER",
+    "LOW_FREQUENCY_FLOOR",
     "DrivenOperator",
     "DrivenRule",
     "check_ports_held",
@@ -118,6 +120,12 @@ __all__ = [
 
 #: The linear solver for ``linear_solver="auto"``: GMRES + BDDC.
 DEFAULT_SOLVER = "bddc_gmres"
+
+#: k0 * h_min below which a driven solve warns (gfem.LowFrequencyWarning).
+LOW_FREQUENCY_FLOOR = 1e-6
+#: k0 * h_min below which direct solves become unreliable (ticket 05), named
+#: in the low-frequency warning.
+DIRECT_FLOOR = 3e-7
 
 
 @dataclasses.dataclass(eq=False)
@@ -192,11 +200,20 @@ class DrivenOperator:
         return out.reshape(x.shape)
 
 
-def driven_operator(model: Model, order: int) -> DrivenOperator:
+def driven_operator(
+    model: Model,
+    order: int,
+    *,
+    elements: np.ndarray | None = None,
+    faces: np.ndarray | None = None,
+) -> DrivenOperator:
     """The driven operator of ``model`` at its current node positions.
 
     Every `PEC` surface is a Dirichlet constraint of the space; every
-    other boundary and lumped port contributes pieces.
+    other boundary and lumped port contributes pieces. ``elements`` and
+    ``faces`` restrict the pieces to those gfem tetrahedra and triangles
+    (boolean masks, ``None`` for all; see `terms.pieces`); the space is the
+    unrestricted one.
     """
     disc = discretization(model.mesh)
     built = disc.built
@@ -206,7 +223,7 @@ def driven_operator(model: Model, order: int) -> DrivenOperator:
         lambda: hcurl_space(model, built, order, dirichlet=pec),
     )
     ports = terms.lumped_ports(model, built.scale)
-    pieces = terms.pieces(model, built, order, ports)
+    pieces = terms.pieces(model, built, order, ports, elements=elements, faces=faces)
     return DrivenOperator(built, space, pieces, ports, order)
 
 
@@ -320,6 +337,7 @@ class DrivenRule:
         # The fields live on the mesh as given (traced or not).
         self._mesh = model.mesh
         self._excluded = model._domain.excluded  # noqa: SLF001
+        _check_low_frequency(model, problem.frequency, stacklevel=3)
 
     def operator(self, model: Model) -> DrivenOperator:
         """The model's driven operator at its current node positions.
@@ -1143,6 +1161,43 @@ def check_ports_held(model: Model) -> None:
                 )
 
 
+def _check_low_frequency(
+    model: Model, frequencies: tuple[float, ...], *, stacklevel: int
+) -> None:
+    """Warn once if a frequency is below the mesh's low-frequency floor.
+
+    h_min is the shortest edge of the solve domain on the imported nodes,
+    so the message is the same at every step of a shape optimization.
+
+    Args:
+        model: The model, its solve domain and its mesh.
+        frequencies: The output frequencies (Hz).
+        stacklevel: Passed on to `warnings.warn`, counted from the caller.
+    """
+    active = model._domain.active  # noqa: SLF001
+    h_min = float(_shortest_edges(model.mesh)[active].min())
+    f = np.asarray(frequencies)
+    k0h = 2 * math.pi * f / scipy.constants.c * h_min
+    low = k0h < LOW_FREQUENCY_FLOOR
+    if not low.any():
+        return
+    f_floor = LOW_FREQUENCY_FLOOR * scipy.constants.c / (2 * math.pi * h_min)
+    lowest = int(np.argmin(f))
+    msg = (
+        f"Driven: {int(low.sum())} of {len(f)} frequencies, the lowest "
+        f"{f[lowest]:.4g} Hz, are below this mesh's low-frequency floor of "
+        f"{f_floor:.4g} Hz (k0*h_min = {k0h[lowest]:.2g} < "
+        f"{LOW_FREQUENCY_FLOOR:g}, with h_min = {h_min:.3g} m the shortest edge "
+        "in the solve domain). Below it the fields and their gradients, and "
+        "with linear_solver='direct' the capacitive part of S, carry rounding "
+        "errors up to about 1e-16/(k0*h_min)^2, and direct solves become "
+        f"unreliable below k0*h_min = {DIRECT_FLOOR:g}. For capacitance, solve "
+        "gfem.Electrostatic instead of reading it from S; otherwise raise the "
+        "lowest frequency or coarsen the smallest elements."
+    )
+    warnings.warn(msg, LowFrequencyWarning, stacklevel=stacklevel + 1)
+
+
 def _solve_block(
     aux: Any, children: Any, problem: Driven, options: SolverOptions, keep: bool
 ) -> dict[str, Any]:
@@ -1151,7 +1206,11 @@ def _solve_block(
     ``aux`` and ``children`` are the model's parts (`gfem._engine.workers`).
     """
     model = workers.model_from_parts(aux, children)
-    outputs, entry = DrivenRule(model, problem, options).forward(model, keep=keep)
+    with warnings.catch_warnings():
+        # the parent's rule already warned for the whole sweep
+        warnings.simplefilter("ignore", LowFrequencyWarning)
+        rule = DrivenRule(model, problem, options)
+    outputs, entry = rule.forward(model, keep=keep)
     names = ("s", "z_ref", "iterations", "e_field")
     block = {name: outputs[name] for name in names if name in outputs}
     if entry is not None:

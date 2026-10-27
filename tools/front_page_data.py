@@ -1,164 +1,130 @@
 """Write the front-page hero data, ``docs/_data/front-page.json`` (committed).
 
-The data comes from the topology tutorial itself: this script executes
-``docs/tutorials/topology.ipynb`` (through nbclient, cwd ``docs/tutorials``)
-with one cell appended that calls `export` on the notebook's namespace. Every
-model value is read from that namespace, never typed here: the mesh, the
-layer grid, the filter, the materials, the objective ``missed_power``, the
-pixel-to-field map ``material`` and the solve ``s21_of_field``, the start
-design ``rho0``, the continuation schedule ``BETAS`` / ``STEPS_PER_BETA``,
-the etch offset ``DELTA``, the sweep and the results. The JSON holds:
+The data comes from the 3D bend tutorial's committed run record,
+``docs/tutorials/data/bend3d.json`` and ``bend3d.npz`` (written by
+``tools/bend3d_run.py``): this script solves nothing, it only resamples and
+quotes the record. The JSON holds:
 
-- the top face of the ``design`` volume as triangles (x, y in mm), each with
-  its tetrahedron's |dJ/d eps_r| at the start design (the nominal variant at
-  the first beta), normalised to its maximum;
-- the eroded / nominal / dilated designs after the optimisation, sampled at
-  each triangle's tetrahedron (0 air, 1 ceramic);
-- the missed-power history, the final J of each variant and the power-balance
-  check of the nominal design;
-- the numbers the front page quotes (``params``): layer size, filter radius,
-  ceramic permittivity, pass and stop frequencies, first beta, steps per
-  beta and sweep range.
+- |S21|^2 and beta of every iteration, for the hero's history strip under
+  the optimization video (``tools/bend3d_animation.py``);
+- the physical density at the tutorial's four snapshot iterations, inside the
+  design square, quantised to 0..255 and base64-encoded, rows from
+  y = +1.5 um down;
+- the numbers the front page quotes: |S21|^2 of ``final``, the schedule, the
+  mesh, the solve time, reciprocity, power balance and the spectrum's
+  minimum.
 
-The notebook file is not modified. ``docs/conf.py`` inlines the JSON into the
-front page; regenerate it whenever the tutorial changes::
+``docs/conf.py`` inlines the JSON into the front page; regenerate it whenever
+the run record changes::
 
     just front-page-data
-
-(about 4 minutes on CPU, in the docs environment).
 """
 
 import argparse
-import os
+import base64
+import json
 from pathlib import Path
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parents[1]
-NOTEBOOK = ROOT / "docs" / "tutorials" / "topology.ipynb"
+DATA = ROOT / "docs" / "tutorials" / "data"
 OUT = ROOT / "docs" / "_data" / "front-page.json"
-
-# Appended to the tutorial; runs in its kernel after its last cell.
-EXPORT_CELL = """\
-# front-page export, appended by tools/front_page_data.py (not part of the tutorial)
-import sys as _sys
-
-_sys.path.insert(0, {tools!r})
-from front_page_data import export as _export
-
-_export(globals(), {out!r})
-"""
+um = 1e-6
 
 
-def export(ns: dict, out: str) -> None:
-    """Write the hero JSON from the executed tutorial's namespace ``ns``."""
-    import json
+def _bytes(values: np.ndarray, vmax: float) -> str:
+    """``values`` / ``vmax`` as base64 uint8, rows top (max y) first."""
+    scaled = np.clip(np.asarray(values, float) / vmax, 0, 1)[::-1]
+    return base64.b64encode(np.round(255 * scaled).astype(np.uint8).tobytes()).decode()
 
-    import jax
-    import numpy as np
 
-    from gfem import design
+def _t(s: np.ndarray) -> np.ndarray:
+    """|S21|^2 of an S-matrix (..., 2, 2)."""
+    return np.abs(np.asarray(s)[..., 1, 0]) ** 2
 
-    mesh, grid, mm, GHz = ns["mesh"], ns["grid"], ns["mm"], ns["GHz"]
-    final, start_beta = ns["final"], ns["BETAS"][0]
 
-    # |dJ/d eps_r| per element of the nominal start design
-    start = design.robust(ns["blur"](ns["rho0"]), beta=start_beta, delta=ns["DELTA"])
+def _db(t: float) -> float:
+    return float(-10 * np.log10(t))
 
-    def j_nominal(field):
-        return ns["missed_power"](ns["s21_of_field"](field))
 
-    field0 = ns["material"](start.nominal)
-    dj = np.abs(np.asarray(jax.grad(j_nominal)(field0).eps_r))
+def build() -> dict:
+    """The hero JSON from the run record."""
+    record = json.loads((DATA / "bend3d.json").read_text())
+    with np.load(DATA / "bend3d.npz") as npz:
+        out = {key: npz[key] for key in npz.files}
+    settings, geometry = record["settings"], record["settings"]["geometry"]
+    half, square = geometry["box_half_width_um"], geometry["design_half_width_um"]
+    guide, pitch = geometry["core_width_um"] / 2, settings["pitch_um"]
+    schedule = settings["schedule"]
 
-    # the top face of the design volume, each triangle with its tetrahedron
-    nodes = np.asarray(mesh.nodes) / mm
-    tets = mesh.tetrahedra[mesh.elements("design")]
-    owner_of = {}
-    for k, tet in enumerate(tets):
-        for drop in range(4):
-            owner_of[frozenset(np.delete(tet, drop).tolist())] = k
-    tris, owner = [], []
-    for face in mesh.triangles[mesh.elements("top")]:
-        k = owner_of.get(frozenset(face.tolist()))
-        if k is not None:
-            tris.append(face.tolist())
-            owner.append(k)
-    owner = np.asarray(owner)
-    used = sorted({n for face in tris for n in face})
-    index = {n: i for i, n in enumerate(used)}
-    xy = nodes[used, :2]
-    sens = dj[owner] / dj[owner].max()
-    extent = [
-        float(xy[:, 0].min()),
-        float(xy[:, 0].max()),
-        float(xy[:, 1].min()),
-        float(xy[:, 1].max()),
-    ]
-    sweep = np.asarray(ns["sweep"].frequency) / GHz
+    t_final = float(_t(out["s_final"]))
+    s = out["s_final"]
+    r11 = float(np.abs(s[0, 0]) ** 2)
+    wavelengths = np.round(out["spectrum_wavelengths"] / um, 3)
+    t_band = _t(out["spectrum_s"])
+    low = int(np.argmin(t_band))
+    seconds = out["seconds_history"][1:]  # iteration 0 includes the JIT compilation
+    mesh = next(m for m in settings["meshes"].values() if "optimize" in m["stages"])
+    snapshot_at = out["snapshot_iterations"]
 
-    data = {
-        "source": "docs/tutorials/topology.ipynb, executed by tools/front_page_data.py",
-        "triangles": len(tris),
-        "tetrahedra": len(tets),
-        "extent_mm": extent,
+    return {
+        "source": "docs/tutorials/data/bend3d.{json,npz}, by tools/front_page_data.py",
+        "extent_um": [-half, half, -half, half],
+        "design_um": square,
+        "guide_um": guide,
+        "history": {
+            "t": out["t_history"].round(5).tolist(),
+            "beta": out["beta_history"].tolist(),
+        },
+        "snapshots": {
+            "shape": list(out["snapshots"].shape[1:]),
+            "iterations": snapshot_at.tolist(),
+            "t": [round(float(out["t_history"][k]), 4) for k in snapshot_at],
+            "density": [_bytes(rho, 1.0) for rho in out["snapshots"]],
+        },
         "params": {
-            "layer_mm": [extent[1] - extent[0], extent[3] - extent[2]],
-            "radius_mm": ns["blur"].radius / mm,
-            "eps_r": ns["CERAMIC"].eps_r,
-            "pass_ghz": ns["PASS"] / GHz,
-            "stop_ghz": ns["STOP"] / GHz,
-            "beta0": start_beta,
-            "steps_per_beta": ns["STEPS_PER_BETA"],
-            "sweep_ghz": [float(sweep.min()), float(sweep.max())],
+            "wavelength_um": settings["wavelength_um"],
+            "core_thickness_um": geometry["core_thickness_um"],
+            "core_width_um": geometry["core_width_um"],
+            "square_um": 2 * square,
+            "pixels": list(out["rho_final"].shape),
+            "pitch_um": pitch,
+            "filter_radius_um": settings["filter_radius_um"],
+            "iterations": schedule["iterations"],
+            "steps_per_beta": schedule["steps_per_beta"],
+            "beta0": schedule["betas"][0],
+            "start": schedule["start"],
+            "dof": mesh["dof"],
+            "tets": mesh["tets"],
+            "order": settings["order"],
+            "median_s": float(np.median(seconds)),
+            "cores": record["provenance"]["physical_cores"],
+            "n_si": settings["indices"]["core"]["n"],
+            "n_sio2": settings["indices"]["cladding"]["n"],
         },
-        "nodes": xy.round(4).tolist(),
-        "tris": [[index[n] for n in face] for face in tris],
-        "sens0": sens.round(4).tolist(),
-        "variants": {
-            name: np.asarray(grid.to_elements(image))[owner].round(3).tolist()
-            for name, image in zip(final._fields, final, strict=True)
+        "results": {
+            "t_final": t_final,
+            "db_final": _db(t_final),
+            "core_fraction": float(out["final"].mean()),
+            "reciprocity": float(np.abs(s[0, 1] - s[1, 0])),
+            "balance": r11 + t_final,
+            "band_min": {"um": float(wavelengths[low]), "t": float(t_band[low])},
+            "band_um": [float(wavelengths.min()), float(wavelengths.max())],
         },
-        "history": np.asarray(ns["history"]).round(5).tolist(),
-        "final": dict(
-            zip(final._fields, np.asarray(ns["missed"]).tolist(), strict=True)
-        ),
-        "balance": float(ns["balance"]),
     }
-    tmp = Path(out).with_suffix(".json.tmp")  # never leave a half-written JSON
-    tmp.write_text(json.dumps(data, separators=(",", ":")) + "\n")
-    tmp.replace(out)
-    print(f"{len(tris)} top triangles over {len(tets)} design tetrahedra")
 
 
 def main() -> None:
-    """Execute the tutorial with the export cell and write the JSON."""
+    """Read the run record and write the JSON."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, default=OUT, help="output JSON path")
     args = parser.parse_args()
-    try:
-        import nbformat
-        from nbclient import NotebookClient
-    except ImportError as exc:
-        raise SystemExit(
-            f"{exc}: run in the docs environment "
-            "(uv sync --python 3.13 --group docs --group site)"
-        ) from exc
-
     out = args.out.resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
-    nb = nbformat.read(NOTEBOOK, as_version=4)
-    cell = EXPORT_CELL.format(tools=str(Path(__file__).resolve().parent), out=str(out))
-    nb.cells.append(nbformat.v4.new_code_cell(cell))
-    os.environ.setdefault("JAX_PLATFORMS", "cpu")  # inherited by the kernel
-    client = NotebookClient(
-        nb,
-        timeout=1800,  # as CI's tutorials job
-        kernel_name="python3",
-        resources={"metadata": {"path": str(NOTEBOOK.parent)}},
-    )
-    client.execute()
-    for output in nb.cells[-1].outputs:
-        if output.get("output_type") == "stream":
-            print(output["text"], end="")
+    tmp = out.with_suffix(".json.tmp")  # never leave a half-written JSON
+    tmp.write_text(json.dumps(build(), separators=(",", ":")) + "\n")
+    tmp.replace(out)
     print("wrote", out.relative_to(ROOT) if out.is_relative_to(ROOT) else out)
 
 

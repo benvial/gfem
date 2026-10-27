@@ -10,6 +10,7 @@ the discretization's dispersion error.
 import cmath
 import dataclasses
 import math
+import warnings
 
 import jax
 import numpy as np
@@ -20,7 +21,7 @@ from petsc_recipe import SOLVER_OPTIONS
 from preconditioners import count_preconditioners
 
 import gfem
-from gfem._engine import driven, terms
+from gfem._engine import driven, terms, workers
 from gfem._engine.driven import DrivenRule
 from gfem._linalg import bddc, prepare
 from gfem._linalg.base import same_pattern
@@ -242,6 +243,37 @@ def test_bddc_gmres_is_the_default_and_matches_direct(line):
     # GMRES at the second frequency starts from the first one's solution
     assert len(outputs["iterations"]) == 2
     assert all(len(its) == 2 for its in outputs["iterations"])
+
+
+def test_bddc_tolerance_is_the_preconditioned_residual(line, monkeypatch):
+    # GMRES stops on |P(b - Ax)| <= tol |P b|; S is accurate to about tol,
+    # while |b - Ax| / |b| (1.6e-5 here) is not asserted: it is no error measure
+    import ngsolve as ngs
+
+    tolerance = 1e-6
+    residuals = []
+    solve = BddcHandle._inverse_map
+
+    def spy(self, B, tol, x0=None):
+        X = solve(self, B, tol, x0)
+        matrix, pre = self._matrix, self._preconditioner.mat
+        b, x, r, pr, pb = (matrix.CreateColVector() for _ in range(5))
+        for j in range(B.shape[1]):
+            b.FV().NumPy()[:] = B[:, j]
+            x.FV().NumPy()[:] = X[:, j]
+            r.data = b - matrix * x
+            pr.data = pre * r
+            pb.data = pre * b
+            residuals.append(ngs.Norm(pr) / ngs.Norm(pb))
+        return X
+
+    monkeypatch.setattr(BddcHandle, "_inverse_map", spy)
+    problem = gfem.Driven(frequency=1e9)
+    s = _s(line, problem, linear_solver="bddc_gmres", tolerance=tolerance).s.values
+    direct = _s(line, problem).s.values
+    assert len(residuals) == 2
+    assert max(residuals) <= 1.01 * tolerance
+    np.testing.assert_allclose(s, direct, rtol=0, atol=10 * tolerance)
 
 
 def _count_prepares(monkeypatch) -> list[int]:
@@ -575,6 +607,37 @@ def test_a_direct_handle_sums_the_pieces_into_the_assembled_operator(tmp_path):
         assert np.abs(summed - assembled).max() <= 1e-14 * np.abs(assembled).max()
 
 
+def test_pieces_restricted_to_a_partition_of_the_mesh_sum_to_the_whole(tmp_path):
+    # every tetrahedron and triangle in one of three parts, at random
+    model = _every_piece_kind(tmp_path)
+    rng = np.random.default_rng(0)
+    tets = rng.integers(0, 3, len(model.mesh.tetrahedra))
+    tris = rng.integers(0, 3, len(model.mesh.triangles))
+    whole = driven.driven_operator(model, 2)
+    parts = [
+        driven.driven_operator(model, 2, elements=tets == j, faces=tris == j)
+        for j in range(3)
+    ]
+    x = rng.standard_normal((whole.space.ndof, 2)) @ np.array([1.0, 1j])
+    names = [p.name for p in whole.pieces]
+    assert {"conductivity", "absorbing order 2", "impedance sheet C"} <= set(names)
+    assert {"conductor bottom (one-sided)", "port p1 R"} <= set(names)
+    for k, name in enumerate(names):
+        expected = whole.apply(k, x)
+        pieces = [part.apply(k, x) for part in parts]
+        assert all(np.abs(y).max() > 0 for y in pieces), name
+        error = np.abs(sum(pieces) - expected).max()
+        assert error <= 1e-12 * np.abs(expected).max(), name
+
+
+def test_a_piece_restriction_is_one_boolean_per_element(line):
+    n = len(line.mesh.tetrahedra)
+    with pytest.raises(ValueError, match="one boolean per tetrahedron"):
+        driven.driven_operator(line, 1, elements=np.ones(n - 1, bool))
+    with pytest.raises(ValueError, match="one boolean per triangle"):
+        driven.driven_operator(line, 1, faces=np.arange(len(line.mesh.triangles)))
+
+
 @pytest.mark.parametrize(
     "linear_solver", ["direct", pytest.param("petsc", marks=pytest.mark.petsc)]
 )
@@ -812,3 +875,76 @@ def test_driven_job_and_result_round_trip(line, tmp_path):
     assert loaded.s.frequency == (2e9, 3e9)
     np.testing.assert_array_equal(loaded.s.values, result.s.values)
     np.testing.assert_array_equal(loaded.s.z_ref, result.s.z_ref)
+
+
+def _edges(mesh):
+    """Brute force: the shortest of each tetrahedron's six edges (m)."""
+    x = mesh.imported_nodes[mesh.tetrahedra]
+    pairs = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]
+    return np.min([np.linalg.norm(x[:, i] - x[:, j], axis=1) for i, j in pairs], 0)
+
+
+def test_shortest_edges_matches_brute_force(mesh):
+    h = gfem.mesh._shortest_edges(mesh)
+    np.testing.assert_allclose(h, _edges(mesh), rtol=1e-14)
+    assert gfem.mesh._shortest_edges(mesh) is h  # cached per topology
+    assert not h.flags.writeable
+
+
+def _f(kh, mesh):
+    """The frequency (Hz) at which the vacuum k0 * h_min is ``kh``."""
+    return kh * const.c / (2 * math.pi * _edges(mesh).min())
+
+
+def _low_frequency(record):
+    return [w for w in record if w.category is gfem.LowFrequencyWarning]
+
+
+def test_a_frequency_below_the_low_frequency_floor_warns_once_per_sweep(mesh, line):
+    problem = gfem.Driven([_f(5e-7, mesh), 1e9, _f(2e-7, mesh)])
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        DrivenRule(line, problem, gfem.SolverOptions())
+    (w,) = _low_frequency(record)
+    message = str(w.message)
+    assert "2 of 3 frequencies" in message
+    assert f"the lowest {_f(2e-7, mesh):.4g} Hz" in message
+    assert "k0*h_min = 2e-07" in message
+    assert f"h_min = {_edges(mesh).min():.3g} m" in message
+    assert "gfem.Electrostatic" in message
+
+
+@pytest.mark.parametrize("sweep", ["uniform", "adaptive"])
+@pytest.mark.parametrize("linear_solver", ["auto", "bddc_gmres", "direct"])
+def test_the_low_frequency_warning_ignores_the_linear_solver(
+    mesh, line, linear_solver, sweep
+):
+    kh = (5e-7,) if sweep == "uniform" else (2e-7, 5e-7, 8e-7)
+    problem = gfem.Driven([_f(k, mesh) for k in kh], sweep=sweep)
+    options = gfem.SolverOptions(linear_solver=linear_solver)
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        DrivenRule(line, problem, options)
+    assert len(_low_frequency(record)) == 1
+
+
+def test_frequencies_above_the_low_frequency_floor_do_not_warn(mesh, line):
+    problem = gfem.Driven([_f(1.001e-6, mesh), 10e9])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", gfem.LowFrequencyWarning)
+        DrivenRule(line, problem, gfem.SolverOptions())
+
+
+def test_the_low_frequency_warning_points_at_the_solve_call(mesh, line):
+    options = gfem.SolverOptions(linear_solver="direct")
+    with pytest.warns(gfem.LowFrequencyWarning) as record:
+        gfem.solve(line, gfem.Driven(_f(5e-7, mesh)), options=options)
+    assert record[0].filename == __file__
+
+
+def test_frequency_workers_do_not_repeat_the_low_frequency_warning(mesh, line):
+    problem = gfem.Driven(_f(5e-7, mesh))
+    options = gfem.SolverOptions(linear_solver="direct")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", gfem.LowFrequencyWarning)
+        driven._solve_block(*workers.model_parts(line), problem, options, False)
