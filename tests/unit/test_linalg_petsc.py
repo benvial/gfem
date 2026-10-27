@@ -195,25 +195,32 @@ def test_a_refactorization_sums_the_handles_own_pieces_in_place(built):
     _agree(handle, fresh, 3)
 
 
-def test_a_refactorization_on_another_pattern_plans_again(built):
-    # on the side's DOFs, a side mass term alone is definite; without the
-    # volume term its matrix couples fewer DOFs: another sparsity pattern
+def _on_the_side(built, volume):
+    """An operator on the side's DOFs, with or without a volume term.
+
+    On those DOFs a side mass term alone is definite; without the volume
+    term its matrix couples fewer DOFs: another sparsity pattern.
+    """
     space = ngs.H1(built.mesh, order=2, dirichlet="bottom|top", complex=True)
     u, v = space.TnT()
     free = space.FreeDofs() & space.GetDofs(built.mesh.Boundaries("side"))
+    form = ngs.BilinearForm(space, symmetric=True)
+    form += (2 - 1j) * u * v * ngs.ds("side")
+    if volume:
+        form += ngs.grad(u) * ngs.grad(v) * quadrature.dx(2)
+    return Operator(form, free)
 
-    def operator(volume):
-        form = ngs.BilinearForm(space, symmetric=True)
-        form += (2 - 1j) * u * v * ngs.ds("side")
-        if volume:
-            form += ngs.grad(u) * ngs.grad(v) * quadrature.dx(2)
-        return Operator(form, free)
 
-    handle = prepare(operator(True), symmetry="complex_symmetric", kind="petsc")
+def test_a_refactorization_on_another_pattern_plans_again(built):
+    handle = prepare(
+        _on_the_side(built, True), symmetry="complex_symmetric", kind="petsc"
+    )
     nonzeros = handle._values.size
-    handle.refactorize(operator(False))
+    handle.refactorize(_on_the_side(built, False))
     assert handle._values.size < nonzeros
-    fresh = prepare(operator(False), symmetry="complex_symmetric", kind="petsc")
+    fresh = prepare(
+        _on_the_side(built, False), symmetry="complex_symmetric", kind="petsc"
+    )
     _agree(handle, fresh, 4)
 
 
@@ -439,9 +446,8 @@ def test_an_option_petsc_did_not_read_raises(built, options):
 
 
 def test_an_option_petsc_reads_is_honoured(built):
-    op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
     handle = prepare(
-        op,
+        _on_the_side(built, True),
         symmetry="complex_symmetric",
         kind="petsc",
         petsc_options=(("mat_mumps_icntl_14", 55), ("pc_type", "lu")),
@@ -449,8 +455,8 @@ def test_an_option_petsc_reads_is_honoured(built):
     pc = handle._ksp.getPC()
     assert (pc.getType(), pc.getFactorSolverType()) == ("lu", "mumps")
     assert pc.getFactorMatrix().getMumpsIcntl(14) == 55
-    # read again by MUMPS at a new pattern's factorization
-    handle.refactorize(_laplace(built, complex_valued=True, shift=2j)[0])
+    # read again by a new pattern's MUMPS instance
+    handle.refactorize(_on_the_side(built, False))
     assert handle._ksp.getPC().getFactorMatrix().getMumpsIcntl(14) == 55
 
 

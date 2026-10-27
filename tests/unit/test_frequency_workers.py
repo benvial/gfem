@@ -75,14 +75,17 @@ def _count_prepares(monkeypatch) -> list[int]:
     return calls
 
 
-def test_two_direct_workers_give_the_sequential_sweep(line, monkeypatch):
+@pytest.mark.parametrize(
+    "linear_solver", ["direct", pytest.param("petsc", marks=pytest.mark.petsc)]
+)
+def test_two_exact_workers_give_the_sequential_sweep(line, monkeypatch, linear_solver):
     # a kept frequency in each block: the fields join in frequency order
     problem = gfem.Driven(FREQUENCIES, keep_fields=(3.5e9, 4.5e9))
     calls = _count_prepares(monkeypatch)
-    one, one_entry = _forward(line, problem, keep=True, linear_solver="direct")
+    one, one_entry = _forward(line, problem, keep=True, linear_solver=linear_solver)
     assert len(calls) == 1
     two, two_entry = _forward(
-        line, problem, keep=True, linear_solver="direct", frequency_workers=2
+        line, problem, keep=True, linear_solver=linear_solver, frequency_workers=2
     )
     assert len(calls) == 1  # the parent solved nothing
     np.testing.assert_allclose(two["s"], one["s"], rtol=0, atol=1e-12)

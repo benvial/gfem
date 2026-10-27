@@ -30,6 +30,7 @@ from gfem._engine.runtime import task_manager
 from gfem._linalg import prepare
 from gfem._linalg.bddc import BddcHandle
 from gfem._linalg.direct import DirectHandle
+from gfem._linalg.petsc import PetscHandle
 
 L, W, H = 10.0, 2.0, 1.0  # mm
 EPS = 4.0
@@ -244,14 +245,17 @@ def test_target_far_below_the_mode_still_finds_the_resonance(mesh):
     np.testing.assert_allclose(result.omega, _line_roots(1000.0, [1]), rtol=1e-5)
 
 
-def test_bddc_gmres_shift_solves_give_the_direct_modes(mesh):
+@pytest.mark.parametrize(
+    "linear_solver", ["bddc_gmres", pytest.param("petsc", marks=pytest.mark.petsc)]
+)
+def test_shift_solves_on_each_linear_solver_give_the_direct_modes(mesh, linear_solver):
     model = _terminated(mesh, 1000.0)
     problem = gfem.Eigenmode(target=8e9)
     direct = gfem.solve(model, problem)
-    iterative = gfem.solve(
-        model, problem, options=gfem.SolverOptions(linear_solver="bddc_gmres")
+    other = gfem.solve(
+        model, problem, options=gfem.SolverOptions(linear_solver=linear_solver)
     )
-    np.testing.assert_allclose(iterative.omega, direct.omega, rtol=1e-9)
+    np.testing.assert_allclose(other.omega, direct.omega, rtol=1e-9)
 
 
 def _count_shift_prepares(monkeypatch) -> list[int]:
@@ -267,17 +271,27 @@ def _count_shift_prepares(monkeypatch) -> list[int]:
     return calls
 
 
-def test_a_reshift_refactorizes_the_prepared_operator(mesh, monkeypatch):
+@pytest.mark.parametrize(
+    ("linear_solver", "handle"),
+    [
+        ("direct", DirectHandle),
+        pytest.param("petsc", PetscHandle, marks=pytest.mark.petsc),
+    ],
+)
+def test_a_reshift_refactorizes_the_prepared_operator(
+    mesh, monkeypatch, linear_solver, handle
+):
     # the second mode, far from the target, is refined at its own shift
     model = _terminated(mesh, 1000.0)
     problem = gfem.Eigenmode(target=8e9, n_modes=2)
+    options = gfem.SolverOptions(linear_solver=linear_solver)
     calls = _count_shift_prepares(monkeypatch)
-    result = gfem.solve(model, problem)
+    result = gfem.solve(model, problem, options=options)
     assert len(calls) == 1
     # a handle that cannot refactorize is prepared afresh at the new shift
-    monkeypatch.delattr(DirectHandle, "refactorize")
+    monkeypatch.delattr(handle, "refactorize")
     calls.clear()
-    fresh = gfem.solve(model, problem)
+    fresh = gfem.solve(model, problem, options=options)
     assert len(calls) == 2
     np.testing.assert_allclose(result.omega, fresh.omega, rtol=1e-12)
     np.testing.assert_allclose(result.q, fresh.q, rtol=1e-10)
