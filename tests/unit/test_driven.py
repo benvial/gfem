@@ -543,6 +543,37 @@ def test_a_direct_handle_sums_the_pieces_into_the_assembled_operator(tmp_path):
         assert np.abs(summed - assembled).max() <= 1e-14 * np.abs(assembled).max()
 
 
+def test_pieces_restricted_to_a_partition_of_the_mesh_sum_to_the_whole(tmp_path):
+    # every tetrahedron and triangle in one of three parts, at random
+    model = _every_piece_kind(tmp_path)
+    rng = np.random.default_rng(0)
+    tets = rng.integers(0, 3, len(model.mesh.tetrahedra))
+    tris = rng.integers(0, 3, len(model.mesh.triangles))
+    whole = driven.driven_operator(model, 2)
+    parts = [
+        driven.driven_operator(model, 2, elements=tets == j, faces=tris == j)
+        for j in range(3)
+    ]
+    x = rng.standard_normal((whole.space.ndof, 2)) @ np.array([1.0, 1j])
+    names = [p.name for p in whole.pieces]
+    assert {"conductivity", "absorbing order 2", "impedance sheet C"} <= set(names)
+    assert {"conductor bottom (one-sided)", "port p1 R"} <= set(names)
+    for k, name in enumerate(names):
+        expected = whole.apply(k, x)
+        pieces = [part.apply(k, x) for part in parts]
+        assert all(np.abs(y).max() > 0 for y in pieces), name
+        error = np.abs(sum(pieces) - expected).max()
+        assert error <= 1e-12 * np.abs(expected).max(), name
+
+
+def test_a_piece_restriction_is_one_boolean_per_element(line):
+    n = len(line.mesh.tetrahedra)
+    with pytest.raises(ValueError, match="one boolean per tetrahedron"):
+        driven.driven_operator(line, 1, elements=np.ones(n - 1, bool))
+    with pytest.raises(ValueError, match="one boolean per triangle"):
+        driven.driven_operator(line, 1, faces=np.arange(len(line.mesh.triangles)))
+
+
 @pytest.mark.parametrize("sweep", ["uniform", "adaptive"])
 def test_a_direct_sweep_by_piece_sums_matches_assembled_operators(
     line, monkeypatch, sweep
