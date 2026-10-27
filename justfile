@@ -21,7 +21,7 @@ notebooks:
         --ExecutePreprocessor.timeout=1800 --ExecutePreprocessor.record_timing=False \
         docs/tutorials/*.ipynb
 
-# Regenerate the front page's hero data, docs/_data/front-page.json, from the topology tutorial.
+# Regenerate the front page's hero data, docs/_data/front-page.json, from the 3D bend's run record (solves nothing).
 front-page-data:
     {{ docs_env }} python tools/front_page_data.py
 
@@ -33,6 +33,14 @@ bend3d-data work="/tmp/bend3d-run":
 # Rerun the arc design's spectrum beside the 3D bend's run record, docs/tutorials/data/bend3d_arc.{json,npz} (tools/bend3d_arc_spectrum.py): about 20 min on 16 cores / 96 GiB with the mkl extra.
 bend3d-arc-data work="/tmp/bend3d-arc":
     JAX_PLATFORMS=cpu uv run --extra mkl --group docs python tools/bend3d_arc_spectrum.py --out docs/tutorials/data --work "{{ work }}"
+
+# Rerun the 3D bend's optimization keeping every iteration's design, gradient and fields, for animations (tools/bend3d_history.py; not committed): about 3.2 h on 16 cores / 96 GiB with the mkl extra.
+bend3d-history work="/tmp/bend3d-history":
+    JAX_PLATFORMS=cpu uv run --extra mkl --group docs python tools/bend3d_history.py all --work "{{ work }}"
+
+# Render the front page's optimization video, docs/_static/front/bend3d-optimization-*, from that record (tools/bend3d_animation.py; GPU via EGL, about 10 min).
+bend3d-animation record="/tmp/bend3d-history":
+    cd tools && VTK_DEFAULT_OPENGL_WINDOW=vtkEGLRenderWindow {{ docs_env }} python bend3d_animation.py "{{ record }}"
 
 # Build the site as docs.yml does (strict, then the Pagefind index) into docs/_build/html.
 docs:

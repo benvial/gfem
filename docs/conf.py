@@ -6,6 +6,7 @@ tutorials' outputs and the front page's hero data are committed, and
 ``just notebooks`` / ``just front-page-data`` regenerate them.
 """
 
+import ast
 import json
 import os
 import shutil
@@ -288,21 +289,20 @@ myst_substitutions = {
 }
 
 
-def _code_line(notebook: Path) -> dict:
-    """The tutorial's value_and_grad line, split around ``jax.value_and_grad(``."""
-    cells = json.loads(notebook.read_text())["cells"]
+def _code_line(script: Path) -> dict:
+    """The run's value_and_grad assignment, split around ``jax.value_and_grad(``."""
+    tree = ast.parse(script.read_text())
     lines = [
-        line.rstrip("\n")
-        for cell in cells
-        if "decisive" in cell.get("metadata", {}).get("tags", [])
-        for line in cell["source"]
-        if line.startswith("value_and_grad = ")
+        ast.unparse(node)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and [ast.unparse(target) for target in node.targets] == ["value_and_grad"]
     ]
     call = "jax.value_and_grad("
     if len(lines) != 1 or call not in lines[0]:
         msg = (
-            f"front page: expected one `value_and_grad = ...{call}...` line in a "
-            f"`decisive` cell of {notebook.name}, found {lines}"
+            f"front page: expected one `value_and_grad = ...{call}...` assignment "
+            f"in {script.name}, found {lines}"
         )
         raise ConfigError(msg)
     head, args = lines[0].split(call, 1)
@@ -313,36 +313,59 @@ def _num(value: float) -> str:
     return f"{value:g}"
 
 
-def _front(path: Path) -> dict | None:
-    """The committed hero data (tools/front_page_data.py), or None when absent."""
-    if not path.exists():
-        return None  # the hero frame says how to generate it; strict builds fail
+def _front(path: Path, video: Path) -> dict | None:
+    """The committed hero data (tools/front_page_data.py), or None when absent.
+
+    ``video`` is the optimization video's timing (tools/bend3d_animation.py),
+    inlined beside the data; the hero needs both.
+    """
+    if not (path.exists() and video.exists()):
+        return None  # the hero frame says how to generate them; strict builds fail
     data = json.loads(path.read_text())
-    final = data["final"]  # J of each etch variant after the optimisation
-    params = data["params"]  # the tutorial's model values
-    x0, x1 = data["extent_mm"][:2]
+    data["video"] = json.loads(video.read_text())
+    params, results = data["params"], data["results"]  # the run record's values
+    snapshots = data["snapshots"]
     return {
-        "steps": len(data["history"]),
-        "final": {name: f"{value:.3f}" for name, value in final.items()},
-        "worst": f"{max(final.values()):.3f}",
-        "balance": f"{data['balance']:.1e}",
-        "layer": [_num(v) for v in params["layer_mm"]],
-        "x": [_num(x0), _num((x0 + x1) / 2), _num(x1)],  # layer ends and middle
-        "radius": _num(params["radius_mm"]),
-        "eps_r": _num(params["eps_r"]),
-        "pass": _num(params["pass_ghz"]),
-        "stop": _num(params["stop_ghz"]),
-        "beta0": _num(params["beta0"]),
+        "wavelength": _num(params["wavelength_um"]),
+        "thickness": _num(params["core_thickness_um"] * 1e3),  # nm
+        "width": _num(params["core_width_um"]),
+        "square": _num(params["square_um"]),
+        "box": _num(2 * data["extent_um"][1]),
+        "design": _num(data["design_um"]),
+        "pixels": params["pixels"],
+        "pitch": _num(params["pitch_um"]),
+        "steps": params["iterations"],
         "steps_per_beta": params["steps_per_beta"],
-        "sweep": [_num(v) for v in params["sweep_ghz"]],
+        "last": params["iterations"] - 1,
+        "start": _num(params["start"]),
+        "dof": f"{params['dof'] / 1e6:.2f} M",
+        "order": params["order"],
+        "median_s": f"{params['median_s']:.0f}",
+        "cores": params["cores"],
+        "n_si": f"{params['n_si']:.2f}",
+        "n_sio2": f"{params['n_sio2']:.2f}",
+        "t_final": f"{results['t_final']:.4f}",
+        "db_final": f"{results['db_final']:.3f}",
+        "reciprocity": f"{results['reciprocity']:.1e}",
+        "balance": f"{results['balance']:.4f}",
+        "band_min": {
+            "um": _num(results["band_min"]["um"]),
+            "t": f"{results['band_min']['t']:.4f}",
+        },
+        "band": [_num(v) for v in results["band_um"]],
+        "snapshots": [
+            {"iteration": k, "t": f"{t:.3f}"}
+            for k, t in zip(snapshots["iterations"], snapshots["t"], strict=True)
+        ],
         # inlined into a <script> (no extra fetch); "</" cannot close the element
-        "topo_json": json.dumps(data, separators=(",", ":")).replace("</", "<\\/"),
+        "data_json": json.dumps(data, separators=(",", ":")).replace("</", "<\\/"),
     }
 
 
 FRONT_DATA = DOCS / "_data" / "front-page.json"
-html_context["gfem_front"] = _front(FRONT_DATA)
-html_context["gfem_code_line"] = _code_line(DOCS / "tutorials" / "topology.ipynb")
+FRONT_VIDEO = DOCS / "_static" / "front" / "bend3d-optimization.json"
+html_context["gfem_front"] = _front(FRONT_DATA, FRONT_VIDEO)
+html_context["gfem_code_line"] = _code_line(DOCS.parent / "tools" / "bend3d_run.py")
 html_context["gfem_install"] = gfem_install
 html_context["gfem_status"] = gfem_status  # the footer and the front page
 html_context["gfem_python"] = gfem_python
@@ -368,8 +391,10 @@ def setup(app):
             "gfem_front"
         ):
             msg = (
-                f"front page: {FRONT_DATA.relative_to(DOCS.parent)} is missing; "
-                "regenerate it with `just front-page-data` (GFEM_DOCS_STRICT=1)"
+                f"front page: {FRONT_DATA.relative_to(DOCS.parent)} or "
+                f"{FRONT_VIDEO.relative_to(DOCS.parent)} is missing; regenerate them "
+                "with `just front-page-data` and tools/bend3d_animation.py "
+                "(GFEM_DOCS_STRICT=1)"
             )
             raise ConfigError(msg)
 

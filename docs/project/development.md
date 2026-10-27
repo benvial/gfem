@@ -29,7 +29,17 @@ tutorial, regenerate them and commit the result:
 
 ```bash
 just notebooks        # re-execute docs/tutorials/*.ipynb in place, docs figure style
-just front-page-data  # rerun the topology tutorial for the front page's hero data
+just front-page-data  # resample the 3D bend's run record for the front page's hero data
+```
+
+The front page's video, `docs/_static/front/bend3d-optimization-*`, is rendered
+from a second, uncommitted record of the 3D bend that keeps every iteration's
+design and fields (`tools/bend3d_history.py`, about 3.2 h on 16 cores /
+96 GiB). Rerender it from that record on a machine with a GPU:
+
+```bash
+just bend3d-history WORK      # the record, into WORK
+just bend3d-animation WORK    # the light and dark videos, posters and timing
 ```
 
 The 3D bend tutorial solves nothing: it reads a committed run record,
