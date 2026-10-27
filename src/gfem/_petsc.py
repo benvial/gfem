@@ -165,7 +165,8 @@ def scoped_options(prefix: str, pairs: PetscOptions) -> Generator[None]:
     Each ``(name, value)`` is set as ``-{prefix}{name}`` (``None``: a flag,
     a ``bool``: ``true`` / ``false``) on entry, and every one is deleted on
     exit, also when the scope raises. Run the object's ``setFromOptions`` /
-    ``setUp`` inside; `LOCK` is held throughout.
+    ``setUp`` inside (and a SLEPc ``solve``, which reads its viewer options
+    at its end); `LOCK` is held throughout.
     """
     PETSc = require_petsc()
     with LOCK:

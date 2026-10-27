@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from eigen_cases import EPS, F1, conductor_line, line, line_mesh, terminated_line
 from gradient_cases import MIRRORED_TARGET, mirrored_cavity
-from petsc_recipe import SLEPC_SUBSPACE
+from petsc_recipe import EPS_VIEW, SLEPC_SUBSPACE
 
 import gfem
 
@@ -196,7 +196,17 @@ class ShiftSolveError(Exception):
     """Raised by a shift solve."""
 
 
-def test_a_failed_shift_solve_raises_its_own_error(mesh, monkeypatch):
+def _gfem_keys() -> list[str]:
+    """The names in PETSc's options database under a gfem prefix."""
+    from gfem import _petsc
+
+    database = _petsc.require_petsc().Options().getAll()
+    return [name for name in database if name.startswith("gfem")]
+
+
+# with a misspelled option too: the shift solve's error, not the typo's
+@pytest.mark.parametrize("petsc_options", [{}, {"eps_mpdd": 20}])
+def test_a_failed_shift_solve_raises_its_own_error(mesh, monkeypatch, petsc_options):
     from gfem._eigen.operator import EigenOperator
 
     solve = EigenOperator.solve
@@ -209,19 +219,34 @@ def test_a_failed_shift_solve_raises_its_own_error(mesh, monkeypatch):
         return solve(self, b)
 
     monkeypatch.setattr(EigenOperator, "solve", failing)
-    options = gfem.SolverOptions(eigen_solver="slepc")
+    options = gfem.SolverOptions(eigen_solver="slepc", petsc_options=petsc_options)
     with pytest.raises(ShiftSolveError, match="the shift solve failed"):
         gfem.solve(terminated_line(mesh, 1000.0), gfem.Eigenmode(8e9), options=options)
+    assert not _gfem_keys()
 
 
 def test_the_options_database_holds_no_gfem_key_after_a_solve(mesh, solved_eps):
-    from gfem import _petsc
-
     options = gfem.SolverOptions(eigen_solver="slepc", petsc_options={"eps_mpd": 20})
     gfem.solve(terminated_line(mesh, 1000.0), gfem.Eigenmode(8e9), options=options)
     assert [eps["dimensions"][2] for eps in solved_eps] == [20]  # it was read
-    database = _petsc.require_petsc().Options().getAll()
-    assert not [name for name in database if name.startswith("gfem")]
+    assert not _gfem_keys()
+
+
+def test_eps_view_prints_the_eps(mesh, capfd):
+    # SLEPc reads its viewer options at the end of the solve
+    options = gfem.SolverOptions(eigen_solver="slepc", petsc_options=EPS_VIEW)
+    capfd.readouterr()
+    gfem.solve(terminated_line(mesh, 1000.0), gfem.Eigenmode(8e9), options=options)
+    out = capfd.readouterr().out
+    assert "EPS Object" in out
+    assert "krylovschur" in out
+
+
+def test_a_misspelled_slepc_option_raises_naming_it(mesh):
+    options = gfem.SolverOptions(eigen_solver="slepc", petsc_options={"eps_mpdd": 20})
+    with pytest.raises(ValueError, match=r"petsc_options\['eps_mpdd'\]"):
+        gfem.solve(terminated_line(mesh, 1000.0), gfem.Eigenmode(8e9), options=options)
+    assert not _gfem_keys()
 
 
 def test_a_slepc_seeded_gradient_matches_arpack(mesh):

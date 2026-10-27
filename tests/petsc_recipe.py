@@ -12,6 +12,8 @@ MUMPS_LU = {"pc_type": "lu", "mat_mumps_icntl_14": 50}
 KSP_VIEW = {"ksp_view": None}
 #: A larger SLEPc subspace and its monitor (test_eigenmode_slepc.py)
 SLEPC_SUBSPACE = {"eps_ncv": 40, "eps_monitor": None}
+#: "See what SLEPc did" (test_eigenmode_slepc.py)
+EPS_VIEW = {"eps_view": None}
 #: GMRES on the first frequency's factors over a uniform sweep (test_driven.py)
 KRYLOV_REUSE = {"ksp_type": "gmres", "ksp_reuse_preconditioner": True}
 #: The job file's options, shown as JSON (test_job.py)
@@ -23,6 +25,7 @@ SOLVER_OPTIONS = {
     "mumps_lu": {"linear_solver": "petsc", "petsc_options": MUMPS_LU},
     "ksp_view": {"linear_solver": "petsc", "petsc_options": KSP_VIEW},
     "slepc_subspace": {"eigen_solver": "slepc", "petsc_options": SLEPC_SUBSPACE},
+    "eps_view": {"eigen_solver": "slepc", "petsc_options": EPS_VIEW},
     "krylov_reuse": {"linear_solver": "petsc", "petsc_options": KRYLOV_REUSE},
     "job": {"linear_solver": "petsc", "eigen_solver": "slepc", "petsc_options": JOB},
 }

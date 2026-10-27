@@ -60,6 +60,25 @@ def _ncv(value: PetscValue, nev: int, size: int) -> int:
     return min(size, max(ncv, nev + 1))
 
 
+def _check_read(eps, names: list[str]) -> None:
+    """Raise if SLEPc did not read some of the user's ``names``.
+
+    Call after the solve, with the options still in the database.
+    """
+    PETSc = _petsc.require_petsc()
+    database = PETSc.Options()
+    prefix = eps.getOptionsPrefix()
+    unread = [n for n in names if not database.used(f"{prefix}{n}")]
+    if not unread:
+        return
+    keys = ", ".join(f"SolverOptions.petsc_options[{n!r}]" for n in unread)
+    verb = "was" if len(unread) == 1 else "were"
+    raise ValueError(
+        f"{keys} {verb} not read by SLEPc's eigensolver (EPS {eps.getType()}): "
+        "check the name, or remove options this configuration does not use."
+    )
+
+
 def shift_invert(
     op: EigenOperator,
     project,
@@ -77,7 +96,8 @@ def shift_invert(
         tol: SLEPc's relative tolerance on the shift-inverted eigenvalues.
         options: ``SolverOptions.petsc_options``. Its ``eps_ncv`` sets the
             subspace size (at least ``nev + 1``); its other SLEPc options
-            (`gfem.options.split_petsc_options`) reach the EPS.
+            (`gfem.options.split_petsc_options`) reach the EPS, in PETSc's
+            options database until the solve ends.
 
     Returns:
         Wavenumbers ``(m,)`` (per file unit, ``m <= nev``; may include
@@ -86,6 +106,8 @@ def shift_invert(
 
     Raises:
         gfem.SolverUnavailableError: slepc4py cannot be used.
+        ValueError: SLEPc did not read one of the options (after a solve
+            that succeeded).
         RuntimeError: SLEPc failed (PETSc's reason quoted). An exception
             raised by the shift solve itself is raised as it is.
     """
@@ -116,10 +138,13 @@ def shift_invert(
             eps.setWhichEigenpairs(SLEPc.EPS.Which.LARGEST_MAGNITUDE)
             eps.setDimensions(nev=nev, ncv=ncv)
             eps.setTolerances(tol=tol)
+            # SLEPc reads its viewer options (eps_view, eps_error_*, ...) at
+            # the end of the solve: the options stay in the database across it
             with _petsc.scoped_options(prefix, pairs):
                 eps.setFromOptions()
-            eps.setInitialSpace([start])
-            eps.solve()
+                eps.setInitialSpace([start])
+                eps.solve()
+                _check_read(eps, [name for name, _ in pairs])
             # a negative converged reason is not an error: the pairs it
             # converged, as ARPACK's early stop
             m = min(eps.getConverged(), nev)

@@ -293,8 +293,8 @@ class SolverOptions:
             from ``eigen_tolerance``, ...) raise `ValueError`. An option the
             PETSc linear solver does not read (a typo, or an option of
             another configuration) raises `ValueError` when the solve
-            starts; SLEPc option names are not checked. Stored as
-            ``(name, value)`` pairs sorted by name.
+            starts; one SLEPc does not read raises it after SLEPc's seed
+            solve. Stored as ``(name, value)`` pairs sorted by name.
     """
 
     order: int = 2

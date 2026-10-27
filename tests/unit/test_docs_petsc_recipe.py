@@ -31,7 +31,7 @@ def page():
 
 
 @pytest.mark.parametrize(
-    "name", ["MUMPS_LU", "KSP_VIEW", "SLEPC_SUBSPACE", "KRYLOV_REUSE"]
+    "name", ["MUMPS_LU", "KSP_VIEW", "SLEPC_SUBSPACE", "EPS_VIEW", "KRYLOV_REUSE"]
 )
 def test_the_page_shows_each_tested_python_dict(page, name):
     assert _python(getattr(petsc_recipe, name)) in page

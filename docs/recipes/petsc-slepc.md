@@ -99,14 +99,17 @@ options = gfem.SolverOptions(
 - `{"ksp_view": None}` prints the linear solver PETSc set up.
 - `{"eps_ncv": 40, "eps_monitor": None}` gives SLEPc a larger subspace and
   prints its progress; `eps_mpd` and `eps_max_it` also reach SLEPc.
+- `{"eps_view": None}` prints the eigensolver SLEPc ran, at the end of each
+  seed solve; so do SLEPc's other end-of-solve viewers, `eps_converged_reason`
+  and `eps_error_*`.
 - Never write an options prefix: gfem gives each solver its own and holds its
   options in PETSc's database only while that solver reads them. Command-line
   PETSc options and your own petsc4py options do not reach gfem's solvers.
 - An option the linear solver does not read raises `ValueError` when the solve
   starts: a typo, or an option of another configuration, such as a MUMPS
   option with `pc_type` `jacobi`. So does an option PETSc refuses, with
-  PETSc's reason. SLEPc option names are not checked: a misspelled one is
-  ignored.
+  PETSc's reason. An option SLEPc does not read, such as `eps_mpdd`, raises
+  `ValueError` after its seed solve.
 
 ### Krylov methods
 
