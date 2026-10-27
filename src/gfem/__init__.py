@@ -26,6 +26,7 @@ from gfem.errors import (  # noqa: E402
     PortModeError,
     PortModeTrackingWarning,
     RegionNotFoundError,
+    SolverUnavailableError,
     SweepNotConvergedWarning,
 )
 from gfem.job import Job, load_result  # noqa: E402
@@ -103,6 +104,7 @@ __all__ = [
     "RegionNotFoundError",
     "SheetField",
     "SolverOptions",
+    "SolverUnavailableError",
     "SweepInfo",
     "SweepNotConvergedWarning",
     "WavePort",

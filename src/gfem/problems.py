@@ -178,8 +178,8 @@ class PortMode:
     `gfem.solve` raises `PortModeError` when the mode is below cutoff
     somewhere in the band (naming the estimated cutoff) or degenerate, and
     warns with `PortModeTrackingWarning` when it crosses another mode. The
-    2D problem always runs SuperLU on the CPU: options with another
-    ``device`` or ``linear_solver`` raise `ValueError`.
+    2D problem always runs SuperLU and SciPy on the CPU: options with another
+    ``device``, ``linear_solver`` or ``eigen_solver`` raise `ValueError`.
 
     Port modes are constants: under `jax.grad` an input the problem reads
     (an electromagnetic material property, the node coordinates) raises
@@ -259,6 +259,9 @@ class Driven:
     own mode without reflection, hybrid modes included), S is the field's
     projection on the mode, and ``WavePort(offset=...)`` de-embeds it. The
     modes are on the result (``DrivenResult.port_modes``).
+
+    A driven solve has no eigen solve: it ignores
+    ``SolverOptions.eigen_solver``.
 
     Args:
         frequency: One frequency or a 1D sequence of them, Hz.

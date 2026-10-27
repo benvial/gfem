@@ -64,6 +64,7 @@ import ngsolve as ngs
 import numpy as np
 import scipy.constants
 
+from gfem import _petsc
 from gfem._adjoint import adjoint_tolerance
 from gfem._boundaries import (
     LumpedPort,
@@ -257,6 +258,8 @@ class DrivenRule:
                 "this version of gfem; use one of "
                 f"{', '.join(repr(k) for k in KINDS)}."
             )
+        if self.kind == "petsc":  # before any assembly, and before any worker
+            _petsc.require_petsc("linear_solver")
         _check_supported(model)
         if not model.ports:
             raise ValueError(

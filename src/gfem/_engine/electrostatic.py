@@ -27,6 +27,7 @@ import ngsolve as ngs
 import numpy as np
 import scipy.constants
 
+from gfem import _petsc
 from gfem._adjoint import adjoint_tolerance
 from gfem._boundaries import PEC, Conductor, sheet_of
 from gfem._engine import quadrature
@@ -83,6 +84,8 @@ class ElectrostaticRule:
                 "problems in this version of gfem; use one of "
                 f"{', '.join(repr(k) for k in KINDS)}."
             )
+        if self.kind == "petsc":  # before any assembly
+            _petsc.require_petsc("linear_solver")
         for b in model.boundaries:
             if sheet_of(b) is not None:
                 raise NotImplementedError(

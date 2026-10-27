@@ -76,8 +76,8 @@ __all__ = [
 ]
 
 Symmetry = Literal["complex_symmetric", "hermitian", "general"]
-Kind = Literal["direct", "bddc_gmres", "cudss"]
-KINDS: tuple[str, ...] = ("direct", "bddc_gmres")
+Kind = Literal["direct", "bddc_gmres", "cudss", "petsc"]
+KINDS: tuple[str, ...] = ("direct", "bddc_gmres", "petsc")
 #: Most Krylov iterations of an iterative solve (as Palace).
 MAXITER = 400
 
@@ -228,6 +228,8 @@ def prepare(
         ValueError: The backend cannot handle this symmetry, or a GPU is
             asked for an iterative backend.
         gfem.DeviceUnavailableError: The GPU cannot be used.
+        gfem.SolverUnavailableError: ``kind="petsc"`` and PETSc cannot be
+            used (checked before assembly).
     """
     if device != "cpu":
         from gfem import _cuda
@@ -244,6 +246,11 @@ def prepare(
         return CudssHandle.from_operator(
             operator, symmetry, device_id=device_id, width=width, threads=threads
         )
+    if kind == "petsc":
+        from gfem import _petsc
+
+        _petsc.require_petsc("linear_solver")
+        raise NotImplementedError("linear_solver='petsc' is not implemented yet")
     if kind == "direct":
         from gfem._linalg.direct import DirectHandle
 

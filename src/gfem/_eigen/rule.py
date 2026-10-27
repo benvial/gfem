@@ -43,6 +43,7 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.constants as const
 
+from gfem import _petsc
 from gfem._boundaries import LumpedPort, WavePort
 from gfem._eigen.arpack import shift_invert
 from gfem._eigen.operator import EigenOperator
@@ -144,6 +145,11 @@ class EigenmodeRule:
             raise NotImplementedError(
                 f"linear_solver={kind!r} is not available for eigenmode problems."
             )
+        # before any assembly
+        if self.kind == "petsc":
+            _petsc.require_petsc("linear_solver")
+        if options.eigen_solver == "slepc":
+            _petsc.require_slepc("eigen_solver")
         _check_supported(model)
         lumped = [p for p in model.ports if isinstance(p, LumpedPort)]
         #: Ports with a resistance (coupling Q) and with an inductance
