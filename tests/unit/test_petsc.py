@@ -6,6 +6,7 @@ modules or replace them by fakes, so they hold on any machine, with or
 without PETSc.
 """
 
+import re
 import sys
 import types
 
@@ -101,10 +102,9 @@ def test_solver_unavailable_error_is_a_runtime_error():
     assert gfem.SolverUnavailableError is gfem.errors.SolverUnavailableError
 
 
+@pytest.mark.usefixtures("stack")
 @pytest.mark.parametrize("problem", PROBLEMS)
-def test_a_petsc_solve_without_petsc4py_names_it_and_the_recipe(
-    stack, plate, line, problem
-):
+def test_a_petsc_solve_without_petsc4py_names_it_and_the_recipe(plate, line, problem):
     model, p = _case(problem, plate, line)
     options = gfem.SolverOptions(order=1, linear_solver="petsc")
     with pytest.raises(gfem.SolverUnavailableError) as err:
@@ -130,7 +130,8 @@ def test_a_slepc_solve_without_slepc4py_names_it(stack, line):
     assert "eigen_solver='arpack'" in message
 
 
-def test_a_slepc_solve_without_petsc4py_names_petsc4py(stack, line):
+@pytest.mark.usefixtures("stack")
+def test_a_slepc_solve_without_petsc4py_names_petsc4py(line):
     with pytest.raises(gfem.SolverUnavailableError) as err:
         _eigen(line, eigen_solver="slepc")
     message = str(err.value)
@@ -178,10 +179,9 @@ def _spy(monkeypatch, owner, name, calls):
     monkeypatch.setattr(owner, name, spy)
 
 
+@pytest.mark.usefixtures("stack")
 @pytest.mark.parametrize("problem", PROBLEMS)
-def test_the_solver_is_checked_before_any_assembly(
-    stack, plate, line, problem, monkeypatch
-):
+def test_the_solver_is_checked_before_any_assembly(plate, line, problem, monkeypatch):
     calls = []
     for module in (_linalg, driven, electrostatic, eigen):
         _spy(monkeypatch, module, "prepare", calls)
@@ -193,7 +193,8 @@ def test_the_solver_is_checked_before_any_assembly(
     assert calls == []
 
 
-def test_frequency_workers_fail_in_the_parent(stack, line, monkeypatch):
+@pytest.mark.usefixtures("stack")
+def test_frequency_workers_fail_in_the_parent(line, monkeypatch):
     calls = []
     _spy(monkeypatch, workers, "run", calls)
     options = gfem.SolverOptions(order=1, linear_solver="petsc", frequency_workers=2)
@@ -202,7 +203,8 @@ def test_frequency_workers_fail_in_the_parent(stack, line, monkeypatch):
     assert calls == []
 
 
-def test_prepare_checks_petsc_again_before_assembly(stack, plate):
+@pytest.mark.usefixtures("stack")
+def test_prepare_checks_petsc_again_before_assembly(plate):
     import ngsolve as ngs
 
     built = to_ngsolve(plate.mesh)
@@ -242,3 +244,107 @@ def test_auto_never_picks_petsc_or_slepc_even_when_installed(
     gfem.solve(model, p, options=gfem.SolverOptions(order=1))
     assert petsc.calls == slepc.calls == []
     assert bool(seeds) == (problem == "eigenmode")  # the ARPACK seed solve
+
+
+# --- where PETSc and SLEPc are installed (skipped elsewhere, by the markers) ------
+
+
+@pytest.mark.petsc
+def test_the_installed_petsc_is_complex_and_recent():
+    PETSc = _petsc.require_petsc()
+    assert np.dtype(PETSc.ScalarType).kind == "c"
+    assert PETSc.Sys.getVersion()[:2] >= _petsc.MIN_VERSION
+
+
+@pytest.mark.slepc
+def test_the_installed_slepc_is_recent():
+    SLEPc = _petsc.require_slepc()
+    assert SLEPc.Sys.getVersion()[:2] >= _petsc.MIN_VERSION
+
+
+def test_unwrap_gives_the_exception_a_petsc_callback_raised():
+    original = KeyboardInterrupt()
+    err = SystemError("<cyfunction EPS.solve> returned a result with an exception set")
+    err.__cause__ = original
+    assert _petsc.unwrap(err) is original
+    plain = ValueError("x")
+    assert _petsc.unwrap(plain) is plain
+
+
+@pytest.mark.petsc
+def test_each_petsc_object_gets_its_own_prefix():
+    a, b = _petsc.next_prefix(), _petsc.next_prefix()
+    assert a != b
+    assert re.fullmatch(r"gfem\d+_", a)
+
+
+def _gfem_keys(PETSc):
+    return [k for k in PETSc.Options().getAll() if k.startswith("gfem")]
+
+
+@pytest.mark.petsc
+def test_scoped_options_reach_the_prefixed_object_only_inside_the_scope():
+    PETSc = _petsc.require_petsc()
+    prefix = _petsc.next_prefix()
+    pairs = (
+        ("ksp_atol", 1e-12),
+        ("ksp_initial_guess_knoll", False),
+        ("ksp_max_it", 7),
+        ("ksp_type", "gmres"),
+        ("ksp_view", None),
+    )
+    PETSc.Options().setValue("ksp_type", "cg")  # a user's own, unprefixed
+    ksp = PETSc.KSP().create(PETSc.COMM_SELF)
+    try:
+        ksp.setOptionsPrefix(prefix)
+        with _petsc.scoped_options(prefix, pairs):
+            ksp.setFromOptions()
+            options = PETSc.Options()
+            assert options.getAll()[f"{prefix}ksp_initial_guess_knoll"] == "false"
+            assert options.hasName(f"{prefix}ksp_view")
+        assert ksp.getType() == "gmres"
+        _, atol, _, max_it = ksp.getTolerances()
+        assert (atol, max_it) == (1e-12, 7)
+        assert ksp.getInitialGuessKnoll() is False
+        assert _gfem_keys(PETSc) == []
+    finally:
+        ksp.destroy()
+        PETSc.Options().delValue("ksp_type")
+
+
+@pytest.mark.petsc
+def test_scoped_options_are_removed_when_the_scope_raises():
+    PETSc = _petsc.require_petsc()
+    prefix = _petsc.next_prefix()
+    inside = []
+
+    def fail():
+        with _petsc.scoped_options(prefix, (("a", 1),)):
+            inside.extend(_gfem_keys(PETSc))
+            raise RuntimeError
+
+    with pytest.raises(RuntimeError):
+        fail()
+    assert inside == [f"{prefix}a"]
+    assert _gfem_keys(PETSc) == []
+
+
+@pytest.mark.petsc
+def test_error_text_keeps_petscs_reason_without_its_traceback():
+    PETSc = _petsc.require_petsc()
+    prefix = _petsc.next_prefix()
+    ksp = PETSc.KSP().create(PETSc.COMM_SELF)
+    try:
+        ksp.setOptionsPrefix(prefix)
+        with (
+            pytest.raises(PETSc.Error) as err,
+            _petsc.scoped_options(prefix, (("ksp_type", "gmress"),)),
+        ):
+            ksp.setFromOptions()
+    finally:
+        ksp.destroy()
+    text = _petsc.error_text(err.value)
+    assert "Unable to find requested KSP type gmress" in text
+    assert text.endswith("(PETSc error 86)")
+    assert "() at " not in text
+    assert "[0]" not in text

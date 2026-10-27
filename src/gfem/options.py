@@ -117,7 +117,7 @@ _RESERVED_PREFIXES: dict[str, str] = {
     "eps_harmonic": _EXTRACTION,
     "eps_refined": _EXTRACTION,
     "st_": (
-        "has no effect: gfem's seed applies T(σ)⁻¹ through linear_solver, not "
+        "has no effect: gfem's seed applies T(σ)⁻¹ through linear_solver, not "  # noqa: RUF001
         "through a SLEPc spectral transform; configure that solver instead "
         "(with linear_solver='petsc', its ksp_ / pc_ options)."
     ),

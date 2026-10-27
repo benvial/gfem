@@ -100,6 +100,8 @@ markers = [
   "reference: reference problems against frozen baselines, needs GFEM_REFERENCE_DIR (tests/reference, deselected by default)",
   "benchmark: wall-time and memory regression runs (tests/benchmark, deselected by default)",
   "cuda: needs an NVIDIA GPU and the cuda12 or cuda13 extra (tests/cuda, deselected by default)",
+  "petsc: needs complex petsc4py built as the PETSc and SLEPc recipe describes; skipped without it (run alone with -m petsc)",
+  "slepc: needs slepc4py on that PETSc; skipped without it",
 ]
 pythonpath = ["tools", "tests"]
 testpaths = ["tests"]
@@ -170,7 +172,7 @@ include = ["src"]
 
 [tool.ty.analysis]
 # The cuda12 / cuda13 extras: absent from the default environment.
-allowed-unresolved-imports = ["nvmath.**", "cuda.**"]
+allowed-unresolved-imports = ["nvmath.**", "cuda.**", "petsc4py.**", "slepc4py.**"]
 
 [tool.uv]
 # The supported platforms: jaxlib has no Intel macOS wheel and

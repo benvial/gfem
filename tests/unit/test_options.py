@@ -139,7 +139,7 @@ def test_petsc_options_are_sorted_pairs():
     assert hash(a) == hash(b)
     assert a.petsc_options == (("a", 1), ("b", None))
     assert dataclasses.replace(a, order=1).petsc_options == a.petsc_options
-    assert pickle.loads(pickle.dumps(a)) == a
+    assert pickle.loads(pickle.dumps(a)) == a  # noqa: S301 - our own bytes
 
 
 @pytest.mark.parametrize(
@@ -170,5 +170,7 @@ def test_petsc_options_split_by_namespace():
 
 def test_slepc_takes_the_krylov_schur_or_arnoldi_eps_type():
     for eps_type in ("krylovschur", "arnoldi"):
-        o = gfem.SolverOptions(eigen_solver="slepc", petsc_options={"eps_type": eps_type})
+        o = gfem.SolverOptions(
+            eigen_solver="slepc", petsc_options={"eps_type": eps_type}
+        )
         assert o.petsc_options == (("eps_type", eps_type),)
