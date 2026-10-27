@@ -250,15 +250,8 @@ class EigenmodeRule:
     ) -> tuple[np.ndarray, np.ndarray]:
         """The seed solve on ``SolverOptions.eigen_solver`` (see `shift_invert`)."""
         if self.options.eigen_solver == "slepc":
-            # stored as sorted pairs once SolverOptions validated them
             options = self.options.petsc_options
-            return slepc.shift_invert(
-                op,
-                project,
-                nev,
-                tol=tol,
-                options=options,  # ty: ignore[invalid-argument-type]
-            )
+            return slepc.shift_invert(op, project, nev, tol=tol, options=options)
         # the module's name, looked up now: tests replace it
         return shift_invert(op, project, nev, tol=tol)
 

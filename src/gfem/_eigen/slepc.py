@@ -16,7 +16,7 @@ imported at module scope.
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import numpy as np
 
@@ -66,7 +66,7 @@ def shift_invert(
     nev: int,
     *,
     tol: float,
-    options: PetscOptions = (),
+    options: Mapping[str, PetscValue] | PetscOptions = (),
 ) -> tuple[np.ndarray, np.ndarray]:
     """Up to ``nev`` eigenpairs ``(k, x)`` of ``T`` nearest ``op.shift``.
 
@@ -93,7 +93,7 @@ def shift_invert(
     PETSc = _petsc.require_petsc("eigen_solver")
     seed = seed_operator(op, project)
     nev, ncv = seed.dimensions(nev)
-    _, eigen = split_petsc_options(options)
+    _, eigen = split_petsc_options(tuple(dict(options).items()))
     pairs = tuple(p for p in eigen if p[0] != "eps_ncv")
     if len(pairs) < len(eigen):
         ncv = _ncv(dict(eigen)["eps_ncv"], nev, seed.size)
