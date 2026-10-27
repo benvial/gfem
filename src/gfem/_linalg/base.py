@@ -7,7 +7,7 @@ import threading
 import ngsolve as ngs
 import numpy as np
 
-from gfem._linalg import Symmetry
+from gfem._linalg import Operator, Symmetry
 
 
 def host_bytes(obj) -> int:
@@ -28,6 +28,23 @@ def same_pattern(a, b) -> bool:
     return np.array_equal(np.asarray(rowptr_a), np.asarray(rowptr_b)) and (
         np.array_equal(np.asarray(cols_a), np.asarray(cols_b))
     )
+
+
+def assemble_operator(
+    operator: Operator,
+) -> tuple[ngs.BaseMatrix, ngs.BaseMatrix | None]:
+    """A new matrix of ``operator`` and the pattern of its pieces, if summed.
+
+    The piece sum when the operator has one whose pieces share a pattern;
+    otherwise the assembled form and ``None``.
+    """
+    piece_sum = operator.piece_sum
+    if piece_sum is not None:
+        matrix = piece_sum.matrix()
+        if matrix is not None:
+            return matrix, piece_sum.pattern
+    operator.form.Assemble()
+    return operator.form.mat, None
 
 
 class NgsHandle:

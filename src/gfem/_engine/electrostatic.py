@@ -189,6 +189,7 @@ class ElectrostaticRule:
             threads=self.options.threads,
             tolerance=tolerance,
             width=len(self.problem.terminals),
+            petsc_options=self.options.petsc_options,
         )
 
     def _space(self, model: Model) -> tuple[ngs.FESpace, EngineMesh]:

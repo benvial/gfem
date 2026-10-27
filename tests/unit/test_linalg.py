@@ -500,7 +500,9 @@ def _update(space, rng, p=2):
     return U, C, free
 
 
-@pytest.mark.parametrize("kind", ["direct", "bddc_gmres"])
+@pytest.mark.parametrize(
+    "kind", ["direct", "bddc_gmres", pytest.param("petsc", marks=pytest.mark.petsc)]
+)
 def test_a_low_rank_update_solves_the_updated_operator(built, kind):
     op, space = _laplace(built, complex_valued=True, shift=1 - 2j)
     rng = np.random.default_rng(9)

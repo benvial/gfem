@@ -25,6 +25,7 @@ from gfem._linalg import bddc, prepare
 from gfem._linalg.base import same_pattern
 from gfem._linalg.bddc import BddcHandle
 from gfem._linalg.direct import DirectHandle
+from gfem._linalg.petsc import PetscHandle
 
 L, W, H = 10.0, 2.0, 1.0  # mm
 EPS = 4.0
@@ -254,16 +255,25 @@ def _count_prepares(monkeypatch) -> list[int]:
     return calls
 
 
+EXACT = [
+    ("direct", DirectHandle),
+    pytest.param("petsc", PetscHandle, marks=pytest.mark.petsc),
+]
+
+
+@pytest.mark.parametrize(("linear_solver", "handle"), EXACT)
 @pytest.mark.parametrize("sweep", ["uniform", "adaptive"])
-def test_a_direct_sweep_plans_once_and_matches_fresh_handles(line, monkeypatch, sweep):
+def test_an_exact_sweep_plans_once_and_matches_fresh_handles(
+    line, monkeypatch, sweep, linear_solver, handle
+):
     problem = gfem.Driven(frequency=(3e9, 4e9, 5e9, 6e9), sweep=sweep)
     calls = _count_prepares(monkeypatch)
-    s = np.asarray(_s(line, problem).s.values)
+    s = np.asarray(_s(line, problem, linear_solver=linear_solver).s.values)
     assert len(calls) == 1
     # a handle that cannot refactorize is prepared afresh at each frequency
-    monkeypatch.delattr(DirectHandle, "refactorize")
+    monkeypatch.delattr(handle, "refactorize")
     calls.clear()
-    result = _s(line, problem)
+    result = _s(line, problem, linear_solver=linear_solver)
     solved = 4 if sweep == "uniform" else len(result.sweep.sampled_frequencies)
     assert len(calls) == solved > 1
     np.testing.assert_allclose(result.s.values, s, rtol=0, atol=1e-12)
@@ -543,23 +553,28 @@ def test_a_direct_handle_sums_the_pieces_into_the_assembled_operator(tmp_path):
         assert np.abs(summed - assembled).max() <= 1e-14 * np.abs(assembled).max()
 
 
+@pytest.mark.parametrize(
+    "linear_solver", ["direct", pytest.param("petsc", marks=pytest.mark.petsc)]
+)
 @pytest.mark.parametrize("sweep", ["uniform", "adaptive"])
 def test_a_direct_sweep_by_piece_sums_matches_assembled_operators(
-    line, monkeypatch, sweep
+    line, monkeypatch, sweep, linear_solver
 ):
     problem = gfem.Driven(frequency=(3e9, 4e9, 5e9, 6e9), sweep=sweep)
-    summed = np.asarray(_s(line, problem).s.values)
+    summed = np.asarray(_s(line, problem, linear_solver=linear_solver).s.values)
     operator_at = driven._Ports.operator_at
 
     def assembled(ports, omega):  # the operator without its piece sum
         return dataclasses.replace(operator_at(ports, omega), piece_sum=None)
 
     monkeypatch.setattr(driven._Ports, "operator_at", assembled)
-    s = np.asarray(_s(line, problem).s.values)
+    s = np.asarray(_s(line, problem, linear_solver=linear_solver).s.values)
     np.testing.assert_allclose(summed, s, rtol=0, atol=1e-12)
 
 
-@pytest.mark.parametrize("kind", ["direct", "bddc_gmres"])
+@pytest.mark.parametrize(
+    "kind", ["direct", "bddc_gmres", pytest.param("petsc", marks=pytest.mark.petsc)]
+)
 @pytest.mark.parametrize("keep", [True, False])
 def test_a_forward_holds_its_assembled_pieces_with_its_handles(
     line, monkeypatch, kind, keep
@@ -580,7 +595,7 @@ def test_a_forward_holds_its_assembled_pieces_with_its_handles(
     vectors = sum(t.vectors.nbytes for t in (*system.excitation, *system.outputs))
     form = ports.operator.form(1.0)
     form.Assemble()
-    if not (kind == "direct" and keep):
+    if not (kind in ("direct", "petsc") and keep):
         # BDDC assembles forms; a forward that keeps nothing drops its pieces
         assert entry is None or entry.handle.nbytes == vectors
         assert ports.nbytes == vectors

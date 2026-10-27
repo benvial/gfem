@@ -276,6 +276,7 @@ class EigenmodeRule:
             device=opts.device,
             threads=opts.threads,
             tolerance=min(opts.tolerance, _INNER * opts.eigen_tolerance),
+            petsc_options=opts.petsc_options,
         )
 
     def _entry(

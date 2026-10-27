@@ -271,16 +271,18 @@ def test_terminal_on_an_excluded_conductor_shell():
     )
 
 
-@pytest.mark.parametrize("solver", ["auto", "bddc_gmres"])
-def test_bddc_default_agrees_with_the_direct_solver(tmp_path, solver):
+@pytest.mark.parametrize(
+    "solver", ["auto", "bddc_gmres", pytest.param("petsc", marks=pytest.mark.petsc)]
+)
+def test_each_linear_solver_agrees_with_the_direct_solver(tmp_path, solver):
     # order 3: face DOFs are off the wirebasket, so BDDC + CG really iterates
     path = tmp_path / "fine.msh"
     sm.write_msh22(path, sm.plate(4.0, 3.0, LAYERS, (3, 3, 2)))
     model = gfem.Model(gfem.Mesh.from_gmsh(path), materials=MATERIALS)
     problem = gfem.Electrostatic(terminals=STACK, ground="bottom")
     direct = _c(model, problem, order=3, linear_solver="direct")
-    bddc = _c(model, problem, order=3, linear_solver=solver)
-    np.testing.assert_allclose(bddc.capacitance, direct.capacitance, rtol=1e-9)
+    other = _c(model, problem, order=3, linear_solver=solver)
+    np.testing.assert_allclose(other.capacitance, direct.capacitance, rtol=1e-9)
 
 
 def test_solve_rejects_wrong_argument_types(stack):
