@@ -162,6 +162,17 @@ def test_a_version_below_the_floor_is_refused(stack, line, package):
         _eigen(line, eigen_solver="slepc")
 
 
+@pytest.mark.parametrize("version", ["", None])
+def test_a_petsc4py_without_a_version_is_refused_as_unknown(stack, plate, version):
+    petsc = fake("petsc4py", version=version)
+    if version is None:
+        del petsc.__version__
+    stack(petsc=petsc)
+    match = r"cannot run: petsc4py of unknown version \(gfem supports 3\.26 or newer\)"
+    with pytest.raises(gfem.SolverUnavailableError, match=match):
+        _electrostatic(plate)
+
+
 def test_a_broken_import_is_reported_with_its_text(stack, plate):
     error = ImportError("libmumps.so.5.9: cannot open shared object file")
     stack(petsc=fake("petsc4py", error=error))

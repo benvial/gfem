@@ -86,9 +86,14 @@ def _import(subject: str, package: str, library: str, build: str) -> tuple[Any, 
         else:
             reason = f"{package} cannot be imported: {type(err).__name__}: {err}"
         raise SolverUnavailableError(f"{head}: {reason}. {fix}") from err
-    version = str(getattr(module, "__version__", ""))
+    version = str(getattr(module, "__version__", None) or "")
+    floor = ".".join(map(str, MIN_VERSION))
+    if not _version(version):
+        raise SolverUnavailableError(
+            f"{head}: {package} of unknown version (gfem supports {floor} or "
+            f"newer). {fix}"
+        )
     if _version(version) < MIN_VERSION:
-        floor = ".".join(map(str, MIN_VERSION))
         raise SolverUnavailableError(
             f"{head}: {package} {version} is older than gfem supports ({floor}). {fix}"
         )
@@ -109,7 +114,7 @@ def require_petsc(subject: str = "linear_solver") -> Any:
     Raises:
         gfem.SolverUnavailableError: petsc4py is missing or cannot be
             imported, its PETSc has real scalars, or it is older than
-            `MIN_VERSION`.
+            `MIN_VERSION` or of unknown version.
     """
     build = "Build PETSc and petsc4py with complex scalars"
     _, PETSc = _import(subject, "petsc4py", "PETSc", build)
@@ -137,7 +142,8 @@ def require_slepc(subject: str = "eigen_solver") -> Any:
 
     Raises:
         gfem.SolverUnavailableError: As `require_petsc`, or slepc4py is
-            missing, cannot be imported, or is older than `MIN_VERSION`.
+            missing, cannot be imported, or is older than `MIN_VERSION` or
+            of unknown version.
     """
     require_petsc(subject)
     build = "Build SLEPc and slepc4py on a complex PETSc"
