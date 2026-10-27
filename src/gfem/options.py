@@ -196,8 +196,8 @@ def _petsc_options(options: SolverOptions) -> PetscOptions:
                 )
         elif options.linear_solver != "petsc":
             slepc = (
-                f"; eigen_solver='slepc' applies linear_solver="
-                f"{options.linear_solver!r}'s own solves"
+                "; eigen_solver='slepc' applies the solves of linear_solver="
+                f"{options.linear_solver!r}"
                 if options.eigen_solver == "slepc"
                 else ""
             )

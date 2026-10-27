@@ -101,6 +101,10 @@ def _slepc(options):
         (_slepc({"st_ksp_type": "gmres"}), "linear_solver"),
         (_slepc({"eps_type": "lapack"}), "eps_type"),
         (_slepc({"ksp_type": "gmres"}), "linear_solver='petsc'"),
+        (
+            {**_slepc({"ksp_type": "gmres"}), "linear_solver": "direct"},
+            "eigen_solver='slepc' applies the solves of linear_solver='direct'[.]$",
+        ),
         (_petsc({"eps_ncv": 30}), "eigen_solver='slepc'"),
         (_slepc({"eps_ncv": "x"}), r"\['eps_ncv'\] must be an integer >= 1"),
         (_slepc({"eps_ncv": "30"}), r"\['eps_ncv'\] must be an integer >= 1"),
