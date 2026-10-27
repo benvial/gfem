@@ -12,7 +12,7 @@ a mode per element.
 from __future__ import annotations
 
 import functools
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import ngsolve as ngs
 import numpy as np
@@ -27,6 +27,7 @@ from gfem._engine.domain import domain_key, h1_space, pec_surfaces
 from gfem._engine.driven import DrivenOperator, real_space
 from gfem._linalg import Handle, Operator, prepare
 from gfem.model import Model
+from gfem.options import PetscOptions, PetscValue
 
 __all__ = [
     "DivFreeProjector",
@@ -49,12 +50,13 @@ def eigen_operator(
     device: str,
     threads: int | None,
     tolerance: float,
+    petsc_options: Mapping[str, PetscValue] | PetscOptions = (),
 ) -> EigenOperator:
     """The eigen operator ``T(k)`` of the driven operator, shifted at ``sigma``.
 
     Nothing is factorized until the handle is first used. ``kind``,
-    ``device``, ``threads`` and ``tolerance`` configure the `gfem._linalg`
-    backend of every shift.
+    ``device``, ``threads``, ``tolerance`` and ``petsc_options`` configure
+    the `gfem._linalg` backend of every shift.
     """
     space, scale = op.space, op.built.scale
     classes = split(op.pieces, scale, sigma)
@@ -74,6 +76,7 @@ def eigen_operator(
             threads=threads,
             tolerance=tolerance,
             width=1,
+            petsc_options=petsc_options,
         )
 
     return EigenOperator(

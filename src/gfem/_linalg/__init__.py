@@ -9,7 +9,8 @@ factors. ``Handle.free()`` releases the backend's memory.
 A handle may also refactorize (`Refactorable`): ``handle.refactorize(operator)``
 assembles another operator with the same sparsity pattern (the next
 frequency of a sweep) and factorizes its values on the existing solver
-plan, so a sweep plans once. ``"direct"`` and ``"cudss"`` handles can;
+plan, so a sweep plans once. ``"direct"``, ``"cudss"`` and ``"petsc"``
+handles can;
 ``"bddc_gmres"`` keeps its preconditioner for the new operator instead, caps
 each warm solve on it, and sets it up again when reusing it costs more than a
 setup (preconditioner reuse; ``prepare(..., reuse_preconditioner=False)`` sets
@@ -18,7 +19,7 @@ handle that can, and prepares a new one in place of any other.
 
 An operator may also carry its piece sum (``Operator.piece_sum``, see
 `gfem._linalg.pieces`): pieces assembled once and their weights, which the
-``direct`` backend sums instead of assembling the form.
+``direct`` and ``petsc`` backends sum instead of assembling the form.
 
 Vectors are NumPy arrays over all DOFs of the operator's space. ``solve``
 reads only the free rows of ``B`` and returns zeros in the fixed (Dirichlet)
@@ -42,6 +43,12 @@ Backends:
   the GPU. Symmetric and Hermitian operators only. Needs the cuda extra; an
   unusable device raises `gfem.DeviceUnavailableError`, never falls back to
   the CPU.
+- ``"petsc"``: a PETSc KSP / PC on the free block (`gfem._linalg.petsc`),
+  from complex petsc4py, which gfem does not install. By default exact, a
+  MUMPS LDL^T factorization; ``petsc_options`` configure any other KSP / PC,
+  and a Krylov method stops at ``tolerance`` times ``|b|`` in the true
+  residual. Real symmetric and complex symmetric operators only. Without a
+  usable petsc4py it raises `gfem.SolverUnavailableError`, never falls back.
 
 `low_rank_update` wraps a handle of ``A`` into one of ``A + U C Uᵀ``
 (Woodbury, the update never assembled): wave ports' modal corrections.
@@ -53,7 +60,7 @@ auxiliary systems assembled outside NGSolve.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 import ngsolve as ngs
@@ -61,7 +68,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     from gfem._linalg.pieces import PieceSum
-    from gfem.options import PetscOptions
+    from gfem.options import PetscOptions, PetscValue
 
 __all__ = [
     "KINDS",
@@ -96,8 +103,8 @@ class Operator:
         freedofs: The DOFs solved for; the others are fixed (Dirichlet).
         piece_sum: The same operator as a piece sum ``Σ θ_k A_k`` of pieces
             assembled once (`gfem._linalg.pieces`), or ``None``. A backend
-            may sum it instead of assembling ``form`` (``"direct"`` does);
-            the others assemble ``form``.
+            may sum it instead of assembling ``form`` (the ``direct`` and
+            ``petsc`` backends do); the others assemble ``form``.
     """
 
     form: ngs.BilinearForm
@@ -199,7 +206,7 @@ def prepare(
     width: int = 1,
     threads: int | None = None,
     reuse_preconditioner: bool = True,
-    petsc_options: PetscOptions = (),
+    petsc_options: Mapping[str, PetscValue] | PetscOptions = (),
 ) -> Handle:
     """Assemble ``operator`` and set up the ``kind`` backend.
 
@@ -223,12 +230,18 @@ def prepare(
         reuse_preconditioner: Iterative backends: keep the preconditioner
             across `refactorize` (preconditioner reuse); False sets it up
             again at every refactorization. Direct backends ignore it.
+        petsc_options: ``SolverOptions.petsc_options``: ``kind="petsc"``
+            reads its linear-solver options (`gfem.options.split_petsc_options`)
+            over gfem's defaults; other backends ignore it.
 
     Raises:
         NotImplementedError: The backend is not available, or the GPU
             solver gets a general operator.
-        ValueError: The backend cannot handle this symmetry, or a GPU is
-            asked for an iterative backend.
+        ValueError: The backend cannot handle this symmetry, a GPU is
+            asked for an iterative backend, or PETSc refused or did not read
+            some of ``petsc_options``.
+        RuntimeError: PETSc's set-up failed (``kind="petsc"``: a singular
+            operator, or an option PETSc cannot apply).
         gfem.DeviceUnavailableError: The GPU cannot be used.
         gfem.SolverUnavailableError: ``kind="petsc"`` and PETSc cannot be
             used (checked before assembly).
@@ -260,7 +273,7 @@ def prepare(
             symmetry,
             tolerance=tolerance,
             maxiter=maxiter,
-            options=split_petsc_options(petsc_options)[0],
+            options=split_petsc_options(tuple(dict(petsc_options).items()))[0],
             reuse=reuse_preconditioner,
         )
     if kind == "direct":

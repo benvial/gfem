@@ -56,6 +56,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import math
+from collections.abc import Mapping
 from typing import Any, Self
 
 import jax
@@ -93,7 +94,7 @@ from gfem._sweep.adaptive import AffineSystem, AffineTerm, adaptive_sweep
 from gfem.errors import PortGeometryError
 from gfem.mesh import Mesh
 from gfem.model import Model
-from gfem.options import SolverOptions
+from gfem.options import PetscOptions, PetscValue, SolverOptions
 from gfem.problems import Driven
 from gfem.results import (
     DrivenResult,
@@ -349,7 +350,8 @@ class DrivenRule:
         Returns:
             ``{"s": (n_freq, n_ports, n_excited) complex, "z_ref":
             (n_freq, n_ports) ohm, "iterations": Krylov iterations per
-            frequency and excited port (empty for direct)}``, plus
+            frequency and excited port (empty for direct solves, including
+            linear_solver='petsc' with ksp_type preonly)}``, plus
             ``"e_field"``, ``(ndof, n_kept * n_excited)`` complex, when
             fields are kept (frequency-major), the wave ports' modes (see
             `_port_outputs`) when there are wave ports, and the cache entry
@@ -375,6 +377,7 @@ class DrivenRule:
                 threads=self.options.threads,
                 tolerance=self.options.tolerance,
                 width=width,
+                petsc_options=self.options.petsc_options,
             ) as handles:
                 for n, f in enumerate(frequencies):
                     omega = 2 * math.pi * f
@@ -597,6 +600,7 @@ class DrivenRule:
                 width=len(self.excite),
                 # samples lie far apart: a reused BDDC would mostly hit its cap
                 reuse_preconditioner=False,
+                petsc_options=options.petsc_options,
             ) as handles:
 
                 def solve(
@@ -875,6 +879,7 @@ class DrivenRule:
                         threads=self.options.threads,
                         tolerance=adjoint_tolerance(self.options),
                         width=width,
+                        petsc_options=self.options.petsc_options,
                     )
                     adjoint += handle.solve(
                         load, tolerance=adjoint_tolerance(self.options)
@@ -1277,7 +1282,8 @@ class _Ports:
     def operator_at(self, omega: float) -> Operator:
         """``A(ω)``, the operator without the modal corrections, to prepare.
 
-        Its form, and its piece sum over `pieces` for the direct backend.
+        Its form, and its piece sum over `pieces` for the ``direct`` and
+        ``petsc`` backends.
         """
         op = self.operator
         weights = tuple(complex(piece.theta(omega)) for piece in op.pieces)
@@ -1306,6 +1312,7 @@ class _Ports:
         tolerance: float,
         width: int,
         threads: int | None = None,
+        petsc_options: Mapping[str, PetscValue] | PetscOptions = (),
     ) -> Handle:
         """A handle of the system operator ``A(ω) + W(ω)`` (see `_Ports`)."""
         handle = prepare(
@@ -1316,6 +1323,7 @@ class _Ports:
             tolerance=tolerance,
             width=width,
             threads=threads,
+            petsc_options=petsc_options,
         )
         return self.system_handle(handle, omega, borrow=False)
 
@@ -1328,6 +1336,7 @@ class _Ports:
         width: int,
         threads: int | None = None,
         reuse_preconditioner: bool = True,
+        petsc_options: Mapping[str, PetscValue] | PetscOptions = (),
     ) -> _SweepHandle:
         """One base handle for a sweep's frequencies (see `_SweepHandle`).
 
@@ -1342,6 +1351,7 @@ class _Ports:
             width=width,
             threads=threads,
             reuse_preconditioner=reuse_preconditioner,
+            petsc_options=petsc_options,
         )
 
     def functional(self, omega: float) -> np.ndarray:
@@ -1498,6 +1508,7 @@ class _Handles:
         tolerance: float,
         width: int,
         threads: int | None = None,
+        petsc_options: Mapping[str, PetscValue] | PetscOptions = (),
     ) -> Handle:
         """The handle of frequency ``n`` at ``ω`` (the options as `_Ports.prepare`).
 
@@ -1514,6 +1525,7 @@ class _Handles:
                     tolerance=tolerance,
                     width=width,
                     threads=threads,
+                    petsc_options=petsc_options,
                 )
             return self._sweep.at(omega)
         if n not in self._handles:
@@ -1524,6 +1536,7 @@ class _Handles:
                 tolerance=tolerance,
                 width=width,
                 threads=threads,
+                petsc_options=petsc_options,
             )
         return self._handles[n]
 

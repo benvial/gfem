@@ -8,6 +8,8 @@ Every test needs complex petsc4py: skipped without it (the ``petsc`` marker).
 import dataclasses
 import re
 
+import jax
+import jax.numpy as jnp
 import ngsolve as ngs
 import numpy as np
 import pytest
@@ -18,6 +20,7 @@ from gfem import _petsc
 from gfem._engine import quadrature
 from gfem._engine.mesh import to_ngsolve
 from gfem._linalg import Operator, prepare
+from gfem._linalg.petsc import PetscHandle
 from gfem._linalg.pieces import AssembledPieces, PieceSum
 
 pytestmark = pytest.mark.petsc
@@ -520,3 +523,83 @@ def test_petsc_needs_the_full_sparse_matrix(built, flags, message):
         prepare(
             Operator(form, space.FreeDofs()), symmetry="complex_symmetric", kind="petsc"
         )
+
+
+# --- petsc_options reach every solve ----------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def line(tmp_path_factory):
+    path = tmp_path_factory.mktemp("line") / "line.msh"
+    sm.write_msh22(path, sm.strip_line(10.0, 2.0, 1.0, (10, 1, 1)))
+    return gfem.Model(
+        gfem.Mesh.from_gmsh(path, length_unit="mm"),
+        materials={"dielectric": gfem.Material(eps_r=4.0)},
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+        ports=[
+            gfem.LumpedPort("p1", "port1", "+z"),
+            gfem.LumpedPort("p2", "port2", "+z"),
+        ],
+    )
+
+
+@pytest.fixture(scope="module")
+def plate(tmp_path_factory):
+    path = tmp_path_factory.mktemp("plate") / "plate.msh"
+    sm.write_msh22(path, sm.plate(1.0, 1.0, (("box", 1.0),), (2, 2, 1)))
+    return gfem.Model(
+        gfem.Mesh.from_gmsh(path), materials={"box": gfem.Material(eps_r=1.0)}
+    )
+
+
+def _record(monkeypatch) -> list:
+    """Spy on the PETSc handles' creation: the options each one reads."""
+    calls = []
+    from_operator = PetscHandle.from_operator.__func__
+
+    def spy(cls, *args, **kwargs):
+        calls.append(kwargs["options"])
+        return from_operator(cls, *args, **kwargs)
+
+    monkeypatch.setattr(PetscHandle, "from_operator", classmethod(spy))
+    return calls
+
+
+LU_GMRES = {"ksp_type": "gmres", "pc_type": "lu"}
+
+
+def test_petsc_options_reach_the_forward_and_adjoint_driven_solves(line, monkeypatch):
+    calls = _record(monkeypatch)
+    # p2 is not excited: its S row needs an adjoint solve
+    problem = gfem.Driven(frequency=(3e9, 4e9), excite="p1")
+    options = gfem.SolverOptions(linear_solver="petsc", petsc_options=LU_GMRES)
+    n = len(line.mesh.tetrahedra)
+
+    def objective(eps, options):
+        model = line.with_material("dielectric", gfem.MaterialField(eps_r=eps))
+        s = gfem.solve(model, problem, options=options).s.values
+        return jnp.sum(jnp.abs(s) ** 2)
+
+    eps = jnp.full(n, 4.0)
+    grad = jax.grad(objective)(eps, options)
+    assert len(calls) >= 2  # the sweep's handle, and the adjoints'
+    assert all(dict(c) == LU_GMRES for c in calls)
+    direct = jax.grad(objective)(eps, gfem.SolverOptions(linear_solver="direct"))
+    np.testing.assert_allclose(grad, direct, rtol=0, atol=1e-8 * np.abs(direct).max())
+
+
+@pytest.mark.parametrize("problem", ["electrostatic", "driven", "eigenmode"])
+def test_an_unread_petsc_option_raises_from_every_problem(line, plate, problem):
+    model, p = {
+        "electrostatic": (
+            plate,
+            gfem.Electrostatic(terminals={"t": "top"}, ground="bottom"),
+        ),
+        "driven": (line, gfem.Driven((3e9, 4e9))),
+        "eigenmode": (line, gfem.Eigenmode(target=12e9, n_modes=1)),
+    }[problem]
+    options = gfem.SolverOptions(
+        order=1, linear_solver="petsc", petsc_options={"ksp_tpye": "gmres"}
+    )
+    with pytest.raises(ValueError, match=r"\['ksp_tpye'\] was not read"):
+        gfem.solve(model, p, options=options)
