@@ -33,6 +33,7 @@ from gfem.measurements import (  # noqa: E402
     InterfaceParticipation,
     characteristic_impedance,
     interface_participation,
+    power_flow,
 )
 from gfem.mesh import Mesh, Region  # noqa: E402
 from gfem.model import (  # noqa: E402
@@ -114,6 +115,7 @@ __all__ = [
     "enclosed_by",
     "interface_participation",
     "load_result",
+    "power_flow",
     "shape",
     "solve",
 ]
