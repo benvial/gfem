@@ -268,6 +268,26 @@ def test_power_flow_needs_the_model_the_field_was_solved_on(step, open_line):
         gfem.power_flow(e, _below(7.5), model=moved)
 
 
+def test_power_flow_accepts_the_same_mesh_read_again(step):
+    model, e, _, _ = step
+    p = float(gfem.power_flow(e, _below(7.5), model=model))
+    again = gfem.Mesh.from_gmsh(model.mesh.source, length_unit="um")
+    assert again._topology is not model.mesh._topology
+    reread = float(gfem.power_flow(e, _below(7.5), model=model.replace(mesh=again)))
+    assert reread == p
+
+
+def test_power_flow_takes_a_loaded_field(step, tmp_path):
+    model, e, _, _ = step
+    problem = gfem.Driven(frequency=F0, excite="p1", keep_fields=True)
+    gfem.Job(model, problem, OPTIONS).run(out=tmp_path / "out")
+    loaded = gfem.load_result(tmp_path / "out").e_field(F0)
+    p = float(gfem.power_flow(e, _below(7.5), model=model))
+    assert float(gfem.power_flow(loaded, _below(7.5), model=model)) == pytest.approx(
+        p, rel=1e-12
+    )
+
+
 def test_power_flow_is_not_differentiable_yet(step):
     model, e, _, _ = step
 

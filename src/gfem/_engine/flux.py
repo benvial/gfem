@@ -39,6 +39,15 @@ __all__ = ["power_flow"]
 #: The six edges of a tetrahedron and the three of a triangle, by vertex.
 _TET_EDGES = np.array([[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]])
 _TRI_EDGES = np.array([[0, 1], [0, 2], [1, 2]])
+#: The `Mesh` arrays that, with its regions, define its elements.
+_TOPOLOGY_ARRAYS = (
+    "tetrahedra",
+    "tetrahedron_tags",
+    "tetrahedron_entities",
+    "triangles",
+    "triangle_tags",
+    "triangle_entities",
+)
 
 
 def power_flow(
@@ -108,9 +117,9 @@ def _check_field(field: Field, model: Model) -> np.ndarray:
         ValueError: The mesh, its nodes or the support differ.
     """
     mesh = model.mesh
-    same = field.mesh._topology is mesh._topology  # noqa: SLF001
-    if same:
-        same = np.array_equal(np.asarray(field.mesh.nodes), np.asarray(mesh.nodes))
+    same = _same_topology(field.mesh, mesh) and np.array_equal(
+        np.asarray(field.mesh.nodes), np.asarray(mesh.nodes)
+    )
     if not same:
         raise ValueError(
             "The field lives on another mesh (or other node positions) than the "
@@ -125,6 +134,20 @@ def _check_field(field: Field, model: Model) -> np.ndarray:
             "or exclusions): pass the model the field was solved with."
         )
     return support
+
+
+def _same_topology(a: Mesh, b: Mesh) -> bool:
+    """Whether two meshes have the same elements, tags and regions.
+
+    The same object, or equal arrays: the same file read twice (a loaded
+    result's mesh and the model's) gives two objects.
+    """
+    if a._topology is b._topology:  # noqa: SLF001
+        return True
+    return a.regions == b.regions and all(
+        np.array_equal(getattr(a, name), getattr(b, name))
+        for name in _TOPOLOGY_ARRAYS
+    )
 
 
 def _selection(
