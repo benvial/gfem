@@ -162,6 +162,13 @@ Participation ratio
 Measurement
   A post-solve function of a result's {term}`fields <Field>` that needs extra
   physics input (a surface, a thickness, a point, a path).
+
+Power flow
+  The net time-averaged power crossing the boundary between a chosen set of
+  elements and the rest of the solve domain, positive when it leaves the set.
+  Measured by `gfem.power_flow` from the residual of the discrete equations, so
+  exact for the solved field. Poynting flux is kept for the pointwise integral
+  of ½Re(E × H*).
 ```
 
 ## Materials and optimization

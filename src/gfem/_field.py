@@ -117,7 +117,9 @@ class Field:
         """The magnetic flux density B = curl E / (-iω) of an electric field.
 
         Exact on the discrete field: B lives in H(div) of one order lower.
-        Differentiable with respect to the coefficients and ``omega``.
+        Differentiable with respect to the coefficients and ``omega``. A
+        flux of point-sampled ``E x B* / mu0`` carries a mesh-periodic bias;
+        use `gfem.power_flow` for the power through a surface.
 
         Returns:
             A `Field` with quantity ``"B"`` in tesla.

@@ -11,6 +11,9 @@ result reloaded with `gfem.load_result`.
   dielectric layer on a surface, and its share of ``1 / Q``.
 - `characteristic_impedance`: the power-voltage impedance of a port mode
   along a voltage path.
+- `power_flow`: the net power a driven field carries out of a set of
+  elements, exact for the solved field (a flux of point-sampled
+  ``E x H*`` is not, see the measurements recipe).
 
 Measurements that evaluate fields run as host kernels behind gfem's
 gradient wrapper: they work under `jax.jit` and `jax.vmap`, and under
@@ -24,7 +27,8 @@ from __future__ import annotations
 
 import dataclasses
 import functools
-from collections.abc import Sequence
+import importlib
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 import jax
@@ -37,10 +41,12 @@ from gfem._checks import check_fixed, is_traced
 from gfem._materials import Material
 from gfem._pytree import register_fields
 from gfem.conventions import MODE_ENERGY
+from gfem.errors import NonDifferentiableError
 from gfem.mesh import Mesh
 
 if TYPE_CHECKING:
     from gfem._field import Field
+    from gfem.model import Model
     from gfem.results import EigenmodeResult, PortModeResult
 
 __all__ = [
@@ -48,6 +54,7 @@ __all__ = [
     "InterfaceParticipation",
     "characteristic_impedance",
     "interface_participation",
+    "power_flow",
 ]
 
 # --- interface participation -------------------------------------------------------
@@ -431,3 +438,133 @@ def characteristic_impedance(mode: PortModeResult, voltage_path: Any) -> jax.Arr
         )
     volts = path_voltage(field._space, field._basis, field._coords, path)  # noqa: SLF001
     return jnp.asarray(np.abs(volts) ** 2 / 2.0)
+
+
+# --- power flow --------------------------------------------------------------------
+
+
+def power_flow(
+    field: Field,
+    side: str | Sequence[str] | Callable[[np.ndarray], np.ndarray],
+    *,
+    model: Model,
+) -> jax.Array:
+    """Net time-averaged power leaving ``side`` through its boundary, W.
+
+    ``side`` is a set of elements: a volume region, several (their union),
+    or a predicate ``inside(centroids) -> bool`` on the ``(n_tetrahedra,
+    3)`` element centroids in m, e.g. ``lambda c: c[:, 0] < x0`` for the
+    power flowing in +x across ``x = x0``. Its surface is made of the
+    element faces between the selected elements of the field's support and
+    the unselected ones (a staircase where a plane cuts through elements);
+    faces on the boundary of the solve domain are not on it, since what
+    crosses them is counted as absorbed inside ``side``. Positive means net
+    power leaves ``side``. A driven field is the peak phasor for 1 W
+    incident at its excited port (`gfem.conventions`), so the number reads
+    as a fraction of the incident power.
+
+    The power comes from the residual of the discrete equations on the
+    outside element layer, not from an integral of ``1/2 Re(E x H*)``, so
+    it is exact for the solved field (to the solver's residual) and the
+    same through every surface that encloses the same ports and losses.
+    In lossy media it is the power entering ``side`` through its ports,
+    minus what its elements and faces absorb (dielectric loss,
+    conductivity, `Conductor` and `Impedance` sheets, its absorbing faces).
+    A face term belongs to ``side`` only when every solve-domain element
+    beside it does, so a sheet lying on the surface counts as outside.
+
+    A field of an adaptive sweep (`gfem.ReducedFields`) is exact at the
+    solved frequencies and accurate to the sweep's tolerance in between.
+    Not differentiable in this version.
+
+    Args:
+        field: A driven electric field (quantity ``"E"``, in H(curl),
+            complex, with a real ``omega``), e.g. ``result.e_field(f)``.
+        side: The volume region name(s), or the centroid predicate.
+        model: The model the field was solved with: the materials and
+            boundaries the residual reads.
+
+    Returns:
+        A 0-d float64 array, W.
+
+    Raises:
+        TypeError: ``field`` is not a `gfem.Field`, ``model`` is not a
+            `gfem.Model`, or ``side`` is neither names nor a callable.
+        RegionNotFoundError: A named region does not exist.
+        ValueError: A name is a surface region; the predicate does not
+            return one boolean per tetrahedron; ``side`` selects no element
+            of the support, or all of them; the field is not a driven
+            electric field, or was not solved on ``model``; or the
+            surface is within one element of a port's surface.
+        NonDifferentiableError: ``field`` or ``model`` is traced by JAX.
+    """
+    from gfem._field import Field
+    from gfem.model import Model
+
+    if not isinstance(field, Field):
+        raise TypeError(f"power_flow needs a gfem.Field, got {type(field).__name__}.")
+    if not isinstance(model, Model):
+        raise TypeError(
+            f"power_flow needs model= a gfem.Model, got {type(model).__name__}."
+        )
+    names = _side_names(side)
+    if is_traced(field) or is_traced(model):
+        raise NonDifferentiableError(
+            "gfem.power_flow is not differentiable in this version: its field and "
+            "model must be concrete values, not traced by JAX. Compute it outside "
+            "the function JAX transforms."
+        )
+    _check_driven(field)
+    engine = importlib.import_module("gfem._engine.power_flow")
+    return jnp.asarray(engine.power_flow(field, names, model), dtype=float)
+
+
+def _side_names(
+    side: Any,
+) -> tuple[str, ...] | Callable[[np.ndarray], np.ndarray]:
+    """``side`` as a predicate or a tuple of region names.
+
+    Raises:
+        TypeError: ``side`` is neither.
+    """
+    if isinstance(side, str):
+        return (side,)
+    if callable(side):
+        return side
+    if isinstance(side, Sequence) and side and all(isinstance(s, str) for s in side):
+        return tuple(side)
+    raise TypeError(
+        "power_flow's side must be a volume region name, a sequence of names or "
+        f"a predicate on element centroids, got {side!r}."
+    )
+
+
+def _check_driven(field: Field) -> None:
+    """Raise unless ``field`` is a driven electric field.
+
+    Raises:
+        ValueError: Another quantity or space, real coefficients, or an
+            ``omega`` that is missing or complex.
+    """
+    if field.quantity != "E" or field.space != "hcurl":
+        raise ValueError(
+            "power_flow needs a driven electric field (quantity 'E' in 'hcurl'), "
+            f"got quantity {field.quantity!r} in {field.space!r}: pass the E field "
+            "the B field or potential came from."
+        )
+    if field.omega is None:
+        raise ValueError(
+            "power_flow needs a time-harmonic field; this one is static (omega is "
+            "None): solve a gfem.Driven problem."
+        )
+    if np.iscomplexobj(np.asarray(field.omega)):
+        raise ValueError(
+            "power_flow needs a driven field with a real omega; eigenmode fields "
+            "have no time-averaged power flow (complex omega, arbitrary "
+            "normalization)."
+        )
+    if not field.is_complex:
+        raise ValueError(
+            "power_flow needs a complex phasor field, got real coefficients: "
+            "solve a gfem.Driven problem."
+        )
