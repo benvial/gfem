@@ -190,11 +190,20 @@ class DrivenOperator:
         return out.reshape(x.shape)
 
 
-def driven_operator(model: Model, order: int) -> DrivenOperator:
+def driven_operator(
+    model: Model,
+    order: int,
+    *,
+    elements: np.ndarray | None = None,
+    faces: np.ndarray | None = None,
+) -> DrivenOperator:
     """The driven operator of ``model`` at its current node positions.
 
     Every `PEC` surface is a Dirichlet constraint of the space; every
-    other boundary and lumped port contributes pieces.
+    other boundary and lumped port contributes pieces. ``elements`` and
+    ``faces`` restrict the pieces to those gfem tetrahedra and triangles
+    (boolean masks, ``None`` for all; see `terms.pieces`); the space is the
+    unrestricted one.
     """
     disc = discretization(model.mesh)
     built = disc.built
@@ -204,7 +213,7 @@ def driven_operator(model: Model, order: int) -> DrivenOperator:
         lambda: hcurl_space(model, built, order, dirichlet=pec),
     )
     ports = terms.lumped_ports(model, built.scale)
-    pieces = terms.pieces(model, built, order, ports)
+    pieces = terms.pieces(model, built, order, ports, elements=elements, faces=faces)
     return DrivenOperator(built, space, pieces, ports, order)
 
 
