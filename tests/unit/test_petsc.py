@@ -9,6 +9,7 @@ without PETSc.
 import re
 import sys
 import types
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -244,6 +245,45 @@ def test_auto_never_picks_petsc_or_slepc_even_when_installed(
     gfem.solve(model, p, options=gfem.SolverOptions(order=1))
     assert petsc.calls == slepc.calls == []
     assert bool(seeds) == (problem == "eigenmode")  # the ARPACK seed solve
+
+
+# --- the build script users and CI run: tools/petsc_wheelhouse.sh -------------------
+
+WHEELHOUSE_SCRIPT = Path(__file__).parents[2] / "tools" / "petsc_wheelhouse.sh"
+
+
+def _script_lines():
+    """The script's lines that are not comments."""
+    lines = WHEELHOUSE_SCRIPT.read_text().splitlines()
+    return [line for line in lines if not line.lstrip().startswith("#")]
+
+
+def _pin(name):
+    (version,) = [
+        m.group(1)
+        for line in _script_lines()
+        if (m := re.fullmatch(rf"{name}=(\d+\.\d+\.\d+)", line.strip()))
+    ]
+    return tuple(int(part) for part in version.split("."))
+
+
+def test_the_version_floor_is_the_minor_the_build_script_pins():
+    # bumping the script to a new PETSc minor raises the floor in the same commit
+    assert _pin("PETSC_VERSION")[:2] == _pin("SLEPC_VERSION")[:2] == _petsc.MIN_VERSION
+
+
+def test_the_build_script_downloads_only_mumps_metis_and_openblas():
+    # The licence control (ADR 0012): the stack holds what these downloads
+    # build and nothing else, the set the licence page names. No ParMETIS,
+    # PT-Scotch or ScaLAPACK, which an MPI build would pull in.
+    code = "\n".join(_script_lines())
+    options = re.findall(r"--download-([\w-]+)", code)
+    assert {option.split("-")[0] for option in options} == {
+        "mumps",
+        "metis",
+        "openblas",
+    }
+    assert "--with-mpi=0" in code
 
 
 # --- where PETSc and SLEPc are installed (skipped elsewhere, by the markers) ------
