@@ -21,7 +21,7 @@ import pyngcore
 import scipy.sparse as sp
 
 from gfem._linalg import Operator, Symmetry
-from gfem._linalg.base import NgsHandle, host_bytes, same_pattern
+from gfem._linalg.base import NgsHandle, assemble_operator, host_bytes, same_pattern
 
 #: NGSolve's sparse Cholesky: the factorization without MKL, and the BDDC
 #: coarse solve's.
@@ -150,7 +150,7 @@ class DirectHandle(NgsHandle):
         if symmetry == "general" or (symmetry == "hermitian" and form.space.is_complex):
             # refuse before paying for the assembly
             cls._refuse(symmetry)
-        matrix, pattern = cls._assemble(operator)
+        matrix, pattern = assemble_operator(operator)
         handle = cls(
             matrix,
             operator.freedofs,
@@ -159,21 +159,6 @@ class DirectHandle(NgsHandle):
         )
         handle._pattern = pattern
         return handle
-
-    @staticmethod
-    def _assemble(operator: Operator) -> tuple[ngs.BaseMatrix, ngs.BaseMatrix | None]:
-        """A new matrix of ``operator`` and the pattern of its pieces, if summed.
-
-        The piece sum when the operator has one whose pieces share a
-        pattern; otherwise the assembled form and ``None``.
-        """
-        piece_sum = operator.piece_sum
-        if piece_sum is not None:
-            matrix = piece_sum.matrix()
-            if matrix is not None:
-                return matrix, piece_sum.pattern
-        operator.form.Assemble()
-        return operator.form.mat, None
 
     @classmethod
     def from_scipy(cls, matrix: sp.sparray | sp.spmatrix) -> DirectHandle:
@@ -217,7 +202,7 @@ class DirectHandle(NgsHandle):
                 piece_sum.sum_into(matrix)
                 self._refactor_values(matrix, solver)
                 return
-        new, pattern = self._assemble(operator)  # assembly needs no lock
+        new, pattern = assemble_operator(operator)  # assembly needs no lock
         with self._lock:
             matrix, solver = self._live()
             self._pattern = pattern
