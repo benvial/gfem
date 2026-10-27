@@ -20,14 +20,15 @@
 # Target Python: the bindings are compiled for one CPython version (3.12 or
 # newer), so build with the Python of the environment that runs gfem. The
 # script uses the Python that `uv python find` gives: the active virtual
-# environment's, if any. Set PYTHON to choose another, as a path or a
-# version, for example PYTHON=/path/to/venv/bin/python or PYTHON=3.12.
+# environment's, or the .venv of the project in the current folder, if any.
+# Set PYTHON to choose another, as a path or a version, for example
+# PYTHON=/path/to/venv/bin/python or PYTHON=3.12.
 #
 # MAKE_NP sets the number of parallel compile jobs (default: PETSc's own
 # choice from the number of cores).
 set -euo pipefail
 
-# gfem supports the PETSc / SLEPc minor pinned here (and newer patch releases).
+# The release gfem's PETSc tests run on: gfem needs this minor or newer.
 PETSC_VERSION=3.26.0
 SLEPC_VERSION=3.26.0
 # sha256 of each source distribution on PyPI
@@ -75,12 +76,11 @@ check_prerequisites() {
 
 # Download one source distribution from PyPI and check its sha256.
 fetch() {
-  local name=$1 version=$2 sha
+  local name=$1 version=$2 sha256=$3
   local sdist=$WORK/$name-$version.tar.gz
-  sha=SHA256_$name
   curl -fsSL --retry 3 -o "$sdist" \
     "https://files.pythonhosted.org/packages/source/${name:0:1}/$name/$name-$version.tar.gz"
-  "$PY" - "$sdist" "${!sha}" << 'EOF'
+  "$PY" - "$sdist" "$sha256" << 'EOF'
 import hashlib, sys
 path, expected = sys.argv[1:]
 with open(path, "rb") as f:
@@ -161,10 +161,10 @@ export PETSC_CONFIGURE_OPTIONS="${CONFIGURE_OPTIONS[*]}${MAKE_NP:+ --with-make-n
 printf '%s\n' "petsc==$PETSC_VERSION" "petsc4py==$PETSC_VERSION" \
   "slepc==$SLEPC_VERSION" "slepc4py==$SLEPC_VERSION" > "$WORK/constraints.txt"
 
-fetch petsc "$PETSC_VERSION"
-fetch petsc4py "$PETSC_VERSION"
-fetch slepc "$SLEPC_VERSION"
-fetch slepc4py "$SLEPC_VERSION"
+fetch petsc "$PETSC_VERSION" "$SHA256_petsc"
+fetch petsc4py "$PETSC_VERSION" "$SHA256_petsc4py"
+fetch slepc "$SLEPC_VERSION" "$SHA256_slepc"
+fetch slepc4py "$SLEPC_VERSION" "$SHA256_slepc4py"
 
 build petsc "$PETSC_VERSION"
 patch_petsc_wheel
