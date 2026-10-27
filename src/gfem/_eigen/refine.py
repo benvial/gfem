@@ -16,7 +16,7 @@ For a polynomial ``T`` an Arnoldi pair usually meets the tolerance at once
 (step 0 is only the Rayleigh functional, which sharpens ``k`` to second
 order in the eigenvector's error); the iteration repairs the pairs that the
 divergence-free projection (exact only without boundary damping) or an
-early ARPACK stop left short.
+early stop of the seed solve left short.
 """
 
 from __future__ import annotations

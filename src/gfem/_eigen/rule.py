@@ -7,13 +7,15 @@ in ``k^2``; with lumped or impedance resistance, conductivity or a
 first-order absorbing boundary it is quadratic; a `Conductor` or a
 second-order absorbing boundary adds the nonpolynomial ``A(k)``, which the
 seed freezes at the target. One factorization of ``T(sigma)`` at the
-target serves the shift-invert Arnoldi of the seed (`gfem._eigen.arpack`,
-with the divergence-free projection), the Rayleigh functional and the
-residual inverse iteration that refines every seed on the true ``T(k)``
-(`gfem._eigen.refine`). A `WavePort` raises: its propagation constant
-would have to be solved at the complex eigenfrequency. Everything that
-touches NGSolve (the assembly of ``T(k)``, the divergence-free projection,
-the energy per element) is in `gfem._engine.eigen`.
+target serves the shift-invert Arnoldi of the seed (`gfem._eigen.arpack`
+or `gfem._eigen.slepc`, chosen by `SolverOptions.eigen_solver`, on the
+shared `gfem._eigen.seed` operator, with the divergence-free projection),
+the Rayleigh functional and the residual inverse iteration that refines
+every seed on the true ``T(k)`` (`gfem._eigen.refine`). A `WavePort`
+raises: its propagation constant would have to be solved at the complex
+eigenfrequency. Everything that touches NGSolve (the assembly of ``T(k)``,
+the divergence-free projection, the energy per element) is in
+`gfem._engine.eigen`.
 
 Gradients (``omega``, so frequency and Q) need no solve: a simple mode's
 ``dk/dp = -x^T (dT/dp) x / x^T T'(k) x``, ``T'(k) = D + 2 k M + Σ θ_p'(k)
@@ -45,6 +47,7 @@ import scipy.constants as const
 
 from gfem import _petsc
 from gfem._boundaries import LumpedPort, WavePort
+from gfem._eigen import slepc
 from gfem._eigen.arpack import shift_invert
 from gfem._eigen.operator import EigenOperator
 from gfem._eigen.refine import Refined, refine
@@ -91,8 +94,8 @@ _STATIC = 1e-6
 #: same mode.
 _DUPLICATE = 10.0
 _OVERLAP = 0.9
-#: Ritz values this close (relative) are one multiple eigenvalue. ARPACK
-#: returns an arbitrary basis of its eigenspace, as nearly parallel as
+#: Ritz values this close (relative) are one multiple eigenvalue. The seed
+#: solver returns an arbitrary basis of its eigenspace, as nearly parallel as
 #: round-off makes it: the seeds are orthonormalized, or two members would
 #: overlap like one mode refined twice.
 _MULTIPLE = 1e-8
@@ -210,7 +213,9 @@ class EigenmodeRule:
                     seed_tolerance = max(seed_tolerance, _SEED_TOLERANCE)
                 guard = None
                 for _ in range(_ATTEMPTS):
-                    k, vectors = shift_invert(eop, divfree, nev, tol=seed_tolerance)
+                    k, vectors = self._shift_invert(
+                        eop, divfree, nev, tol=seed_tolerance
+                    )
                     modes, failed, guard = self._select(
                         eop, k, vectors, sigma, guard=keep
                     )
@@ -239,6 +244,23 @@ class EigenmodeRule:
                 if divfree is not None:
                     divfree.free()
         return outputs, entry
+
+    def _shift_invert(
+        self, op: EigenOperator, project, nev: int, *, tol: float
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """The seed solve on ``SolverOptions.eigen_solver`` (see `shift_invert`)."""
+        if self.options.eigen_solver == "slepc":
+            # stored as sorted pairs once SolverOptions validated them
+            options = self.options.petsc_options
+            return slepc.shift_invert(
+                op,
+                project,
+                nev,
+                tol=tol,
+                options=options,  # ty: ignore[invalid-argument-type]
+            )
+        # the module's name, looked up now: tests replace it
+        return shift_invert(op, project, nev, tol=tol)
 
     def operator(self, op: DrivenOperator, sigma: float) -> EigenOperator:
         """The eigen operator ``T(k)`` of the driven operator, shifted at ``sigma``.
