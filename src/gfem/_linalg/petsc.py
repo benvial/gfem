@@ -237,8 +237,10 @@ class PetscHandle(NgsHandle):
                 raise
             self._matrix, self._pattern = new, pattern
             self._adopt(block)
-            old.destroy()
-            self._set_up()
+            try:
+                self._set_up()  # symbolic and numeric, with the options read
+            finally:
+                old.destroy()  # the KSP let go of it at setOperators
 
     def _live(self) -> ngs.BaseMatrix:
         """The held NGSolve matrix; call under the lock.

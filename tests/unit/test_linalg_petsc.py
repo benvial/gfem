@@ -601,6 +601,37 @@ def test_a_failed_replan_keeps_the_handle_on_its_operator(built, monkeypatch):
     _agree(handle, fresh, 6)
 
 
+def test_a_replan_sets_the_new_aij_up_before_destroying_the_old(built, monkeypatch):
+    PETSc = _petsc.require_petsc()
+    events = []
+
+    class Mat(PETSc.Mat):
+        def destroy(self):
+            events.append(("destroy", id(self)))
+            return super().destroy()
+
+    class KSP(PETSc.KSP):
+        def setOperators(self, A, P=None):  # noqa: N802 - PETSc name
+            events.append(("setOperators", id(A)))
+            return super().setOperators(A, P)
+
+        def setUp(self):
+            events.append(("setUp", None))
+            return super().setUp()
+
+    monkeypatch.setattr(PETSc, "Mat", Mat)
+    monkeypatch.setattr(PETSc, "KSP", KSP)
+    handle = prepare(
+        _on_the_side(built, True), symmetry="complex_symmetric", kind="petsc"
+    )
+    old = id(handle._mat)
+    events.clear()
+    handle.refactorize(_on_the_side(built, False))
+    new = id(handle._mat)
+    assert events == [("setOperators", new), ("setUp", None), ("destroy", old)]
+    handle.free()
+
+
 @pytest.mark.parametrize(
     ("complex_valued", "symmetry"), [(False, "general"), (True, "hermitian")]
 )
