@@ -218,9 +218,9 @@ class SolverOptions:
             ``"direct"`` (one LDL^T factorization reused for every
             right-hand side: MKL PARDISO with METIS ordering when the ``mkl``
             extra is installed, NGSolve's sparse Cholesky otherwise) or
-            ``"petsc"`` (PETSc: a direct MUMPS factorization unless
-            ``petsc_options`` configures another, from complex petsc4py
-            built as the "PETSc and SLEPc" recipe describes; never chosen by
+            ``"petsc"`` (PETSc: an exact MUMPS LDL^T factorization unless
+            ``petsc_options`` configures another PETSc solver, from the
+            PETSc stack the "PETSc and SLEPc" recipe builds; never chosen by
             ``"auto"``). A solver this Python cannot use raises
             `gfem.SolverUnavailableError` when the solve starts.
         tolerance: Relative residual of iterative solves.
@@ -232,6 +232,9 @@ class SolverOptions:
             cannot be used raises `gfem.DeviceUnavailableError`, never a
             silent CPU fallback. See `gfem.cuda_available`.
         threads: CPU threads, or ``None`` for the machine's default.
+            ``linear_solver="petsc"`` does not read it: MUMPS's BLAS follows
+            ``OPENBLAS_NUM_THREADS``, which frequency workers set to their
+            share.
         adaptive_tolerance: Error target of the adaptive frequency sweep;
             at least 10x ``tolerance``.
         adaptive_max_samples: Most frequencies the adaptive sweep solves.
@@ -271,18 +274,27 @@ class SolverOptions:
             entry point with ``if __name__ == "__main__":``.
         eigen_solver: What finds an `gfem.Eigenmode` problem's modes near
             ``target`` from shift-invert solves: ``"auto"`` or ``"arpack"``
-            (SciPy ARPACK), or ``"slepc"`` (SLEPc, through slepc4py; never
-            chosen by ``"auto"``). Refinement and gradients follow either.
-            Other problem types ignore it.
+            (SciPy ARPACK), or ``"slepc"`` (SLEPc's Krylov-Schur, through
+            slepc4py, from the PETSc stack the "PETSc and SLEPc" recipe
+            builds; never chosen by ``"auto"``). gfem refines and
+            differentiates the modes the same way after either. Other
+            problem types ignore it. SLEPc this Python cannot use raises
+            `gfem.SolverUnavailableError` when the solve starts.
         petsc_options: PETSc and SLEPc option names, without the leading
             ``-``, and their values, read by ``linear_solver="petsc"`` and
-            ``eigen_solver="slepc"``; a value of ``None`` is a flag. Names
-            starting ``eps_``, ``bv_``, ``ds_``, ``rg_`` or ``fn_`` need
-            ``eigen_solver="slepc"``, every other name needs
-            ``linear_solver="petsc"``: options are never silently ignored.
-            Options gfem sets from its own fields (``ksp_rtol`` from
-            ``tolerance``, ``eps_tol`` from ``eigen_tolerance``, ...) raise
-            `ValueError`. Stored as ``(name, value)`` pairs sorted by name.
+            ``eigen_solver="slepc"``; a value of ``None`` is a flag, a
+            ``bool`` is ``true`` / ``false``. They override gfem's defaults
+            (``pc_type cholesky``, ...), under each solver's own options
+            prefix: never write one. Names starting ``eps_``, ``bv_``,
+            ``ds_``, ``rg_`` or ``fn_`` need ``eigen_solver="slepc"``, every
+            other name needs ``linear_solver="petsc"``, so an option never
+            goes to a solver that is not selected. Options gfem sets from
+            its own fields (``ksp_rtol`` from ``tolerance``, ``eps_tol``
+            from ``eigen_tolerance``, ...) raise `ValueError`. An option the
+            PETSc linear solver does not read (a typo, or an option of
+            another configuration) raises `ValueError` when the solve
+            starts; SLEPc option names are not checked. Stored as
+            ``(name, value)`` pairs sorted by name.
     """
 
     order: int = 2

@@ -13,6 +13,17 @@ The `reference`, `benchmark` and `cuda` tiers are deselected by default; run
 them with `uv run pytest -m reference` (and so on). Reference tests read their
 data from `GFEM_REFERENCE_DIR` and skip when it is unset.
 
+Tests marked `petsc` and `slepc` sit in the unit and verification tiers and
+skip unless the {term}`PETSc stack` is installed. To run them, add the
+wheelhouse that {doc}`../recipes/petsc-slepc` builds, and keep uv from
+removing it:
+
+```bash
+uv sync
+uv pip install --no-index --find-links wheelhouse petsc petsc4py slepc slepc4py
+uv run --no-sync pytest -m "unit or (verification and (petsc or slepc))" -rs
+```
+
 ## Docs
 
 The docs site needs Python 3.13 and [just](https://just.systems):

@@ -45,8 +45,13 @@ gradient that would be wrong:
   ({doc}`recipes/sheet-design`).
 - **Measurements**: {py:obj}`gfem.characteristic_impedance` and
   {py:obj}`gfem.interface_participation` ({doc}`recipes/measurements`).
-- **Linear solvers**: direct, BDDC + GMRES, and the experimental cuDSS
-  direct solver on an NVIDIA GPU ({doc}`recipes/gpu-direct-solver`).
+- **Linear solvers**: direct, BDDC + GMRES, PETSc (an exact MUMPS
+  factorization unless you configure another PETSc solver; built from source,
+  {doc}`recipes/petsc-slepc`), and the experimental cuDSS direct solver on an
+  NVIDIA GPU ({doc}`recipes/gpu-direct-solver`). The gradient matrix above
+  covers the direct and BDDC solvers.
+- **Eigen solvers**: ARPACK, or SLEPc ({doc}`recipes/petsc-slepc`); mode
+  refinement, Q and gradients are the same for both.
 
 ## Platforms
 

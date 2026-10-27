@@ -21,6 +21,8 @@ pip install "gfem[xarray]"  # optional: results as xarray datasets (.to_xarray()
 pip install "gfem[viz]"     # optional: fields as pyvista grids (.to_pyvista())
 ```
 
+PETSc and SLEPc solvers need a source build: see the PETSc and SLEPc recipe (`docs/recipes/petsc-slepc.md`).
+
 Supported platforms: Linux x86_64 (glibc >= 2.28), macOS arm64 and Windows x86_64, Python >= 3.12.
 
 Importing gfem turns on JAX double precision (`jax_enable_x64`), which every gfem solve requires.
@@ -37,7 +39,7 @@ uv run pytest -m "unit or verification"
 Test tiers are pytest markers set by directory: `tests/unit`, `tests/verification`, `tests/reference`,
 `tests/benchmark` and `tests/cuda`. The `reference`, `benchmark` and `cuda` tiers are deselected by default; run
 them with `uv run pytest -m reference` (and so on). Reference tests read their data from `GFEM_REFERENCE_DIR` and
-skip when it is unset.
+skip when it is unset. Tests marked `petsc` / `slepc` skip unless the PETSc stack is installed.
 
 ## Licence
 

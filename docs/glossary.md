@@ -126,12 +126,23 @@ Terminal
   matrix.
 
 Solver options
-  The numerical knobs of a solve (polynomial order, linear solver, tolerances,
-  {term}`device`), kept apart from the {term}`model` and problem type.
+  The numerical knobs of a solve (polynomial order, linear solver,
+  {term}`eigen solver`, tolerances, {term}`device`), kept apart from the
+  {term}`model` and problem type.
 
 Device
   The hardware a solve's linear algebra runs on, the CPU or one CUDA GPU; part
   of the {term}`solver options`, never of the {term}`model`.
+
+Eigen solver
+  The iteration that finds an eigenmode problem's modes near the target,
+  ARPACK or SLEPc; gfem refines and differentiates the modes the same way for
+  both.
+
+PETSc stack
+  Complex PETSc and SLEPc with their Python bindings, built without MPI as
+  {doc}`recipes/petsc-slepc` describes: what `linear_solver="petsc"` and
+  `eigen_solver="slepc"` need.
 
 Job
   A self-contained run, {term}`model` plus problem type plus

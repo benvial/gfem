@@ -29,6 +29,10 @@ are proprietary Intel software, and Intel's OpenMP runtime comes under a
 licence that forbids SaaS and service-bureau use: read {doc}`project/licence`
 before installing the extra.
 
+PETSc and SLEPc are not an extra: gfem needs them built from source with
+complex scalars, which {doc}`recipes/petsc-slepc` does with one script. Then
+select them with `linear_solver="petsc"` and `eigen_solver="slepc"`.
+
 Supported platforms: Linux x86_64 (glibc >= 2.28), macOS arm64 and Windows
 x86_64, Python >= {{ python }}.
 
