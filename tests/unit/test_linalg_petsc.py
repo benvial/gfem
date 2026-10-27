@@ -47,6 +47,19 @@ def _free(space):
     return np.array(list(space.FreeDofs()))
 
 
+def test_the_petsc_stack_is_complex_with_mumps_and_no_non_free_package():
+    # The licence control of ADR 0012 for a stack the licence gate cannot
+    # see (MUMPS and METIS are compiled into the petsc wheel): what
+    # tools/petsc_wheelhouse.sh builds, and none of the packages an MPI
+    # build pulls in (ParMETIS is not free for commercial use).
+    PETSc = _petsc.require_petsc()
+    assert np.dtype(PETSc.ScalarType) == np.complex128
+    assert PETSc.Sys.hasExternalPackage("mumps")
+    assert PETSc.Sys.hasExternalPackage("metis")
+    for package in ("parmetis", "ptscotch", "scalapack"):
+        assert not PETSc.Sys.hasExternalPackage(package), package
+
+
 def test_petsc_solves_many_right_hand_sides_on_the_free_dofs(built):
     op, space = _laplace(built)
     handle = prepare(op, symmetry="hermitian", kind="petsc")
