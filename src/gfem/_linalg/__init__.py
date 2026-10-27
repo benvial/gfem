@@ -33,10 +33,17 @@ Backends:
   serves every right-hand side.
 - ``"bddc_gmres"``: NGSolve BDDC with a sparse Cholesky coarse problem, and
   conjugate gradients (Hermitian operators) or GMRES (the others) to the
-  relative ``tolerance``. GMRES takes an initial guess (``solve(B, x0=...)``,
-  e.g. the previous frequency's solution) and then stops at ``tolerance``
-  times the preconditioned right-hand side. BDDC reads the fixed DOFs from
-  the space, so the operator's free DOFs must be the space's ``FreeDofs()``.
+  relative preconditioned residual ``tolerance``. GMRES, cold or warm, stops
+  at ``|P(b - Ax)| <= tolerance |P b|`` (the residual estimate of its
+  left-preconditioned iteration); CG at the P-norm of the residual over its
+  first value. The solution is accurate to about ``tolerance``; the
+  unpreconditioned ``|b - Ax| / |b|`` can be orders larger at low frequency
+  and does not measure the error. A solve that stops early above the
+  tolerance (a Krylov breakdown) restarts once from its iterate, and raises
+  RuntimeError if it stops short again. GMRES takes an initial guess
+  (``solve(B, x0=...)``, e.g. the previous frequency's solution). BDDC reads
+  the fixed DOFs from the space, so the operator's free DOFs must be the
+  space's ``FreeDofs()``.
 - ``"cudss"``: the ``direct`` solver on a GPU (``device="cuda"`` or
   ``"cuda:N"``), NVIDIA cuDSS. The host holds all data; the factors stay on
   the GPU. Symmetric and Hermitian operators only. Needs the cuda extra; an
@@ -208,7 +215,9 @@ def prepare(
         kind: The backend.
         device: ``"cpu"``, or ``"cuda"`` / ``"cuda:N"`` for the ``direct``
             backend on a GPU (cuDSS). The GPU is checked before assembly.
-        tolerance: Relative residual of iterative backends.
+        tolerance: Relative preconditioned residual of iterative backends
+            (``|P(b - Ax)| / |P b|`` for BDDC + GMRES, the P-norm of the
+            residual over its first value for CG).
         maxiter: Most iterations of iterative backends; a solve that does
             not converge in them raises RuntimeError.
         width: Right-hand-side columns the GPU solver solves at once (the
