@@ -121,6 +121,9 @@ DEFAULT_SOLVER = "bddc_gmres"
 
 #: k0 * h_min below which a driven solve warns (gfem.LowFrequencyWarning).
 LOW_FREQUENCY_FLOOR = 1e-6
+#: k0 * h_min below which direct solves become unreliable (ticket 05), named
+#: in the low-frequency warning.
+DIRECT_FLOOR = 3e-7
 
 
 @dataclasses.dataclass(eq=False)
@@ -1173,14 +1176,14 @@ def _check_low_frequency(
     msg = (
         f"Driven: {int(low.sum())} of {len(f)} frequencies, the lowest "
         f"{f[lowest]:.4g} Hz, are below this mesh's low-frequency floor of "
-        f"{f_floor:.4g} Hz (k0*h_min = {k0h[lowest]:.2g} < 1e-06, with h_min = "
-        f"{h_min:.3g} m the shortest edge in the solve domain). Below it the "
-        "fields and their gradients, and with linear_solver='direct' the "
-        "capacitive part of S, carry rounding errors up to about "
-        "1e-16/(k0*h_min)^2, and direct solves become unreliable below "
-        "k0*h_min = 3e-07. For capacitance, solve gfem.Electrostatic instead "
-        "of reading it from S; otherwise raise the lowest frequency or coarsen "
-        "the smallest elements."
+        f"{f_floor:.4g} Hz (k0*h_min = {k0h[lowest]:.2g} < "
+        f"{LOW_FREQUENCY_FLOOR:g}, with h_min = {h_min:.3g} m the shortest edge "
+        "in the solve domain). Below it the fields and their gradients, and "
+        "with linear_solver='direct' the capacitive part of S, carry rounding "
+        "errors up to about 1e-16/(k0*h_min)^2, and direct solves become "
+        f"unreliable below k0*h_min = {DIRECT_FLOOR:g}. For capacitance, solve "
+        "gfem.Electrostatic instead of reading it from S; otherwise raise the "
+        "lowest frequency or coarsen the smallest elements."
     )
     warnings.warn(msg, LowFrequencyWarning, stacklevel=stacklevel + 1)
 
