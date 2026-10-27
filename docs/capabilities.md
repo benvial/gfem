@@ -48,6 +48,15 @@ gradient that would be wrong:
 - **Linear solvers**: direct, BDDC + GMRES, and the experimental cuDSS
   direct solver on an NVIDIA GPU ({doc}`recipes/gpu-direct-solver`).
 
+## Limits
+
+- **Low frequency**: below the low-frequency floor, k0·h_min = 1e-6 (f·h_min ≈
+  48 Hz·m, with h_min the shortest edge: 48 MHz with 1 µm elements, 5 GHz with
+  10 nm elements), a driven solve's fields, gradients and, with the direct
+  solver, the capacitive part of S lose digits, and it warns with
+  {py:obj}`gfem.LowFrequencyWarning`. For capacitance at low frequency, solve
+  {py:obj}`gfem.Electrostatic`; the details are under {py:obj}`gfem.Driven`.
+
 ## Platforms
 
 Linux x86_64 (glibc >= 2.28), macOS arm64 and Windows x86_64, Python >= 3.12.
