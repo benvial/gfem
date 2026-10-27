@@ -448,9 +448,10 @@ class PetscHandle(NgsHandle):
         Waits for a running solve or refactorization.
         """
         with self._lock:
-            if self._ksp is not None:
-                self._ksp.destroy()
-                self._mat.destroy()
+            # each on its own: a failed set-up may have made the AIJ only
+            for obj in (self._ksp, self._mat):
+                if obj is not None:
+                    obj.destroy()
             super().free()
             self._ksp = self._mat = None
             self._pattern = None

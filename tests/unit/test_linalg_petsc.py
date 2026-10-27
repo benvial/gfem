@@ -549,6 +549,41 @@ def test_a_singular_operator_raises_a_factorization_error(built):
     assert "mat_mumps_icntl_14" in str(err.value)
 
 
+def _aijs(monkeypatch, error=None) -> list:
+    """The AIJs PETSc creates from now on; or every creation raises ``error``."""
+    PETSc = _petsc.require_petsc()
+    made = []
+
+    class Mat(PETSc.Mat):
+        def createAIJWithArrays(self, *args, **kwargs):  # noqa: N802 - PETSc name
+            if error is not None:
+                raise error
+            made.append(self)
+            return super().createAIJWithArrays(*args, **kwargs)
+
+    monkeypatch.setattr(PETSc, "Mat", Mat)
+    return made
+
+
+class CreationError(Exception):
+    """Raised by a PETSc object creation."""
+
+
+def test_a_failed_ksp_creation_destroys_the_aij(built, monkeypatch):
+    PETSc = _petsc.require_petsc()
+    made = _aijs(monkeypatch)
+
+    class KSP(PETSc.KSP):
+        def create(self, comm=None):  # noqa: ARG002 - PETSc signature
+            raise CreationError("no KSP")
+
+    monkeypatch.setattr(PETSc, "KSP", KSP)
+    with pytest.raises(CreationError, match="no KSP"):
+        prepare(_laplace(built)[0], symmetry="hermitian", kind="petsc")
+    assert len(made) == 1
+    assert not made[0]  # destroyed: its handle is null
+
+
 @pytest.mark.parametrize(
     ("complex_valued", "symmetry"), [(False, "general"), (True, "hermitian")]
 )
