@@ -1,0 +1,522 @@
+"""The ``petsc`` backend: PETSc KSP / PC behind the solver-handle seam.
+
+By default an exact MUMPS LDL^T factorization (``ksp_type preonly``,
+``pc_type cholesky``); ``petsc_options`` configures any other KSP / PC.
+Every test needs complex petsc4py: skipped without it (the ``petsc`` marker).
+"""
+
+import dataclasses
+import re
+
+import ngsolve as ngs
+import numpy as np
+import pytest
+import structured_meshes as sm
+
+import gfem
+from gfem import _petsc
+from gfem._engine import quadrature
+from gfem._engine.mesh import to_ngsolve
+from gfem._linalg import Operator, prepare
+from gfem._linalg.pieces import AssembledPieces, PieceSum
+
+pytestmark = pytest.mark.petsc
+
+
+@pytest.fixture(scope="module")
+def built(tmp_path_factory):
+    path = tmp_path_factory.mktemp("mesh") / "box.msh"
+    sm.write_msh22(path, sm.plate(1.0, 1.0, (("box", 1.0),), (2, 2, 2)))
+    return to_ngsolve(gfem.Mesh.from_gmsh(path))
+
+
+def _laplace(built, complex_valued=False, shift=0.0, order=2):
+    space = ngs.H1(
+        built.mesh, order=order, dirichlet="bottom|top", complex=complex_valued
+    )
+    u, v = space.TnT()
+    form = ngs.BilinearForm(space, symmetric=True)
+    form += (ngs.grad(u) * ngs.grad(v) + shift * u * v) * quadrature.dx(order)
+    return Operator(form, space.FreeDofs()), space
+
+
+def _free(space):
+    return np.array(list(space.FreeDofs()))
+
+
+def test_petsc_solves_many_right_hand_sides_on_the_free_dofs(built):
+    op, space = _laplace(built)
+    handle = prepare(op, symmetry="hermitian", kind="petsc")
+    assert handle.kind == "petsc"
+    free = _free(space)
+    rng = np.random.default_rng(0)
+    B = rng.standard_normal((space.ndof, 3))
+    X = handle.solve(B)
+    assert X.shape == (space.ndof, 3)
+    assert X.dtype == np.float64  # a real operator gives real solutions
+    np.testing.assert_array_equal(X[~free], 0)
+    A = handle.apply(np.eye(space.ndof))
+    np.testing.assert_allclose((A @ X)[free], B[free], atol=1e-10 * np.abs(B).max())
+    # one column at a time (a single solve, not a block): the same factors
+    np.testing.assert_allclose(handle.solve(B[:, 1]), X[:, 1], rtol=1e-12)
+    np.testing.assert_allclose(handle.solve(B, transpose=True), X, rtol=1e-12)
+
+
+def test_petsc_solves_a_complex_symmetric_operator(built):
+    op, space = _laplace(built, complex_valued=True, shift=1 - 2j)
+    handle = prepare(op, symmetry="complex_symmetric", kind="petsc")
+    free = _free(space)
+    rng = np.random.default_rng(1)
+    B = rng.standard_normal((space.ndof, 2)) + 1j * rng.standard_normal((space.ndof, 2))
+    X = handle.solve(B)
+    A = handle.apply(np.eye(space.ndof))
+    np.testing.assert_allclose(A, A.T, atol=1e-12)
+    np.testing.assert_allclose((A @ X)[free], B[free], atol=1e-10 * np.abs(B).max())
+    np.testing.assert_allclose(handle.solve(B, transpose=True), X, rtol=1e-12)
+    direct = prepare(
+        _laplace(built, True, 1 - 2j)[0], symmetry="complex_symmetric", kind="direct"
+    )
+    np.testing.assert_allclose(X, direct.solve(B), rtol=1e-10)
+
+
+def test_a_real_operator_solves_a_complex_rhs_by_parts(built):
+    op, space = _laplace(built)
+    handle = prepare(op, symmetry="hermitian", kind="petsc")
+    rng = np.random.default_rng(2)
+    real, imag = rng.standard_normal((2, space.ndof))
+    X = handle.solve(real + 1j * imag)
+    np.testing.assert_allclose(X, handle.solve(real) + 1j * handle.solve(imag))
+
+
+def test_without_options_petsc_is_an_exact_mumps_cholesky(built):
+    op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
+    handle = prepare(op, symmetry="complex_symmetric", kind="petsc")
+    ksp = handle._ksp
+    pc = ksp.getPC()
+    assert (ksp.getType(), pc.getType()) == ("preonly", "cholesky")
+    assert pc.getFactorSolverType() == "mumps"
+    A, _ = ksp.getOperators()
+    assert A.isSymmetricKnown() == (True, True)
+    assert not A.isHermitianKnown()[1]
+    assert handle.iterations == []
+
+
+def _gfem_keys():
+    PETSc = _petsc.require_petsc()
+    return [k for k in PETSc.Options().getAll() if k.startswith("gfem")]
+
+
+def test_options_live_under_the_handles_prefix_only_while_it_reads_them(built):
+    PETSc = _petsc.require_petsc()
+    options = PETSc.Options()
+    # a user's own, unprefixed options never reach gfem's KSP
+    options.setValue("ksp_type", "gmres")
+    options.setValue("pc_type", "jacobi")
+    try:
+        op, space = _laplace(built, complex_valued=True, shift=1 - 2j)
+        handle = prepare(op, symmetry="complex_symmetric", kind="petsc")
+        assert re.fullmatch(r"gfem\d+_", handle._ksp.getOptionsPrefix())
+        assert handle._ksp.getType() == "preonly"
+        assert _gfem_keys() == []
+        handle.solve(np.ones(space.ndof, complex))
+        handle.refactorize(_laplace(built, complex_valued=True, shift=2 + 1j)[0])
+        assert _gfem_keys() == []
+        handle.free()
+        assert _gfem_keys() == []
+    finally:
+        options.delValue("ksp_type")
+        options.delValue("pc_type")
+
+
+def _pieces(built, integrands, weights):
+    """Complex H1 pieces as a form and as a piece sum (`Operator.piece_sum`)."""
+    space = ngs.H1(built.mesh, order=2, dirichlet="bottom|top", complex=True)
+    u, v = space.TnT()
+    form = ngs.BilinearForm(space, symmetric=True)
+    for w, integrand in zip(weights, integrands, strict=True):
+        form += w * integrand(u, v)
+    pieces = AssembledPieces(space, integrands)
+    return Operator(form, space.FreeDofs(), PieceSum(pieces, weights)), pieces
+
+
+PIECES = (
+    lambda u, v: ngs.grad(u) * ngs.grad(v) * quadrature.dx(2),
+    lambda u, v: u * v * quadrature.dx(2),
+    lambda u, v: u * v * ngs.ds("side"),
+)
+
+
+def _agree(handle, fresh, seed):
+    n = handle.ndof
+    A = fresh.apply(np.eye(n))
+    assert np.abs(handle.apply(np.eye(n)) - A).max() <= 1e-14 * np.abs(A).max()
+    rng = np.random.default_rng(seed)
+    B = rng.standard_normal((n, 2)) + 1j * rng.standard_normal((n, 2))
+    X, ref = handle.solve(B), fresh.solve(B)
+    assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
+
+
+def test_a_refactorization_solves_like_a_fresh_handle(built):
+    # a sweep's second frequency: new values on the first one's solver plan
+    handle = prepare(
+        _laplace(built, complex_valued=True, shift=1 - 2j)[0],
+        symmetry="complex_symmetric",
+        kind="petsc",
+    )
+    ksp = handle._ksp
+    handle.refactorize(_laplace(built, complex_valued=True, shift=3 + 1j)[0])
+    fresh = prepare(
+        _laplace(built, complex_valued=True, shift=3 + 1j)[0],
+        symmetry="complex_symmetric",
+        kind="petsc",
+    )
+    assert handle._ksp is ksp
+    _agree(handle, fresh, 12)
+
+
+def test_a_refactorization_sums_the_handles_own_pieces_in_place(built):
+    op, pieces = _pieces(built, PIECES, (1.0, 2 - 1j, 3j))
+    handle = prepare(op, symmetry="complex_symmetric", kind="petsc")
+    with pytest.raises(Exception, match="assemble"):  # the form is not assembled
+        _ = op.form.mat
+    matrix = handle._matrix
+    weights = (1.0, -1 + 1j, 0.5)
+    op, _ = _pieces(built, PIECES, weights)
+    handle.refactorize(dataclasses.replace(op, piece_sum=PieceSum(pieces, weights)))
+    assert handle._matrix is matrix  # summed into the held matrix
+    fresh = prepare(
+        dataclasses.replace(op, piece_sum=None),
+        symmetry="complex_symmetric",
+        kind="petsc",
+    )
+    _agree(handle, fresh, 3)
+
+
+def test_a_refactorization_on_another_pattern_plans_again(built):
+    # on the side's DOFs, a side mass term alone is definite; without the
+    # volume term its matrix couples fewer DOFs: another sparsity pattern
+    space = ngs.H1(built.mesh, order=2, dirichlet="bottom|top", complex=True)
+    u, v = space.TnT()
+    free = space.FreeDofs() & space.GetDofs(built.mesh.Boundaries("side"))
+
+    def operator(volume):
+        form = ngs.BilinearForm(space, symmetric=True)
+        form += (2 - 1j) * u * v * ngs.ds("side")
+        if volume:
+            form += ngs.grad(u) * ngs.grad(v) * quadrature.dx(2)
+        return Operator(form, free)
+
+    handle = prepare(operator(True), symmetry="complex_symmetric", kind="petsc")
+    nonzeros = handle._values.size
+    handle.refactorize(operator(False))
+    assert handle._values.size < nonzeros
+    fresh = prepare(operator(False), symmetry="complex_symmetric", kind="petsc")
+    _agree(handle, fresh, 4)
+
+
+def _factorizations():
+    PETSc = _petsc.require_petsc()
+    PETSc.Log.begin()
+    return lambda: {
+        name: PETSc.Log.Event(name).getPerfInfo()["count"]
+        for name in ("MatCholFctrSym", "MatCholFctrNum")
+    }
+
+
+def test_a_same_pattern_refactorization_is_numeric_only(built):
+    counts = _factorizations()
+    handle = prepare(
+        _laplace(built, complex_valued=True, shift=1 - 2j)[0],
+        symmetry="complex_symmetric",
+        kind="petsc",
+    )
+    before = counts()
+    handle.refactorize(_laplace(built, complex_valued=True, shift=3 + 1j)[0])
+    after = counts()
+    assert after["MatCholFctrSym"] == before["MatCholFctrSym"]
+    assert after["MatCholFctrNum"] == before["MatCholFctrNum"] + 1
+
+
+def test_a_freed_handle_refuses_to_solve_and_holds_nothing(built):
+    handle = prepare(_laplace(built)[0], symmetry="hermitian", kind="petsc")
+    n = handle.ndof
+    assert handle.nbytes > 0
+    handle.free()
+    handle.free()  # idempotent
+    assert handle.nbytes == 0
+    with pytest.raises(RuntimeError, match="freed"):
+        handle.solve(np.ones(n))
+    with pytest.raises(RuntimeError, match="freed"):
+        handle.apply(np.ones(n))
+    with pytest.raises(RuntimeError, match="This solver handle was freed"):
+        handle.refactorize(_laplace(built)[0])
+
+
+@pytest.mark.parametrize("summed", [True, False])
+def test_a_handle_freed_during_refactorization_raises_freed(built, summed):
+    # another thread frees the handle while refactorize reads the piece sum
+    op, _ = _pieces(built, PIECES, (1.0, 2 - 1j, 3j))
+    handle = prepare(op, symmetry="complex_symmetric", kind="petsc")
+
+    class FreedOnRead:
+        def __init__(self, piece_sum):
+            self._piece_sum = piece_sum
+
+        def __getattr__(self, name):
+            handle.free()
+            return getattr(self._piece_sum, name)
+
+    # the handle's pieces are summed into its matrix; others are summed anew
+    other = op if summed else _pieces(built, PIECES, (1.0, 2 - 1j, 3j))[0]
+    piece_sum = FreedOnRead(other.piece_sum)
+    with pytest.raises(RuntimeError, match="This solver handle was freed"):
+        handle.refactorize(dataclasses.replace(op, piece_sum=piece_sum))
+
+
+def test_nbytes_counts_the_mumps_factorization(built):
+    # MUMPS reports its memory in millions of bytes: a larger operator
+    op, _ = _laplace(built, complex_valued=True, shift=1 - 2j, order=5)
+    exact = prepare(op, symmetry="complex_symmetric", kind="petsc")
+    factor = exact._ksp.getPC().getFactorMatrix()
+    assert factor.getMumpsInfog(22) > 0
+    op, _ = _laplace(built, complex_valued=True, shift=1 - 2j, order=5)
+    options = (("ksp_type", "gmres"), ("pc_type", "jacobi"))
+    krylov = prepare(
+        op, symmetry="complex_symmetric", kind="petsc", petsc_options=options
+    )
+    assert exact.nbytes - krylov.nbytes == 10**6 * factor.getMumpsInfog(22)
+
+
+# --- Krylov configurations --------------------------------------------------------
+
+GMRES = (("ksp_type", "gmres"), ("pc_type", "jacobi"))
+
+
+def _krylov(built, shift=1 - 2j, tolerance=1e-8, options=GMRES, **kwargs):
+    op, _ = _laplace(built, complex_valued=True, shift=shift, order=4)
+    return prepare(
+        op,
+        symmetry="complex_symmetric",
+        kind="petsc",
+        tolerance=tolerance,
+        petsc_options=options,
+        **kwargs,
+    )
+
+
+def _relative_residual(handle, B, X):
+    free = handle._free
+    return np.linalg.norm((handle.apply(X) - B)[free]) / np.linalg.norm(B[free])
+
+
+def test_a_krylov_solve_stops_at_the_true_relative_residual(built):
+    handle = _krylov(built)
+    ksp = handle._ksp
+    PETSc = _petsc.require_petsc()
+    # the unpreconditioned norm, so the preconditioner goes on the right
+    assert ksp.getNormType() == PETSc.KSP.NormType.UNPRECONDITIONED
+    assert ksp.getPCSide() == PETSc.PC.Side.RIGHT
+    rng = np.random.default_rng(13)
+    B = rng.standard_normal((handle.ndof, 2)) + 0j
+    X = handle.solve(B)
+    assert len(handle.iterations) == 2
+    assert all(n > 1 for n in handle.iterations)
+    for j in range(2):
+        assert _relative_residual(handle, B[:, j], X[:, j]) <= 1e-8
+    exact = prepare(
+        _laplace(built, complex_valued=True, shift=1 - 2j, order=4)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+    ).solve(B)
+    np.testing.assert_allclose(X, exact, atol=1e-6 * np.abs(exact).max())
+    np.testing.assert_array_equal(X[~handle._free], 0)
+
+
+def test_a_user_norm_type_is_kept(built):
+    PETSc = _petsc.require_petsc()
+    handle = _krylov(built, options=(*GMRES, ("ksp_norm_type", "preconditioned")))
+    assert handle._ksp.getNormType() == PETSc.KSP.NormType.PRECONDITIONED
+
+
+def test_a_krylov_solve_at_another_tolerance_restores_the_prepared_one(built):
+    handle = _krylov(built, tolerance=1e-3)
+    b = np.random.default_rng(14).standard_normal(handle.ndof) + 0j
+    handle.solve(b)
+    loose = handle.iterations[-1]
+    x = handle.solve(b, tolerance=1e-10)
+    assert handle.iterations[-1] > loose
+    assert _relative_residual(handle, b, x) <= 1e-10
+    handle.solve(b)
+    assert handle.iterations[-1] == loose
+
+
+def test_a_krylov_initial_guess_saves_iterations(built):
+    handle = _krylov(built)
+    b = np.random.default_rng(15).standard_normal(handle.ndof) + 0j
+    cold = handle.solve(b)
+    warm = handle.solve(b, x0=cold * (1 + 1e-6))
+    assert handle.iterations[1] < handle.iterations[0]
+    np.testing.assert_allclose(warm, cold, atol=1e-6 * np.abs(cold).max())
+    handle.solve(b)  # no guess: from zero again
+    assert handle.iterations[2] == handle.iterations[0]
+
+
+def test_a_krylov_solve_that_does_not_converge_raises(built):
+    handle = _krylov(built, tolerance=1e-14, maxiter=3)
+    with pytest.raises(
+        RuntimeError, match=r"PETSc gmres \+ jacobi did not converge"
+    ) as err:
+        handle.solve(np.ones(handle.ndof, complex))
+    assert "DIVERGED_MAX_IT" in str(err.value)
+    assert "1e-14 in 3 iterations" in str(err.value)
+
+
+def test_cg_on_a_complex_symmetric_operator_points_to_gmres(built):
+    handle = _krylov(
+        built, shift=-40 + 1j, options=(("ksp_type", "cg"), ("pc_type", "none"))
+    )
+    b = np.random.default_rng(16).standard_normal(handle.ndof) + 0j
+    with pytest.raises(RuntimeError, match="DIVERGED_INDEFINITE_MAT") as err:
+        handle.solve(b)
+    assert "use ksp_type gmres" in str(err.value)
+
+
+def _pc_setups():
+    PETSc = _petsc.require_petsc()
+    PETSc.Log.begin()
+    return lambda: PETSc.Log.Event("PCSetUp").getPerfInfo()["count"]
+
+
+@pytest.mark.parametrize("reuse", [True, False])
+def test_reuse_preconditioner_false_overrides_petscs_reuse(built, reuse):
+    # the adaptive sweep prepares with reuse_preconditioner=False
+    options = (*GMRES, ("ksp_reuse_preconditioner", True))
+    handle = _krylov(built, options=options, reuse_preconditioner=reuse)
+    b = np.ones(handle.ndof, complex)
+    handle.solve(b)
+    setups = _pc_setups()
+    before = setups()
+    op, _ = _laplace(built, complex_valued=True, shift=1.1 - 2j, order=4)
+    handle.refactorize(op)
+    handle.solve(b)
+    assert setups() - before == (0 if reuse else 1)
+
+
+def test_preonly_refuses_petscs_preconditioner_reuse(built):
+    op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
+    with pytest.raises(
+        ValueError, match=r"ksp_reuse_preconditioner.*previous operator"
+    ):
+        prepare(
+            op,
+            symmetry="complex_symmetric",
+            kind="petsc",
+            petsc_options=(("ksp_reuse_preconditioner", None),),
+        )
+    assert _gfem_keys() == []
+
+
+# --- what PETSc and gfem refuse ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        (("ksp_tpye", "gmres"),),  # a typo
+        (("mat_mumps_icntl_14", 50), ("pc_type", "jacobi")),  # not MUMPS's PC
+    ],
+)
+def test_an_option_petsc_did_not_read_raises(built, options):
+    op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
+    unread = options[0][0]
+    with pytest.raises(ValueError, match=rf"\['{unread}'\] was not read") as err:
+        prepare(op, symmetry="complex_symmetric", kind="petsc", petsc_options=options)
+    assert "check the name" in str(err.value)
+    assert _gfem_keys() == []
+
+
+def test_an_option_petsc_reads_is_honoured(built):
+    op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
+    handle = prepare(
+        op,
+        symmetry="complex_symmetric",
+        kind="petsc",
+        petsc_options=(("mat_mumps_icntl_14", 55), ("pc_type", "lu")),
+    )
+    pc = handle._ksp.getPC()
+    assert (pc.getType(), pc.getFactorSolverType()) == ("lu", "mumps")
+    assert pc.getFactorMatrix().getMumpsIcntl(14) == 55
+    # read again by MUMPS at a new pattern's factorization
+    handle.refactorize(_laplace(built, complex_valued=True, shift=2j)[0])
+    assert handle._ksp.getPC().getFactorMatrix().getMumpsIcntl(14) == 55
+
+
+@pytest.mark.parametrize(
+    ("options", "reason"),
+    [
+        ((("ksp_type", "gmress"),), "Unable to find requested KSP type gmress"),
+        ((*GMRES, ("ksp_max_it", "many")), "PETSc error 63"),
+    ],
+)
+def test_options_petsc_refuses_raise_a_value_error(built, options, reason):
+    op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
+    with pytest.raises(ValueError, match="refused by PETSc") as err:
+        prepare(op, symmetry="complex_symmetric", kind="petsc", petsc_options=options)
+    assert reason in str(err.value)
+    assert _gfem_keys() == []
+
+
+def test_an_error_in_petscs_set_up_raises_a_runtime_error(built):
+    # the recipe's MUMPS has no OpenMP
+    op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
+    with pytest.raises(RuntimeError, match=r"PETSc failed in KSPSetUp \(KSP preonly"):
+        prepare(
+            op,
+            symmetry="complex_symmetric",
+            kind="petsc",
+            petsc_options=(("mat_mumps_use_omp_threads", 2),),
+        )
+    assert _gfem_keys() == []
+
+
+def test_a_singular_operator_raises_a_factorization_error(built):
+    # a side mass term alone: the rows of the inner DOFs are zero
+    space = ngs.H1(built.mesh, order=2, dirichlet="bottom|top", complex=True)
+    u, v = space.TnT()
+    form = ngs.BilinearForm(space, symmetric=True)
+    form += u * v * ngs.ds("side")
+    with pytest.raises(RuntimeError, match="factorization failed") as err:
+        prepare(
+            Operator(form, space.FreeDofs()), symmetry="complex_symmetric", kind="petsc"
+        )
+    assert "MUMPS INFOG(1)=" in str(err.value)
+    assert "mat_mumps_icntl_14" in str(err.value)
+
+
+@pytest.mark.parametrize(
+    ("complex_valued", "symmetry"), [(False, "general"), (True, "hermitian")]
+)
+def test_petsc_refuses_operators_ldlt_cannot_factor(built, complex_valued, symmetry):
+    op, _ = _laplace(built, complex_valued=complex_valued)
+    with pytest.raises(ValueError, match=r"needs A\^T = A"):
+        prepare(op, symmetry=symmetry, kind="petsc")
+    with pytest.raises(TypeError, match="assemble"):
+        _ = op.form.mat  # refused before the assembly
+
+
+@pytest.mark.parametrize(
+    ("flags", "message"),
+    [
+        ({"symmetric_storage": True}, "symmetric \\(triangular\\) storage"),
+        ({"nonassemble": True}, "sparse matrix"),
+    ],
+)
+def test_petsc_needs_the_full_sparse_matrix(built, flags, message):
+    space = ngs.H1(built.mesh, order=2, dirichlet="bottom|top", complex=True)
+    u, v = space.TnT()
+    form = ngs.BilinearForm(space, symmetric=True, **flags)
+    form += (ngs.grad(u) * ngs.grad(v) + u * v) * quadrature.dx(2)
+    with pytest.raises(ValueError, match=message):
+        prepare(
+            Operator(form, space.FreeDofs()), symmetry="complex_symmetric", kind="petsc"
+        )

@@ -61,6 +61,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     from gfem._linalg.pieces import PieceSum
+    from gfem.options import PetscOptions
 
 __all__ = [
     "KINDS",
@@ -198,6 +199,7 @@ def prepare(
     width: int = 1,
     threads: int | None = None,
     reuse_preconditioner: bool = True,
+    petsc_options: PetscOptions = (),
 ) -> Handle:
     """Assemble ``operator`` and set up the ``kind`` backend.
 
@@ -248,9 +250,19 @@ def prepare(
         )
     if kind == "petsc":
         from gfem import _petsc
+        from gfem.options import split_petsc_options
 
         _petsc.require_petsc("linear_solver")
-        raise NotImplementedError("linear_solver='petsc' is not implemented yet")
+        from gfem._linalg.petsc import PetscHandle
+
+        return PetscHandle.from_operator(
+            operator,
+            symmetry,
+            tolerance=tolerance,
+            maxiter=maxiter,
+            options=split_petsc_options(petsc_options)[0],
+            reuse=reuse_preconditioner,
+        )
     if kind == "direct":
         from gfem._linalg.direct import DirectHandle
 
