@@ -120,7 +120,10 @@ def test_slepc_seed_gives_the_arpack_modes(request, case):
         np.testing.assert_array_equal(np.asarray(slepc.cluster), [0, 0, 1])
 
 
-@pytest.mark.parametrize("linear_solver", ["direct", "bddc_gmres"])
+@pytest.mark.parametrize(
+    "linear_solver",
+    ["direct", "bddc_gmres", pytest.param("petsc", marks=pytest.mark.petsc)],
+)
 def test_slepc_seed_runs_on_each_linear_solver(mesh, linear_solver):
     model = terminated_line(mesh, 1000.0)
     arpack, slepc = _both(model, gfem.Eigenmode(8e9), linear_solver=linear_solver)
