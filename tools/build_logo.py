@@ -452,6 +452,7 @@ def build(out, font, text_font):
     s = (cap + over) / mh
     gap = 150
     lw = mw * s + gap
+
     def lockup(mark):
         return (
             f'<path{mark_fill(mark)} transform="translate(0 {-cap}) scale({s:.4f})"'
