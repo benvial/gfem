@@ -10,6 +10,7 @@ the discretization's dispersion error.
 import cmath
 import dataclasses
 import math
+import warnings
 
 import jax
 import numpy as np
@@ -19,7 +20,7 @@ import structured_meshes as sm
 from preconditioners import count_preconditioners
 
 import gfem
-from gfem._engine import driven, terms
+from gfem._engine import driven, terms, workers
 from gfem._engine.driven import DrivenRule
 from gfem._linalg import bddc, prepare
 from gfem._linalg.base import same_pattern
@@ -775,3 +776,76 @@ def test_driven_job_and_result_round_trip(line, tmp_path):
     assert loaded.s.frequency == (2e9, 3e9)
     np.testing.assert_array_equal(loaded.s.values, result.s.values)
     np.testing.assert_array_equal(loaded.s.z_ref, result.s.z_ref)
+
+
+def _edges(mesh):
+    """Brute force: the shortest of each tetrahedron's six edges (m)."""
+    x = mesh.imported_nodes[mesh.tetrahedra]
+    pairs = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]
+    return np.min([np.linalg.norm(x[:, i] - x[:, j], axis=1) for i, j in pairs], 0)
+
+
+def test_shortest_edges_matches_brute_force(mesh):
+    h = gfem.mesh._shortest_edges(mesh)
+    np.testing.assert_allclose(h, _edges(mesh), rtol=1e-14)
+    assert gfem.mesh._shortest_edges(mesh) is h  # cached per topology
+    assert not h.flags.writeable
+
+
+def _f(kh, mesh):
+    """The frequency (Hz) at which the vacuum k0 * h_min is ``kh``."""
+    return kh * const.c / (2 * math.pi * _edges(mesh).min())
+
+
+def _low_frequency(record):
+    return [w for w in record if w.category is gfem.LowFrequencyWarning]
+
+
+def test_a_frequency_below_the_low_frequency_floor_warns_once_per_sweep(mesh, line):
+    problem = gfem.Driven([_f(5e-7, mesh), 1e9, _f(2e-7, mesh)])
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        DrivenRule(line, problem, gfem.SolverOptions())
+    (w,) = _low_frequency(record)
+    message = str(w.message)
+    assert "2 of 3 frequencies" in message
+    assert f"the lowest {_f(2e-7, mesh):.4g} Hz" in message
+    assert "k0*h_min = 2e-07" in message
+    assert f"h_min = {_edges(mesh).min():.3g} m" in message
+    assert "gfem.Electrostatic" in message
+
+
+@pytest.mark.parametrize("sweep", ["uniform", "adaptive"])
+@pytest.mark.parametrize("linear_solver", ["auto", "bddc_gmres", "direct"])
+def test_the_low_frequency_warning_ignores_the_linear_solver(
+    mesh, line, linear_solver, sweep
+):
+    kh = (5e-7,) if sweep == "uniform" else (2e-7, 5e-7, 8e-7)
+    problem = gfem.Driven([_f(k, mesh) for k in kh], sweep=sweep)
+    options = gfem.SolverOptions(linear_solver=linear_solver)
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        DrivenRule(line, problem, options)
+    assert len(_low_frequency(record)) == 1
+
+
+def test_frequencies_above_the_low_frequency_floor_do_not_warn(mesh, line):
+    problem = gfem.Driven([_f(1.001e-6, mesh), 10e9])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", gfem.LowFrequencyWarning)
+        DrivenRule(line, problem, gfem.SolverOptions())
+
+
+def test_the_low_frequency_warning_points_at_the_solve_call(mesh, line):
+    options = gfem.SolverOptions(linear_solver="direct")
+    with pytest.warns(gfem.LowFrequencyWarning) as record:
+        gfem.solve(line, gfem.Driven(_f(5e-7, mesh)), options=options)
+    assert record[0].filename == __file__
+
+
+def test_frequency_workers_do_not_repeat_the_low_frequency_warning(mesh, line):
+    problem = gfem.Driven(_f(5e-7, mesh))
+    options = gfem.SolverOptions(linear_solver="direct")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", gfem.LowFrequencyWarning)
+        driven._solve_block(*workers.model_parts(line), problem, options, False)
