@@ -13,6 +13,12 @@ One cell per problem type x input kind x linear solver x frequency sweep:
   model reproduces the full solve of the perturbed design too, so the
   differences of the adaptive pipeline check the frozen-basis gradient).
 
+The PETSc cells (`PETSC_CELLS`: ``linear_solver="petsc"``, and SLEPc seeds
+for the eigenmode cell) run the same checks where the PETSc stack is
+installed, and are skipped elsewhere (the ``petsc`` / ``slepc`` markers).
+They stay out of `CELLS`, which the Capabilities page reads (ADR 0017): the
+verification job that runs on every PR has no PETSc.
+
 Each cell checks the gradient along 3 random unit directions against
 fourth-order central differences (tests/finite_differences.py, gate 1e-6)
 at tight tolerance (iterative solves to 1e-12, eigenpairs to 1e-12), and
@@ -138,6 +144,23 @@ def _cells() -> list[Cell]:
 
 
 CELLS = _cells()
+#: The PETSc stack's cells, one per path its solves take: electrostatic,
+#: driven on both sweeps, the adjoint through a wave port operator's
+#: Woodbury update, and the eigenmode seed on SLEPc.
+PETSC_CELLS = [
+    Cell("electrostatic", "eps_r", "petsc"),
+    Cell("driven", "eps_r", "petsc", "uniform"),
+    Cell("driven", "eps_r", "petsc", "adaptive"),
+    Cell("driven_wave", "eps_r", "petsc", "uniform", "lossy"),
+    Cell("eigenmode", "eps_r", "petsc"),
+]
+PETSC_PARAMS = [
+    pytest.param(
+        cell,
+        marks=pytest.mark.slepc if cell.problem == "eigenmode" else pytest.mark.petsc,
+    )
+    for cell in PETSC_CELLS
+]
 
 
 @dataclasses.dataclass
@@ -222,9 +245,13 @@ def designs(tmp_path_factory):
 
 
 def _options(cell: Cell, *, production: bool) -> gfem.SolverOptions:
+    extra = {}
+    if cell.problem == "eigenmode" and cell.solver == "petsc":
+        extra["eigen_solver"] = "slepc"  # a PETSc cell runs the whole PETSc stack
     if production:
-        return gfem.SolverOptions(order=2, linear_solver=cell.solver)
-    extra = {"eigen_tolerance": 1e-12} if cell.problem == "eigenmode" else {}
+        return gfem.SolverOptions(order=2, linear_solver=cell.solver, **extra)
+    if cell.problem == "eigenmode":
+        extra["eigen_tolerance"] = 1e-12
     return tight(cell.solver, **extra)
 
 
@@ -496,7 +523,7 @@ def _case(designs: Designs, cell: Cell, *, production: bool, seed: int = 0) -> C
 # --- the cells -----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("cell", CELLS, ids=str)
+@pytest.mark.parametrize("cell", [*CELLS, *PETSC_PARAMS], ids=str)
 def test_gradient_matrix_matches_central_differences(designs, cell):
     case = _case(designs, cell, production=False)
     assert_gradient_matches(
@@ -508,7 +535,7 @@ def test_gradient_matrix_matches_central_differences(designs, cell):
     )
 
 
-@pytest.mark.parametrize("cell", CELLS, ids=str)
+@pytest.mark.parametrize("cell", [*CELLS, *PETSC_PARAMS], ids=str)
 def test_gradient_matrix_taylor_remainder_is_second_order(designs, cell):
     case = _case(designs, cell, production=True, seed=1)
     (d,) = case.directions(1)
@@ -571,7 +598,9 @@ def test_gradient_matrix_transformations_and_eviction_agree(designs, cell):
     _assert_same(jax.grad(evicted.objective)(case.p), looped[0], cell)
 
 
-@pytest.mark.parametrize("solver", SOLVERS)
+@pytest.mark.parametrize(
+    "solver", [*SOLVERS, pytest.param("petsc", marks=pytest.mark.petsc)]
+)
 def test_gradient_matrix_reciprocity_equals_the_explicit_adjoint(designs, solver):
     # Exciting p1 only leaves S21 without p2's solution: its gradient takes
     # an adjoint solve. With both ports excited it comes from reciprocity.
