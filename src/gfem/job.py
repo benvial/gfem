@@ -357,6 +357,13 @@ def _port_mode_field_from_args(args: dict[str, Any], _: _codec.Context) -> Any:
     return PortModeField(space, args["basis"], args["coords"])
 
 
+def _options_args(options: SolverOptions, _: _codec.Context) -> dict[str, Any]:
+    args = {f.name: getattr(options, f.name) for f in dataclasses.fields(options)}
+    # a JSON object, as a user writes it; the constructor sorts it back
+    args["petsc_options"] = dict(options.petsc_options)
+    return args
+
+
 def _job_from_args(args: dict[str, Any], _: _codec.Context) -> Job:
     return Job(args["model"], args["problem"], args.get("options", SolverOptions()))
 
@@ -375,7 +382,6 @@ for _cls in (
     Impedance,
     LumpedPort,
     WavePort,
-    SolverOptions,
     PortMode,
     ElectrostaticResult,
     Field,
@@ -391,6 +397,7 @@ for _cls in (
     InterfaceParticipation,
 ):
     _codec.register(_cls)
+_codec.register(SolverOptions, to_args=_options_args)
 _codec.register(Electrostatic, to_args=_electrostatic_args)
 _codec.register(
     PortModeField, to_args=_port_mode_field_args, from_args=_port_mode_field_from_args

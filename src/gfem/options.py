@@ -5,12 +5,19 @@ from __future__ import annotations
 import dataclasses
 import math
 import re
+from collections.abc import Mapping
 from typing import Any, Literal
 
 __all__ = ["SolverOptions"]
 
-LinearSolver = Literal["auto", "bddc_gmres", "direct"]
-_LINEAR_SOLVERS = ("auto", "bddc_gmres", "direct")
+LinearSolver = Literal["auto", "bddc_gmres", "direct", "petsc"]
+_LINEAR_SOLVERS = ("auto", "bddc_gmres", "direct", "petsc")
+EigenSolver = Literal["auto", "arpack", "slepc"]
+_EIGEN_SOLVERS = ("auto", "arpack", "slepc")
+#: A PETSc option's value: ``None`` is a flag with no value.
+PetscValue = str | int | float | bool | None
+#: ``SolverOptions.petsc_options`` as stored: pairs sorted by name.
+PetscOptions = tuple[tuple[str, PetscValue], ...]
 #: ``"cpu"``, ``"cuda"``, or ``"cuda:N"`` for the N-th GPU (hence ``| str``).
 Device = Literal["cpu", "cuda"] | str  # noqa: PYI051 - names the choices
 _DEVICE = re.compile(r"cpu|cuda(:\d+)?")
@@ -31,6 +38,170 @@ def _tol(value: object, name: str) -> float:
     return float(value)
 
 
+_PETSC_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+#: Option names that ``eigen_solver="slepc"`` reads (SLEPc's objects); every
+#: other name is read by ``linear_solver="petsc"``.
+SLEPC_NAMESPACES = ("eps_", "bv_", "ds_", "rg_", "fn_")
+#: The seed solve's EPS types: the others apply the shift-inverted operator
+#: once per DOF (``lapack``) or swap its spectral transform (``gd``).
+_EPS_TYPES = ("krylovschur", "arnoldi")
+_SELECTION = (
+    "is set by gfem: Eigenmode.target picks the modes (the seed keeps the "
+    "eigenvalues nearest it); set that instead."
+)
+_PROBLEM_TYPE = (
+    "is set by gfem: the seed operator is a non-Hermitian shift-inverted operator."
+)
+_CONVERGENCE = (
+    "is set by gfem: eigen_tolerance is relative to each shift-inverted "
+    "eigenvalue, as with ARPACK; set SolverOptions.eigen_tolerance instead."
+)
+_EXTRACTION = (
+    "needs the operator's transpose or a target, which gfem's seed operator "
+    "does not give SLEPc."
+)
+#: Options gfem sets itself, and what to set instead (the message's tail).
+_RESERVED: dict[str, str] = {
+    "ksp_rtol": (
+        "is set from SolverOptions.tolerance (adjoint_tolerance for adjoint "
+        "solves); set that instead."
+    ),
+    "ksp_initial_guess_nonzero": (
+        "is set per solve from the initial guess gfem passes; remove it."
+    ),
+    "eps_tol": "is set from SolverOptions.eigen_tolerance; set that instead.",
+    "eps_nev": "is set from Eigenmode.n_modes; set that instead.",
+    "eps_target": "is set from Eigenmode.target; set that instead.",
+    **dict.fromkeys(
+        (
+            "eps_largest_magnitude",
+            "eps_smallest_magnitude",
+            "eps_largest_real",
+            "eps_smallest_real",
+            "eps_largest_imaginary",
+            "eps_smallest_imaginary",
+            "eps_target_magnitude",
+            "eps_target_real",
+            "eps_target_imaginary",
+            "eps_all",
+            "eps_which_user",
+            "eps_interval",
+            "eps_threshold_absolute",
+            "eps_threshold_relative",
+        ),
+        _SELECTION,
+    ),
+    **dict.fromkeys(
+        (
+            "eps_hermitian",
+            "eps_gen_hermitian",
+            "eps_non_hermitian",
+            "eps_gen_non_hermitian",
+            "eps_pos_gen_non_hermitian",
+            "eps_gen_indefinite",
+            "eps_bse",
+            "eps_hamiltonian",
+            "eps_lrep",
+        ),
+        _PROBLEM_TYPE,
+    ),
+    **dict.fromkeys(
+        ("eps_conv_abs", "eps_conv_rel", "eps_conv_norm", "eps_conv_user"),
+        _CONVERGENCE,
+    ),
+    "eps_two_sided": _EXTRACTION,
+    "eps_ritz": _EXTRACTION,
+}
+#: Reserved option families, by name prefix.
+_RESERVED_PREFIXES: dict[str, str] = {
+    "eps_harmonic": _EXTRACTION,
+    "eps_refined": _EXTRACTION,
+    "st_": (
+        "has no effect: gfem's seed applies T(σ)⁻¹ through linear_solver, not "
+        "through a SLEPc spectral transform; configure that solver instead "
+        "(with linear_solver='petsc', its ksp_ / pc_ options)."
+    ),
+}
+
+
+def _is_slepc(name: str) -> bool:
+    return name.startswith(SLEPC_NAMESPACES)
+
+
+def split_petsc_options(pairs: PetscOptions) -> tuple[PetscOptions, PetscOptions]:
+    """``SolverOptions.petsc_options`` split into its linear and eigen options.
+
+    Names in `SLEPC_NAMESPACES` go to the eigen solver (SLEPc), every other
+    name to the linear solver (PETSc).
+
+    Returns:
+        ``(linear, eigen)``, each in the order of ``pairs``.
+    """
+    linear = tuple(p for p in pairs if not _is_slepc(p[0]))
+    eigen = tuple(p for p in pairs if _is_slepc(p[0]))
+    return linear, eigen
+
+
+def _petsc_pairs(value: object) -> list[tuple[Any, Any]]:
+    """The ``(name, value)`` pairs of a mapping or of the stored pairs."""
+    if isinstance(value, Mapping):
+        return list(value.items())
+    if isinstance(value, tuple) and all(
+        isinstance(p, tuple) and len(p) == 2 for p in value
+    ):
+        return list(value)
+    raise ValueError(
+        "SolverOptions.petsc_options must map PETSc option names to values, e.g. "
+        f"{{'ksp_type': 'gmres'}}, got {type(value).__name__}."
+    )
+
+
+def _petsc_options(options: SolverOptions) -> PetscOptions:
+    """Check ``options.petsc_options`` and return its stored form."""
+    pairs = _petsc_pairs(options.petsc_options)
+    seen: set[str] = set()
+    for name, value in pairs:
+        field = f"SolverOptions.petsc_options[{name!r}]"
+        if not isinstance(name, str) or not _PETSC_NAME.fullmatch(name):
+            raise ValueError(
+                "SolverOptions.petsc_options keys are PETSc option names without "
+                f"the leading '-', e.g. 'ksp_type', got {name!r}."
+            )
+        if name in seen:
+            raise ValueError(f"SolverOptions.petsc_options names {name!r} twice.")
+        seen.add(name)
+        # exact types: NumPy scalars (float64 is a float) would not stay plain JSON
+        if value is not None and type(value) not in (str, int, float, bool):
+            raise ValueError(
+                f"{field} must be a str, int, float, bool or None, got "
+                f"{type(value).__name__}."
+            )
+        if type(value) is float and not math.isfinite(value):
+            raise ValueError(f"{field} must be finite, got {value!r}.")
+        reserved = _RESERVED.get(name) or next(
+            (t for p, t in _RESERVED_PREFIXES.items() if name.startswith(p)), None
+        )
+        if reserved is not None:
+            raise ValueError(f"{field} {reserved}")
+        if _is_slepc(name):
+            if options.eigen_solver != "slepc":
+                raise ValueError(f"{field} is read only by eigen_solver='slepc'.")
+            if name == "eps_type" and value not in _EPS_TYPES:
+                raise ValueError(
+                    f"{field} must be 'krylovschur' or 'arnoldi' on gfem's "
+                    f"shift-inverted seed operator, got {value!r}."
+                )
+        elif options.linear_solver != "petsc":
+            slepc = (
+                f"; eigen_solver='slepc' applies linear_solver="
+                f"{options.linear_solver!r}'s own solves"
+                if options.eigen_solver == "slepc"
+                else ""
+            )
+            raise ValueError(f"{field} is read only by linear_solver='petsc'{slepc}.")
+    return tuple(sorted(pairs, key=lambda p: p[0]))
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class SolverOptions:
     """Every numerical knob of a solve, kept apart from the model and problem.
@@ -43,10 +214,15 @@ class SolverOptions:
         linear_solver: ``"auto"`` (each problem type's default: BDDC + GMRES
             for driven, BDDC + conjugate gradients for electrostatic, direct
             for eigenmode), ``"bddc_gmres"`` (BDDC with the Krylov method
-            that fits the operator: conjugate gradients for electrostatic)
-            or ``"direct"`` (one LDL^T factorization reused for every
+            that fits the operator: conjugate gradients for electrostatic),
+            ``"direct"`` (one LDL^T factorization reused for every
             right-hand side: MKL PARDISO with METIS ordering when the ``mkl``
-            extra is installed, NGSolve's sparse Cholesky otherwise).
+            extra is installed, NGSolve's sparse Cholesky otherwise) or
+            ``"petsc"`` (PETSc: a direct MUMPS factorization unless
+            ``petsc_options`` configures another, from complex petsc4py
+            built as the "PETSc and SLEPc" recipe describes; never chosen by
+            ``"auto"``). A solver this Python cannot use raises
+            `gfem.SolverUnavailableError` when the solve starts.
         tolerance: Relative residual of iterative solves.
         device: Where the direct solver runs: ``"cpu"``, ``"cuda"`` or
             ``"cuda:N"`` (the N-th GPU). A GPU needs
@@ -93,6 +269,20 @@ class SolverOptions:
             GPU device. The workers are
             spawned processes, so a script that sets it must guard its
             entry point with ``if __name__ == "__main__":``.
+        eigen_solver: What finds an `gfem.Eigenmode` problem's modes near
+            ``target`` from shift-invert solves: ``"auto"`` or ``"arpack"``
+            (SciPy ARPACK), or ``"slepc"`` (SLEPc, through slepc4py; never
+            chosen by ``"auto"``). Refinement and gradients follow either.
+            Other problem types ignore it.
+        petsc_options: PETSc and SLEPc option names, without the leading
+            ``-``, and their values, read by ``linear_solver="petsc"`` and
+            ``eigen_solver="slepc"``; a value of ``None`` is a flag. Names
+            starting ``eps_``, ``bv_``, ``ds_``, ``rg_`` or ``fn_`` need
+            ``eigen_solver="slepc"``, every other name needs
+            ``linear_solver="petsc"``: options are never silently ignored.
+            Options gfem sets from its own fields (``ksp_rtol`` from
+            ``tolerance``, ``eps_tol`` from ``eigen_tolerance``, ...) raise
+            `ValueError`. Stored as ``(name, value)`` pairs sorted by name.
     """
 
     order: int = 2
@@ -110,6 +300,8 @@ class SolverOptions:
     cluster_rtol: float = 1e-6
     max_refine_iterations: int = 50
     frequency_workers: int = 1
+    eigen_solver: EigenSolver = "auto"
+    petsc_options: Mapping[str, PetscValue] | PetscOptions = ()
 
     def __post_init__(self) -> None:
         set_ = object.__setattr__
@@ -120,6 +312,13 @@ class SolverOptions:
                 f"{', '.join(repr(s) for s in _LINEAR_SOLVERS)}, got "
                 f"{self.linear_solver!r}."
             )
+        if self.eigen_solver not in _EIGEN_SOLVERS:
+            raise ValueError(
+                f"SolverOptions.eigen_solver must be one of "
+                f"{', '.join(repr(s) for s in _EIGEN_SOLVERS)}, got "
+                f"{self.eigen_solver!r}."
+            )
+        set_(self, "petsc_options", _petsc_options(self))
         for name in (
             "tolerance",
             "adaptive_tolerance",
