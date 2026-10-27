@@ -186,12 +186,6 @@ def test_eps_ncv_reaches_the_eps(mesh, solved_eps, capfd):
     assert "EPS nconv=" in capfd.readouterr().out
 
 
-def test_a_non_integer_eps_ncv_is_refused(mesh):
-    options = gfem.SolverOptions(eigen_solver="slepc", petsc_options={"eps_ncv": "x"})
-    with pytest.raises(ValueError, match=r"eps_ncv.*integer"):
-        gfem.solve(terminated_line(mesh, 1000.0), gfem.Eigenmode(8e9), options=options)
-
-
 class ShiftSolveError(Exception):
     """Raised by a shift solve."""
 

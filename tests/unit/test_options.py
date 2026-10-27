@@ -102,6 +102,12 @@ def _slepc(options):
         (_slepc({"eps_type": "lapack"}), "eps_type"),
         (_slepc({"ksp_type": "gmres"}), "linear_solver='petsc'"),
         (_petsc({"eps_ncv": 30}), "eigen_solver='slepc'"),
+        (_slepc({"eps_ncv": "x"}), r"\['eps_ncv'\] must be an integer >= 1"),
+        (_slepc({"eps_ncv": "30"}), r"\['eps_ncv'\] must be an integer >= 1"),
+        (_slepc({"eps_ncv": 30.0}), r"\['eps_ncv'\] must be an integer >= 1"),
+        (_slepc({"eps_ncv": 0}), r"\['eps_ncv'\] must be an integer >= 1"),
+        (_slepc({"eps_ncv": True}), r"\['eps_ncv'\] must be an integer >= 1"),
+        (_slepc({"eps_ncv": None}), r"\['eps_ncv'\] must be an integer >= 1"),
     ],
 )
 def test_invalid_values_name_the_option(kwargs, word):

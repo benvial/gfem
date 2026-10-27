@@ -186,6 +186,9 @@ def _petsc_options(options: SolverOptions) -> PetscOptions:
         if _is_slepc(name):
             if options.eigen_solver != "slepc":
                 raise ValueError(f"{field} is read only by eigen_solver='slepc'.")
+            if name == "eps_ncv" and (type(value) is not int or value < 1):
+                # gfem reads it (floored at nev + 1 at the solve), not SLEPc
+                raise ValueError(f"{field} must be an integer >= 1, got {value!r}.")
             if name == "eps_type" and value not in _EPS_TYPES:
                 raise ValueError(
                     f"{field} must be 'krylovschur' or 'arnoldi' on gfem's "

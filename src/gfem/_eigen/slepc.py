@@ -15,8 +15,8 @@ imported at module scope.
 
 from __future__ import annotations
 
-import contextlib
 from collections.abc import Callable, Mapping
+from typing import cast
 
 import numpy as np
 
@@ -48,16 +48,11 @@ class _Shell:
 
 
 def _ncv(value: PetscValue, nev: int, size: int) -> int:
-    """The user's ``eps_ncv``, at least ``nev + 1`` and at most ``size``."""
-    ncv = None
-    if value is not None and not isinstance(value, bool):
-        with contextlib.suppress(ValueError):
-            ncv = int(value)
-    if ncv is None:
-        raise ValueError(
-            f"SolverOptions.petsc_options['eps_ncv'] must be an integer, got {value!r}."
-        )
-    return min(size, max(ncv, nev + 1))
+    """The user's ``eps_ncv``, at least ``nev + 1`` and at most ``size``.
+
+    `gfem.SolverOptions` checked that it is an integer >= 1.
+    """
+    return min(size, max(cast("int", value), nev + 1))
 
 
 def _check_read(eps, names: list[str]) -> None:
