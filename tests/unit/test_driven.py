@@ -915,7 +915,10 @@ def test_a_frequency_below_the_low_frequency_floor_warns_once_per_sweep(mesh, li
 
 
 @pytest.mark.parametrize("sweep", ["uniform", "adaptive"])
-@pytest.mark.parametrize("linear_solver", ["auto", "bddc_gmres", "direct"])
+@pytest.mark.parametrize(
+    "linear_solver",
+    ["auto", "bddc_gmres", "direct", pytest.param("petsc", marks=pytest.mark.petsc)],
+)
 def test_the_low_frequency_warning_ignores_the_linear_solver(
     mesh, line, linear_solver, sweep
 ):
