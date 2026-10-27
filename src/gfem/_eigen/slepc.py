@@ -74,7 +74,7 @@ def _check_read(eps, names: list[str]) -> None:
     keys = ", ".join(f"SolverOptions.petsc_options[{n!r}]" for n in unread)
     verb = "was" if len(unread) == 1 else "were"
     raise ValueError(
-        f"{keys} {verb} not read by SLEPc's eigensolver (EPS {eps.getType()}): "
+        f"{keys} {verb} not read by SLEPc's eigen solver (eps_type {eps.getType()}): "
         "check the name, or remove options this configuration does not use."
     )
 

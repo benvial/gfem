@@ -244,8 +244,9 @@ def test_eps_view_prints_the_eps(mesh, capfd):
 
 def test_a_misspelled_slepc_option_raises_naming_it(mesh):
     options = gfem.SolverOptions(eigen_solver="slepc", petsc_options={"eps_mpdd": 20})
-    with pytest.raises(ValueError, match=r"petsc_options\['eps_mpdd'\]"):
+    with pytest.raises(ValueError, match=r"petsc_options\['eps_mpdd'\]") as error:
         gfem.solve(terminated_line(mesh, 1000.0), gfem.Eigenmode(8e9), options=options)
+    assert "SLEPc's eigen solver (eps_type krylovschur)" in str(error.value)
     assert not _gfem_keys()
 
 
