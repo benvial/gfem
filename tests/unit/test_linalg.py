@@ -513,8 +513,9 @@ def test_bddc_gmres_does_not_accept_a_breakdown_above_the_tolerance(
     assert handle.iterations[-1] == sum(iterations)
     # a restart that stops short too raises
     _break_down(monkeypatch, krylov, times=2)
-    with pytest.raises(RuntimeError, match="converge"):
+    with pytest.raises(RuntimeError, match="converge") as raised:
         handle.solve(B, x0=x0)
+    assert "stopped short of the tolerance after 4 iterations" in str(raised.value)
 
 
 def test_freed_bddc_handle_refuses_to_solve(built):

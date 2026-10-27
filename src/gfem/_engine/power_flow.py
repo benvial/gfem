@@ -3,7 +3,7 @@
 The host kernel of `gfem.power_flow`. With A the selected elements, the
 driven equations ``a(E, v) = l(v)`` tested with ``v = conj(χ_A E)`` (E on
 the DOFs of A's edges, faces and cells, zero elsewhere) split into the
-terms on A, whose imaginary part is minus the power A's sources feed and
+terms on A, whose imaginary part is minus the power A's ports feed and
 its losses absorb, and the terms on the outside elements and faces that
 share an edge with A. So the outside layer's terms give the power crossing
 A's boundary exactly for the discrete field, with no point evaluation:
@@ -28,17 +28,25 @@ import scipy.constants as const
 from gfem._boundaries import surfaces_of
 from gfem._engine import probe
 from gfem._engine.driven import DrivenOperator, driven_operator
+from gfem.mesh import _TET_EDGES, Mesh
 
 if TYPE_CHECKING:
     from gfem._field import Field
-    from gfem.mesh import Mesh
     from gfem.model import Model
 
 __all__ = ["power_flow"]
 
-#: The six edges of a tetrahedron and the three of a triangle, by vertex.
-_TET_EDGES = np.array([[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]])
+#: The three edges of a triangle, by vertex.
 _TRI_EDGES = np.array([[0, 1], [0, 2], [1, 2]])
+#: The `Mesh` arrays that, with its regions, define its elements.
+_TOPOLOGY_ARRAYS = (
+    "tetrahedra",
+    "tetrahedron_tags",
+    "tetrahedron_entities",
+    "triangles",
+    "triangle_tags",
+    "triangle_entities",
+)
 
 
 def power_flow(
@@ -67,7 +75,7 @@ def power_flow(
             "The side selects every element of the field's support, so it has "
             "no surface: the side holds the whole solve domain."
         )
-    tet_edges = _edge_keys(mesh, mesh.tetrahedra, _TET_EDGES)
+    tet_edges = _edge_keys(mesh, mesh.tetrahedra, np.array(_TET_EDGES))
     closure = np.unique(tet_edges[inside])
     layer = outside & np.isin(tet_edges, closure).any(axis=1)
     rim = inside & np.isin(tet_edges, np.unique(tet_edges[outside])).any(axis=1)
@@ -108,9 +116,9 @@ def _check_field(field: Field, model: Model) -> np.ndarray:
         ValueError: The mesh, its nodes or the support differ.
     """
     mesh = model.mesh
-    same = field.mesh._topology is mesh._topology  # noqa: SLF001
-    if same:
-        same = np.array_equal(np.asarray(field.mesh.nodes), np.asarray(mesh.nodes))
+    same = _same_topology(field.mesh, mesh) and np.array_equal(
+        np.asarray(field.mesh.nodes), np.asarray(mesh.nodes)
+    )
     if not same:
         raise ValueError(
             "The field lives on another mesh (or other node positions) than the "
@@ -125,6 +133,19 @@ def _check_field(field: Field, model: Model) -> np.ndarray:
             "or exclusions): pass the model the field was solved with."
         )
     return support
+
+
+def _same_topology(a: Mesh, b: Mesh) -> bool:
+    """Whether two meshes have the same elements, tags and regions.
+
+    The same object, or equal arrays: the same file read twice (a loaded
+    result's mesh and the model's) gives two objects.
+    """
+    if a._topology is b._topology:  # noqa: SLF001
+        return True
+    return a.regions == b.regions and all(
+        np.array_equal(getattr(a, name), getattr(b, name)) for name in _TOPOLOGY_ARRAYS
+    )
 
 
 def _selection(

@@ -466,7 +466,7 @@ def power_flow(
     The power comes from the residual of the discrete equations on the
     outside element layer, not from an integral of ``1/2 Re(E x H*)``, so
     it is exact for the solved field (to the solver's residual) and the
-    same through every surface that encloses the same sources and losses.
+    same through every surface that encloses the same ports and losses.
     In lossy media it is the power entering ``side`` through its ports,
     minus what its elements and faces absorb (dielectric loss,
     conductivity, `Conductor` and `Impedance` sheets, its absorbing faces).
@@ -515,8 +515,8 @@ def power_flow(
             "the function JAX transforms."
         )
     _check_driven(field)
-    flux = importlib.import_module("gfem._engine.flux")
-    return jnp.asarray(flux.power_flow(field, names, model), dtype=float)
+    engine = importlib.import_module("gfem._engine.power_flow")
+    return jnp.asarray(engine.power_flow(field, names, model), dtype=float)
 
 
 def _side_names(

@@ -123,17 +123,29 @@ class BddcHandle(NgsHandle):
             raise RuntimeError("This solver handle was freed.")
         return matrix, pre, form
 
-    def _krylov(self, matrix: ngs.BaseMatrix, pre: ngs.Preconditioner):
-        """The Krylov solver of ``matrix`` on the preconditioner ``pre``."""
-        if self.symmetry == "hermitian":
-            return ngs.solvers.CGSolver(
-                matrix,
-                pre.mat,
-                tol=self.tolerance,
-                maxiter=self.maxiter,
-                conjugate=self._complex,
-            )
-        return self._gmres(matrix, pre, maxiter=self.maxiter)
+    def _krylov(
+        self,
+        matrix: ngs.BaseMatrix,
+        pre: ngs.Preconditioner,
+        *,
+        maxiter: int | None = None,
+        reference: float | None = None,
+    ):
+        """The Krylov solver of ``matrix`` on the preconditioner ``pre``.
+
+        ``maxiter`` defaults to the handle's; ``reference`` is as for
+        `_gmres`.
+        """
+        maxiter = self.maxiter if maxiter is None else maxiter
+        if self.symmetry != "hermitian":
+            return self._gmres(matrix, pre, maxiter=maxiter, reference=reference)
+        if reference is None:
+            stop = {"tol": self.tolerance}
+        else:
+            stop = {"atol": self.tolerance * reference}
+        return ngs.solvers.CGSolver(
+            matrix, pre.mat, maxiter=maxiter, conjugate=self._complex, **stop
+        )
 
     def _gmres(
         self,
@@ -199,7 +211,7 @@ class BddcHandle(NgsHandle):
         start = residuals[0] if reference is None else reference
         return residuals[-1] <= self.tolerance * start
 
-    def _check(
+    def _finish(
         self,
         solver,
         b: ngs.BaseVector,
@@ -207,17 +219,17 @@ class BddcHandle(NgsHandle):
         reference: float | None = None,
         iterations: int = 0,
     ) -> None:
-        """Record the iterations; raise if the solve stopped unconverged.
+        """Finish a column's solve: restart it if needed, record, raise.
 
-        ``solver`` solved ``b`` into ``x``. A solve that stopped before its
-        ``maxiter`` above the tolerance restarts once from ``x``, with the
-        iterations left, to ``tolerance`` times the same start: NGSolve
-        6.2.2608's GMRES leaves an Arnoldi breakdown before its stopping
-        test, with an iterate that is wrong after the first step. An exact
-        stop costs the restart one operator and preconditioner apply.
-        ``reference`` is as for `_converged`; ``iterations`` were spent on
-        the column before ``solver`` (a capped solve on a reused
-        preconditioner).
+        ``solver`` solved ``b`` into ``x``; a restart updates ``x`` in place.
+        A solve that stopped before its ``maxiter`` above the tolerance
+        restarts once from ``x``, with the iterations left, to ``tolerance``
+        times the same start: NGSolve 6.2.2608's GMRES leaves an Arnoldi
+        breakdown before its stopping test, with an iterate that is wrong
+        after the first step. An exact stop costs the restart one operator
+        and preconditioner apply. ``reference`` is as for `_converged`;
+        ``iterations`` were spent on the column before ``solver`` (a capped
+        solve on a reused preconditioner).
         """
         spent = iterations + int(solver.iterations)
         residuals = solver.residuals
@@ -227,32 +239,29 @@ class BddcHandle(NgsHandle):
         start = residuals[0] if reference is None else reference
         early = int(solver.iterations) < solver.maxiter
         if early and not self._converged(solver, start):
-            solver = self._restart(start, maxiter=solver.maxiter - solver.iterations)
+            matrix, pre, _ = self._held()
+            left = solver.maxiter - solver.iterations
+            solver = self._krylov(matrix, pre, maxiter=left, reference=start)
             solver.Solve(rhs=b, sol=x, initialize=False)
             spent += int(solver.iterations)
+            early = int(solver.iterations) < solver.maxiter
         self.iterations.append(spent)
         if self._converged(solver, start):
             return
         name = "CG" if self.symmetry == "hermitian" else "GMRES"
+        reached = f"{solver.residuals[-1] / start:.2g}"
+        if early:
+            what = (
+                f": it stopped short of the tolerance after {spent} iterations, "
+                f"restart included (reached {reached})"
+            )
+        else:
+            what = f" in {self.maxiter} iterations (reached {reached})"
         raise RuntimeError(
             f"BDDC + {name} did not converge to the relative tolerance "
-            f"{self.tolerance:g} in {self.maxiter} iterations (reached "
-            f"{solver.residuals[-1] / start:.2g}). Use linear_solver='direct', "
-            "or a looser tolerance."
+            f"{self.tolerance:g}{what}. Use linear_solver='direct', or a looser "
+            "tolerance."
         )
-
-    def _restart(self, start: float, *, maxiter: int):
-        """The Krylov solver of the held matrix to ``tolerance * start``."""
-        matrix, pre, _ = self._held()
-        if self.symmetry == "hermitian":
-            return ngs.solvers.CGSolver(
-                matrix,
-                pre.mat,
-                atol=self.tolerance * start,
-                maxiter=maxiter,
-                conjugate=self._complex,
-            )
-        return self._gmres(matrix, pre, maxiter=maxiter, reference=start)
 
     def _inverse_map(
         self, B: np.ndarray, tolerance: float | None, x0: np.ndarray | None = None
@@ -273,7 +282,7 @@ class BddcHandle(NgsHandle):
                 if x0 is not None and self.symmetry != "hermitian":
                     return self._warm(B, x0, measure=measure)
                 before = len(self.iterations)
-                out = self._map(solver, B, after=self._check)
+                out = self._map(solver, B, after=self._finish)
                 # a cold solve runs on a fresh preconditioner
                 self._set_reference(self.iterations[before:], measure=measure)
                 return out
@@ -300,10 +309,14 @@ class BddcHandle(NgsHandle):
         On a reused preconditioner (see `refactorize`) each column stops at
         ``min(maxiter, n_ref + 2Δ)`` iterations; a column that stops there
         unconverged sets BDDC up again at this matrix and goes on from where
-        it stopped. Only a solve with ``measure`` true (at the prepared
-        tolerance) counts: the iterations spent on a fresh preconditioner
-        set ``n_ref`` when it is unset, and those spent on the reused one
-        decide the rebuild rule, when every column stayed on it.
+        it stopped. A breakdown above the tolerance on the reused
+        preconditioner (a stop before the cap) sets BDDC up again the same
+        way: that is the warm path's recovery, and only a breakdown on the
+        fresh preconditioner meets the restart rule of `_finish`. Only a
+        solve with ``measure`` true (at the prepared tolerance) counts: the
+        iterations spent on a fresh preconditioner set ``n_ref`` when it is
+        unset, and those spent on the reused one decide the rebuild rule,
+        when every column stayed on it.
         """
         cols, flat = self._columns(B)
         guesses, _ = self._columns(x0)
@@ -346,7 +359,7 @@ class BddcHandle(NgsHandle):
                     )
                     solver.Solve(rhs=b, sol=x, initialize=False)
                     on_reused = False
-                self._check(solver, b, x, reference, spent)
+                self._finish(solver, b, x, reference, spent)
                 (stale if on_reused else fresh).append(self.iterations[-1] - spent)
                 out[:, j] = x.FV().NumPy()
             # n_ref only from a fresh preconditioner; the rebuild rule, by
