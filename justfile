@@ -38,6 +38,10 @@ bend3d-arc-data work="/tmp/bend3d-arc":
 bend3d-history work="/tmp/bend3d-history":
     JAX_PLATFORMS=cpu uv run --extra mkl --group docs python tools/bend3d_history.py all --work "{{ work }}"
 
+# Render the front page's optimization video, docs/_static/front/bend3d-optimization-*, from that record (tools/bend3d_animation.py; GPU via EGL, about 10 min).
+bend3d-animation record="/tmp/bend3d-history":
+    cd tools && VTK_DEFAULT_OPENGL_WINDOW=vtkEGLRenderWindow {{ docs_env }} python bend3d_animation.py "{{ record }}"
+
 # Build the site as docs.yml does (strict, then the Pagefind index) into docs/_build/html.
 docs:
     GFEM_DOCS_STRICT=1 {{ docs_env }} sphinx-build -n -W --keep-going docs docs/_build/html

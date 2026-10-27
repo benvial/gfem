@@ -5,14 +5,11 @@ The data comes from the 3D bend tutorial's committed run record,
 ``tools/bend3d_run.py``): this script solves nothing, it only resamples and
 quotes the record. The JSON holds:
 
-- |E| on the core mid-plane z = 0 for ``final``, with 1 W incident in the
-  fundamental mode at p1, normalised to its peak in the input guide (as the
-  tutorial's field figure), quantised to 0..255 of its maximum and
-  base64-encoded, rows from y = +2.5 um down;
-- ``final`` itself and the physical density at the tutorial's four snapshot
-  iterations, inside the design square, quantised and base64-encoded the
-  same way, and the core edge (density 0.5) of ``final`` over the whole box,
-  as polylines in um;
+- |S21|^2 and beta of every iteration, for the hero's history strip under
+  the optimization video (``tools/bend3d_animation.py``);
+- the physical density at the tutorial's four snapshot iterations, inside the
+  design square, quantised to 0..255 and base64-encoded, rows from
+  y = +1.5 um down;
 - the numbers the front page quotes: |S21|^2 of ``final``, the schedule, the
   mesh, the solve time, reciprocity, power balance and the spectrum's
   minimum.
@@ -29,7 +26,6 @@ import json
 from pathlib import Path
 
 import numpy as np
-from contourpy import contour_generator
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "docs" / "tutorials" / "data"
@@ -62,23 +58,6 @@ def build() -> dict:
     guide, pitch = geometry["core_width_um"] / 2, settings["pitch_um"]
     schedule = settings["schedule"]
 
-    # the core layer of the box: guides around a design (the tutorial's layer_image)
-    centres = -half + (np.arange(round(2 * half / pitch)) + 0.5) * pitch
-    x, y = np.meshgrid(centres, centres)
-    arms = ((x < -square) & (np.abs(y) < guide)) | ((y < -square) & (np.abs(x) < guide))
-    in_design = (np.abs(x) < square) & (np.abs(y) < square)
-
-    def edge(density):
-        image = arms.astype(float)
-        image[in_design] = np.ravel(density)
-        lines = contour_generator(centres, centres, image).lines(0.5)
-        return [line.round(4).tolist() for line in lines]
-
-    cut_x = out["cut_x"] / um
-    cut = out["cut_top_final"].astype(float)
-    field = cut / cut[:, cut_x < -square].max()  # input-guide peak
-    vmax = field.max()
-
     t_final = float(_t(out["s_final"]))
     s = out["s_final"]
     r11 = float(np.abs(s[0, 0]) ** 2)
@@ -94,13 +73,10 @@ def build() -> dict:
         "extent_um": [-half, half, -half, half],
         "design_um": square,
         "guide_um": guide,
-        "field": {
-            "shape": list(field.shape),
-            "vmax": round(float(vmax), 4),
-            "final": _bytes(field, vmax),
+        "history": {
+            "t": out["t_history"].round(5).tolist(),
+            "beta": out["beta_history"].tolist(),
         },
-        "final": _bytes(out["final"], 1.0),
-        "edge": edge(out["final"]),
         "snapshots": {
             "shape": list(out["snapshots"].shape[1:]),
             "iterations": snapshot_at.tolist(),

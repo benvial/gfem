@@ -313,11 +313,16 @@ def _num(value: float) -> str:
     return f"{value:g}"
 
 
-def _front(path: Path) -> dict | None:
-    """The committed hero data (tools/front_page_data.py), or None when absent."""
-    if not path.exists():
-        return None  # the hero frame says how to generate it; strict builds fail
+def _front(path: Path, video: Path) -> dict | None:
+    """The committed hero data (tools/front_page_data.py), or None when absent.
+
+    ``video`` is the optimization video's timing (tools/bend3d_animation.py),
+    inlined beside the data; the hero needs both.
+    """
+    if not (path.exists() and video.exists()):
+        return None  # the hero frame says how to generate them; strict builds fail
     data = json.loads(path.read_text())
+    data["video"] = json.loads(video.read_text())
     params, results = data["params"], data["results"]  # the run record's values
     snapshots = data["snapshots"]
     return {
@@ -331,6 +336,7 @@ def _front(path: Path) -> dict | None:
         "pitch": _num(params["pitch_um"]),
         "steps": params["iterations"],
         "steps_per_beta": params["steps_per_beta"],
+        "last": params["iterations"] - 1,
         "start": _num(params["start"]),
         "dof": f"{params['dof'] / 1e6:.2f} M",
         "order": params["order"],
@@ -347,7 +353,6 @@ def _front(path: Path) -> dict | None:
             "t": f"{results['band_min']['t']:.4f}",
         },
         "band": [_num(v) for v in results["band_um"]],
-        "vmax": f"{data['field']['vmax']:.2f}",
         "snapshots": [
             {"iteration": k, "t": f"{t:.3f}"}
             for k, t in zip(snapshots["iterations"], snapshots["t"], strict=True)
@@ -358,7 +363,8 @@ def _front(path: Path) -> dict | None:
 
 
 FRONT_DATA = DOCS / "_data" / "front-page.json"
-html_context["gfem_front"] = _front(FRONT_DATA)
+FRONT_VIDEO = DOCS / "_static" / "front" / "bend3d-optimization.json"
+html_context["gfem_front"] = _front(FRONT_DATA, FRONT_VIDEO)
 html_context["gfem_code_line"] = _code_line(DOCS.parent / "tools" / "bend3d_run.py")
 html_context["gfem_install"] = gfem_install
 html_context["gfem_status"] = gfem_status  # the footer and the front page
@@ -385,8 +391,10 @@ def setup(app):
             "gfem_front"
         ):
             msg = (
-                f"front page: {FRONT_DATA.relative_to(DOCS.parent)} is missing; "
-                "regenerate it with `just front-page-data` (GFEM_DOCS_STRICT=1)"
+                f"front page: {FRONT_DATA.relative_to(DOCS.parent)} or "
+                f"{FRONT_VIDEO.relative_to(DOCS.parent)} is missing; regenerate them "
+                "with `just front-page-data` and tools/bend3d_animation.py "
+                "(GFEM_DOCS_STRICT=1)"
             )
             raise ConfigError(msg)
 

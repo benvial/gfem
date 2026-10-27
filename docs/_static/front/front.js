@@ -1,8 +1,9 @@
-// gfem front page (layout/gfem-home.html): draws the hero's design and field map and
-// the four design snapshots from window.BEND, which conf.py inlines from
-// docs/_data/front-page.json (tools/front_page_data.py, the 3D bend's run record).
+// gfem front page (layout/gfem-home.html): plays the hero's optimization video with
+// its readout and history strip, and draws the four design snapshots, from
+// window.BEND, which conf.py inlines from docs/_data/front-page.json
+// (tools/front_page_data.py, the 3D bend's run record) and the video's timing.
 // Shibuya owns the theme switch (html.light / html.dark) and the menu; the figures
-// redraw, without the fade-in, when the theme class or the width changes.
+// redraw (the video swaps to the theme's file) when the theme class or the width changes.
 (function () {
   const ns = "http://www.w3.org/2000/svg";
   const el = (name, attrs) => {
@@ -33,28 +34,7 @@
     svgEl.replaceChildren();
   }
 
-  const line = (pts) => "M" + pts.map(([x, y]) => `${x},${-y}`).join("L");
   const css = () => getComputedStyle(document.documentElement);
-
-  // |E| on the core mid-plane: the field in the signal red, the silicon edge in ink,
-  // the design square dashed.
-  function drawField(svgEl, data, animate) {
-    const ext = data.extent_um, d = data.design_um, style = css();
-    frame(svgEl, ext);
-    const image = el("image", {
-      href: raster(bytes(data.field.final), data.field.shape, style.getPropertyValue("--accent-field").trim(),
-        (v) => Math.min(0.92, 0.95 * v)),
-      x: ext[0], y: -ext[3], width: ext[1] - ext[0], height: ext[3] - ext[2], preserveAspectRatio: "none",
-    });
-    svgEl.appendChild(image);
-    svgEl.appendChild(el("rect", { x: -d, y: -d, width: 2 * d, height: 2 * d, class: "square" }));
-    for (const pts of data.edge) svgEl.appendChild(el("path", { d: line(pts), class: "edge" }));
-    if (animate && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      image.style.opacity = 0;
-      image.style.transition = "opacity .9s cubic-bezier(.16,1,.3,1)";
-      requestAnimationFrame(() => requestAnimationFrame(() => (image.style.opacity = 1)));
-    }
-  }
 
   // A design over the whole box: the guides, then the design square's density
   // (base64 uint8, data.snapshots.shape) in ink.
@@ -72,38 +52,106 @@
     svgEl.appendChild(el("rect", { x: -d, y: -d, width: 2 * d, height: 2 * d, class: "square" }));
   }
 
-  // Pointer move or tap over a field shows |E| / input-guide peak there.
-  function readout(svgEl, tip, data) {
-    const values = bytes(data.field.final);
-    const [ny, nx] = data.field.shape;
-    const show = (e) => {
-      const r = svgEl.getBoundingClientRect(), box = tip.parentElement.getBoundingClientRect();
-      const col = Math.floor(((e.clientX - r.left) / r.width) * nx);
-      const row = Math.floor(((e.clientY - r.top) / r.height) * ny);
-      if (col < 0 || col >= nx || row < 0 || row >= ny) { tip.hidden = true; return; }
-      tip.hidden = false;
-      tip.textContent = `|E| / input peak = ${((values[row * nx + col] / 255) * data.field.vmax).toFixed(2)}`;
-      const x = e.clientX - box.left, flip = x > box.width - 200;
-      tip.style.left = (flip ? x - 190 : x + 14) + "px";
-      tip.style.top = e.clientY - box.top + 14 + "px";
+  // The optimization video (tools/bend3d_animation.py): the theme's file, the
+  // readout of the iteration on screen and the |S21|^2 history strip's playhead.
+  function film(data) {
+    const video = document.getElementById("bend-video");
+    if (!video) return { redraw() {} };
+    const timing = data.video, its = timing.iterations, n = its.length;
+    const hist = document.getElementById("hist"), button = document.getElementById("r-play");
+    const out = { k: document.getElementById("r-k"), beta: document.getElementById("r-beta"), t: document.getElementById("r-t") };
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const ext = video.canPlayType('video/webm; codecs="vp9"') ? ".webm" : ".mp4";
+    let theme = null, marker = null;
+
+    const at = (time) => {  // the iteration on screen at ``time``: 0..n-1, or n for final
+      if (time >= timing.final.time_s) return n;
+      let k = 0;
+      while (k + 1 < n && its[k + 1].time_s <= time) k++;
+      return k;
     };
-    svgEl.addEventListener("pointermove", show);
-    svgEl.addEventListener("pointerdown", show);
-    svgEl.addEventListener("pointerleave", () => (tip.hidden = true));
+    const show = () => {
+      const time = video.currentTime, k = at(time);
+      out.k.textContent = k === n ? "final" : k;
+      out.beta.textContent = its[Math.min(k, n - 1)].beta;
+      out.t.textContent = (k === n ? timing.final.t : its[k].t).toFixed(4);
+      if (marker) {
+        const blend = its[1] ? its[1].time_s : 1;
+        const x = Math.min(n - 1, time / blend);
+        marker.setAttribute("transform", `translate(${marker.scale * x},0)`);
+      }
+    };
+    const loop = () => {
+      show();
+      if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(loop);
+      else if (!video.paused) requestAnimationFrame(loop);
+    };
+    const label = () => (button.textContent = video.paused ? "play" : "pause");
+
+    function load() {
+      const next = document.documentElement.classList.contains("dark") ? "dark" : "light";
+      if (next === theme) return;
+      const first = theme === null;
+      const time = video.currentTime, paused = first ? reduce : video.paused;
+      theme = next;
+      video.poster = video.dataset[theme] + ".png";
+      video.src = video.dataset[theme] + ext;
+      video.addEventListener("loadedmetadata", () => {
+        // first load with reduced motion: hold the last frame, final, paused;
+        // a theme switch resumes where the other theme's file was
+        video.currentTime = first ? (reduce ? video.duration - 0.05 : 0) : time;
+        if (!paused) video.play().catch(label);
+        label();
+        show();
+      }, { once: true });
+    }
+
+    function strip() {
+      const W = hist.clientWidth, H = 56, pad = 6;
+      hist.setAttribute("viewBox", `0 0 ${W} ${H}`);
+      hist.style.height = H + "px";
+      hist.replaceChildren();
+      const x = (k) => pad + ((W - 2 * pad) * k) / (n - 1);
+      const y = (t) => H - pad - (H - 2 * pad) * t;
+      for (let k = 1; k < n; k++) {
+        if (its[k].beta !== its[k - 1].beta) {
+          hist.appendChild(el("line", { x1: x(k - 0.5), x2: x(k - 0.5), y1: pad, y2: H - pad, class: "tick" }));
+        }
+      }
+      hist.appendChild(el("path", { d: "M" + its.map((it, k) => `${x(k).toFixed(1)},${y(it.t).toFixed(1)}`).join("L"), class: "curve" }));
+      marker = el("g", { class: "head" });
+      marker.scale = (W - 2 * pad) / (n - 1);
+      marker.appendChild(el("line", { x1: pad, x2: pad, y1: pad - 4, y2: H - pad + 4 }));
+      hist.appendChild(marker);
+      show();
+    }
+
+    hist.addEventListener("click", (e) => {
+      const r = hist.getBoundingClientRect();
+      const k = Math.round(((e.clientX - r.left - 6) / (r.width - 12)) * (n - 1));
+      video.currentTime = its[Math.max(0, Math.min(n - 1, k))].time_s;
+      show();
+    });
+    button.addEventListener("click", () => {
+      if (video.paused) video.play().catch(label);
+      else video.pause();
+    });
+    video.addEventListener("play", () => { label(); loop(); });
+    video.addEventListener("pause", label);
+    video.addEventListener("seeked", show);
+    load();
+    strip();
+    return { redraw() { load(); strip(); } };
   }
 
-  function drawFront(data, first) {
-    drawDesign(document.getElementById("d-final"), data, data.final);
-    const field = document.getElementById("f-final");
-    drawField(field, data, first);
-    if (first) readout(field, document.getElementById("grad-tip"), data);
+  function drawFront(data) {
     data.snapshots.density.forEach((d, k) => drawDesign(document.getElementById("s-" + k), data, d));
   }
 
   if (window.BEND) {
-    let first = true;
-    const draw = () => { drawFront(window.BEND, first); first = false; };
-    draw();
+    const movie = film(window.BEND);
+    const draw = () => { drawFront(window.BEND); movie.redraw(); };
+    drawFront(window.BEND);
     // redraw on a theme switch only: html's class list changes for other reasons too
     const root = document.documentElement;
     let dark = root.classList.contains("dark");

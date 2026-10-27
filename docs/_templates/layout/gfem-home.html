@@ -38,24 +38,23 @@
 
     <figure class="grad" aria-labelledby="grad-cap">
       {%- if front %}
-      <div class="readout" aria-hidden="true"><span><i>Core layer</i>{{ front.box }} × {{ front.box }} µm, z = 0</span><span><i>Quantity</i>|E| / input-guide peak</span><span><i>Wavelength</i>{{ front.wavelength }} µm</span><span class="scale">0 <b style="background:rgba(var(--accent-field),0)"></b><b style="background:rgba(var(--accent-field),.23)"></b><b style="background:rgba(var(--accent-field),.46)"></b><b style="background:rgba(var(--accent-field),.69)"></b><b style="background:rgba(var(--accent-field),.92)"></b> {{ front.vmax }}</span></div>
-      {%- endif %}
-      <div class="plot">
-        {%- if front %}
-        <div class="pane"><div class="pane-h"><span>Design, <code>final</code></span><span>{{ front.thickness }} nm Si in SiO<sub>2</sub></span></div><svg id="d-final" role="img" aria-label="Top view of the optimized bend: silicon in ink, oxide blank"></svg></div>
-        <div class="pane"><div class="pane-h"><span>|E|, core mid-plane</span><span>|S21|² <b>{{ front.t_final }}</b></span></div><svg id="f-final" role="img" aria-label="Field magnitude on the core mid-plane of the optimized bend, with the silicon edge drawn as a line"></svg></div>
-        <div class="tip" id="grad-tip" hidden></div>
-        {%- else %}<p class="gfem-missing">The hero data is missing: run <code>just front-page-data</code>, then rebuild.</p>{% endif -%}
+      <div class="readout"><span aria-hidden="true"><i>Iteration</i><b id="r-k">final</b></span><span aria-hidden="true"><i class="greek">β</i><b id="r-beta">32</b></span><span aria-hidden="true"><i>|S21|²</i><b id="r-t">{{ front.t_final }}</b></span><span aria-hidden="true"><i>Wavelength</i>{{ front.wavelength }} µm</span><button class="play" id="r-play" type="button" aria-controls="bend-video">pause</button></div>
+      <div class="plot film">
+        <video id="bend-video" muted loop playsinline preload="metadata" poster="{{ pathto('_static/front/bend3d-optimization-light.png', 1) }}"
+          data-light="{{ pathto('_static/front/bend3d-optimization-light', 1) }}" data-dark="{{ pathto('_static/front/bend3d-optimization-dark', 1) }}"
+          aria-label="Animation: the 3D bend's design and field over the {{ front.steps }} optimization iterations, then the thresholded design final"></video>
       </div>
-      {%- if front %}
-      <div class="ports"><span>p1: input guide, x &lt; −{{ front.design }} µm</span><span class="sr">Scale: |E| over its peak in the input guide, from 0 to {{ front.vmax }}, in five steps.</span><span>p2: output guide, y &lt; −{{ front.design }} µm</span></div>
+      <svg class="hist" id="hist" role="img" aria-label="|S21|² at each of the {{ front.steps }} iterations, rising from {{ front.snapshots[0].t }} to {{ front.snapshots[-1].t }}; click to go to an iteration"></svg>
+      <div class="ports" aria-hidden="true"><span>iteration 0, ρ = {{ front.start }} everywhere</span><span>|S21|² per iteration, β doubling every {{ front.steps_per_beta }}</span><span>iteration {{ front.last }}, then <code>final</code></span></div>
+      {%- else %}
+      <div class="plot"><p class="gfem-missing">The hero data is missing: run <code>just front-page-data</code> and <code>tools/bend3d_animation.py</code>, then rebuild.</p></div>
       {%- endif %}
       <div class="chain" aria-label="The differentiable chain">
         <span>ρ</span><span class="op">→</span><span>½(ρ + ρᵀ)</span><span class="op">→</span><span>helmholtz_filter</span><span class="op">→</span><span>project</span><span class="op">→</span><span>MaterialField</span><span class="op">→</span><span>gfem.solve</span><span class="op">→</span><span>S21</span><span class="op">→</span><span>J</span>
         <span class="back"><span class="op">←</span> <b>jax.value_and_grad</b> back to ρ</span>
       </div>
       {%- if front %}
-      <figcaption id="grad-cap"><span>A 90° bend between two {{ front.width }} µm guides of {{ front.thickness }} nm silicon in oxide, solved in 3D at {{ front.wavelength }} µm with 1 W incident in the fundamental TE-like mode at p1. |E| on the core mid-plane, normalised to its peak in the input guide; the line is the silicon edge, the dashed square the {{ front.square }} µm × {{ front.square }} µm design region. Left, <code>final</code>, the pattern {{ front.steps }} gradient steps found there, each one driven solve of {{ front.dof }} unknowns and its gradient; right, its field. {{ front.t_final }} of the power reaches the output guide's fundamental mode.</span><span>From the 3D bend's run record</span></figcaption>
+      <figcaption id="grad-cap"><span>A 90° bend between two {{ front.width }} µm guides of {{ front.thickness }} nm silicon in oxide, optimized in 3D at {{ front.wavelength }} µm: each of the {{ front.steps }} iterations is one driven solve of {{ front.dof }} unknowns and its gradient. Grey: the silicon in the {{ front.square }} µm × {{ front.square }} µm design square, shaded by density; red: the surface where |E| is 0.35 of its peak in the input guide, with 1 W incident at p1, and |E| on the core mid-plane drawn on the floor of the box. The last iteration gives way to <code>final</code>, the design thresholded at 0.5.</span><span>Rendered from a rerun of the 3D bend</span></figcaption>
       {%- endif %}
     </figure>
 
