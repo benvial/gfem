@@ -1,6 +1,6 @@
 /* The gfem front page (layout/gfem-home.html) on Shibuya; loaded by that layout only.
    Tokens come from gfem.css. Header and footer rules re-aim Shibuya's .sy-head / .sy-foot at the
-   1320px front-page container; the rest lays out the hero, the instrument panel (the mesh figure
+   1320px front-page container; the rest lays out the hero, the instrument panel (two field maps
    framed by mono readout strips) and the sections, each 5:7 (claim left, proof right). */
 .gfem-home { --sy-s-navbar-height: 72px; }
 .gfem-home .sy-head { border-bottom: 0; }
@@ -50,13 +50,18 @@ figure.grad { margin: 0 0 var(--s-8); }
 .readout, .ports { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s-2) var(--s-5); flex-wrap: wrap;
   font: var(--t-data); color: var(--ink-2); }
 .readout { border-top: 1px solid var(--ink); padding: var(--s-3) 0; }
-.readout + .variants, .readout + .status { border-top: 1px solid var(--hair); }
+.readout + .status { border-top: 1px solid var(--hair); }
 .readout i, .ports i { font-style: normal; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-right: 10px; }
-figure.grad .plot { position: relative; border: 1px solid var(--hair); background: var(--panel); }
-figure.grad svg { display: block; width: 100%; }
-svg path.hot { stroke: var(--ink); stroke-width: 1.4; }
+figure.grad .plot { position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-5); }
+figure.grad .pane-h { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s-3); font: var(--t-data); color: var(--muted); padding-bottom: var(--s-2); }
+figure.grad .pane-h span:first-child { text-transform: uppercase; letter-spacing: .08em; }
+figure.grad .pane-h code { font: inherit; text-transform: none; letter-spacing: 0; color: var(--ink); }
+figure.grad .pane-h b { font-weight: 500; color: var(--ink); margin-left: 6px; }
+figure.grad svg, .snap svg { display: block; width: 100%; border: 1px solid var(--hair); background: var(--panel); box-sizing: border-box; }
+svg .edge { fill: none; stroke: var(--ink); stroke-width: 1.2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+svg .square { fill: none; stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+svg image.pixels { image-rendering: pixelated; }
 .ports { padding: var(--s-2) 0 0; color: var(--muted); }
-.ports .narrow { display: none; }
 .scale { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
 .scale b { width: 18px; height: 10px; border: 1px solid var(--mesh); }
 .chain { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2) var(--s-3); font: var(--t-code); color: var(--ink-2); padding: var(--s-5) 0 var(--s-4); border-bottom: 1px solid var(--hair); }
@@ -82,13 +87,14 @@ section.s .claim .src code { font: .86em var(--f-mono); color: var(--ink-2); }
   color: var(--ink) !important; text-decoration: none !important; padding-top: var(--s-2); }
 .more:hover { color: var(--accent) !important; }
 
-/* tutorial: the three etch variants after the optimisation */
-.variants { border-top: 1px solid var(--ink); }
-.variants .row { display: grid; grid-template-columns: 88px minmax(0, 1fr) 120px; gap: var(--s-4); align-items: center; padding: var(--s-3) 0; border-bottom: 1px solid var(--hair); }
-.variants .name { font: var(--t-data); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
-.variants svg { display: block; width: 100%; border: 1px solid var(--hair); background: var(--panel); }
-.variants .val { font: var(--t-data); color: var(--muted); text-align: right; }
-.variants .val b { display: block; font: 400 22px/1.2 var(--f-mono); letter-spacing: -.02em; color: var(--ink); }
+/* tutorial: the design at four iterations of the optimisation */
+.snaps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-4); padding: var(--s-4) 0; border-bottom: 1px solid var(--hair); }
+.readout + .snaps { border-top: 1px solid var(--hair); }
+.snap { display: flex; flex-direction: column; gap: var(--s-1); }
+.snap svg { margin-bottom: var(--s-1); }
+.snap .name { font: var(--t-data); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.snap .val { font: var(--t-data); color: var(--muted); }
+.snap .val b { font-weight: 500; color: var(--ink); margin-left: 4px; }
 .figkey { display: flex; gap: var(--s-5); font: var(--t-small); color: var(--muted); padding-top: var(--s-3); }
 .figkey i { display: inline-block; width: 12px; height: 12px; border: 1px solid var(--mesh); vertical-align: -1px; margin-right: 6px; }
 .figkey i.c { background: rgba(var(--ink-field), .88); }
@@ -136,8 +142,6 @@ table.matrix tbody th span { display: block; font-weight: 400; color: var(--mute
   .chain .back { margin-left: 0; flex-basis: 100%; }
   .hero .line { white-space: normal; }
   .hero .line .arg { display: block; padding-left: 2ch; }
-  .variants .row { grid-template-columns: 1fr auto; }
-  .variants .row svg { grid-column: 1 / -1; grid-row: 2; }
   table.matrix thead { display: none; }
   table.matrix tr { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--hair); padding: var(--s-2) 0; }
   table.matrix tbody tr:first-child { border-top: 1px solid var(--ink); }
@@ -150,7 +154,6 @@ table.matrix tbody th span { display: block; font-weight: 400; color: var(--mute
 }
 @media (max-width: 599px) {
   .readout { justify-content: flex-start; }
-  .ports { flex-wrap: wrap; }
-  .ports .wide { display: none; }
-  .ports .narrow { display: block; flex-basis: 100%; }
+  figure.grad .plot { grid-template-columns: minmax(0, 1fr); }
+  .snaps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

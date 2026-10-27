@@ -3,8 +3,8 @@
     Header: the site-head partial fed the three-item front-page nav (gfem_nav_home in conf.py) by
     re-binding theme_nav_links before the include; gfem_home drops the drawer's site tree.
     Body: static copy in this template (conf.py's front-page block lists it); numbers from the build:
-      gfem_front         docs/_data/front-page.json (just front-page-data) and its model values, via conf.py
-      gfem_code_line     the tutorial's value_and_grad line, read from topology.ipynb by conf.py
+      gfem_front         docs/_data/front-page.json (just front-page-data), the 3D bend's run record, via conf.py
+      gfem_code_line     the 3D bend run's value_and_grad line, read from tools/bend3d_run.py by conf.py
       gfem_install       the install line and its note (one conf.py value)
       gfem_status        the version label, from gfem.__version__ (conf.py)
       gfem_python        the Python floor, from requires-python in pyproject.toml (conf.py)
@@ -32,27 +32,30 @@
         <p class="lead">Gradients of full-wave FEM results with respect to your geometry and materials, in Python.</p>
         <p class="scope">Driven, eigenmode and electrostatic problems, from microwave circuits to photonic waveguides, on NGSolve and JAX.</p>
         <div class="line">{{ gfem_code_line.head|e }}<b>jax.value_and_grad</b>(<span class="arg">{{ gfem_code_line.args|e }}</span></div>
-        <div class="actions"><a class="btn" href="{{ pathto('tutorials/topology') }}">Run the topology tutorial</a><a class="btn quiet" href="{{ pathto('capabilities') }}">Capabilities</a></div>
+        <div class="actions"><a class="btn" href="{{ pathto('tutorials/bend3d') }}">The 3D bend tutorial</a><a class="btn quiet" href="{{ pathto('capabilities') }}">Capabilities</a></div>
       </div>
     </div>
 
     <figure class="grad" aria-labelledby="grad-cap">
       {%- if front %}
-      <div class="readout" aria-hidden="true"><span><i>Design layer</i>{{ front.layer[0] }} × {{ front.layer[1] }} mm</span><span><i>Quantity</i>|∂J/∂ε<sub>r</sub>|, normalised</span><span><i>Start design</i>β = {{ front.beta0 }}</span><span class="scale">0 <b style="background:rgba(var(--accent-field),0)"></b><b style="background:rgba(var(--accent-field),.23)"></b><b style="background:rgba(var(--accent-field),.46)"></b><b style="background:rgba(var(--accent-field),.69)"></b><b style="background:rgba(var(--accent-field),.92)"></b> 1</span></div>
+      <div class="readout" aria-hidden="true"><span><i>Core layer</i>{{ front.box }} × {{ front.box }} µm, z = 0</span><span><i>Quantity</i>|E| / input-guide peak</span><span><i>Wavelength</i>{{ front.wavelength }} µm</span><span class="scale">0 <b style="background:rgba(var(--accent-field),0)"></b><b style="background:rgba(var(--accent-field),.23)"></b><b style="background:rgba(var(--accent-field),.46)"></b><b style="background:rgba(var(--accent-field),.69)"></b><b style="background:rgba(var(--accent-field),.92)"></b> {{ front.vmax }}</span></div>
       {%- endif %}
       <div class="plot">
-        {%- if front %}<svg id="grad" role="img" aria-label="Top view of the design layer's tetrahedral mesh, each element shaded by the sensitivity of the band-stop objective to its permittivity at the start design"></svg><div class="tip" id="grad-tip" hidden></div>
+        {%- if front %}
+        <div class="pane"><div class="pane-h"><span>Circular arc</span><span>|S21|² <b>{{ front.t_arc }}</b></span></div><svg id="f-arc" role="img" aria-label="Field magnitude on the core mid-plane of a circular-arc bend, with the silicon edge drawn as a line"></svg></div>
+        <div class="pane"><div class="pane-h"><span>Optimized, <code>final</code></span><span>|S21|² <b>{{ front.t_final }}</b></span></div><svg id="f-final" role="img" aria-label="Field magnitude on the core mid-plane of the optimized bend, with the silicon edge drawn as a line"></svg></div>
+        <div class="tip" id="grad-tip" hidden></div>
         {%- else %}<p class="gfem-missing">The hero data is missing: run <code>just front-page-data</code>, then rebuild.</p>{% endif -%}
       </div>
       {%- if front %}
-      <div class="ports"><span class="wide">x = {{ front.x[0] }} mm, feed to port 1</span><span class="narrow">top row x = {{ front.x[0] }} to {{ front.x[1] }} mm, bottom row {{ front.x[1] }} to {{ front.x[2] }} mm</span><span class="sr">Scale: normalised sensitivity from 0 to 1, in five steps.</span><span class="wide">x = {{ front.x[2] }} mm, feed to port 2</span></div>
+      <div class="ports"><span>p1: input guide, x &lt; −{{ front.design }} µm</span><span class="sr">Scale: |E| over its peak in the input guide, from 0 to {{ front.vmax }}, in five steps.</span><span>p2: output guide, y &lt; −{{ front.design }} µm</span></div>
       {%- endif %}
       <div class="chain" aria-label="The differentiable chain">
-        <span>ρ</span><span class="op">→</span><span>helmholtz_filter</span><span class="op">→</span><span>robust</span><span class="op">→</span><span>MaterialField</span><span class="op">→</span><span>gfem.solve</span><span class="op">→</span><span>S21</span><span class="op">→</span><span>J</span>
+        <span>ρ</span><span class="op">→</span><span>½(ρ + ρᵀ)</span><span class="op">→</span><span>helmholtz_filter</span><span class="op">→</span><span>project</span><span class="op">→</span><span>MaterialField</span><span class="op">→</span><span>gfem.solve</span><span class="op">→</span><span>S21</span><span class="op">→</span><span>J</span>
         <span class="back"><span class="op">←</span> <b>jax.value_and_grad</b> back to ρ</span>
       </div>
       {%- if front %}
-      <figcaption id="grad-cap"><span><code>grad</code> has one value per element. Here: |∂J/∂ε<sub>r</sub>|, normalised to its maximum, at the topology tutorial's start design (nominal, β = {{ front.beta0 }}), on the {{ front.layer[0] }} mm × {{ front.layer[1] }} mm design layer of a parallel-plate line. J = 1 − |S21({{ front.pass }} GHz)|² + |S21({{ front.stop }} GHz)|² is the power that misses a band-stop target. The line's field is uniform across its width, so the sensitivity varies only along x.</span><span>Computed from the tutorial's model</span></figcaption>
+      <figcaption id="grad-cap"><span>A 90° bend between two {{ front.width }} µm guides of {{ front.thickness }} nm silicon in oxide, solved in 3D at {{ front.wavelength }} µm with 1 W incident in the fundamental TE-like mode at p1. |E| on the core mid-plane, normalised to its peak in the input guide; the line is the silicon edge, the dashed square the {{ front.square }} µm × {{ front.square }} µm design region. Left, a circular arc; right, <code>final</code>, the pattern {{ front.steps }} gradient steps found there, each one driven solve of {{ front.dof }} unknowns and its gradient.</span><span>From the 3D bend's run record</span></figcaption>
       {%- endif %}
     </figure>
 
@@ -60,21 +63,22 @@
       <div class="claim">
         <h2 id="t-h">Where that gradient leads</h2>
         {%- if front %}
-        <p class="tut-q">Which ceramic pattern, with a {{ front.radius }} mm minimum feature, passes {{ front.pass }} GHz and blocks {{ front.stop }} GHz, and still does when over- or under-etched?</p>
-        <p>{{ front.steps }} Adam steps on the pixels, the projection sharpened every {{ front.steps_per_beta }}. The worst of the three etch variants ends at J = {{ front.worst }}, the missed-power fraction the tutorial minimises.</p>
+        <p class="tut-q">Which pattern of silicon and oxide, in the {{ front.square }} µm square where the two guides meet, carries the most {{ front.wavelength }} µm light round the turn?</p>
+        <p>{{ front.steps }} Adam steps on {{ front.pixels[0] }} × {{ front.pixels[1] }} pixels of {{ front.pitch }} µm, from {{ front.start }} everywhere, the projection sharpened every {{ front.steps_per_beta }}; one step took a median {{ front.median_s }} s on {{ front.cores }} cores. <code>final</code> carries {{ front.t_final }} of the power into the output guide's fundamental mode ({{ front.db_final }} dB), against {{ front.t_arc }} ({{ front.db_arc }} dB) for the arc.</p>
+        <p>Optimized at {{ front.wavelength }} µm only, it beats the arc from {{ front.beats[0] }} to {{ front.beats[1] }} µm, not across {{ front.band[0] }} to {{ front.band[1] }} µm: the tutorial shows the spectrum.</p>
         {%- endif %}
-        <a class="more" href="{{ pathto('tutorials/topology') }}">Run the topology tutorial</a>
+        <a class="more" href="{{ pathto('tutorials/bend3d') }}">Read the 3D bend tutorial</a>
       </div>
       <div>
         {%- if front %}
-        <div class="readout" aria-hidden="true"><span><i>Optimiser</i>{{ front.steps }} Adam steps</span><span><i>Min. feature</i>{{ front.radius }} mm</span><span><i>Worst J</i>{{ front.worst }}</span></div>
-        <div class="variants" role="list">
-          {%- for name in ("eroded", "nominal", "dilated") %}
-          <div class="row" role="listitem"><span class="name">{{ name }}</span><svg id="v-{{ name }}" role="img" aria-label="{{ name|capitalize }} design"></svg><span class="val"><b>{{ front.final[name] }}</b>J</span></div>
+        <div class="readout" aria-hidden="true"><span><i>Optimizer</i>{{ front.steps }} Adam steps</span><span><i>Mesh</i>{{ front.dof }} DOF, order {{ front.order }}</span><span><i>One step</i>{{ front.median_s }} s</span></div>
+        <div class="snaps" role="list">
+          {%- for snap in front.snapshots %}
+          <div class="snap" role="listitem"><svg id="s-{{ loop.index0 }}" role="img" aria-label="Design at iteration {{ snap.iteration }}"></svg><span class="name">iteration {{ snap.iteration }}</span><span class="val">|S21|² <b>{{ snap.t }}</b></span></div>
           {%- endfor %}
         </div>
-        <div class="figkey"><span><i class="c"></i>ceramic, ε<sub>r</sub> = {{ front.eps_r }}</span><span><i></i>air</span></div>
-        <p class="check">The line is lossless and both ports are matched, so for the nominal design the tutorial checks <code>|S11|² + |S21|² = 1</code> across its {{ front.sweep[0] }} to {{ front.sweep[1] }} GHz sweep: the largest deviation is <code>{{ front.balance }}</code>.</p>
+        <div class="figkey"><span><i class="c"></i>Si, n = {{ front.n_si }}</span><span><i></i>SiO<sub>2</sub>, n = {{ front.n_sio2 }}</span></div>
+        <p class="check">The media are lossless, so for <code>final</code> the tutorial checks reciprocity, <code>|S12 − S21| = {{ front.reciprocity }}</code>, and power balance, <code>|S11|² + |S21|² = {{ front.balance }}</code>, at most 1: the rest leaves as the guide's second mode or radiation, which the tutorial splits.</p>
         {%- endif %}
       </div>
     </section>
@@ -139,7 +143,7 @@
 {%- block scripts -%}
   {{ super() }}
   {%- if front %}
-  <script>window.TOPO = {{ front.topo_json }};</script>
+  <script>window.BEND = {{ front.data_json }};</script>
   {%- endif %}
   <script src="{{ pathto('_static/front/front.js', 1) }}"></script>
 {%- endblock -%}

@@ -29,7 +29,7 @@ tutorial, regenerate them and commit the result:
 
 ```bash
 just notebooks        # re-execute docs/tutorials/*.ipynb in place, docs figure style
-just front-page-data  # rerun the topology tutorial for the front page's hero data
+just front-page-data  # resample the 3D bend's run record for the front page's hero data
 ```
 
 The 3D bend tutorial solves nothing: it reads a committed run record,

@@ -21,7 +21,7 @@ notebooks:
         --ExecutePreprocessor.timeout=1800 --ExecutePreprocessor.record_timing=False \
         docs/tutorials/*.ipynb
 
-# Regenerate the front page's hero data, docs/_data/front-page.json, from the topology tutorial.
+# Regenerate the front page's hero data, docs/_data/front-page.json, from the 3D bend's run record (solves nothing).
 front-page-data:
     {{ docs_env }} python tools/front_page_data.py
 
