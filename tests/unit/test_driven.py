@@ -242,6 +242,37 @@ def test_bddc_gmres_is_the_default_and_matches_direct(line):
     assert all(len(its) == 2 for its in outputs["iterations"])
 
 
+def test_bddc_tolerance_is_the_preconditioned_residual(line, monkeypatch):
+    # GMRES stops on |P(b - Ax)| <= tol |P b|; S is accurate to about tol,
+    # while |b - Ax| / |b| (1.6e-5 here) is not asserted: it is no error measure
+    import ngsolve as ngs
+
+    tolerance = 1e-6
+    residuals = []
+    solve = BddcHandle._inverse_map
+
+    def spy(self, B, tol, x0=None):
+        X = solve(self, B, tol, x0)
+        matrix, pre = self._matrix, self._preconditioner.mat
+        b, x, r, pr, pb = (matrix.CreateColVector() for _ in range(5))
+        for j in range(B.shape[1]):
+            b.FV().NumPy()[:] = B[:, j]
+            x.FV().NumPy()[:] = X[:, j]
+            r.data = b - matrix * x
+            pr.data = pre * r
+            pb.data = pre * b
+            residuals.append(ngs.Norm(pr) / ngs.Norm(pb))
+        return X
+
+    monkeypatch.setattr(BddcHandle, "_inverse_map", spy)
+    problem = gfem.Driven(frequency=1e9)
+    s = _s(line, problem, linear_solver="bddc_gmres", tolerance=tolerance).s.values
+    direct = _s(line, problem).s.values
+    assert len(residuals) == 2
+    assert max(residuals) <= 1.01 * tolerance
+    np.testing.assert_allclose(s, direct, rtol=0, atol=10 * tolerance)
+
+
 def _count_prepares(monkeypatch) -> list[int]:
     """Spy on the driven sweep's `prepare`: one entry per base handle."""
     calls = []
