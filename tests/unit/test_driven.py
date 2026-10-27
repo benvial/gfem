@@ -243,6 +243,37 @@ def test_bddc_gmres_is_the_default_and_matches_direct(line):
     assert all(len(its) == 2 for its in outputs["iterations"])
 
 
+def test_bddc_tolerance_is_the_preconditioned_residual(line, monkeypatch):
+    # GMRES stops on |P(b - Ax)| <= tol |P b|; S is accurate to about tol,
+    # while |b - Ax| / |b| (1.6e-5 here) is not asserted: it is no error measure
+    import ngsolve as ngs
+
+    tolerance = 1e-6
+    residuals = []
+    solve = BddcHandle._inverse_map
+
+    def spy(self, B, tol, x0=None):
+        X = solve(self, B, tol, x0)
+        matrix, pre = self._matrix, self._preconditioner.mat
+        b, x, r, pr, pb = (matrix.CreateColVector() for _ in range(5))
+        for j in range(B.shape[1]):
+            b.FV().NumPy()[:] = B[:, j]
+            x.FV().NumPy()[:] = X[:, j]
+            r.data = b - matrix * x
+            pr.data = pre * r
+            pb.data = pre * b
+            residuals.append(ngs.Norm(pr) / ngs.Norm(pb))
+        return X
+
+    monkeypatch.setattr(BddcHandle, "_inverse_map", spy)
+    problem = gfem.Driven(frequency=1e9)
+    s = _s(line, problem, linear_solver="bddc_gmres", tolerance=tolerance).s.values
+    direct = _s(line, problem).s.values
+    assert len(residuals) == 2
+    assert max(residuals) <= 1.01 * tolerance
+    np.testing.assert_allclose(s, direct, rtol=0, atol=10 * tolerance)
+
+
 def _count_prepares(monkeypatch) -> list[int]:
     """Spy on the driven sweep's `prepare`: one entry per base handle."""
     calls = []
@@ -542,6 +573,37 @@ def test_a_direct_handle_sums_the_pieces_into_the_assembled_operator(tmp_path):
         summed = handle._matrix.AsVector().FV().NumPy()
         assembled = form.mat.AsVector().FV().NumPy()
         assert np.abs(summed - assembled).max() <= 1e-14 * np.abs(assembled).max()
+
+
+def test_pieces_restricted_to_a_partition_of_the_mesh_sum_to_the_whole(tmp_path):
+    # every tetrahedron and triangle in one of three parts, at random
+    model = _every_piece_kind(tmp_path)
+    rng = np.random.default_rng(0)
+    tets = rng.integers(0, 3, len(model.mesh.tetrahedra))
+    tris = rng.integers(0, 3, len(model.mesh.triangles))
+    whole = driven.driven_operator(model, 2)
+    parts = [
+        driven.driven_operator(model, 2, elements=tets == j, faces=tris == j)
+        for j in range(3)
+    ]
+    x = rng.standard_normal((whole.space.ndof, 2)) @ np.array([1.0, 1j])
+    names = [p.name for p in whole.pieces]
+    assert {"conductivity", "absorbing order 2", "impedance sheet C"} <= set(names)
+    assert {"conductor bottom (one-sided)", "port p1 R"} <= set(names)
+    for k, name in enumerate(names):
+        expected = whole.apply(k, x)
+        pieces = [part.apply(k, x) for part in parts]
+        assert all(np.abs(y).max() > 0 for y in pieces), name
+        error = np.abs(sum(pieces) - expected).max()
+        assert error <= 1e-12 * np.abs(expected).max(), name
+
+
+def test_a_piece_restriction_is_one_boolean_per_element(line):
+    n = len(line.mesh.tetrahedra)
+    with pytest.raises(ValueError, match="one boolean per tetrahedron"):
+        driven.driven_operator(line, 1, elements=np.ones(n - 1, bool))
+    with pytest.raises(ValueError, match="one boolean per triangle"):
+        driven.driven_operator(line, 1, faces=np.arange(len(line.mesh.triangles)))
 
 
 @pytest.mark.parametrize("sweep", ["uniform", "adaptive"])

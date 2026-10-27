@@ -330,20 +330,46 @@ def lumped_ports(model: Model, scale: float) -> tuple[LumpedPortData, ...]:
 
 @dataclasses.dataclass(frozen=True, eq=False)
 class _Tangential:
-    """``∫ weight E_t · v_t`` on a boundary region, on the pinned rule."""
+    """``∫ weight E_t · v_t`` on a boundary region, on the pinned rule.
+
+    ``faces`` restricts it to those NGSolve surface elements (``None``:
+    the whole region).
+    """
 
     region: Any
     order: int
+    faces: Any = None
 
     def __call__(self, u: Any, v: Any, weight: Any = 1.0) -> Any:
-        ds = quadrature.ds(self.order, definedon=self.region)
+        ds = quadrature.ds(
+            self.order, definedon=self.region, definedonelements=self.faces
+        )
         return weight * u.Trace() * v.Trace() * ds
 
 
 def _tangential(
-    built: EngineMesh, surfaces: tuple[str, ...], order: int
+    built: EngineMesh, surfaces: tuple[str, ...], order: int, faces: Any = None
 ) -> _Tangential:
-    return _Tangential(boundary_region(built, surfaces), order)
+    return _Tangential(boundary_region(built, surfaces), order, faces)
+
+
+def _bits(mask: np.ndarray | None, order: np.ndarray, what: str) -> Any:
+    """The NGSolve element bits of a mask over gfem ``what`` (``None``: all).
+
+    NGSolve element ``i`` is gfem element ``order[i]``.
+
+    Raises:
+        ValueError: The mask is not one boolean per gfem element.
+    """
+    if mask is None:
+        return None
+    mask = np.asarray(mask)
+    if mask.dtype != bool or mask.shape != order.shape:
+        raise ValueError(
+            f"A driven piece restriction needs one boolean per {what} "
+            f"({len(order)}), got an array of {mask.dtype} of shape {mask.shape}."
+        )
+    return ngs.BitArray(mask[order].tolist())
 
 
 def _inverse(values: np.ndarray) -> np.ndarray:
@@ -355,15 +381,31 @@ def pieces(
     built: EngineMesh,
     order: int,
     ports: tuple[LumpedPortData, ...],
+    *,
+    elements: np.ndarray | None = None,
+    faces: np.ndarray | None = None,
 ) -> list[Piece]:
     """The driven operator's pieces on ``model`` (see the module docstring).
 
     `PEC` is a constraint of the space and `PMC` the natural condition, so
     neither has a piece.
+
+    ``elements`` and ``faces`` restrict the pieces to part of the mesh:
+    boolean masks over the gfem tetrahedra and triangles. Every volume term
+    is integrated on the selected tetrahedra only, every surface term
+    (absorbing, conductor, impedance and lumped port) on the selected
+    triangles only; ``None`` selects them all. The pieces of a partition of
+    the mesh sum to the unrestricted pieces. θ and the coefficients do not
+    change.
+
+    Raises:
+        ValueError: A mask is not one boolean per tetrahedron (triangle).
     """
     scale = built.scale
     k = lambda w: wavenumber(w, scale)  # noqa: E731
-    dx = quadrature.dx(order)
+    tets = _bits(elements, built.tetrahedron_order, "tetrahedron")
+    tris = _bits(faces, built.triangle_order, "triangle")
+    dx = quadrature.dx(order, definedonelements=tets)
     active = model._domain.active  # noqa: SLF001
 
     eps = lossy_eps(model)
@@ -401,7 +443,7 @@ def pieces(
     absorbing = [b for b in model.boundaries if isinstance(b, Absorbing)]
     if absorbing:
         admittance, curl = _absorbing_coefficients(model, eps)
-        form = _tangential(built, tuple(b.surface for b in absorbing), order)
+        form = _tangential(built, tuple(b.surface for b in absorbing), order, tris)
         y_cf = surface_p0(built, admittance)
         out.append(
             Piece(
@@ -417,7 +459,7 @@ def pieces(
         if second:
             curl_cf = surface_p0(built, curl)
             region = boundary_region(built, second)
-            ds = quadrature.ds(order, definedon=region)
+            ds = quadrature.ds(order, definedon=region, definedonelements=tris)
             out.append(
                 Piece(
                     "absorbing order 2",
@@ -435,12 +477,12 @@ def pieces(
 
     for b in model.boundaries:
         if isinstance(b, Conductor):
-            out.extend(_conductor(model, built, order, b))
+            out.extend(_conductor(model, built, order, b, tris))
         elif isinstance(b, Impedance):
-            out.extend(_impedance(model, built, order, b))
+            out.extend(_impedance(model, built, order, b, tris))
 
     for data in ports:
-        out.extend(_port(built, order, data))
+        out.extend(_port(built, order, data, tris))
     return out
 
 
@@ -501,12 +543,12 @@ def absorbing_faces(model: Model, order: int = 1) -> tuple[tuple[str, ...], np.n
 
 
 def _conductor(
-    model: Model, built: EngineMesh, order: int, b: Conductor
+    model: Model, built: EngineMesh, order: int, b: Conductor, faces: Any = None
 ) -> list[Piece]:
     """One piece per thickness: a face on the mesh boundary counts it twice."""
     mesh = model.mesh
     sigma, scale = b.conductivity, built.scale
-    form = _tangential(built, (b.surface,), order)
+    form = _tangential(built, (b.surface,), order, faces)
     on = mesh.triangle_tags == mesh.region(b.surface).tag
     one_sided = (mesh.triangle_neighbours < 0).any(axis=1)
     groups = [(1.0, on & ~one_sided), (EXTERIOR_THICKNESS_FACTOR, on & one_sided)]
@@ -632,18 +674,20 @@ def sheet_fill(model: Model, boundary: Conductor | Impedance) -> np.ndarray | No
     return out
 
 
-def _port(built: EngineMesh, order: int, data: LumpedPortData) -> list[Piece]:
+def _port(
+    built: EngineMesh, order: int, data: LumpedPortData, faces: Any = None
+) -> list[Piece]:
     sheets = [
-        (_tangential(built, (e.surface,), order), *data.per_square(e))
+        (_tangential(built, (e.surface,), order, faces), *data.per_square(e))
         for e in data.elements
     ]
     return _rlc(f"port {data.port.name}", built.scale, sheets, "port")
 
 
 def _impedance(
-    model: Model, built: EngineMesh, order: int, b: Impedance
+    model: Model, built: EngineMesh, order: int, b: Impedance, faces: Any = None
 ) -> list[Piece]:
-    form = _tangential(built, (b.surface,), order)
+    form = _tangential(built, (b.surface,), order, faces)
     sheet: tuple = (form, b.resistance, b.inductance, b.capacitance)
     fill = sheet_fill(model, b)
     if fill is not None:
