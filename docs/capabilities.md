@@ -43,8 +43,9 @@ gradient that would be wrong:
 - **Materials and designs**: {py:obj}`gfem.Material` per region, {py:obj}`gfem.MaterialField`
   per element, and {py:obj}`gfem.SheetField` for the fill of a patterned metal sheet
   ({doc}`recipes/sheet-design`).
-- **Measurements**: {py:obj}`gfem.characteristic_impedance` and
-  {py:obj}`gfem.interface_participation` ({doc}`recipes/measurements`).
+- **Measurements**: {py:obj}`gfem.characteristic_impedance`,
+  {py:obj}`gfem.interface_participation` and {py:obj}`gfem.power_flow`
+  ({doc}`recipes/measurements`).
 - **Linear solvers**: direct, BDDC + GMRES, and the experimental cuDSS
   direct solver on an NVIDIA GPU ({doc}`recipes/gpu-direct-solver`).
 
