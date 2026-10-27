@@ -56,7 +56,7 @@ def eigen_operator(
 
     Nothing is factorized until the handle is first used. ``kind``,
     ``device``, ``threads``, ``tolerance`` and ``petsc_options`` configure
-    the `gfem._linalg` backend of every shift.
+    the linear solver of every shift (`gfem._linalg`).
     """
     space, scale = op.space, op.built.scale
     classes = split(op.pieces, scale, sigma)

@@ -19,7 +19,7 @@ handle that can, and prepares a new one in place of any other.
 
 An operator may also carry its piece sum (``Operator.piece_sum``, see
 `gfem._linalg.pieces`): pieces assembled once and their weights, which the
-``direct`` and ``petsc`` backends sum instead of assembling the form.
+``direct`` and ``petsc`` linear solvers sum instead of assembling the form.
 
 Vectors are NumPy arrays over all DOFs of the operator's space. ``solve``
 reads only the free rows of ``B`` and returns zeros in the fixed (Dirichlet)
@@ -109,9 +109,9 @@ class Operator:
             symmetries need ``BilinearForm(..., symmetric=True)``.
         freedofs: The DOFs solved for; the others are fixed (Dirichlet).
         piece_sum: The same operator as a piece sum ``Σ θ_k A_k`` of pieces
-            assembled once (`gfem._linalg.pieces`), or ``None``. A backend
-            may sum it instead of assembling ``form`` (the ``direct`` and
-            ``petsc`` backends do); the others assemble ``form``.
+            assembled once (`gfem._linalg.pieces`), or ``None``. A linear
+            solver may sum it instead of assembling ``form`` (``direct`` and
+            ``petsc`` do); the others assemble ``form``.
     """
 
     form: ngs.BilinearForm
@@ -241,7 +241,7 @@ def prepare(
             again at every refactorization. Direct backends ignore it.
         petsc_options: ``SolverOptions.petsc_options``: ``kind="petsc"``
             reads its linear-solver options (`gfem.options.split_petsc_options`)
-            over gfem's defaults; other backends ignore it.
+            over gfem's defaults; other linear solvers ignore it.
 
     Raises:
         NotImplementedError: The backend is not available, or the GPU

@@ -1,4 +1,4 @@
-"""The ``petsc`` backend: a PETSc KSP / PC on the free block, MUMPS by default.
+"""The PETSc linear solver: a PETSc KSP / PC on the free block, MUMPS by default.
 
 The handle keeps the full NGSolve matrix (`apply` and the piece sum use it)
 and, beside it, the free-row, free-column block as a PETSc AIJ matrix built

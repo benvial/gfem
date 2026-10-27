@@ -1342,7 +1342,7 @@ class _Ports:
         """``A(ω)``, the operator without the modal corrections, to prepare.
 
         Its form, and its piece sum over `pieces` for the ``direct`` and
-        ``petsc`` backends.
+        ``petsc`` linear solvers.
         """
         op = self.operator
         weights = tuple(complex(piece.theta(omega)) for piece in op.pieces)

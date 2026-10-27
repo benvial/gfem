@@ -1,4 +1,4 @@
-"""The ``petsc`` backend: PETSc KSP / PC behind the solver-handle seam.
+"""The PETSc linear solver: PETSc KSP / PC behind the solver-handle seam.
 
 By default an exact MUMPS LDL^T factorization (``ksp_type preonly``,
 ``pc_type cholesky``); ``petsc_options`` configures any other KSP / PC.
