@@ -17,7 +17,7 @@ not read raises.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import ngsolve as ngs
 import numpy as np
@@ -43,6 +43,17 @@ CG_HINT = (
 )
 #: The preconditioners that factorize: their factors count in `nbytes`.
 FACTORIZATIONS = ("cholesky", "lu", "icc", "ilu")
+
+
+class _Block(NamedTuple):
+    """A free block as a PETSc AIJ over its own arrays (`PetscHandle._block`)."""
+
+    aij: Any
+    rowptr: np.ndarray
+    cols: np.ndarray
+    #: The free block's entries in NGSolve's value vector.
+    index: np.ndarray
+    values: np.ndarray
 
 
 class PetscHandle(NgsHandle):
@@ -89,7 +100,7 @@ class PetscHandle(NgsHandle):
         self._options = tuple({**dict(defaults), **dict(options)}.items())
         with self._lock:
             try:
-                self._mat = self._aij(matrix)
+                self._adopt(self._block(matrix))
                 ksp = PETSc.KSP().create(PETSc.COMM_SELF)
                 self._solver = self._ksp = ksp
                 ksp.setOptionsPrefix(self._prefix)
@@ -212,14 +223,20 @@ class PetscHandle(NgsHandle):
         new, pattern = assemble_operator(operator)  # assembly needs no lock
         with self._lock:
             matrix = self._live()
-            self._pattern = pattern
             if same_pattern(matrix, new):
+                self._pattern = pattern
                 matrix.AsVector().data = new.AsVector()
                 self._refactor_values(matrix)
                 return
-            old, self._matrix = self._mat, new
-            self._mat = self._aij(new)
-            self._ksp.setOperators(self._mat)
+            # the new plan is built aside: a failure leaves the handle as it was
+            block, old = self._block(new), self._mat
+            try:
+                self._ksp.setOperators(block.aij)
+            except BaseException:
+                block.aij.destroy()
+                raise
+            self._matrix, self._pattern = new, pattern
+            self._adopt(block)
             old.destroy()
             self._set_up()
 
@@ -235,7 +252,7 @@ class PetscHandle(NgsHandle):
 
     def _refactor_values(self, matrix) -> None:
         """Set the KSP up on ``matrix``'s new values; under the lock."""
-        self._gather(matrix.CSR()[0])
+        self._gather(matrix.CSR()[0], self._index, self._values)
         self._mat.assemble()  # marks the new values: PETSc sets up again
         self._set_up()
 
@@ -275,8 +292,12 @@ class PetscHandle(NgsHandle):
             "(petsc_options mat_mumps_icntl_14)."
         )
 
-    def _aij(self, matrix):
-        """The free block of ``matrix`` as an AIJ over the handle's own arrays."""
+    def _block(self, matrix) -> _Block:
+        """The free block of ``matrix`` as a new AIJ over new arrays.
+
+        The handle is left as it is (`_adopt` takes the block); a failed
+        creation destroys what it created.
+        """
         PETSc = _petsc.require_petsc()
         data, cols, rowptr = matrix.CSR()
         cols = np.asarray(cols).astype(np.int64)
@@ -287,25 +308,34 @@ class PetscHandle(NgsHandle):
         number = np.cumsum(free) - 1  # a free DOF's row in the free block
         n = int(free.sum())
         counts = np.bincount(number[rows[index]], minlength=n)
-        self._rowptr = np.concatenate([[0], np.cumsum(counts)]).astype(PETSc.IntType)
-        self._cols = number[cols[index]].astype(PETSc.IntType)
-        self._index = index
-        self._values = np.zeros(index.size, dtype=PETSc.ScalarType)
-        self._gather(data)
+        rowptr = np.concatenate([[0], np.cumsum(counts)]).astype(PETSc.IntType)
+        block_cols = number[cols[index]].astype(PETSc.IntType)
+        values = np.zeros(index.size, dtype=PETSc.ScalarType)
+        self._gather(data, index, values)
         aij = PETSc.Mat().createAIJWithArrays(
-            (n, n), (self._rowptr, self._cols, self._values), comm=PETSc.COMM_SELF
+            (n, n), (rowptr, block_cols, values), comm=PETSc.COMM_SELF
         )
-        aij.setOption(PETSc.Mat.Option.SYMMETRIC, True)
-        aij.setOption(PETSc.Mat.Option.SYMMETRY_ETERNAL, True)
-        return aij
+        try:
+            aij.setOption(PETSc.Mat.Option.SYMMETRIC, True)
+            aij.setOption(PETSc.Mat.Option.SYMMETRY_ETERNAL, True)
+        except BaseException:
+            aij.destroy()
+            raise
+        return _Block(aij, rowptr, block_cols, index, values)
 
-    def _gather(self, data) -> None:
-        """Write the free block's values of NGSolve's value vector ``data``."""
-        values = np.asarray(data)[self._index]
+    def _adopt(self, block: _Block) -> None:
+        """Hold ``block``: its AIJ, and the arrays the AIJ reads."""
+        self._mat = block.aij
+        self._rowptr, self._cols = block.rowptr, block.cols
+        self._index, self._values = block.index, block.values
+
+    def _gather(self, data, index: np.ndarray, values: np.ndarray) -> None:
+        """Write into ``values`` the free block's entries of NGSolve's ``data``."""
+        entries = np.asarray(data)[index]
         if self._complex:
-            self._values[:] = values
+            values[:] = entries
         else:
-            self._values.real[:] = values
+            values.real[:] = entries
 
     def _inverse_map(
         self, B: np.ndarray, tolerance: float | None, x0: np.ndarray | None = None

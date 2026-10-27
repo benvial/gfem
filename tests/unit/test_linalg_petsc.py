@@ -584,6 +584,23 @@ def test_a_failed_ksp_creation_destroys_the_aij(built, monkeypatch):
     assert not made[0]  # destroyed: its handle is null
 
 
+def test_a_failed_replan_keeps_the_handle_on_its_operator(built, monkeypatch):
+    handle = prepare(
+        _on_the_side(built, True), symmetry="complex_symmetric", kind="petsc"
+    )
+    with monkeypatch.context() as patch:
+        _aijs(patch, CreationError("no AIJ"))
+        with pytest.raises(CreationError, match="no AIJ"):
+            handle.refactorize(_on_the_side(built, False))  # another pattern
+    fresh = prepare(
+        _on_the_side(built, True), symmetry="complex_symmetric", kind="petsc"
+    )
+    _agree(handle, fresh, 5)
+    # and it refactorizes on the pattern it holds
+    handle.refactorize(_on_the_side(built, True))
+    _agree(handle, fresh, 6)
+
+
 @pytest.mark.parametrize(
     ("complex_valued", "symmetry"), [(False, "general"), (True, "hermitian")]
 )
