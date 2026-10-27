@@ -100,9 +100,12 @@ def _assert_same_modes(arpack, slepc, tolerance, *, fields=True):
     np.testing.assert_allclose(slepc.omega, arpack.omega, rtol=1e-9)
     np.testing.assert_allclose(slepc.q, arpack.q, rtol=1e-9)
     assert (np.asarray(slepc.error) < tolerance).all()
+    # the Rayleigh functional makes omega's error second order in the
+    # field's, so a field agrees to about the square root of omega's bar (the
+    # target far below the mode gives 2e-8)
     for i in range(len(arpack.omega) if fields else 0):
         a, s = (np.asarray(r.e_field(i).coefficients) for r in (arpack, slepc))
-        assert np.linalg.norm(s - a) <= 1e-9 * np.linalg.norm(a)
+        assert np.linalg.norm(s - a) <= 1e-6 * np.linalg.norm(a)
 
 
 @pytest.mark.parametrize("case", list(CASES))
