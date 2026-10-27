@@ -34,6 +34,10 @@ bend3d-data work="/tmp/bend3d-run":
 bend3d-arc-data work="/tmp/bend3d-arc":
     JAX_PLATFORMS=cpu uv run --extra mkl --group docs python tools/bend3d_arc_spectrum.py --out docs/tutorials/data --work "{{ work }}"
 
+# Rerun the 3D bend's optimization keeping every iteration's design, gradient and fields, for animations (tools/bend3d_history.py; not committed): about 3.2 h on 16 cores / 96 GiB with the mkl extra.
+bend3d-history work="/tmp/bend3d-history":
+    JAX_PLATFORMS=cpu uv run --extra mkl --group docs python tools/bend3d_history.py all --work "{{ work }}"
+
 # Build the site as docs.yml does (strict, then the Pagefind index) into docs/_build/html.
 docs:
     GFEM_DOCS_STRICT=1 {{ docs_env }} sphinx-build -n -W --keep-going docs docs/_build/html
