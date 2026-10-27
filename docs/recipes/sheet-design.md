@@ -78,14 +78,40 @@ as for any density method. Grey inductive sheets stay lossless.
 
 A design sweeps the sheet's admittance over many orders of magnitude, and a
 solid metal sheet is PEC-like (`eta |Y|` of 1e4 for 2 µm of copper). Both
-solvers are verified on sheet designs: the gradient checks pass on `direct`
-and on `bddc_gmres`, and on a test line BDDC + GMRES took the same ~51
-iterations (tolerance 1e-10) for a solid, a random grey and a binary fill of
-a 2 µm copper film, a 1 pH kinetic-inductance sheet and a 50 ohm resistive
-film, matching the direct solve to 2e-11. Prefer `direct` for the small,
-repeated solves of an optimization loop (it factorizes once per frequency and
-is insensitive to the contrast); keep `bddc_gmres` for large models, and check
-its iteration counts on your own design's extremes (all void, all solid).
+solvers are verified on sheet designs, and the contrast alone does not slow
+BDDC + GMRES: on the test line, a solid, checkerboard or random void / solid
+fill of 2 µm of copper or of a 1 pH kinetic inductance takes the iterations
+of an empty sheet (within 2) and matches the direct solve to 1e-12, and the
+gradient checks pass on `direct` and on `bddc_gmres`, including a copper
+pixel design graded across the default contrast.
+
+What slows BDDC + GMRES is a faint **inductive** face. A face of an
+inductive sheet (an `Impedance` with an `inductance`, a kinetic-inductance
+film) at fill `w` has a reactance per square `omega L / w`, and where that is
+about
+
+    X ≈ eta0 lambda0 / (2 h (eps1 + eps2))
+
+(`h` the mesh size along the sheet, `eps1`, `eps2` the relative
+permittivities on its two sides: tens of `eta0` on usual meshes), the sheet
+resonates at the drive frequency in a quasi-static mode about `2 h` long (a
+sheet plasmon at the mesh scale). Grey and exponentially interpolated fills
+of an inductive sheet put some faces there. On the test line (`h` = 0.5 mm,
+tolerance 1e-6) such designs took 60-175 GMRES iterations where an empty
+sheet takes 23; with the mesh halved, some solves stopped at the
+400-iteration limit, which raises `RuntimeError` naming `direct`, and so did
+a uniform fill tuned onto the resonance, on the coarser mesh already. The iterations grow
+with refinement because a finer mesh resonates over a wider range of fills. Solves that converge, and their gradients, still match the
+direct solver to about ten times the tolerance. Resistive films and
+conductors are barely affected (a grey copper film: 31 iterations), and the
+direct solver not at all.
+
+So use `direct` for inductive sheet designs, and for the small, repeated
+solves of an optimization loop (it factorizes once per frequency and is
+insensitive to the contrast). `bddc_gmres`, the driven default, suits large
+models of resistive or conductor sheets; on any sheet design, check its
+iteration counts at your design's extremes (all void, all solid) and at a
+grey fill.
 
 ## Gradients
 

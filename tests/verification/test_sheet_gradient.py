@@ -9,6 +9,14 @@ through the face pass of the sensitivity kernel. The whole design chain
 exponential fill) differentiates end to end, and so do node coordinates
 moving the filled sheet itself.
 
+**BDDC + GMRES on PEC-like sheets**: the same line with 2 um of copper or a
+1 pH kinetic inductance, solid or patterned void / solid. The contrast
+costs BDDC + GMRES no iterations over an empty sheet, S is the direct
+solver's to the Krylov tolerance, and a copper pixel design graded across
+the default contrast (1e10) passes finite differences on both solvers. (Faint
+inductive faces do slow BDDC + GMRES: a mesh-scale sheet resonance, see the
+sheet-design recipe; not tested here.)
+
 **Eigenmode**: a 20 x 10 x 20 mm PEC cavity glued at z = 10 mm, where the
 TE101 field is largest, with a resistive thin-film `Conductor` sheet of
 random per-face fill there. The film's ``Z_s(omega)`` makes the operator
@@ -48,6 +56,7 @@ from gradient_cases import (
     sheet_mesh,
     tight,
 )
+from preconditioners import count_iterations
 
 import gfem
 from gfem import design
@@ -108,6 +117,73 @@ def test_shape_gradient_through_a_filled_sheet(line):
     t = jnp.zeros(morph.n_params)
     directions = unit_directions(rng, t.shape, 2)
     assert_gradient_matches(objective, t, directions, step=2e-6)
+
+
+# --- BDDC + GMRES on PEC-like sheets -------------------------------------------------
+
+#: Sheets that are PEC-like where solid: 2 um of copper (eta0 |Y| about 2e4)
+#: and a 1 pH kinetic inductance (eta0 |Y| about 1e4 at 6 GHz).
+PEC_LIKE = {
+    "copper": lambda fill: gfem.Conductor("sheet", 5.8e7, 2e-6, fill=fill),
+    "kinetic": lambda fill: gfem.Impedance("sheet", inductance=1e-12, fill=fill),
+}
+
+
+def _pattern(mesh, name: str) -> np.ndarray:
+    """Fill 0 or 1 per face of "sheet": solid, a checkerboard of cells, random."""
+    faces = mesh.elements("sheet")
+    centroids = np.asarray(mesh.nodes)[mesh.triangles[faces]].mean(axis=1)
+    if name == "solid":
+        return np.ones(len(faces))
+    if name == "checkerboard":  # 1 mm cells
+        return np.floor(centroids[:, :2] / 1e-3).sum(axis=1) % 2
+    return np.random.default_rng(5).integers(0, 2, len(faces)).astype(float)
+
+
+@pytest.mark.parametrize("pattern", ["solid", "checkerboard", "random"])
+@pytest.mark.parametrize("sheet", PEC_LIKE)
+def test_bddc_converges_on_pec_like_sheets_as_on_none(
+    line, monkeypatch, sheet, pattern
+):
+    # the contrast between void and PEC-like faces costs BDDC + GMRES no
+    # iterations, and S is the direct solver's to the Krylov tolerance
+    iterations = count_iterations(monkeypatch)
+    problem = gfem.Driven(frequency=FREQUENCIES)
+
+    def solve(fill, solver):
+        model = sheet_line(line, PEC_LIKE[sheet](gfem.SheetField(fill=fill)))
+        return np.asarray(gfem.solve(model, problem, options=tight(solver)).s.values)
+
+    fill = _pattern(line, pattern)
+    solve(np.zeros_like(fill), "bddc_gmres")
+    void = max(iterations)
+    iterations.clear()
+    s = solve(fill, "bddc_gmres")
+    assert max(iterations) <= void + 5
+    assert np.abs(s - solve(fill, "direct")).max() <= 1e-10
+
+
+@pytest.mark.parametrize("solver", ["direct", "bddc_gmres"])
+def test_copper_pixel_design_differentiates_across_the_contrast(line, solver):
+    # the default contrast 1e10 puts the grey pixels of a copper film in the
+    # window between transparent and PEC-like
+    grid = design.LayerGrid(line, "sheet", pitch=1e-3)
+    blur = design.helmholtz_filter(grid, radius=2e-3)
+    problem = gfem.Driven(frequency=FREQUENCIES)
+    options = tight(solver)
+
+    def objective(rho):
+        density = grid.to_faces(design.project(blur(rho), beta=2.0))
+        fill = gfem.SheetField.interpolate(density)
+        model = sheet_line(line, PEC_LIKE["copper"](fill))
+        s = gfem.solve(model, problem, options=options).s.values
+        return jnp.sum(WEIGHTS * jnp.abs(s) ** 2)
+
+    rng = np.random.default_rng(4)
+    rho = jnp.asarray(rng.uniform(0.3, 0.7, grid.shape))
+    directions = unit_directions(rng, rho.shape, 2)
+    # d fill / d rho is ln(1e10) fill: a smaller step than FILL_STEP
+    assert_gradient_matches(objective, rho, directions, step=1e-3)
 
 
 # --- eigenmode: the glued cavity -----------------------------------------------------
