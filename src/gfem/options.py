@@ -228,7 +228,8 @@ class SolverOptions:
             for BDDC + conjugate gradients the P-norm of the residual over
             its first value. S and fields are accurate to about this size;
             the unpreconditioned residual ``|b - Ax| / |b|`` can be orders
-            larger at low frequency and does not measure the error.
+            larger at low frequency and does not measure the error. With
+            ``"petsc"`` it is PETSc's ``ksp_rtol``.
         device: Where the direct solver runs: ``"cpu"``, ``"cuda"`` or
             ``"cuda:N"`` (the N-th GPU). A GPU needs
             ``linear_solver="direct"`` (NVIDIA cuDSS, from the ``cuda12`` or
