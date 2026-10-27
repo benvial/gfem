@@ -71,7 +71,12 @@ class ElectrostaticRule:
     def __init__(
         self, model: Model, problem: Electrostatic, options: SolverOptions
     ) -> None:
-        """Check that the problem fits the model (see `gfem.Electrostatic`)."""
+        """Check that the problem fits the model (see `gfem.Electrostatic`).
+
+        Raises:
+            gfem.SolverUnavailableError: ``linear_solver="petsc"`` and PETSc
+                cannot be used.
+        """
         if not isinstance(problem, Electrostatic):
             raise TypeError(f"Expected gfem.Electrostatic, got {problem!r}.")
         self.problem = problem

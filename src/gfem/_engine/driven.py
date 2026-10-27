@@ -245,6 +245,8 @@ class DrivenRule:
         Raises:
             NotImplementedError: A feature this version cannot solve.
             ValueError: The problem does not fit the model.
+            gfem.SolverUnavailableError: ``linear_solver="petsc"`` and PETSc
+                cannot be used.
         """
         if not isinstance(problem, Driven):
             raise TypeError(f"Expected gfem.Driven, got {problem!r}.")

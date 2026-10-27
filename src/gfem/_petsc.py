@@ -79,19 +79,12 @@ def _import(subject: str, package: str, library: str, build: str) -> tuple[Any, 
     fix = f"{build} as {_RECIPE} describes, or {other}."
     try:
         module, lib = _load(package, library)
-    except ModuleNotFoundError as err:
-        if err.name != package:
-            raise SolverUnavailableError(
-                f"{head}: {package} cannot be imported: {type(err).__name__}: "
-                f"{err}. {fix}"
-            ) from err
-        raise SolverUnavailableError(
-            f"{head}: {package} is not installed ({err}). {fix}"
-        ) from err
-    except Exception as err:  # a broken shared library, a failed initialisation
-        raise SolverUnavailableError(
-            f"{head}: {package} cannot be imported: {type(err).__name__}: {err}. {fix}"
-        ) from err
+    except Exception as err:  # also a broken shared library, a failed init
+        if isinstance(err, ModuleNotFoundError) and err.name == package:
+            reason = f"{package} is not installed ({err})"
+        else:
+            reason = f"{package} cannot be imported: {type(err).__name__}: {err}"
+        raise SolverUnavailableError(f"{head}: {reason}. {fix}") from err
     version = str(getattr(module, "__version__", ""))
     if _version(version) < MIN_VERSION:
         floor = ".".join(map(str, MIN_VERSION))

@@ -134,6 +134,8 @@ class EigenmodeRule:
 
         Raises:
             NotImplementedError: A feature this version cannot solve.
+            gfem.SolverUnavailableError: ``linear_solver="petsc"`` or
+                ``eigen_solver="slepc"`` names a library that cannot be used.
         """
         if not isinstance(problem, Eigenmode):
             raise TypeError(f"Expected gfem.Eigenmode, got {problem!r}.")
