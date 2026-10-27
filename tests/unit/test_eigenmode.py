@@ -19,6 +19,19 @@ import numpy as np
 import pytest
 import scipy.constants as const
 import structured_meshes as sm
+from eigen_cases import (
+    EPS,
+    ETA0,
+    F1,
+    Z0,
+    H,
+    L,
+    W,
+    line,
+    line_mesh,
+    line_roots,
+    terminated_line,
+)
 from preconditioners import count_preconditioners
 from scipy.optimize import brentq
 
@@ -31,48 +44,10 @@ from gfem._linalg import prepare
 from gfem._linalg.bddc import BddcHandle
 from gfem._linalg.direct import DirectHandle
 
-L, W, H = 10.0, 2.0, 1.0  # mm
-EPS = 4.0
-ETA0 = const.mu_0 * const.c
-Z0 = ETA0 * H / (W * math.sqrt(EPS))
-F1 = const.c / (2 * L * 1e-3 * math.sqrt(EPS))  # 7.49 GHz
-
 
 @pytest.fixture(scope="module")
 def mesh(tmp_path_factory):
-    path = tmp_path_factory.mktemp("line") / "line.msh"
-    sm.write_msh22(path, sm.strip_line(L, W, H, (20, 1, 1)))
-    return gfem.Mesh.from_gmsh(path, length_unit="mm")
-
-
-def _line(mesh, ports=(), **material):
-    return gfem.Model(
-        mesh,
-        materials={"dielectric": gfem.Material(eps_r=EPS, **material)},
-        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
-        ports=list(ports),
-    )
-
-
-def _terminated(mesh, r):
-    return _line(
-        mesh,
-        ports=[
-            gfem.LumpedPort("p1", "port1", "+z", impedance=r),
-            gfem.LumpedPort("p2", "port2", "+z", impedance=r),
-        ],
-    )
-
-
-def _line_roots(r, modes):
-    """Complex angular frequencies of the line with R on both ends."""
-    gamma = (r - Z0) / (r + Z0)
-    out = []
-    for m in modes:
-        # exp(-2 i beta L) = Gamma^-2  =>  beta = (2 pi m - 2 i log Gamma) / (2 L)
-        beta = (2 * math.pi * m - 2j * cmath.log(gamma)) / (2 * L * 1e-3)
-        out.append(beta * const.c / math.sqrt(EPS))
-    return np.array(out)
+    return line_mesh(tmp_path_factory.mktemp("line"))
 
 
 # --- the problem value -----------------------------------------------------------
@@ -105,7 +80,7 @@ def test_eigenmode_rejects_bad_values(kwargs, message):
 
 
 def test_open_line_resonates_at_the_half_wave_frequencies(mesh):
-    result = gfem.solve(_line(mesh), gfem.Eigenmode(target=8e9, n_modes=2))
+    result = gfem.solve(line(mesh), gfem.Eigenmode(target=8e9, n_modes=2))
     assert isinstance(result, gfem.EigenmodeResult)
     # nearest the target first
     np.testing.assert_allclose(result.frequency, [F1, 2 * F1], rtol=1e-5)
@@ -117,7 +92,7 @@ def test_open_line_resonates_at_the_half_wave_frequencies(mesh):
 
 
 def test_mode_field_stores_one_joule_of_electric_energy(mesh):
-    result = gfem.solve(_line(mesh), gfem.Eigenmode(target=8e9))
+    result = gfem.solve(line(mesh), gfem.Eigenmode(target=8e9))
     field = result.e_field(0)
     assert (field.quantity, field.unit, field.space) == ("E", "V/m", "hcurl")
     assert complex(field.omega) == complex(result.omega[0])
@@ -145,7 +120,7 @@ def test_mode_sign_ties_break_on_the_lowest_dof_index(mesh):
     # sit at both ends with opposite signs and equal magnitudes up to
     # rounding, so a rounding-level node move must not flip the mode's sign.
     def mode(m):
-        return gfem.solve(_line(m), gfem.Eigenmode(target=8e9)).e_field(0)
+        return gfem.solve(line(m), gfem.Eigenmode(target=8e9)).e_field(0)
 
     near_port1 = np.array([[L / 10 * 1e-3, W / 2 * 1e-3, H / 2 * 1e-3]])
     for m in (mesh, *(_jittered(mesh, seed) for seed in range(6))):
@@ -161,8 +136,8 @@ def test_loss_tangent_divides_the_eigenvalue_exactly(mesh):
     # K x = k^2 eps_r (1 - i tan_delta) M x: the lossy k^2 is the lossless one
     # over (1 - i tan_delta), in the discrete problem too
     problem = gfem.Eigenmode(target=8e9)
-    lossless = complex(gfem.solve(_line(mesh), problem).omega[0])
-    lossy = gfem.solve(_line(mesh, tan_delta=0.01), problem)
+    lossless = complex(gfem.solve(line(mesh), problem).omega[0])
+    lossy = gfem.solve(line(mesh, tan_delta=0.01), problem)
     expected = lossless / cmath.sqrt(1 - 0.01j)
     np.testing.assert_allclose(complex(lossy.omega[0]), expected, rtol=1e-10)
     assert lossy.omega[0].imag > 0  # decays under exp(+i omega t)
@@ -175,7 +150,7 @@ def test_per_axis_loss_tangent_acts_along_its_axis(mesh):
     # to the discrete field's small E_x / E_y part; the mean tan_delta would
     # give a 17x larger Im omega)
     problem = gfem.Eigenmode(target=8e9)
-    isotropic = complex(gfem.solve(_line(mesh, tan_delta=0.01), problem).omega[0])
+    isotropic = complex(gfem.solve(line(mesh, tan_delta=0.01), problem).omega[0])
     per_axis = gfem.Model(
         mesh,
         materials={
@@ -217,9 +192,9 @@ def test_bulk_participation_shares_the_energy_between_regions(tmp_path):
 
 
 def test_terminated_line_modes_are_the_transmission_line_roots(mesh):
-    model = _terminated(mesh, 1000.0)
+    model = terminated_line(mesh, 1000.0)
     result = gfem.solve(model, gfem.Eigenmode(target=8e9, n_modes=2))
-    expected = _line_roots(1000.0, [1, 2])
+    expected = line_roots(1000.0, [1, 2])
     np.testing.assert_allclose(result.omega, expected, rtol=1e-5)
     q = np.abs(expected) / (2 * expected.imag)
     np.testing.assert_allclose(result.q, q, rtol=1e-4)
@@ -230,7 +205,7 @@ def test_terminated_line_modes_are_the_transmission_line_roots(mesh):
 
 def test_coupling_q_of_weakly_coupled_ports_adds_up_to_the_mode_q(mesh):
     # 1/Q = sum 1/Q_port to first order in the (small) port loss
-    result = gfem.solve(_terminated(mesh, 1e5), gfem.Eigenmode(target=8e9))
+    result = gfem.solve(terminated_line(mesh, 1e5), gfem.Eigenmode(target=8e9))
     q = float(result.q[0])
     q1, q2 = float(result.q_port["p1"][0]), float(result.q_port["p2"][0])
     np.testing.assert_allclose(q1, q2, rtol=1e-6)  # symmetric line
@@ -240,12 +215,12 @@ def test_coupling_q_of_weakly_coupled_ports_adds_up_to_the_mode_q(mesh):
 def test_target_far_below_the_mode_still_finds_the_resonance(mesh):
     # the curl-curl null space (frequency 0) is nearer the shift than the mode:
     # the divergence-free projection keeps it out
-    result = gfem.solve(_terminated(mesh, 1000.0), gfem.Eigenmode(target=1e9))
-    np.testing.assert_allclose(result.omega, _line_roots(1000.0, [1]), rtol=1e-5)
+    result = gfem.solve(terminated_line(mesh, 1000.0), gfem.Eigenmode(target=1e9))
+    np.testing.assert_allclose(result.omega, line_roots(1000.0, [1]), rtol=1e-5)
 
 
 def test_bddc_gmres_shift_solves_give_the_direct_modes(mesh):
-    model = _terminated(mesh, 1000.0)
+    model = terminated_line(mesh, 1000.0)
     problem = gfem.Eigenmode(target=8e9)
     direct = gfem.solve(model, problem)
     iterative = gfem.solve(
@@ -269,7 +244,7 @@ def _count_shift_prepares(monkeypatch) -> list[int]:
 
 def test_a_reshift_refactorizes_the_prepared_operator(mesh, monkeypatch):
     # the second mode, far from the target, is refined at its own shift
-    model = _terminated(mesh, 1000.0)
+    model = terminated_line(mesh, 1000.0)
     problem = gfem.Eigenmode(target=8e9, n_modes=2)
     calls = _count_shift_prepares(monkeypatch)
     result = gfem.solve(model, problem)
@@ -286,7 +261,7 @@ def test_a_reshift_refactorizes_the_prepared_operator(mesh, monkeypatch):
 def test_a_bddc_reshift_sets_the_preconditioner_up_at_the_new_shift(mesh, monkeypatch):
     # shift-invert solves start cold, so a reshift never solves on the
     # preconditioner of the old shift: the modes are those of fresh handles
-    model = _terminated(mesh, 1000.0)
+    model = terminated_line(mesh, 1000.0)
     problem = gfem.Eigenmode(target=8e9, n_modes=2)
     options = gfem.SolverOptions(linear_solver="bddc_gmres")
     builds = count_preconditioners(monkeypatch)
@@ -308,7 +283,7 @@ def test_inductor_participation_matches_the_loaded_line(mesh):
     # tan(beta L) = Z0 / (omega L_p); peak energies 1/2 L_p |V(0) / omega L_p|^2
     # in the inductor and 1/2 C' integral of |V|^2 on the line
     inductance = 1e-9
-    model = _line(mesh, ports=[gfem.LumpedPort("jj", "port1", "+z", inductance=1e-9)])
+    model = line(mesh, ports=[gfem.LumpedPort("jj", "port1", "+z", inductance=1e-9)])
     length = L * 1e-3
     speed = const.c / math.sqrt(EPS)
 
@@ -353,8 +328,8 @@ def test_conductivity_damps_the_line_exactly(mesh):
     # discrete problem too
     sigma = 0.05
     problem = gfem.Eigenmode(target=8e9)
-    k0 = complex(gfem.solve(_line(mesh), problem).omega[0]) / const.c
-    lossy = gfem.solve(_line(mesh, conductivity=sigma), problem)
+    k0 = complex(gfem.solve(line(mesh), problem).omega[0]) / const.c
+    lossy = gfem.solve(line(mesh, conductivity=sigma), problem)
     a = ETA0 * sigma / EPS
     k = 0.5j * a + cmath.sqrt(k0**2 - a**2 / 4)
     np.testing.assert_allclose(complex(lossy.omega[0]), k * const.c, rtol=1e-10)
@@ -382,7 +357,7 @@ def test_unconverged_modes_raise_without_a_partial_result(mesh):
     with pytest.raises(
         gfem.EigenmodeConvergenceError, match=r"(?s)0 of the 1.*Remedies"
     ):
-        gfem.solve(_terminated(mesh, 1000.0), gfem.Eigenmode(8e9), options=options)
+        gfem.solve(terminated_line(mesh, 1000.0), gfem.Eigenmode(8e9), options=options)
 
 
 # --- the divergence-free projection ----------------------------------------------
@@ -395,7 +370,7 @@ def test_divfree_projection_matches_the_complex_product_bit_for_bit(tmp_path, or
     # leave free H1 nodes between the plates at order 1 too
     path = tmp_path / "line.msh"
     sm.write_msh22(path, sm.strip_line(L, W, H, (6, 1, 2)))
-    model = _line(gfem.Mesh.from_gmsh(path, length_unit="mm"))
+    model = line(gfem.Mesh.from_gmsh(path, length_unit="mm"))
     with task_manager(1):
         op = driven_operator(model, order)
         project = projector(model, op)
@@ -413,7 +388,7 @@ def test_divfree_projection_matches_the_complex_product_bit_for_bit(tmp_path, or
 
 
 def test_eigenmode_job_round_trips_its_result(mesh, tmp_path):
-    model = _terminated(mesh, 1000.0)
+    model = terminated_line(mesh, 1000.0)
     problem = gfem.Eigenmode(target=8e9, n_modes=2)
     job = gfem.Job.from_json(gfem.Job(model, problem).to_json(tmp_path / "job.json"))
     assert job.problem == problem

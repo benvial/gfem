@@ -28,13 +28,10 @@ import numpy as np
 import pytest
 import scipy.constants as const
 import structured_meshes as sm
+from eigen_cases import EPS, F1, SIGMA, H, conductor_line, line_mesh
 
 import gfem
 
-L, W, H = 10.0, 2.0, 1.0  # mm
-EPS = 4.0
-F1 = const.c / (2 * L * 1e-3 * math.sqrt(EPS))  # 7.49 GHz
-SIGMA = 1e5  # a poor conductor: Q of about 100
 #: Targets 25 % below and 30 % above the mode: a seed frozen there has a Q
 #: off by about 13 %.
 TARGETS = (0.75 * F1, 1.3 * F1)
@@ -43,9 +40,7 @@ TIGHT = gfem.SolverOptions(eigen_tolerance=1e-10)
 
 @pytest.fixture(scope="module")
 def mesh(tmp_path_factory):
-    path = tmp_path_factory.mktemp("line") / "line.msh"
-    sm.write_msh22(path, sm.strip_line(L, W, H, (20, 1, 2)))
-    return gfem.Mesh.from_gmsh(path, length_unit="mm")
+    return line_mesh(tmp_path_factory.mktemp("line"), (20, 1, 2))
 
 
 def _skin_depth(omega):
@@ -54,11 +49,7 @@ def _skin_depth(omega):
 
 @pytest.fixture(scope="module")
 def conductor_modes(mesh):
-    model = gfem.Model(
-        mesh,
-        materials={"dielectric": gfem.Material(eps_r=EPS)},
-        boundaries=[gfem.PEC("bottom"), gfem.Conductor("top", SIGMA)],
-    )
+    model = conductor_line(mesh)
     return [gfem.solve(model, gfem.Eigenmode(target=f), options=TIGHT) for f in TARGETS]
 
 
