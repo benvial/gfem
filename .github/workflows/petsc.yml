@@ -83,5 +83,6 @@ jobs:
         _petsc.require_petsc('linear_solver'); _petsc.require_slepc('eigen_solver')"
     - name: Unit tier and the PETSc verification tests
       # The whole unit tier runs with PETSc initialised at collection: gfem's
-      # PETSc coexists with every other test (ADR 0023).
+      # PETSc coexists with every other test (each PETSc object has its own
+      # options prefix and gfem removes the options it inserts).
       run: uv run --no-sync pytest -m "unit or (verification and (petsc or slepc))" -rs

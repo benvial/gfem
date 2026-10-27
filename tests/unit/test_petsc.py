@@ -273,9 +273,10 @@ def test_the_version_floor_is_the_minor_the_build_script_pins():
 
 
 def test_the_build_script_downloads_only_mumps_metis_and_openblas():
-    # The licence control (ADR 0012): the stack holds what these downloads
-    # build and nothing else, the set the licence page names. No ParMETIS,
-    # PT-Scotch or ScaLAPACK, which an MPI build would pull in.
+    # The licence control (no non-free or non-commercial dependency): the
+    # stack holds what these downloads build and nothing else, the set the
+    # licence page names. No ParMETIS, PT-Scotch or ScaLAPACK, which an MPI
+    # build would pull in.
     code = "\n".join(_script_lines())
     options = re.findall(r"--download-([\w-]+)", code)
     assert {option.split("-")[0] for option in options} == {

@@ -49,10 +49,11 @@ def _free(space):
 
 
 def test_the_petsc_stack_is_complex_with_mumps_and_no_non_free_package():
-    # The licence control of ADR 0012 for a stack the licence gate cannot
-    # see (MUMPS and METIS are compiled into the petsc wheel): what
-    # tools/petsc_wheelhouse.sh builds, and none of the packages an MPI
-    # build pulls in (ParMETIS is not free for commercial use).
+    # The licence control (no non-free or non-commercial dependency) for a
+    # stack the licence gate cannot see (MUMPS and METIS are compiled into
+    # the petsc wheel): what tools/petsc_wheelhouse.sh builds, and none of
+    # the packages an MPI build pulls in (ParMETIS is not free for
+    # commercial use).
     PETSc = _petsc.require_petsc()
     assert np.dtype(PETSc.ScalarType) == np.complex128
     assert PETSc.Sys.hasExternalPackage("mumps")

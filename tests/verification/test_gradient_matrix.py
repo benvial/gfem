@@ -16,8 +16,8 @@ One cell per problem type x input kind x linear solver x frequency sweep:
 The PETSc cells (`PETSC_CELLS`: ``linear_solver="petsc"``, and SLEPc seeds
 for the eigenmode cell) run the same checks where the PETSc stack is
 installed, and are skipped elsewhere (the ``petsc`` / ``slepc`` markers).
-They stay out of `CELLS`, which the Capabilities page reads (ADR 0017): the
-verification job that runs on every PR has no PETSc.
+They stay out of `CELLS`, from which the docs build derives the Capabilities
+page's claims: the verification job that runs on every PR has no PETSc.
 
 Each cell checks the gradient along 3 random unit directions against
 fourth-order central differences (tests/finite_differences.py, gate 1e-6)
