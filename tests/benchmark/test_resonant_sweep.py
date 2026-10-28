@@ -10,11 +10,11 @@ tier checks the adaptive sweep against.
 """
 
 import os
-import resource
 import time
 
 import numpy as np
 import qpdk_resonator as qr
+from isolated import peak_rss_gib
 
 import gfem
 
@@ -37,7 +37,7 @@ def test_adaptive_matches_801_point_uniform_sweep(tmp_path, reference_dir):
     start = time.perf_counter()
     uniform = gfem.solve(model, gfem.Driven(frequency=frequency), options=options)
     uniform_wall = time.perf_counter() - start
-    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20
+    rss = peak_rss_gib()
 
     s_uniform = np.asarray(uniform.s.values)
     np.savez(

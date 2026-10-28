@@ -25,13 +25,12 @@ take Palace's attributes.
 import json
 import math
 import os
-import resource
 import time
 from pathlib import Path
 
 import numpy as np
 import pytest
-from isolated import isolated
+from isolated import isolated, peak_rss_gib
 
 import gfem
 from gfem._engine import terms
@@ -132,10 +131,6 @@ def _db(s):
     return 20 * np.log10(np.abs(s))
 
 
-def _peak_rss_gib():
-    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20
-
-
 # --- parity -----------------------------------------------------------------------
 
 
@@ -166,7 +161,7 @@ def test_driven_parity_s_matches_palace(reference, name, ndof, max_iterations):
     print(  # noqa: T201
         f"{name}: max |dS| {diff:.3g}, GMRES iterations {outputs['iterations']}, "
         f"{wall:.1f} s for {len(frequency)} frequencies, peak RSS "
-        f"{_peak_rss_gib():.2f} GiB, load {os.getloadavg()}"
+        f"{peak_rss_gib():.2f} GiB, load {os.getloadavg()}"
     )
     assert diff <= TOLERANCE, (diff, outputs["iterations"])
     assert max(max(its) for its in outputs["iterations"]) <= max_iterations, outputs
@@ -228,7 +223,7 @@ def test_driven_physics_box150_converged_transmission(reference):
         f"r8_box150: |S21| {np.round(s21_db, 4)} dB (Palace order 2 "
         f"{np.round(_db(palace21), 4)}), max |dS| vs independent "
         f"{np.abs(s - expected).max():.3g}, GMRES {outputs['iterations']}, "
-        f"{wall:.1f} s, peak RSS {_peak_rss_gib():.2f} GiB, load {os.getloadavg()}"
+        f"{wall:.1f} s, peak RSS {peak_rss_gib():.2f} GiB, load {os.getloadavg()}"
     )
     assert s21_db[2] == pytest.approx(-0.300, abs=0.002)
     np.testing.assert_allclose(s, expected, atol=TOLERANCE)
@@ -288,7 +283,7 @@ def test_driven_per_sample_time_against_palace(reference, name):
     print(  # noqa: T201
         f"{name}: ndof {op.space.ndof}, per sample {per_sample:.1f} s "
         f"({ratio:.2f}x Palace {PALACE_PER_SAMPLE[name]} s), GMRES {iterations}, "
-        f"peak RSS {_peak_rss_gib():.2f} GiB, load {os.getloadavg()}; "
+        f"peak RSS {peak_rss_gib():.2f} GiB, load {os.getloadavg()}; "
         f"order 2 at 50 GHz: |S21| {_db(s[1, 0]):.4f} dB vs Palace "
         f"{_db(palace_s[1, 0]):.4f} dB (sign of the curl term; not asserted)"
     )
@@ -421,7 +416,7 @@ def test_wave_port_parity_s_matches_palace(reference):
         f"r8_wp uniform: max |dS| vs Palace {np.round(diff, 9).tolist()} at "
         f"{np.round(frequency[rows] / 1e9, 3).tolist()} GHz; n_eff "
         f"{np.round(np.asarray(result.port_modes['p1'].n_eff), 6).tolist()}; "
-        f"{wall:.1f} s, peak RSS {_peak_rss_gib():.2f} GiB, load {os.getloadavg()}"
+        f"{wall:.1f} s, peak RSS {peak_rss_gib():.2f} GiB, load {os.getloadavg()}"
     )
     assert diff.max() <= TOLERANCE
     np.testing.assert_allclose(s, np.swapaxes(s, 1, 2), atol=1e-6)

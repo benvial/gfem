@@ -34,12 +34,12 @@ it. ``eigenmode/r20`` is order 2 (one mode near 7.78 GHz), ``r5_p1`` order 1
 import json
 import math
 import os
-import resource
 import time
 from pathlib import Path
 
 import numpy as np
 import pytest
+from isolated import peak_rss_gib
 
 import gfem
 
@@ -138,7 +138,7 @@ def solved(request, reference):
     start = time.perf_counter()
     result = gfem.solve(model, problem, options=options)
     wall = time.perf_counter() - start
-    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20
+    rss = peak_rss_gib()
     palace_run = json.loads((case / "run.json").read_text())
     print(  # noqa: T201
         f"{request.param}: {problem.n_modes} modes in {wall:.1f} s (Palace "
