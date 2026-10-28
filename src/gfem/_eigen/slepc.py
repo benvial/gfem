@@ -83,6 +83,21 @@ def _configure(eps, mat, prefix: str, *, nev: int, ncv: int, tol: float) -> None
     eps.setTolerances(tol=tol)
 
 
+def _set_from_options(eps) -> None:
+    """``eps.setFromOptions()``; a refused option raises `ValueError`.
+
+    slepc4py reports the refusal as a `SystemError` around PETSc's error.
+    """
+    PETSc = _petsc.require_petsc()
+    try:
+        eps.setFromOptions()
+    except (PETSc.Error, SystemError) as err:
+        raise ValueError(
+            "SolverOptions.petsc_options was refused by SLEPc: "
+            f"{_petsc.error_text(err)}."
+        ) from _petsc.unwrap(err)
+
+
 def _eigenpairs(eps, vector, nev: int, size: int) -> tuple[np.ndarray, np.ndarray]:
     """Up to ``nev`` converged ``(theta, vectors)`` of a solved ``eps``.
 
@@ -125,8 +140,8 @@ def shift_invert(
 
     Raises:
         gfem.SolverUnavailableError: slepc4py cannot be used.
-        ValueError: SLEPc did not read one of the options (after a solve
-            that succeeded).
+        ValueError: SLEPc refused the options, or did not read one of them
+            (after a solve that succeeded).
         RuntimeError: SLEPc failed (PETSc's reason quoted). An exception
             raised by the shift solve itself is raised as it is.
     """
@@ -163,7 +178,7 @@ def shift_invert(
             # SLEPc reads its viewer options (eps_view, eps_error_*, ...) at
             # the end of the solve: the options stay in the database across it
             with _petsc.scoped_options(prefix, pairs):
-                eps.setFromOptions()
+                _set_from_options(eps)
                 eps.setInitialSpace([start])
                 eps.solve()
                 _check_read(eps, [name for name, _ in pairs])

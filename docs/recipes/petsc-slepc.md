@@ -107,8 +107,8 @@ options = gfem.SolverOptions(
   PETSc options and your own petsc4py options do not reach gfem's solvers.
 - An option the linear solver does not read raises `ValueError` when the solve
   starts: a typo, or an option of another configuration, such as a MUMPS
-  option with `pc_type` `jacobi`. So does an option PETSc refuses, with
-  PETSc's reason. An option SLEPc does not read, such as `eps_mpdd`, raises
+  option with `pc_type` `jacobi`. So does an option PETSc or SLEPc refuses,
+  with its reason. An option SLEPc does not read, such as `eps_mpdd`, raises
   `ValueError` after its seed solve.
 
 ### Krylov methods

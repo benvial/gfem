@@ -301,3 +301,13 @@ def test_a_failed_eps_creation_destroys_the_petsc_objects(mesh, monkeypatch):
         gfem.solve(terminated_line(mesh, 1000.0), gfem.Eigenmode(8e9), options=options)
     assert len(made) == 2  # the shell matrix and the start vector
     assert not any(made)  # destroyed: their handles are null
+
+
+def test_options_slepc_refuses_raise_a_value_error(mesh):
+    options = gfem.SolverOptions(
+        eigen_solver="slepc", petsc_options={"eps_max_it": "many"}
+    )
+    with pytest.raises(ValueError, match="refused by SLEPc") as err:
+        gfem.solve(terminated_line(mesh, 1000.0), gfem.Eigenmode(8e9), options=options)
+    assert "PETSc error" in str(err.value)
+    assert not _gfem_keys()
