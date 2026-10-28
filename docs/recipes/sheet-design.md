@@ -51,8 +51,8 @@ also takes any per-face density of your own.
   For a superconductor use its kinetic inductance, `Impedance(inductance=L_k)`
   (0.1-10 pH per square is PEC-like for the fields at GHz); for a normal metal
   `Conductor(sigma, thickness)`. On an interior surface a thin film of
-  thickness `t` is a sheet admittance of about `sigma t / 2` (one face term,
-  Palace's convention; see `gfem.conventions`).
+  thickness `t` is a sheet admittance of about `sigma t / 2` (one face term;
+  see `gfem.conventions`).
 - **Driven (uniform and adaptive) and eigenmode problems.** An electrostatic
   problem raises: a partly filled sheet is not a fixed-potential conductor.
 

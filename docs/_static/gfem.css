@@ -299,19 +299,17 @@ html:is(.light,.dark) .highlight span[class^="c"][class] { color: var(--syn-comm
 .yue ul.gfem-status > li { margin: 0; padding: 10px 0 10px 32px; border-bottom: 1px solid var(--hair); font: var(--t-small); position: relative; }
 .yue ul.gfem-status > li > p { margin: 0; display: flex; justify-content: space-between; align-items: baseline; gap: var(--s-3); }
 .yue ul.gfem-status .what { min-width: 0; }
-.yue ul.gfem-status .tag { font: var(--t-data); color: var(--ink); white-space: nowrap; text-align: right; }  /* Palace tolerances: ink, not a pass colour */
+.yue ul.gfem-status .tag { font: var(--t-data); color: var(--ink); white-space: nowrap; text-align: right; }
 .yue ul.gfem-status .tag code { font: inherit; color: inherit; }
 .yue ul.gfem-status .tag.zero { color: var(--muted); font-weight: 400; }
 .yue ul.gfem-status .tag.raises { color: var(--bad); font-weight: 500; }
 .yue ul.gfem-status .what .gfem-detail { display: block; color: var(--muted); }
 
 /* status marks, the one implementation: the green LED (verified), a dash (exact zero), the struck ring
-   (raises). Tolerance rows carry an unlit LED: a ring in ink, never a pass colour.
-   Drawn by a .gfem-glyph inside a .gfem-verified / .gfem-zero / .gfem-raises parent (the gradient
+   (raises). Drawn by a .gfem-glyph inside a .gfem-verified / .gfem-zero / .gfem-raises parent (the gradient
    matrix, the front page) and by the status list's li::before, keyed on its .tag. */
 .gfem-glyph, .yue ul.gfem-status > li::before {
   flex: none; display: inline-block; box-sizing: border-box; width: 8px; height: 8px; border-radius: 50%; background: var(--led-ok); }
-.yue ul.gfem-status > li::before { background: none; border: 1.5px solid var(--ink); }  /* a tolerance row: unlit */
 .gfem-zero .gfem-glyph, .yue ul.gfem-status > li:has(.tag.zero)::before {
   width: 10px; height: 1px; border: 0; border-radius: 0; background: var(--muted); }
 .gfem-raises .gfem-glyph, .yue ul.gfem-status > li:has(.tag.raises)::before {
