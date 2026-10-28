@@ -35,6 +35,7 @@ import scipy.sparse as sp
 from gfem._boundaries import Conductor
 from gfem._engine import quadrature
 from gfem._engine.terms import surface_impedance
+from gfem._linalg.base import free_mask
 from gfem._port_section import PortSection
 
 # Points this close to a midline of the phase-reference quadrant (relative to
@@ -95,8 +96,7 @@ class PortModeSpace:
         h1 = ngs.H1(self.mesh, order=order, complex=True, dirichlet=dirichlet)
         self.space = ngs.FESpace([nd, h1])
         self.n_t = nd.ndof
-        free = self.space.FreeDofs()
-        self.free = np.flatnonzero(np.array(list(free), dtype=bool))  # ty: ignore[invalid-argument-type]
+        self.free = np.flatnonzero(free_mask(self.space.FreeDofs(), self.space.ndof))
         self._coef = _coefficients(self.mesh, section)
         self.pencil = self._assemble()
 
