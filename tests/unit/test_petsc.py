@@ -298,6 +298,36 @@ def test_the_build_script_downloads_only_mumps_metis_and_openblas():
     assert "--with-mpi=0" in code
 
 
+def test_the_build_script_ignores_the_shells_compilers_and_flags():
+    # An active conda environment exports these, and the petsc4py and
+    # slepc4py builds pick them up: they then compile against conda's own
+    # PETSc headers and link its runtime libraries, and do not import.
+    unset = {
+        name
+        for line in _script_lines()
+        if line.strip().startswith("unset ")
+        for name in line.split()[1:]
+    }
+    assert {
+        "CC",
+        "CXX",
+        "FC",
+        "F77",
+        "F90",
+        "CPP",
+        "CFLAGS",
+        "CPPFLAGS",
+        "CXXFLAGS",
+        "FFLAGS",
+        "FCFLAGS",
+        "LDFLAGS",
+        "CPATH",
+        "C_INCLUDE_PATH",
+        "CPLUS_INCLUDE_PATH",
+        "LIBRARY_PATH",
+    } <= unset
+
+
 # --- where PETSc and SLEPc are installed (skipped elsewhere, by the markers) ------
 
 

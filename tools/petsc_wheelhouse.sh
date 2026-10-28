@@ -65,6 +65,8 @@ check_prerequisites() {
     command -v "$tool" > /dev/null || missing+=("$tool")
   done
   [ "$(uname -s)" = Linux ] || echo "warning: only Linux is tested, not $(uname -s)" >&2
+  [ -z "${CONDA_PREFIX:-}" ] ||
+    echo "warning: conda environment $CONDA_PREFIX is active: the build ignores its compilers and flags (CC, CFLAGS, LDFLAGS, ...) and uses gcc, g++ and gfortran from PATH ($(command -v gcc))" >&2
   ((${#missing[@]} == 0)) || fail "missing prerequisites: ${missing[*]} (install them and run again)"
   PY=$(UV_NO_CONFIG=1 uv python find ${PYTHON:+"$PYTHON"}) ||
     fail "no Python found for PYTHON='${PYTHON:-}' (set PYTHON to the Python of the environment that runs gfem)"
@@ -156,6 +158,13 @@ trap 'rm -rf "$WORK"' EXIT
 
 # A PETSC_DIR / PETSC_ARCH of another PETSc would leak into the build.
 unset PETSC_DIR PETSC_ARCH SLEPC_DIR
+# So would the compilers and flags an active conda environment exports:
+# PETSc's configure ignores them, but the petsc4py and slepc4py builds use
+# them, compile against conda's own PETSc headers, link conda's runtime
+# libraries, and give bindings that do not import. Build with the gcc, g++
+# and gfortran on PATH only.
+unset CC CXX FC F77 F90 CPP CFLAGS CPPFLAGS CXXFLAGS FFLAGS FCFLAGS LDFLAGS
+unset CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH LIBRARY_PATH
 export UV_NO_CONFIG=1
 export PETSC_CONFIGURE_OPTIONS="${CONFIGURE_OPTIONS[*]}${MAKE_NP:+ --with-make-np=$MAKE_NP}"
 printf '%s\n' "petsc==$PETSC_VERSION" "petsc4py==$PETSC_VERSION" \
