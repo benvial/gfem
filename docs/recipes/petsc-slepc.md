@@ -15,11 +15,12 @@ and neither is a pip extra: you build the {term}`PETSc stack` once, from source.
 ## Build the PETSc stack
 
 You need Linux (macOS is not tested, Windows is not supported), uv, curl,
-make, cmake, and the gcc, g++ and gfortran compilers. The script ignores an
-active conda environment's compilers and flags (`CC`, `CFLAGS`, `LDFLAGS`, …)
-and uses the gcc, g++ and gfortran on your `PATH`. gfem needs PETSc with
-complex scalars and without MPI, and conda-forge's PETSc depends on ParMETIS,
-which is not free for commercial use ({doc}`../project/licence`).
+make, cmake, the system's gcc, g++ and gfortran compilers, and a Python not
+built by conda (for example `uv python install 3.13` and a uv virtual
+environment). The script takes an active conda environment off `PATH`. gfem
+needs PETSc with complex scalars and without MPI, and conda-forge's PETSc
+depends on ParMETIS, which is not free for commercial use
+({doc}`../project/licence`).
 
 The script `tools/petsc_wheelhouse.sh` in the repository
 ({download}`download it <../../tools/petsc_wheelhouse.sh>`, or read it at the
