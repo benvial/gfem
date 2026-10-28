@@ -9,12 +9,10 @@ one (Linux ``VmHWM``), and with the sampled path that kernels without it
 (gVisor, Modal's sandbox) take.
 """
 
-import resource
-
 import isolated as isolated_module
 import numpy as np
 import pytest
-from isolated import isolated
+from isolated import isolated, peak_rss_gib
 
 MIB = 2**20
 
@@ -46,7 +44,7 @@ def test_peak_counts_what_the_call_allocates():
 
 def test_peak_ignores_the_callers_high_water_mark():
     _touch(400)
-    parent = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / MIB  # GiB
+    parent = peak_rss_gib()
     assert parent >= 400 / 1024
     _, rss = isolated(_touch, 1)
     assert rss < parent - 300 / 1024

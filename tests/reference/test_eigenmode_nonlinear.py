@@ -24,12 +24,12 @@ with the case's order.
 import json
 import math
 import os
-import resource
 import time
 from pathlib import Path
 
 import numpy as np
 import pytest
+from isolated import peak_rss_gib
 
 import gfem
 
@@ -101,7 +101,7 @@ def _solve(case: Path, absorbing_order: int | None = None):
     start = time.perf_counter()
     result = gfem.solve(model, problem, options=options)
     wall = time.perf_counter() - start
-    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20
+    rss = peak_rss_gib()
     palace_run = json.loads((case / "run.json").read_text())
     print(  # noqa: T201
         f"{case.name} (absorbing order {absorbing_order or 'as config'}): "
