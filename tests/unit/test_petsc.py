@@ -7,6 +7,8 @@ without PETSc.
 """
 
 import re
+import shutil
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -326,6 +328,73 @@ def test_the_build_script_ignores_the_shells_compilers_and_flags():
         "CPLUS_INCLUDE_PATH",
         "LIBRARY_PATH",
     } <= unset
+
+
+def _stub(folder, name, body):
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / name
+    path.write_text(f"#!/bin/sh\n{body}\n")
+    path.chmod(0o755)
+
+
+def _check(tmp_path, path=(), **env):
+    """Run the script's --check on stub tools.
+
+    A system folder holds every prerequisite; its uv finds PYTHON, or else
+    the Python running the tests. ``path`` folders go first on PATH.
+    """
+    system = tmp_path / "system" / "bin"
+    for tool in ("gcc", "g++", "gfortran"):
+        _stub(system, tool, "echo 13.2.0")
+    for tool in ("cmake", "make", "curl"):
+        _stub(system, tool, "exit 0")
+    _stub(system, "uv", f'echo "${{3:-{sys.executable}}}"')
+    folders = [*map(str, path), str(system), "/usr/bin", "/bin"]
+    return subprocess.run(
+        [shutil.which("bash"), str(WHEELHOUSE_SCRIPT), "--check"],
+        env={"HOME": str(tmp_path), "PATH": ":".join(folders), **env},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the build script is bash")
+def test_the_build_script_takes_an_active_conda_off_path(tmp_path):
+    # Conda's gcc, g++ and gfortran search conda's include and lib folders,
+    # so bindings built with them link conda's PETSc and do not import.
+    conda = tmp_path / "conda"
+    for tool in ("gcc", "g++", "gfortran"):
+        _stub(conda / "bin", tool, "echo 14.3.0")
+    result = _check(tmp_path, path=[conda / "bin"], CONDA_PREFIX=str(conda))
+    assert result.returncode == 0, result.stderr
+    system = tmp_path / "system" / "bin"
+    assert f"gcc: {system / 'gcc'} (13.2.0)" in result.stdout
+    assert f"gfortran: {system / 'gfortran'} (13.2.0)" in result.stdout
+    assert str(conda / "bin") not in result.stdout + result.stderr
+    assert "off PATH" in result.stderr
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the build script is bash")
+@pytest.mark.parametrize("active", [False, True])
+def test_the_build_script_refuses_a_conda_python(tmp_path, active):
+    # A conda Python's compiler flags point at conda's headers. Fake one: a
+    # virtual environment whose prefix holds conda-meta, as a conda
+    # environment's does, or which is the active conda environment.
+    conda = tmp_path / "conda"
+    (conda / "bin").mkdir(parents=True)
+    base = Path(sys.executable).resolve()
+    (conda / "bin" / "python").symlink_to(base)
+    (conda / "pyvenv.cfg").write_text(f"home = {base.parent}\n")
+    env = {"PYTHON": str(conda / "bin" / "python")}
+    if active:
+        env["CONDA_PREFIX"] = str(conda)
+    else:
+        (conda / "conda-meta").mkdir()
+    result = _check(tmp_path, **env)
+    assert result.returncode == 1
+    assert "conda" in result.stderr
+    assert "uv python install" in result.stderr
 
 
 # --- where PETSc and SLEPc are installed (skipped elsewhere, by the markers) ------

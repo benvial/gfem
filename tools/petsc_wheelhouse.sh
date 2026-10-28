@@ -12,15 +12,17 @@
 #   pip install --no-index --find-links OUTPUT_DIR petsc petsc4py slepc slepc4py
 #
 # Prerequisites: Linux (macOS is not tested), uv, curl, make, cmake, and the
-# C, C++ and Fortran compilers gcc, g++ and gfortran. The script downloads
-# the four source distributions from PyPI, and PETSc's configure downloads
+# system's C, C++ and Fortran compilers gcc, g++ and gfortran (the script
+# takes an active conda environment off PATH). The script downloads the
+# four source distributions from PyPI, and PETSc's configure downloads
 # MUMPS, METIS and OpenBLAS; all of them are compiled from source. It is a
 # long build, done once per Python version.
 #
 # Target Python: the bindings are compiled for one CPython version (3.12 or
-# newer), so build with the Python of the environment that runs gfem. The
-# script uses the Python that `uv python find` gives: the active virtual
-# environment's, or the .venv of the project in the current folder, if any.
+# newer, not built by conda), so build with the Python of the environment
+# that runs gfem. The script uses the Python that `uv python find` gives:
+# the active virtual environment's, or the .venv of the project in the
+# current folder, if any.
 # Set PYTHON to choose another, as a path or a version, for example
 # PYTHON=/path/to/venv/bin/python or PYTHON=3.12.
 #
@@ -57,6 +59,34 @@ fail() {
   exit 1
 }
 
+# An active conda environment puts its own gcc, g++ and gfortran first on
+# PATH. They search conda's include and lib folders by default, so the
+# petsc4py and slepc4py builds compile and link against conda's PETSc,
+# OpenBLAS and MPI, and give bindings that do not import. Take every folder
+# of the environment, and of the conda installation, off PATH, so that the
+# build uses the system's compilers and tools. CONDA_ROOTS keeps those two
+# folders for the target Python check. The installation is the folder above
+# CONDA_EXE's bin, if it holds conda-meta (not /usr for a system conda).
+leave_conda() {
+  CONDA_ROOTS=()
+  [ -n "${CONDA_PREFIX:-}" ] || return 0
+  CONDA_ROOTS=("${CONDA_PREFIX%/}")
+  local base IFS=: entries entry root kept=()
+  base=$(dirname "$(dirname "${CONDA_EXE:-/}")")
+  [ ! -d "$base/conda-meta" ] || CONDA_ROOTS+=("${base%/}")
+  read -ra entries <<< "$PATH"
+  for entry in "${entries[@]}"; do
+    for root in "${CONDA_ROOTS[@]}"; do
+      case $entry/ in "$root"/*) continue 2 ;; esac
+    done
+    kept+=("$entry")
+  done
+  PATH="${kept[*]-}"
+  hash -r
+  echo "warning: conda environment $CONDA_PREFIX is active: the build takes its folders off PATH, ignores its compilers and flags (CC, CFLAGS, LDFLAGS, ...) and uses the system's gcc, g++ and gfortran" >&2
+  unset CONDA_PREFIX CONDA_DEFAULT_ENV CONDA_SHLVL
+}
+
 # Check every prerequisite, report all that are missing, and set PY to the
 # target Python.
 check_prerequisites() {
@@ -65,14 +95,26 @@ check_prerequisites() {
     command -v "$tool" > /dev/null || missing+=("$tool")
   done
   [ "$(uname -s)" = Linux ] || echo "warning: only Linux is tested, not $(uname -s)" >&2
-  [ -z "${CONDA_PREFIX:-}" ] ||
-    echo "warning: conda environment $CONDA_PREFIX is active: the build ignores its compilers and flags (CC, CFLAGS, LDFLAGS, ...) and uses gcc, g++ and gfortran from PATH ($(command -v gcc))" >&2
   ((${#missing[@]} == 0)) || fail "missing prerequisites: ${missing[*]} (install them and run again)"
   PY=$(UV_NO_CONFIG=1 uv python find ${PYTHON:+"$PYTHON"}) ||
     fail "no Python found for PYTHON='${PYTHON:-}' (set PYTHON to the Python of the environment that runs gfem)"
   "$PY" -c 'import sys; sys.exit(sys.implementation.name != "cpython" or sys.version_info < (3, 12))' ||
     fail "$PY is not CPython 3.12 or newer, which gfem needs"
-  echo "compilers: $(gcc -dumpfullversion -dumpversion) (gcc), $(gfortran -dumpfullversion -dumpversion) (gfortran)"
+  # A conda Python, or a virtual environment made from one, builds the
+  # bindings with its own compiler flags, which point at conda's headers and
+  # libraries: the same failure as conda's compilers.
+  "$PY" - ${CONDA_ROOTS[@]+"${CONDA_ROOTS[@]}"} << 'EOF' || fail "$PY is a conda Python: a conda-built Python's compiler flags point at conda's headers and libraries, and the bindings built with them do not import. Use a Python not built by conda, for example: uv python install 3.13, then uv venv --python-preference only-managed --python 3.13 and run gfem from that environment"
+import os, sys
+roots = [os.path.realpath(root) for root in sys.argv[1:]]
+for prefix in {os.path.realpath(sys.prefix), os.path.realpath(sys.base_prefix)}:
+    if os.path.isdir(os.path.join(prefix, "conda-meta")) or any(
+        prefix == root or prefix.startswith(root + os.sep) for root in roots
+    ):
+        sys.exit(f"{prefix} is a conda environment")
+EOF
+  for tool in gcc g++ gfortran; do
+    echo "$tool: $(command -v "$tool") ($("$tool" -dumpfullversion -dumpversion))"
+  done
   echo "target Python: $PY ($("$PY" -c 'import sys; print(sys.version.split()[0])'))"
 }
 
@@ -141,6 +183,7 @@ EOF
 case ${1:-} in
 --check)
   (($# == 1)) || usage
+  leave_conda
   check_prerequisites
   echo "all prerequisites found"
   exit 0
@@ -148,6 +191,7 @@ case ${1:-} in
 "" | -*) usage ;;
 esac
 (($# == 1)) || usage
+leave_conda
 check_prerequisites
 
 mkdir -p "$1"
