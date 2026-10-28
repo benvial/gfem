@@ -29,6 +29,11 @@
 # MAKE_NP sets the number of parallel compile jobs (default: PETSc's own
 # choice from the number of cores).
 set -euo pipefail
+# make runs each recipe through /bin/sh, which is bash on many Linux systems,
+# and every such bash runs the file BASH_ENV names: one that runs `conda init`
+# puts conda's compilers back on PATH inside the build, and conda's linker
+# cannot link what the system's gcc compiled. No child shell reads one.
+unset BASH_ENV ENV
 
 # The release gfem's PETSc tests run on: gfem needs this minor or newer.
 PETSC_VERSION=3.26.0

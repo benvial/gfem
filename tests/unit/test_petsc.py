@@ -330,6 +330,16 @@ def test_the_build_script_ignores_the_shells_compilers_and_flags():
     } <= unset
 
 
+def test_the_build_script_runs_no_shell_startup_file_in_its_children():
+    # make runs each recipe through /bin/sh, which is bash on many Linux
+    # systems: a BASH_ENV that runs `conda init` would put conda's compilers
+    # back on PATH inside the build, and conda's linker cannot link what the
+    # system's gcc compiled.
+    commands = [line.strip() for line in _script_lines() if line.strip()]
+    assert commands[0] == "set -euo pipefail"
+    assert commands[1].split()[:3] == ["unset", "BASH_ENV", "ENV"]
+
+
 def _stub(folder, name, body):
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / name
