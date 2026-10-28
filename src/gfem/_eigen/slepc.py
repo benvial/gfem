@@ -71,6 +71,33 @@ def _check_read(eps, names: list[str]) -> None:
     )
 
 
+def _configure(eps, mat, prefix: str, *, nev: int, ncv: int, tol: float) -> None:
+    """Set what gfem decides on ``eps``: Krylov-Schur on ``mat``, its prefix."""
+    SLEPc = _petsc.require_slepc()
+    eps.setOptionsPrefix(prefix)
+    eps.setOperators(mat)
+    eps.setProblemType(SLEPc.EPS.ProblemType.NHEP)
+    eps.setType(SLEPc.EPS.Type.KRYLOVSCHUR)
+    eps.setWhichEigenpairs(SLEPc.EPS.Which.LARGEST_MAGNITUDE)
+    eps.setDimensions(nev=nev, ncv=ncv)
+    eps.setTolerances(tol=tol)
+
+
+def _eigenpairs(eps, vector, nev: int, size: int) -> tuple[np.ndarray, np.ndarray]:
+    """Up to ``nev`` converged ``(theta, vectors)`` of a solved ``eps``.
+
+    A negative converged reason is not an error: the pairs it converged, as
+    ARPACK's early stop.
+    """
+    m = min(eps.getConverged(), nev)
+    theta = np.empty(m, complex)
+    vectors = np.empty((size, m), complex)
+    for i in range(m):
+        theta[i] = eps.getEigenpair(i, vector)
+        vectors[:, i] = vector.array_r
+    return theta, vectors
+
+
 def shift_invert(
     op: EigenOperator,
     project,
@@ -114,22 +141,25 @@ def shift_invert(
 
     shell = _Shell(seed.apply)
     comm = PETSc.COMM_SELF
+    # LOCK is held across the whole solve, not only around the options: the
+    # shell's `mult` runs gfem's linear solves (PETSc calls, which take the
+    # reentrant LOCK again) on this same thread, and PETSc must never be
+    # called from another thread while SLEPc is inside it
     with _petsc.LOCK:
-        mat = PETSc.Mat().createPython([seed.size, seed.size], shell, comm=comm)
-        start = PETSc.Vec().createWithArray(seed.start.copy(), comm=comm)
-        vector = mat.createVecRight()
-        eps = SLEPc.EPS().create(comm)
+        created: list = []  # destroyed in reverse in the finally
         failed = True
         try:
+            mat = PETSc.Mat().createPython([seed.size, seed.size], shell, comm=comm)
+            created.append(mat)
+            start = PETSc.Vec().createWithArray(seed.start.copy(), comm=comm)
+            created.append(start)
+            vector = mat.createVecRight()
+            created.append(vector)
+            eps = SLEPc.EPS().create(comm)
+            created.append(eps)
             mat.setUp()
             prefix = _petsc.next_prefix()
-            eps.setOptionsPrefix(prefix)
-            eps.setOperators(mat)
-            eps.setProblemType(SLEPc.EPS.ProblemType.NHEP)
-            eps.setType(SLEPc.EPS.Type.KRYLOVSCHUR)
-            eps.setWhichEigenpairs(SLEPc.EPS.Which.LARGEST_MAGNITUDE)
-            eps.setDimensions(nev=nev, ncv=ncv)
-            eps.setTolerances(tol=tol)
+            _configure(eps, mat, prefix, nev=nev, ncv=ncv, tol=tol)
             # SLEPc reads its viewer options (eps_view, eps_error_*, ...) at
             # the end of the solve: the options stay in the database across it
             with _petsc.scoped_options(prefix, pairs):
@@ -137,14 +167,7 @@ def shift_invert(
                 eps.setInitialSpace([start])
                 eps.solve()
                 _check_read(eps, [name for name, _ in pairs])
-            # a negative converged reason is not an error: the pairs it
-            # converged, as ARPACK's early stop
-            m = min(eps.getConverged(), nev)
-            theta = np.empty(m, complex)
-            vectors = np.empty((seed.size, m), complex)
-            for i in range(m):
-                theta[i] = eps.getEigenpair(i, vector)
-                vectors[:, i] = vector.array_r
+            theta, vectors = _eigenpairs(eps, vector, nev, seed.size)
             failed = False
         except (PETSc.Error, SystemError) as err:
             if shell.error is not None:
@@ -154,7 +177,7 @@ def shift_invert(
                 f"{dict(options)}): {_petsc.error_text(err)}"
             ) from _petsc.unwrap(err)
         finally:
-            for obj in (eps, vector, start, mat):
+            for obj in reversed(created):
                 try:
                     obj.destroy()
                 except (PETSc.Error, SystemError):

@@ -267,3 +267,37 @@ def test_a_slepc_seeded_gradient_matches_arpack(mesh):
     slepc = jax.grad(frequency)(eps, "slepc")
     assert np.abs(np.asarray(arpack)).max() > 0
     np.testing.assert_allclose(slepc, arpack, rtol=1e-9)
+
+
+class CreationError(Exception):
+    """Raised by a PETSc or SLEPc object creation."""
+
+
+def test_a_failed_eps_creation_destroys_the_petsc_objects(mesh, monkeypatch):
+    from gfem import _petsc
+
+    PETSc, SLEPc = _petsc.require_petsc(), _petsc.require_slepc()
+    made = []
+
+    class Mat(PETSc.Mat):
+        def createPython(self, *args, **kwargs):  # noqa: N802 - PETSc name
+            made.append(self)
+            return super().createPython(*args, **kwargs)
+
+    class Vec(PETSc.Vec):
+        def createWithArray(self, *args, **kwargs):  # noqa: N802 - PETSc name
+            made.append(self)
+            return super().createWithArray(*args, **kwargs)
+
+    class EPS(SLEPc.EPS):
+        def create(self, comm=None):  # noqa: ARG002 - SLEPc signature
+            raise CreationError("no EPS")
+
+    monkeypatch.setattr(PETSc, "Mat", Mat)
+    monkeypatch.setattr(PETSc, "Vec", Vec)
+    monkeypatch.setattr(SLEPc, "EPS", EPS)
+    options = gfem.SolverOptions(eigen_solver="slepc")
+    with pytest.raises(CreationError, match="no EPS"):
+        gfem.solve(terminated_line(mesh, 1000.0), gfem.Eigenmode(8e9), options=options)
+    assert len(made) == 2  # the shell matrix and the start vector
+    assert not any(made)  # destroyed: their handles are null
