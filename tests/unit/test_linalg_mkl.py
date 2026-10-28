@@ -20,7 +20,7 @@ import structured_meshes as sm
 import gfem
 from gfem._engine import quadrature
 from gfem._engine.mesh import to_ngsolve
-from gfem._linalg import Operator, direct, prepare
+from gfem._linalg import Operator, direct, pardiso, prepare
 from gfem._linalg.base import host_bytes
 
 
@@ -49,11 +49,13 @@ def built(tmp_path_factory):
     return to_ngsolve(gfem.Mesh.from_gmsh(path))
 
 
-def _laplace(built, complex_valued=False, shift=0.0):
-    space = ngs.H1(built.mesh, order=2, dirichlet="bottom|top", complex=complex_valued)
+def _laplace(built, complex_valued=False, shift=0.0, order=2):
+    space = ngs.H1(
+        built.mesh, order=order, dirichlet="bottom|top", complex=complex_valued
+    )
     u, v = space.TnT()
     form = ngs.BilinearForm(space, symmetric=True)
-    form += (ngs.grad(u) * ngs.grad(v) + shift * u * v) * quadrature.dx(2)
+    form += (ngs.grad(u) * ngs.grad(v) + shift * u * v) * quadrature.dx(order)
     return Operator(form, space.FreeDofs()), space
 
 
@@ -301,6 +303,95 @@ def test_pardiso_memory_counts_the_gather_index(built):
     held = handle.nbytes
     handle._gather = None
     assert held - handle.nbytes == index.nbytes > 0
+
+
+# --- BDDC's coarse factorization ---------------------------------------------------
+
+
+@pytest.fixture
+def coarse_wrappers(monkeypatch):
+    """Record each PARDISO wrapper NGSolve plans: its type, flags and matrix type."""
+    from ngsolve.solvers import mkl_pardiso
+
+    seen = []
+    analyze = mkl_pardiso.MKLPardiso.Analyze
+
+    def recording(self):
+        analyze(self)
+        seen.append(
+            {
+                "type": type(self),
+                "symmetric": self._force_symmetric,
+                "ordering": self._params[1],
+                "refinement": self._params[7],
+                "matrix_type": self._matrixtype[0],
+            }
+        )
+
+    monkeypatch.setattr(mkl_pardiso.MKLPardiso, "Analyze", recording)
+    return seen
+
+
+def _bddc_solve(built, complex_valued, symmetry):
+    shift = 1 - 2j if symmetry == "complex_symmetric" else 1.0
+    op, space = _laplace(built, complex_valued, shift=shift, order=4)
+    handle = prepare(op, symmetry=symmetry, kind="bddc_gmres", tolerance=1e-10)
+    rng = np.random.default_rng(7)
+    B = rng.standard_normal(space.ndof)
+    if complex_valued:
+        B = B + 1j * rng.standard_normal(space.ndof)
+    return handle, handle.solve(B)
+
+
+@needs_mkl
+@pytest.mark.parametrize(
+    ("complex_valued", "symmetry", "symmetric", "matrix_type"),
+    [
+        (True, "complex_symmetric", True, 6),
+        (True, "general", False, 13),
+        (False, "hermitian", True, -2),  # electrostatics: real SPD, CG
+        # a complex Hermitian coarse matrix is not A^T = A: unsymmetric LU
+        (True, "hermitian", False, 13),
+    ],
+)
+def test_bddc_coarse_problem_is_factored_by_gfem_flagged_pardiso(  # noqa: PLR0917
+    built,
+    monkeypatch,
+    coarse_wrappers,
+    complex_valued,
+    symmetry,
+    symmetric,
+    matrix_type,
+):
+    handle, X = _bddc_solve(built, complex_valued, symmetry)
+    inverse = handle._preconditioner.flags.ToDict()["inverse"]
+    assert inverse.startswith("gfem_")  # never NGSolve's own "pardiso"
+    assert len(coarse_wrappers) == 1
+    (wrapper,) = coarse_wrappers
+    assert wrapper["type"].__module__ == "gfem._linalg.pardiso"
+    assert wrapper["symmetric"] is symmetric
+    assert wrapper["ordering"] == 3  # OpenMP parallel METIS
+    assert wrapper["refinement"] == 0
+    assert wrapper["matrix_type"] == matrix_type
+    # the same iterations and solution as a sparse Cholesky coarse problem
+    monkeypatch.setattr(pardiso, "pardiso_available", lambda: False)
+    ref_handle, ref = _bddc_solve(built, complex_valued, symmetry)
+    assert ref_handle._preconditioner.flags.ToDict()["inverse"] == "sparsecholesky"
+    assert len(coarse_wrappers) == 1
+    assert handle.iterations == ref_handle.iterations
+    assert handle.iterations[-1] > 1  # order 4: the coarse problem is not all of A
+    assert np.linalg.norm(X - ref) <= 1e-10 * np.linalg.norm(ref)
+
+
+@pytest.mark.parametrize("symmetry", ["complex_symmetric", "general"])
+def test_bddc_coarse_problem_without_mkl_is_sparse_cholesky(
+    built, monkeypatch, symmetry
+):
+    monkeypatch.setattr(pardiso, "pardiso_available", lambda: False)
+    assert pardiso.pardiso_inverse(symmetry) is None
+    op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
+    handle = prepare(op, symmetry=symmetry, kind="bddc_gmres")
+    assert handle._preconditioner.flags.ToDict()["inverse"] == "sparsecholesky"
 
 
 # --- no reliance on NGSolve's default inverse ---------------------------------------

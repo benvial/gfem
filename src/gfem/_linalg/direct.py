@@ -22,38 +22,14 @@ import scipy.sparse as sp
 
 from gfem._linalg import Operator, Symmetry
 from gfem._linalg.base import NgsHandle, host_bytes, same_pattern
+from gfem._linalg.pardiso import PARDISO_FLAGS, pardiso_available
 
-#: NGSolve's sparse Cholesky: the factorization without MKL, and the BDDC
+#: NGSolve's sparse Cholesky: the factorization without MKL, also the BDDC
 #: coarse solve's.
 INVERSE = "sparsecholesky"
-#: NGSolve's MKL PARDISO wrapper and its flags: MKL's OpenMP parallel METIS
-#: ordering (the same nested dissection and fill as serial METIS, with a
-#: faster analysis, phase 11, at 2-4 threads), the symmetric matrix type
-#: (gfem stores the full matrix, so NGSolve would otherwise factor it as
-#: unsymmetric LU, with twice the fill), and no iterative refinement.
-#: NGSolve's wrapper asks for up to 16 refinement steps with no
-#: backward-error stop: they stagnate without lowering the residual and make
-#: a solve cost about 4.5 substitutions instead of one. 0 is MKL's default
-#: (two steps only after a perturbed pivot).
+#: NGSolve's MKL PARDISO wrapper, with gfem's `PARDISO_FLAGS` as the
+#: factored matrix's ``inverse_flags``.
 PARDISO = "pardiso"
-PARDISO_FLAGS = {"ordering": "parallel_metis", "symmetric": True, "refinement": 0}
-
-
-@functools.cache
-def pardiso_available() -> bool:
-    """Whether NGSolve found MKL PARDISO in a pip ``mkl`` (the ``mkl`` extra).
-
-    Reads private attributes of NGSolve's wrapper: if they are missing (another
-    NGSolve version), the direct solver stays sparse Cholesky.
-    """
-    try:
-        from ngsolve.solvers import mkl_pardiso
-    except ImportError:
-        return False
-    return (
-        getattr(mkl_pardiso, "_pardiso", None) is not None
-        and getattr(mkl_pardiso, "_mkl_free_buffers", None) is not None
-    )
 
 
 @functools.cache

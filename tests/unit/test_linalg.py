@@ -271,12 +271,6 @@ def test_one_bddc_handle_solves_an_adjoint_at_its_own_tolerance(built):
     np.testing.assert_array_equal(direct.solve(B, tolerance=1e-3), direct.solve(B))
 
 
-def test_bddc_coarse_inverse_is_sparse_cholesky_never_the_default(built):
-    handle = prepare(_laplace(built)[0], symmetry="hermitian", kind="bddc_gmres")
-    flags = handle._preconditioner.flags.ToDict()
-    assert flags["inverse"] == "sparsecholesky"
-
-
 def test_bddc_complex_symmetric_operator_uses_gmres(built):
     op, space = _laplace(built, complex_valued=True, shift=1 - 2j)
     handle = prepare(op, symmetry="complex_symmetric", kind="bddc_gmres")
