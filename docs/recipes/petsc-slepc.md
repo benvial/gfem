@@ -15,7 +15,9 @@ and neither is a pip extra: you build the {term}`PETSc stack` once, from source.
 ## Build the PETSc stack
 
 You need Linux (macOS is not tested, Windows is not supported), uv, curl,
-make, cmake, and the gcc, g++ and gfortran compilers. gfem needs PETSc with
+make, cmake, and the gcc, g++ and gfortran compilers. The script ignores an
+active conda environment's compilers and flags (`CC`, `CFLAGS`, `LDFLAGS`, …)
+and uses the gcc, g++ and gfortran on your `PATH`. gfem needs PETSc with
 complex scalars and without MPI, and conda-forge's PETSc depends on ParMETIS,
 which is not free for commercial use ({doc}`../project/licence`).
 
