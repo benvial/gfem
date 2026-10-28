@@ -53,14 +53,6 @@ Port mode sweep
   frequencies before the 3D solve, giving each wave port's propagation constant
   and mode profile at every output frequency.
 
-Reference problem
-  A fixed geometry plus problem type, solved with both Palace and gfem and
-  compared.
-
-Agreement with Palace
-  The tolerance a {term}`reference problem` asserts between gfem and Palace,
-  stated per quantity as relative or absolute.
-
 Gradient verification matrix
   The set of cells (problem type × gradient input × linear solver × sweep)
   whose gradients are checked against fourth-order central differences and a

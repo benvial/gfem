@@ -16,9 +16,9 @@ length_unit=)``); gfem converts on import, and every field value is in SI
 Time dependence
 ---------------
 Time-harmonic quantities are complex phasors under e^{+iωt}: the physical
-field is ``Re(E exp(+iωt))``. This is Palace's convention (its operator
-is ``K + iωC - ω²M``) and the electrical engineering one (Touchstone,
-scikit-rf, SPICE write ``j`` for ``i``). Consequences:
+field is ``Re(E exp(+iωt))``, so the operator is ``K + iωC - ω²M``. This
+is the electrical engineering convention (Touchstone, scikit-rf, SPICE write
+``j`` for ``i``). Consequences:
 
 - a wave travelling along ``+s`` is ``exp(-gamma s)``, with
   ``gamma = alpha + i beta`` and attenuation ``alpha >= 0``;
@@ -55,10 +55,10 @@ real, power waves and pseudo-waves coincide.
   NaN, and it cannot be excited.
 - A `WavePort`'s S is normalized to unit modal power; its ``z_ref`` is the
   power-voltage impedance ``Z_PV`` along its ``voltage_path`` (NaN without
-  one). As in Palace, a wave port's S is the projection of the field on
-  the conjugated port mode, with the mode's magnetic field taken at its
-  complex wavenumber (Palace v0.18.1), and the mode scaled so that this projection
-  of the mode itself carries 1 W; for a lossless mode this is the modal
+  one). A wave port's S is the projection of the field on the conjugated
+  port mode, with the mode's magnetic field taken at its complex
+  wavenumber, and the mode scaled so that this projection of the mode
+  itself carries 1 W; for a lossless mode this is the modal
   power wave. ``WavePort(offset=d)`` refers S to a plane ``d`` inside the
   domain: ``S_ij`` times ``exp(gamma_i d_i) exp(gamma_j d_j)``.
 - ``NetworkParameters.y()``, ``.z()`` and ``.renormalize(z_new)`` use the
@@ -86,8 +86,7 @@ Surface conductors
 ------------------
 A `Conductor` face adds the boundary term ``iω/Z_s(ω) ∫ E_t · v_t``, with
 ``Z_s`` the surface impedance of a metal of conductivity sigma and
-thickness t in the finite-thickness form of HFSS and Palace
-(``surfaceconductivityoperator.cpp``)::
+thickness t in the finite-thickness form of HFSS::
 
     Z_s = (1 / (sigma δ)) [(sinh nu + sin nu) + i (sinh nu - sin nu)]
           / (cosh nu - cos nu)
@@ -110,21 +109,20 @@ excluded metal volume is: for a film much thinner than its skin depth,
   the given thickness; the top and bottom faces of a trace together carry
   ``sigma t``.
 
-This is Palace's convention face for face, so gsim layouts give the same
-discrete problem in both codes.
+gsim layouts assume this convention face for face.
 
 Eigenmodes
 ----------
 An eigenmode is a complex angular frequency ``omega`` and a field ``E``
 with ``Re(E exp(+iωt))`` source-free; ``Im omega > 0`` decays, and
-``Q = |omega| / (2 |Im omega|)`` (Palace's definition). The mode's
+``Q = |omega| / (2 |Im omega|)``. The mode's
 electric energy is::
 
     E_elec = 1/2 Re ∫ D* · E dV + Σ C_j |V_j|^2 / 2
 
 over the solve domain and the capacitive lumped ports (peak phasors: the
-total time-averaged energy of a lossless mode, electric plus magnetic, as
-Palace's ``E_elec``). Each mode field is scaled to ``E_elec`` =
+total time-averaged energy of a lossless mode, electric plus magnetic).
+Each mode field is scaled to ``E_elec`` =
 `MODE_ENERGY` and phased so that ``∫ D · E dV`` (no conjugate) is real
 and positive, which makes a lossless mode's field real; the remaining sign
 puts the largest coefficient's real part positive (among coefficients equal

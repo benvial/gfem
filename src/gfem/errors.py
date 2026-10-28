@@ -88,8 +88,9 @@ class PortModeTrackingWarning(UserWarning):
 
     gfem follows the physical mode (by its overlap with the neighbouring
     frequency's mode) through the crossing, so beyond it the mode is no
-    longer the n-th in Palace's per-frequency order and S-parameters differ
-    from Palace's there. Filter it with Python's `warnings` module.
+    longer the n-th in the per-frequency rank order and S-parameters differ
+    from those of a solver that ranks modes at each frequency. Filter it
+    with Python's `warnings` module.
     """
 
 

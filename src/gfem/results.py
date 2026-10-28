@@ -78,18 +78,16 @@ class ElectrostaticResult:
             ``(n_terminals, n_terminals)``, rows and columns in `terminals`
             order: ``capacitance[i, j]`` is the charge on terminal ``i`` in
             excitation ``j``. The diagonal is positive and the off-diagonal
-            entries are negative or zero (Palace's ``terminal-C.csv``
-            convention).
+            entries are negative or zero.
         terminals: The terminal names (static labels).
         energy: Electric energy in joules stored in each volume region of
             the solve domain, by region name: an ``(n_terminals,)`` array,
-            entry ``i`` for excitation ``i`` (Palace's ``domain-E.csv`` at
-            1 V). Excluded volumes are left out. Summed over the regions,
-            excitation ``i`` stores ``capacitance[i, i] / 2``. Not
-            differentiable with respect to what the solve reads: a gradient
-            through it that reaches ``eps_r`` or the mesh nodes raises
-            `gfem.NonDifferentiableError` (`mutual` and `inverse` do
-            differentiate).
+            entry ``i`` for excitation ``i`` at 1 V. Excluded volumes are
+            left out. Summed over the regions, excitation ``i`` stores
+            ``capacitance[i, i] / 2``. Not differentiable with respect to
+            what the solve reads: a gradient through it that reaches
+            ``eps_r`` or the mesh nodes raises `gfem.NonDifferentiableError`
+            (`mutual` and `inverse` do differentiate).
         potential: The potential of each terminal's solve, a `Field` by
             terminal name (in `terminals` order): 1 V on that terminal, 0 V on
             every other terminal and the ground. Quantity ``"V"``, in volts,
@@ -111,7 +109,7 @@ class ElectrostaticResult:
 
     @property
     def mutual(self) -> jax.Array:
-        """The mutual capacitance matrix in farads (Palace ``terminal-Cm.csv``).
+        """The mutual capacitance matrix in farads.
 
         Off the diagonal, ``mutual[i, j] = -capacitance[i, j]``, the
         capacitance between terminals ``i`` and ``j``; on it, the row sum
@@ -122,7 +120,7 @@ class ElectrostaticResult:
 
     @property
     def inverse(self) -> jax.Array:
-        """The inverse of `capacitance` in 1/F (Palace ``terminal-Cinv.csv``).
+        """The inverse of `capacitance` in 1/F.
 
         Entry ``[i, j]`` is the voltage of terminal ``i`` per coulomb on
         terminal ``j``, the others carrying no charge. Without a ground the
@@ -938,32 +936,31 @@ class EigenmodeResult:
             e^{+iωt} a decaying mode has ``Im omega > 0``.
         error: Backward error of each mode,
             ``|T(omega) x| / ((|K| + |omega| |C| + |omega|^2 |M|) |x|)`` for
-            the discrete operator ``T(omega) = K + i omega C - omega^2 M``
-            (Palace's ``Error (Bkwd.)``); at most
+            the discrete operator ``T(omega) = K + i omega C - omega^2 M``;
+            at most
             ``SolverOptions.eigen_tolerance``.
         q_port: Coupling Q of each lumped port with a resistance R, by port
             name: ``Re omega / kappa`` with the port's coupling rate
             ``kappa = R |I|^2 / (2 E)``, ``I = V / R`` the current through R
             for the port voltage V of the mode and ``E`` the mode's electric
-            energy (Palace's ``port-Q.csv``). V is the port's mean voltage
+            energy. V is the port's mean voltage
             over its elements, as in a driven problem; when the elements of
             a multi-element port see different voltages, R dissipates more
             than ``|V|^2 / (2 R)``, and ``1 / Q`` exceeds the sum of the
             ``1 / q_port`` and the dielectric losses.
         participation: Inductive energy participation ratio of each lumped
             port with an inductance L, by port name: ``L |I|^2 / (2 E)``
-            with ``I = V / (i Re(omega) L)`` (Palace's ``port-EPR.csv``),
-            the junction participation of a transmon. Its sign is that of
-            ``Re V``: the field's phase makes a lossless mode real, so the
-            sign is the junction's polarity along its port direction (Palace
-            signs by ``Re I``, which is zero for a real field).
+            with ``I = V / (i Re(omega) L)``, the junction participation of
+            a transmon. Its sign is that of ``Re V``: the field's phase
+            makes a lossless mode real, so the sign is the junction's
+            polarity along its port direction (not ``Re I``, which is zero
+            for a real field).
         bulk_participation: Electric energy participation of each volume
             region of the solve domain, by region name: the fraction of the
-            mode's electric energy ``E`` stored in it (Palace's
-            ``domain-E.csv`` ratios). Times the region's ``tan_delta``, it
-            is the region's contribution to ``1 / Q`` (for a per-axis
-            ``tan_delta`` that holds only if the field lies along one
-            principal axis).
+            mode's electric energy ``E`` stored in it. Times the region's
+            ``tan_delta``, it is the region's contribution to ``1 / Q``
+            (for a per-axis ``tan_delta`` that holds only if the field lies
+            along one principal axis).
         e_fields: The mode fields, one `Field` per mode (read them with
             `e_field`): peak phasors in V/m, quantity ``"E"``, on H(curl)
             of the solve order over the solve domain, each with its mode's

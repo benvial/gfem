@@ -1,32 +1,24 @@
 """The Capabilities page's claims, derived from the tests at docs build time.
 
-The gradient matrix (problem type x gradient input), the raises list and the
-agreement-with-Palace tolerances are never typed by hand:
-
-- the matrix and the raises list come from the verification tests'
-  module-level data, imported by path without running a solve:
-  ``CELLS`` (tests/verification/test_gradient_matrix.py), ``EXPECTED`` and
-  ``OUT_OF_SCOPE`` (tests/verification/test_gradient_matrix_raise_table.py);
-- the Palace tolerances are read with `ast` from an allowlist of
-  reference-test constants (`AGREEMENT`), never by importing those tests.
+The gradient matrix (problem type x gradient input) and the raises list are
+never typed by hand: they come from the verification tests' module-level
+data, imported by path without running a solve: ``CELLS``
+(tests/verification/test_gradient_matrix.py), ``EXPECTED`` and
+``OUT_OF_SCOPE`` (tests/verification/test_gradient_matrix_raise_table.py).
 
 Every claim that cannot be derived raises `CapabilitiesError`, which the
 Sphinx hook turns into an `ExtensionError`: a problem key or input kind the
 mapping below does not know, a grid cell with no outcome or with
-conflicting ones, a missing ``OUT_OF_SCOPE`` row the grid needs, and an
-allowlisted constant that is missing, not a literal, unused, or named like
-a timing figure. Timing has no path to the page: the wall-time assertions
-are inline expressions the allowlist cannot name.
+conflicting ones, and a missing ``OUT_OF_SCOPE`` row the grid needs.
 
 `derive` returns one plain dict (lists, dicts, strings and numbers). The
-three directives on docs/capabilities.md render it, and every page template
+two directives on docs/capabilities.md render it, and every page template
 gets it as ``gfem_capabilities`` (the template context, as if set in
-``html_context``) for the front page's compact matrix and Palace rows. Only
+``html_context``) for the front page's compact matrix. Only
 `setup` imports Sphinx, so the derivation runs (and is unit-tested) without
 it.
 """
 
-import ast
 import dataclasses
 import importlib.util
 import re
@@ -37,7 +29,7 @@ REPO = Path(__file__).resolve().parents[2]
 MATRIX_TEST = "tests/verification/test_gradient_matrix.py"
 RAISE_TEST = "tests/verification/test_gradient_matrix_raise_table.py"
 CAPABILITIES_DOC = "capabilities"
-FRONT_DOC = "index"  # the gfem-home layout renders the compact matrix and Palace rows
+FRONT_DOC = "index"  # the gfem-home layout renders the compact matrix
 CONTEXT_KEY = "gfem_capabilities"  # the template context name
 
 
@@ -342,192 +334,6 @@ def _display(label: str) -> str:
     return label.replace(" x ", " \N{MULTIPLICATION SIGN} ")
 
 
-# --- Agreement with Palace ------------------------------------------------------
-
-
-@dataclasses.dataclass(frozen=True)
-class Agreement:
-    """An allowlisted row: tolerance constants of one reference test.
-
-    ``names`` are module-level constants of ``file`` (relative to the repo),
-    one per measured ``quantities`` entry; ``kind`` is ``"relative"`` or
-    ``"absolute"``; ``problem`` rows (one per problem type) are also the
-    front page's, the others (measurements) are Capabilities only.
-    """
-
-    file: str
-    names: tuple[str, ...]
-    quantities: tuple[str, ...]
-    label: str
-    detail: str
-    kind: str
-    problem: bool = True
-
-
-AGREEMENT = (
-    Agreement(
-        "tests/reference/test_driven.py",
-        ("TOLERANCE",),
-        ("max |ΔS|",),
-        "Driven, lumped ports",
-        "800 µm coplanar line on the IHP SG13G2 stack, first-order absorbing boundary",
-        "absolute",
-    ),
-    Agreement(
-        "tests/reference/test_eigenmode.py",
-        ("PARITY_F", "PARITY_Q"),
-        ("Re f", "Q"),
-        "Eigenmode, port-loaded",
-        "4 mm CPW resonator on sapphire",
-        "relative",
-    ),
-    Agreement(
-        "tests/reference/test_eigenmode_nonlinear.py",
-        ("PARITY_F", "PARITY_Q"),
-        ("Re f", "Q"),
-        "Nonlinear eigenmode, conductor loss",
-        "IHP half-wave resonator near 104 GHz",
-        "relative",
-    ),
-    Agreement(
-        "tests/reference/test_electrostatic.py",
-        ("RTOL",),
-        ("capacitance",),
-        "Electrostatic",
-        "two-layer plate stack, every capacitance entry",
-        "relative",
-    ),
-    Agreement(
-        "tests/reference/test_measurements.py",
-        ("PARITY",),
-        ("participation",),
-        "Interface participation",
-        "metal-air, metal-substrate and substrate-air on the CPW resonator",
-        "relative",
-        problem=False,
-    ),
-)
-# No timing figure reaches the site (no speed claims before the release gate).
-TIMING = re.compile(r"WALL|TIME|RSS|PER_SAMPLE|BUDGET|SPEED")
-
-
-def palace_agreement(repo: Path, allowlist=AGREEMENT) -> list[dict]:
-    """The agreement-with-Palace rows, read from the reference tests by AST.
-
-    Raises:
-        CapabilitiesError: when an allowlisted constant is named like a
-            timing figure, is missing, is not a number literal, or is never
-            read by its test.
-    """
-    rows = []
-    for row in allowlist:
-        if row.kind not in ("relative", "absolute"):
-            raise CapabilitiesError(f"{row.label}: kind {row.kind!r} is unknown")
-        values = _constants(repo, row.file, row.names)
-        entries = [
-            {"name": name, "quantity": q, "value": values[name], "text": _fmt(row, v)}
-            for name, q, v in zip(
-                row.names, row.quantities, values.values(), strict=True
-            )
-        ]
-        if row.kind == "absolute":
-            text = " · ".join(f"{e['quantity']} ≤ {e['text']}" for e in entries)
-        elif len(entries) == 1:
-            text = f"relative {entries[0]['text']}"
-        else:
-            text = "relative: " + " · ".join(
-                f"{e['quantity']} {e['text']}" for e in entries
-            )
-        rows.append(
-            {
-                "label": row.label,
-                "detail": row.detail,
-                "kind": row.kind,
-                "values": entries,
-                "text": text,
-                "file": row.file,
-                "problem": row.problem,
-            }
-        )
-    return rows
-
-
-def _constants(repo: Path, file: str, names: tuple[str, ...]) -> dict:
-    """Module-level number literals of a test, never importing it."""
-    for name in names:
-        if TIMING.search(name.upper()):
-            raise CapabilitiesError(
-                f"{file}: {name} looks like a timing constant; timing is never "
-                "published on the site"
-            )
-    path = repo / file
-    try:
-        tree = ast.parse(path.read_text(), filename=str(path))
-    except (OSError, SyntaxError) as exc:
-        raise CapabilitiesError(f"cannot read {path}: {exc}") from exc
-    assigned = _assignments(tree)
-    reads = {
-        n.id
-        for n in ast.walk(tree)
-        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
-    }
-    out = {}
-    for name in names:
-        if name not in assigned:
-            raise CapabilitiesError(
-                f"{file}: allowlisted constant {name} is missing "
-                "(docs/_ext/gfem_capabilities.py AGREEMENT)"
-            )
-        try:
-            value = ast.literal_eval(assigned[name])  # type: ignore[arg-type]
-        except (ValueError, TypeError, SyntaxError):
-            value = None
-        if not isinstance(value, int | float) or isinstance(value, bool):
-            raise CapabilitiesError(f"{file}: {name} is not a number literal")
-        if name not in reads:
-            raise CapabilitiesError(
-                f"{file}: {name} is unused (only its own assignment): a dead "
-                "constant is not a tolerance the test asserts"
-            )
-        out[name] = value
-    return out
-
-
-def _assignments(tree: ast.Module) -> dict[str, ast.expr | None]:
-    """Module-level ``NAME = value`` and ``A, B = a, b`` assignments.
-
-    A name whose value is not one expression of its own (``A, B = f()``)
-    maps to None, which `ast.literal_eval` rejects.
-    """
-    assigned: dict[str, ast.expr | None] = {}
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            targets, value = node.targets, node.value
-        elif isinstance(node, ast.AnnAssign):
-            targets, value = [node.target], node.value
-        else:
-            continue
-        for target in targets:
-            if isinstance(target, ast.Name):
-                assigned[target.id] = value
-            elif isinstance(target, ast.Tuple):
-                elts = value.elts if isinstance(value, ast.Tuple) else []
-                ok = len(elts) == len(target.elts)
-                for i, t in enumerate(target.elts):
-                    if isinstance(t, ast.Name):
-                        assigned[t.id] = elts[i] if ok else None
-    return assigned
-
-
-def _fmt(row: Agreement, value: float) -> str:
-    if row.kind == "relative" and value >= 0.01:
-        return f"{value * 100:g} %"
-    if 0 < abs(value) < 0.01:  # 1e-3, not 0.001: tolerances read as exponents
-        mantissa, exponent = f"{value:.6e}".split("e")
-        return f"{mantissa.rstrip('0').rstrip('.')}e{int(exponent)}"
-    return f"{value:g}"
-
-
 # --- Loading the verification tests --------------------------------------------
 
 
@@ -570,11 +376,9 @@ def derive(repo: Path = REPO) -> dict:
 
     Returns:
         ``columns``, ``rows``, ``counts``, ``provenance`` and ``raises`` (see
-        `gradient_matrix`) and ``palace`` (see `palace_agreement`).
+        `gradient_matrix`).
     """
-    return gradient_matrix(*load_verification(repo)) | {
-        "palace": palace_agreement(repo)
-    }
+    return gradient_matrix(*load_verification(repo))
 
 
 # --- Sphinx --------------------------------------------------------------------
@@ -595,7 +399,7 @@ def setup(app):
 
     def add_context(app, _pagename, _templatename, context, _doctree) -> None:
         # Every page template sees the claims (the gfem-home layout renders
-        # the compact matrix and the Palace rows from them).
+        # the compact matrix from them).
         context[CONTEXT_KEY] = app.env.gfem_capabilities
 
     def reread(_app, env, *_changes) -> list[str]:
@@ -613,7 +417,7 @@ def setup(app):
 
 
 def _directives() -> dict:
-    """The three directives (defined here so the module imports without Sphinx)."""
+    """The two directives (defined here so the module imports without Sphinx)."""
     from docutils import nodes
     from sphinx import addnodes
     from sphinx.util.docutils import SphinxDirective
@@ -719,31 +523,10 @@ def _directives() -> dict:
                 items += nodes.list_item("", para)
             return [items]
 
-    class PalaceAgreement(_Claims):
-        """One row per reference problem: the tolerance its test asserts."""
-
-        def run(self):
-            items = nodes.bullet_list(classes=["gfem-status", "gfem-palace"])
-            for row in self.data["palace"]:
-                what = nodes.inline(classes=["what"])
-                what += nodes.strong(text=row["label"])
-                what += nodes.Text(" ")
-                what += nodes.inline(text=row["detail"], classes=["gfem-detail"])
-                tag = nodes.inline(classes=["tag"])
-                tag += nodes.Text(f"{row['text']} ")
-                tag += nodes.literal(text=Path(row["file"]).name)
-                para = nodes.paragraph()
-                para += what
-                para += nodes.Text(" ")
-                para.extend(self.source(row["file"], tag))
-                items += nodes.list_item("", para)
-            return [items]
-
     def _entry(*children):
         return nodes.entry("", nodes.paragraph("", "", *children))
 
     return {
         "gfem-gradient-matrix": GradientMatrix,
         "gfem-raises": Raises,
-        "gfem-palace-agreement": PalaceAgreement,
     }

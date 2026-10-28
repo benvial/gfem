@@ -11,7 +11,7 @@ The thin oxides and residues on a superconducting resonator are too thin to
 mesh. `gfem.interface_participation` gives the share of each mode's electric
 energy in a layer of thickness `t` and permittivity `eps_r` on a surface,
 with the metal-air (`"MA"`), metal-substrate (`"MS"`) and substrate-air
-(`"SA"`) models of Wenner et al. (Palace's `Dielectric` postprocessing):
+(`"SA"`) models of Wenner et al.:
 
 ```python
 import gfem

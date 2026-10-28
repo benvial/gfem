@@ -1,8 +1,8 @@
 # Capabilities
 
-What gfem solves and differentiates at v0.1. The gradient matrix, the raises
-list and the Palace tolerances on this page are generated from the test suite
-when the docs are built: none of them is typed by hand.
+What gfem solves and differentiates at v0.1. The gradient matrix and the
+raises list on this page are generated from the test suite when the docs are
+built: neither is typed by hand.
 
 ## What differentiates
 
@@ -69,14 +69,3 @@ requires. See {doc}`get-started`.
 
 MIT. gfem depends on NGSolve (LGPL-2.1), whose PyPI wheels also contain
 GPL-2.0+ SuiteSparse code; see {doc}`project/licence`.
-
-## Agreement with Palace
-
-On the reference problems gfem and Palace discretize the same mesh at the same
-order. Each row is the tolerance its test asserts.
-
-```{gfem-palace-agreement}
-```
-
-The reference tier, `tests/reference/`, runs outside the default test
-selection: it needs the Palace baselines in `GFEM_REFERENCE_DIR`.
