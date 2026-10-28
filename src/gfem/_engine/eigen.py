@@ -26,6 +26,7 @@ from gfem._engine.coefficients import coefficient, element_tensors
 from gfem._engine.domain import domain_key, h1_space, pec_surfaces
 from gfem._engine.driven import DrivenOperator, real_space
 from gfem._linalg import Handle, Operator, prepare
+from gfem._linalg.base import free_mask
 from gfem.model import Model
 
 __all__ = [
@@ -59,7 +60,7 @@ def eigen_operator(
     space, scale = op.space, op.built.scale
     classes = split(op.pieces, scale, sigma)
     powers = classes.powers
-    free = np.array(list(space.FreeDofs()), dtype=bool)  # ty: ignore[invalid-argument-type]
+    free = free_mask(space.FreeDofs(), space.ndof)
 
     def operator(k: complex) -> Operator:
         return Operator(op.form(k * const.c / scale), space.FreeDofs())

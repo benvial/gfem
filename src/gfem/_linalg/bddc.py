@@ -20,7 +20,7 @@ import ngsolve as ngs
 import numpy as np
 
 from gfem._linalg import Operator, Symmetry
-from gfem._linalg.base import NgsHandle, host_bytes
+from gfem._linalg.base import NgsHandle, host_bytes, same_free_dofs
 from gfem._linalg.direct import INVERSE
 
 #: Krylov iterations a BDDC setup is worth, summed over the right-hand sides
@@ -80,8 +80,7 @@ class BddcHandle(NgsHandle):
         """
         form = operator.form
         space = form.space
-        free = np.array(list(operator.freedofs), dtype=bool)  # ty: ignore[invalid-argument-type]
-        if not np.array_equal(free, np.array(list(space.FreeDofs()), dtype=bool)):  # ty: ignore[invalid-argument-type]
+        if not same_free_dofs(operator.freedofs, space.FreeDofs()):
             raise ValueError(
                 "BDDC fixes the Dirichlet DOFs of the space, so the operator's free "
                 "DOFs must be the space's FreeDofs(); build the space with "
