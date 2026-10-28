@@ -14,9 +14,10 @@ allow-proprietary = ["cuda-*", "cutensor-*", "nvidia-*"]
 # stays OSI-licensed.
 #
 # Intel Simplified Software License: redistributable in binary form, no
-# non-commercial term.
+# non-commercial term. onemkl-license (Windows, mkl 2026.2+) ships only the
+# licence texts.
 [allow-licence."Intel Simplified Software License"]
-distributions = ["mkl", "tbb", "tcmlib"]
+distributions = ["mkl", "onemkl-license", "tbb", "tcmlib"]
 
 # Intel End User License Agreement for Developer Tools: the OpenMP runtime mkl
 # requires. Redistributable as part of a product, no non-commercial term, but
