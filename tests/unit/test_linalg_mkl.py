@@ -394,6 +394,18 @@ def test_bddc_coarse_problem_without_mkl_is_sparse_cholesky(
     assert handle._preconditioner.flags.ToDict()["inverse"] == "sparsecholesky"
 
 
+@pytest.mark.parametrize("symmetry", ["hermitian", "general"])
+def test_bddc_handles_a_coarse_problem_without_free_dofs(tmp_path, symmetry):
+    # every wirebasket DOF fixed (an electrostatic terminal and ground on a
+    # one-cell plate): PARDISO refuses an empty matrix, so it is never called
+    path = tmp_path / "cell.msh"
+    sm.write_msh22(path, sm.plate(1.0, 1.0, (("box", 1.0),), (1, 1, 1)))
+    op, space = _laplace(to_ngsolve(gfem.Mesh.from_gmsh(path)), order=1)
+    assert space.FreeDofs().NumSet() == 0
+    handle = prepare(op, symmetry=symmetry, kind="bddc_gmres")
+    np.testing.assert_array_equal(handle.solve(np.ones(space.ndof)), 0)
+
+
 # --- no reliance on NGSolve's default inverse ---------------------------------------
 
 

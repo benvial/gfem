@@ -79,6 +79,12 @@ def _register() -> None:
             super().__init__(*args, **kwargs)
             self._apply_flags(self.flags)
 
+        def _call_pardiso(self, phase: int) -> None:
+            # PARDISO refuses an empty matrix: a coarse problem whose DOFs
+            # are all fixed has nothing to factor or solve
+            if self._n[0] > 0:  # ty: ignore[unresolved-attribute]
+                super()._call_pardiso(phase)
+
     class GfemPardisoGeneral(GfemPardiso):
         """gfem's PARDISO for a general operator: unsymmetric LU."""
 

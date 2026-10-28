@@ -4,9 +4,9 @@ BDDC splits each element's DOFs into a wirebasket (vertices and low-order
 edges) and the rest, and solves a global coarse problem on the wirebasket.
 That coarse problem is factorized by an explicitly named inverse, never
 NGSolve's default: gfem's flagged MKL PARDISO with the ``mkl`` extra (see
-`gfem._linalg.pardiso`), ``sparsecholesky`` without it. The Krylov method follows the
-operator: conjugate gradients for a Hermitian (real symmetric positive
-definite) operator, GMRES otherwise.
+`gfem._linalg.pardiso`), ``sparsecholesky`` without it. The Krylov method
+follows the operator: conjugate gradients for a Hermitian (real symmetric
+positive definite) operator, GMRES otherwise.
 
 Across a sweep the handle keeps its preconditioner (`BddcHandle.refactorize`)
 once a solve on it measured a reference iteration count, caps every warm
