@@ -77,6 +77,9 @@ def test_a_device_that_cannot_run_exits_1(model, tmp_path, capsys, monkeypatch, 
     _cuda.probe.cache_clear()
 
 
+@pytest.mark.skipif(
+    sys.platform == "darwin", reason="macOS refuses CUDA before probing"
+)
 def test_a_gpu_job_without_a_gpu_names_the_cuda_error(
     model, tmp_path, capsys, monkeypatch
 ):

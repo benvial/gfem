@@ -15,7 +15,7 @@ would still report the caller's high-water mark. Instead:
   outside the child's GIL, samples the child's ``VmRSS`` every
   `SAMPLE_INTERVAL`; the child adds its own reading just before it returns.
   A peak held for less than about one interval can be missed;
-- without ``/proc`` (macOS) the child reports ``ru_maxrss``.
+- without ``/proc`` (macOS, Windows) the child reports `peak_rss_gib`.
 
 The call must be a module-level function of a Python file (a test module
 works: the child loads it by path); arguments, return value and exception
@@ -24,9 +24,14 @@ travel by pickle, so they must not use classes defined in that file.
 
 import importlib.util
 import multiprocessing
-import resource
 import sys
 from pathlib import Path
+
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+else:
+    import resource
 
 #: Seconds between the caller's samples of the child's RSS.
 SAMPLE_INTERVAL = 0.001
@@ -78,9 +83,7 @@ def _child(send, target, args, kwargs, sampled_only):
         value = getattr(module, name)(*args, **kwargs)
         status = _status("self")
         if not status:  # no /proc
-            kib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-            if sys.platform == "darwin":  # bytes there
-                kib /= 1024
+            kib = peak_rss_gib() * 2**20
         elif "VmHWM" in status and not sampled_only:
             kib = status["VmHWM"]
         else:
@@ -90,6 +93,41 @@ def _child(send, target, args, kwargs, sampled_only):
         reply = (False, error, 0)
     send.send(reply)
     send.close()
+
+
+def peak_rss_gib() -> float:
+    """This process's peak RSS so far, in GiB."""
+    if sys.platform == "win32":
+        return _peak_working_set() / 2**30
+    maxrss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return maxrss / 2**30 if sys.platform == "darwin" else maxrss / 2**20  # B, KiB
+
+
+def _peak_working_set() -> int:
+    """``PeakWorkingSetSize`` of this process, in bytes (Windows)."""
+
+    class Counters(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    current = ctypes.windll.kernel32.GetCurrentProcess
+    current.restype = wintypes.HANDLE  # a 64-bit pseudo-handle, not an int
+    info = ctypes.windll.psapi.GetProcessMemoryInfo
+    info.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+    counters = Counters(cb=ctypes.sizeof(Counters))
+    if not info(current(), ctypes.byref(counters), counters.cb):
+        raise ctypes.WinError()
+    return counters.PeakWorkingSetSize
 
 
 def _status(pid) -> dict[str, int]:

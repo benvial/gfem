@@ -56,6 +56,23 @@ def pardiso_available() -> bool:
     )
 
 
+@functools.cache
+def _real_sparse_matrix() -> Any:
+    """NGSolve's ``SparseMatrix<double>`` class.
+
+    NGSolve names it after the C++ ``typeid``: ``SparseMatrixd`` with GCC and
+    Clang, another name with MSVC (Windows), so it is found by what its
+    ``CreateFromCOO`` returns.
+    """
+    for cls in vars(ngs.la).values():
+        if not (isinstance(cls, type) and "CreateFromCOO" in vars(cls)):
+            continue
+        signature = cls.CreateFromCOO.__doc__ or ""
+        if signature.rstrip().endswith("SparseMatrixTM<double>"):
+            return cls
+    raise RuntimeError("ngsolve.la has no real SparseMatrix with CreateFromCOO")
+
+
 class DirectHandle(NgsHandle):
     """One LDL^T factorization, reused for every right-hand side.
 
@@ -167,7 +184,7 @@ class DirectHandle(NgsHandle):
         n, m = coo.shape
         if n != m:
             raise ValueError(f"factorize needs a square matrix, got shape {coo.shape}.")
-        assembled = ngs.la.SparseMatrixd.CreateFromCOO(
+        assembled = _real_sparse_matrix().CreateFromCOO(
             coo.row.astype(np.int64),
             coo.col.astype(np.int64),
             np.asarray(coo.data, dtype=float),

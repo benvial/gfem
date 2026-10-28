@@ -378,10 +378,11 @@ def test_unconverged_modes_raise_without_a_partial_result(mesh):
 
 
 @pytest.mark.parametrize("order", [1, 2])
-def test_divfree_projection_matches_the_complex_product_bit_for_bit(tmp_path, order):
-    # the real G applied to the real and imaginary parts gives exactly what
-    # SciPy's complex product (G upcast to complex) gives; two layers in z
-    # leave free H1 nodes between the plates at order 1 too
+def test_divfree_projection_matches_the_complex_product(tmp_path, order):
+    # the real G applied to the real and imaginary parts gives what SciPy's
+    # complex product (G upcast to complex) gives: bit for bit on x86_64, to
+    # rounding on arm64, where the complex product contracts into FMAs; two
+    # layers in z leave free H1 nodes between the plates at order 1 too
     path = tmp_path / "line.msh"
     sm.write_msh22(path, sm.strip_line(L, W, H, (6, 1, 2)))
     model = line(gfem.Mesh.from_gmsh(path, length_unit="mm"))
@@ -395,7 +396,7 @@ def test_divfree_projection_matches_the_complex_product_bit_for_bit(tmp_path, or
         projected = project(x)
         project.free()
     assert np.linalg.norm(projected - x) > 0.1 * np.linalg.norm(x)
-    assert np.array_equal(projected, expected)
+    np.testing.assert_allclose(projected, expected, rtol=1e-13, atol=1e-13)
 
 
 # --- serialization -----------------------------------------------------------------
