@@ -120,11 +120,12 @@ def _peak_working_set() -> int:
             ("PeakPagefileUsage", ctypes.c_size_t),
         ]
 
+    current = ctypes.windll.kernel32.GetCurrentProcess
+    current.restype = wintypes.HANDLE  # a 64-bit pseudo-handle, not an int
+    info = ctypes.windll.psapi.GetProcessMemoryInfo
+    info.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
     counters = Counters(cb=ctypes.sizeof(Counters))
-    process = ctypes.windll.kernel32.GetCurrentProcess()
-    if not ctypes.windll.psapi.GetProcessMemoryInfo(
-        process, ctypes.byref(counters), counters.cb
-    ):
+    if not info(current(), ctypes.byref(counters), counters.cb):
         raise ctypes.WinError()
     return counters.PeakWorkingSetSize
 
