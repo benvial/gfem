@@ -373,6 +373,10 @@ def _check(tmp_path, path=(), **env):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the build script is bash")
+@pytest.mark.skipif(
+    (Path(sys.base_prefix) / "conda-meta").is_dir(),
+    reason="a conda Python runs the tests, and the script refuses it as target",
+)
 def test_the_build_script_takes_an_active_conda_off_path(tmp_path):
     # Conda's gcc, g++ and gfortran search conda's include and lib folders,
     # so bindings built with them link conda's PETSc and do not import; the
