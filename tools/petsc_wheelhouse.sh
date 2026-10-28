@@ -64,14 +64,18 @@ fail() {
 # petsc4py and slepc4py builds compile and link against conda's PETSc,
 # OpenBLAS and MPI, and give bindings that do not import. Take every folder
 # of the environment, and of the conda installation, off PATH, so that the
-# build uses the system's compilers and tools. CONDA_ROOTS keeps those two
-# folders for the target Python check. The installation is the folder above
-# CONDA_EXE's bin, if it holds conda-meta (not /usr for a system conda).
+# build uses the system's compilers and tools, and unset every other
+# exported variable that names one of them: the activation's tools (AR, LD,
+# NM, ...) and search paths (CMAKE_PREFIX_PATH, CMAKE_ARGS, ...) would pull
+# conda in too. PYTHON and VIRTUAL_ENV stay: they choose the target Python,
+# which the check then refuses if it is conda's. CONDA_ROOTS keeps those two
+# folders for that check. The installation is the folder above CONDA_EXE's
+# bin, if it holds conda-meta (not /usr for a system conda).
 leave_conda() {
   CONDA_ROOTS=()
   [ -n "${CONDA_PREFIX:-}" ] || return 0
   CONDA_ROOTS=("${CONDA_PREFIX%/}")
-  local base IFS=: entries entry root kept=()
+  local base IFS=: entries entry root kept=() name
   base=$(dirname "$(dirname "${CONDA_EXE:-/}")")
   [ ! -d "$base/conda-meta" ] || CONDA_ROOTS+=("${base%/}")
   read -ra entries <<< "$PATH"
@@ -83,7 +87,17 @@ leave_conda() {
   done
   PATH="${kept[*]-}"
   hash -r
-  echo "warning: conda environment $CONDA_PREFIX is active: the build takes its folders off PATH, ignores its compilers and flags (CC, CFLAGS, LDFLAGS, ...) and uses the system's gcc, g++ and gfortran" >&2
+  echo "warning: conda environment $CONDA_PREFIX is active: the build takes its folders off PATH, unsets the variables that name them, ignores its compilers and flags (CC, CFLAGS, LDFLAGS, ...) and uses the system's gcc, g++ and gfortran" >&2
+  while IFS= read -r name; do
+    case $name in PATH | PYTHON | VIRTUAL_ENV | [0-9]* | *[!A-Za-z0-9_]*) continue ;; esac
+    for root in "${CONDA_ROOTS[@]}"; do
+      case ${!name-} in *"$root"*)
+        unset "$name" 2> /dev/null || true # readonly: left as is
+        continue 2
+        ;;
+      esac
+    done
+  done < <(compgen -e)
   unset CONDA_PREFIX CONDA_DEFAULT_ENV CONDA_SHLVL
 }
 

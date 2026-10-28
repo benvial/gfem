@@ -341,14 +341,17 @@ def _check(tmp_path, path=(), **env):
     """Run the script's --check on stub tools.
 
     A system folder holds every prerequisite; its uv finds PYTHON, or else
-    the Python running the tests. ``path`` folders go first on PATH.
+    the Python running the tests, and saves the environment the script gives
+    it, which the build's tools would see, to uv.env. ``path`` folders go
+    first on PATH.
     """
     system = tmp_path / "system" / "bin"
     for tool in ("gcc", "g++", "gfortran"):
         _stub(system, tool, "echo 13.2.0")
     for tool in ("cmake", "make", "curl"):
         _stub(system, tool, "exit 0")
-    _stub(system, "uv", f'echo "${{3:-{sys.executable}}}"')
+    seen = tmp_path / "uv.env"
+    _stub(system, "uv", f'env > "{seen}"; echo "${{3:-{sys.executable}}}"')
     folders = [*map(str, path), str(system), "/usr/bin", "/bin"]
     return subprocess.run(
         [shutil.which("bash"), str(WHEELHOUSE_SCRIPT), "--check"],
@@ -362,17 +365,29 @@ def _check(tmp_path, path=(), **env):
 @pytest.mark.skipif(sys.platform == "win32", reason="the build script is bash")
 def test_the_build_script_takes_an_active_conda_off_path(tmp_path):
     # Conda's gcc, g++ and gfortran search conda's include and lib folders,
-    # so bindings built with them link conda's PETSc and do not import.
+    # so bindings built with them link conda's PETSc and do not import; the
+    # tools and folders its activation exports (AR, CMAKE_PREFIX_PATH, ...)
+    # would pull conda in too.
     conda = tmp_path / "conda"
     for tool in ("gcc", "g++", "gfortran"):
         _stub(conda / "bin", tool, "echo 14.3.0")
-    result = _check(tmp_path, path=[conda / "bin"], CONDA_PREFIX=str(conda))
+    result = _check(
+        tmp_path,
+        path=[conda / "bin"],
+        CONDA_PREFIX=str(conda),
+        AR=f"{conda / 'bin' / 'ar'}",
+        CMAKE_PREFIX_PATH=f"{conda}:/opt/other",
+        OTHER_TOOL="/opt/other/bin/tool",
+    )
     assert result.returncode == 0, result.stderr
     system = tmp_path / "system" / "bin"
     assert f"gcc: {system / 'gcc'} (13.2.0)" in result.stdout
     assert f"gfortran: {system / 'gfortran'} (13.2.0)" in result.stdout
     assert str(conda / "bin") not in result.stdout + result.stderr
     assert "off PATH" in result.stderr
+    seen = (tmp_path / "uv.env").read_text()
+    assert str(conda) not in seen
+    assert "OTHER_TOOL=/opt/other/bin/tool" in seen.splitlines()
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the build script is bash")
