@@ -50,7 +50,6 @@ figure.grad { margin: 0 0 var(--s-8); }
 .readout, .ports { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s-2) var(--s-5); flex-wrap: wrap;
   font: var(--t-data); color: var(--ink-2); }
 .readout { border-top: 1px solid var(--ink); padding: var(--s-3) 0; }
-.readout + .status { border-top: 1px solid var(--hair); }
 .readout i, .ports i { font-style: normal; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-right: 10px; }
 figure.grad .plot { position: relative; border: 1px solid var(--hair); background: var(--panel); }
 figure.grad .film video { display: block; width: 100%; aspect-ratio: 16 / 9; height: auto; }
@@ -118,15 +117,6 @@ table.matrix tbody th span { display: block; font-weight: 400; color: var(--mute
 .legend .key { display: inline-flex; align-items: center; gap: 8px; }
 .legend { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-5); padding-top: var(--s-3); font: var(--t-small); color: var(--muted); }
 
-/* Palace agreement, as a status list: unlit indicators (a tolerance is not a pass) */
-.status { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--ink); }
-.status li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: var(--s-2) var(--s-4); align-items: start; padding: var(--s-3) 0; border-bottom: 1px solid var(--hair); font: var(--t-small); }
-.status li::before { content: ""; width: 8px; height: 8px; margin-top: 7px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--ink); }
-.status .p { color: var(--ink); font-weight: 500; }
-.status .p span { display: block; font-weight: 400; color: var(--muted); }
-.status .tol { font: var(--t-data); color: var(--ink); text-align: right; white-space: nowrap; padding-top: 3px; }
-.status .tol span { display: block; color: var(--muted); }
-
 /* install */
 .install pre { font: var(--t-code); color: var(--code-fg); background: var(--code-bg); border: 1px solid var(--code-edge); padding: var(--s-4) 108px var(--s-4) var(--s-5); margin: 0 0 var(--s-3); white-space: pre-wrap; overflow-wrap: anywhere; position: relative; }
 .install .gfem-copy { position: absolute; top: 8px; right: 8px; display: inline-flex; align-items: center; gap: 6px; font: var(--t-label); text-transform: uppercase; letter-spacing: .08em;
@@ -152,8 +142,6 @@ table.matrix tbody th span { display: block; font-weight: 400; color: var(--mute
   table.matrix td { border: 0; padding: var(--s-1) 0; }
   .mark { white-space: normal; }
   table.matrix td::before { content: attr(data-h); display: block; font: var(--t-label); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 2px; }
-  .status li { grid-template-columns: 8px minmax(0, 1fr); }
-  .status .tol { grid-column: 2; text-align: left; }
 }
 @media (max-width: 599px) {
   .readout { justify-content: flex-start; }

@@ -85,12 +85,11 @@ class Absorbing:
     taken infinite). Its weak form adds i (k / mu_r) ∮ E_t · v_t and, at
     order 2, (1 / (2ik)) ∮ mu_r^-1 (n · curl E)(n · curl v). Only the curl part of the
     second-order term is kept; the β ∇_t(∇ · E_t) part is dropped, as in
-    Palace and COMSOL, because the tangential divergence of a Nédélec trace
-    is not square-integrable. Palace up to v0.18.1 uses the opposite sign
-    of the curl term, which reflects more than order 1 (awslabs/palace#1070
-    changes it to this sign); gfem uses the textbook sign only, so on a
-    tight air box the two codes differ at order 2 (they agree at order 1
-    and on adequately sized boxes).
+    COMSOL, because the tangential divergence of a Nédélec trace is not
+    square-integrable. gfem uses the textbook sign of the curl term only;
+    the opposite sign reflects more than order 1, so on a tight air box a
+    solver using it differs from gfem at order 2 (they agree at order 1 and
+    on adequately sized boxes).
 
     Attributes:
         surface: The surface region's name.
@@ -117,11 +116,11 @@ class Conductor:
     """A finite-conductivity metal surface, modelled by its surface impedance.
 
     Each face adds iω / Z_s(ω) ∫ E_t · v_t, with Z_s the surface impedance of
-    one face of a metal film (HFSS / Palace finite-thickness form). On an
+    one face of a metal film (HFSS finite-thickness form). On an
     interior surface it is one term for the whole sheet, so a film much
     thinner than its skin depth is a sheet admittance of about sigma t / 2; on
     an exterior surface the metal is one-sided and its thickness counts
-    twice (sigma t). This is Palace's convention; see `gfem.conventions`.
+    twice (sigma t); see `gfem.conventions`.
 
     Attributes:
         surface: The surface region's name.

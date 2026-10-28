@@ -8,7 +8,7 @@
       gfem_install       the install line and its note (one conf.py value)
       gfem_status        the version label, from gfem.__version__ (conf.py)
       gfem_python        the Python floor, from requires-python in pyproject.toml (conf.py)
-      gfem_capabilities  the gradient matrix, its provenance and the Palace rows (docs/_ext/gfem_capabilities.py)
+      gfem_capabilities  the gradient matrix and its provenance (docs/_ext/gfem_capabilities.py)
     Status marks are gfem.css's .gfem-glyph inside a .gfem-verified / .gfem-zero / .gfem-raises parent. -#}
 {%- extends "layout.html" -%}
 {%- set front = gfem_front -%}
@@ -102,23 +102,6 @@
           </tbody>
         </table>
         <div class="legend"><span class="key gfem-verified"><span class="gfem-glyph"></span>checked against finite differences</span><span class="key gfem-zero"><span class="gfem-glyph"></span>exact zero: the physics never reads the input</span><span class="key gfem-raises"><span class="gfem-glyph"></span>raises <code>NonDifferentiableError</code> unless named</span></div>
-      </div>
-    </section>
-
-    <section class="s" aria-labelledby="p-h">
-      <div class="claim">
-        <h2 id="p-h">Checked against Palace</h2>
-        <p>On reference problems both codes discretize the same mesh at the same order. Each row is the tolerance its test asserts.</p>
-        <p class="src">The reference tier, <code>tests/reference/</code>, runs outside the default test selection: it needs the baselines in <code>GFEM_REFERENCE_DIR</code>.</p>
-        <a class="more" href="{{ pathto('capabilities') }}">Reference problems on Capabilities</a>
-      </div>
-      <div>
-      <div class="readout" aria-hidden="true"><span><i>Tier</i>tests/reference/</span><span><i>Problems</i>{{ caps.palace|selectattr("problem")|list|length }}</span><span><i>Runs</i>outside default CI</span></div>
-      <ul class="status">
-        {%- for row in caps.palace if row.problem %}
-        <li><span class="p">{{ row.label }}<span>{{ row.detail }}</span></span><span class="tol">{{ row.text }}<span>{{ row.file.split('/')[-1] }}</span></span></li>
-        {%- endfor %}
-      </ul>
       </div>
     </section>
 

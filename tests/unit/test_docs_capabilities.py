@@ -1,10 +1,9 @@
 """The Capabilities page generator (docs/_ext/gfem_capabilities.py).
 
-The site's gradient claims and Palace tolerances are derived from the tests
-at docs build time (no hand-typed table); a claim that cannot be derived
-fails the build. These tests pin the derivation against a grid reviewed by
-hand, and each drift guard against a broken input. The generator is imported
-without Sphinx.
+The site's gradient claims are derived from the tests at docs build time
+(no hand-typed table); a claim that cannot be derived fails the build. These
+tests pin the derivation against a grid reviewed by hand, and each drift
+guard against a broken input. The generator is imported without Sphinx.
 """
 
 import dataclasses
@@ -205,65 +204,3 @@ def test_a_zero_and_a_raise_in_one_cell_fails(data):
     expected = data[1] | {("electrostatic", "capacitance", kind): "zero"}
     with pytest.raises(caps.CapabilitiesError, match="conflicting"):
         _derive(data, expected=expected)
-
-
-# --- agreement with Palace ------------------------------------------------------
-
-
-def test_palace_rows_quote_the_reference_tolerances(derived):
-    rows = {r["label"]: r for r in derived["palace"]}
-    assert rows["Driven, lumped ports"]["text"] == "max |ΔS| ≤ 1e-5"
-    assert rows["Driven, lumped ports"]["kind"] == "absolute"
-    assert rows["Eigenmode, port-loaded"]["text"] == "relative: Re f 1e-5 · Q 1e-3"
-    nonlinear = rows["Nonlinear eigenmode, conductor loss"]
-    assert [v["value"] for v in nonlinear["values"]] == [1e-5, 1e-3]
-    assert rows["Electrostatic"]["text"] == "relative 1e-4"
-    assert rows["Electrostatic"]["file"] == "tests/reference/test_electrostatic.py"
-    assert rows["Interface participation"]["text"] == "relative 5 %"
-    problems = [r["label"] for r in derived["palace"] if r["problem"]]
-    assert problems == [
-        "Driven, lumped ports",
-        "Eigenmode, port-loaded",
-        "Nonlinear eigenmode, conductor loss",
-        "Electrostatic",
-    ]
-
-
-def _module(tmp_path, source):
-    (tmp_path / "test_x.py").write_text(source)
-    return tmp_path
-
-
-def _row(*names):
-    return caps.Agreement("test_x.py", names, ("q",) * len(names), "X", "", "relative")
-
-
-def test_a_tuple_assignment_is_read(tmp_path):
-    repo = _module(tmp_path, "A, B = 1e-5, 2e-3\nassert A < B\n")
-    (row,) = caps.palace_agreement(repo, [_row("A", "B")])
-    assert [v["value"] for v in row["values"]] == [1e-5, 2e-3]
-
-
-def test_a_missing_constant_fails(tmp_path):
-    repo = _module(tmp_path, "RTOL_X = 1e-4\nassert RTOL_X\n")
-    with pytest.raises(caps.CapabilitiesError, match=r"RTOL.*missing"):
-        caps.palace_agreement(repo, [_row("RTOL")])
-
-
-def test_a_non_literal_constant_fails(tmp_path):
-    repo = _module(tmp_path, "import math\nRTOL = math.sqrt(1e-8)\nassert RTOL\n")
-    with pytest.raises(caps.CapabilitiesError, match=r"RTOL.*literal"):
-        caps.palace_agreement(repo, [_row("RTOL")])
-
-
-def test_a_dead_constant_fails(tmp_path):
-    repo = _module(tmp_path, "RTOL = 1e-4\n")
-    with pytest.raises(caps.CapabilitiesError, match=r"RTOL.*unused"):
-        caps.palace_agreement(repo, [_row("RTOL")])
-
-
-@pytest.mark.parametrize("name", ["PALACE_PER_SAMPLE", "WALL_FACTOR", "TIME_BUDGET"])
-def test_a_timing_constant_is_never_published(tmp_path, name):
-    repo = _module(tmp_path, f"{name} = 1.5\nassert {name}\n")
-    with pytest.raises(caps.CapabilitiesError, match="timing"):
-        caps.palace_agreement(repo, [_row(name)])

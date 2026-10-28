@@ -60,11 +60,10 @@ __all__ = [
 # --- interface participation -------------------------------------------------------
 
 #: The thin-layer models of `interface_participation` (Wenner et al., Appl.
-#: Phys. Lett. 99, 113513 (2011); Palace's ``Dielectric`` types).
+#: Phys. Lett. 99, 113513 (2011)).
 InterfaceKind = Literal["default", "MA", "MS", "SA"]
 INTERFACE_KINDS = get_args(InterfaceKind)
-#: A medium is vacuum when its fastest light speed is within this of c
-#: (Palace's test).
+#: A medium is vacuum when its fastest light speed is within this of c.
 _VACUUM = 1.0 - 1e-6
 
 
@@ -125,8 +124,7 @@ def interface_participation(
     The layer (an oxide on a metal, a residue on a substrate) is too thin to
     mesh: it has thickness ``t`` and relative permittivity ``eps_r`` and
     sits on ``surface``. Its electric energy follows from the mode's field
-    at the surface, for each kind of interface (Wenner et al. 2011, the
-    definitions of Palace's ``Dielectric`` postprocessing):
+    at the surface, for each kind of interface (Wenner et al. 2011):
 
     - ``"MA"`` (metal-air): ``t / eps_r * |E_n|^2``, ``E`` on the vacuum
       side of the surface.
@@ -146,8 +144,7 @@ def interface_participation(
     nothing. Sides inside volumes the model excludes from the solve
     (metal) do not count. The participation is that energy over the mode's
     electric energy ``E`` (1 J, see `gfem.conventions`), and
-    ``participation * tan_delta`` is the layer's contribution to ``1 / Q``
-    (Palace's ``surface-Q.csv``).
+    ``participation * tan_delta`` is the layer's contribution to ``1 / Q``.
 
     Differentiable with respect to ``thickness``, ``eps_r``, ``tan_delta``,
     the mode fields and the substrate's `MaterialField` permittivity (the
@@ -392,7 +389,7 @@ def characteristic_impedance(mode: PortModeResult, voltage_path: Any) -> jax.Arr
 
     ``Z_PV = |V|^2 / (2 P)`` with ``V`` the line integral of the mode's
     electric field along ``voltage_path`` and ``P = 1 W`` the mode's power
-    (Palace's ``mode-Z``). For a wave port declared with a ``voltage_path``
+    For a wave port declared with a ``voltage_path``
     the result already holds it as ``Z_PV``; this measures it along any
     path, after the solve. A constant of the port mode solve: port modes
     are not differentiable.

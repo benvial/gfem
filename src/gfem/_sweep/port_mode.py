@@ -5,7 +5,7 @@ model instead of one exact solve per frequency:
 
 1. **Exact solves** factor the shifted 2D pencil with SuperLU and run ARPACK
    shift-invert at ``sigma = -1.1 (n_max k0)^2``. At the lowest frequency
-   the requested mode is picked in Palace's order: converged, propagating
+   the requested mode is picked in rank order: converged, propagating
    Ritz pairs below the largest bulk wavenumber (the formulation's spurious
    modes sit above it), by decreasing ``Re 1 / (lam - sigma)``.
 2. **Reduced solves** are Rayleigh-Ritz on the affine pencil projected onto
@@ -23,10 +23,10 @@ model instead of one exact solve per frequency:
 Across frequencies the mode is **tracked** by its overlap (L2 inner product)
 with the neighbouring tabulated mode, never by ranking, which follows the
 physical mode through crossings and ignores spurious Ritz values. Each mode
-is normalized to 1 W. Its phase follows Palace's rule at the lowest
-frequency and is continuous after it (the overlap with the previous
-frequency's mode is real and positive); with a voltage path, ``Re V > 0`` at
-every frequency.
+is normalized to 1 W. Its phase is fixed at the lowest frequency by a
+quadrant integral of its tangential magnetic field and is continuous after
+it (the overlap with the previous frequency's mode is real and positive);
+with a voltage path, ``Re V > 0`` at every frequency.
 """
 
 from __future__ import annotations
@@ -304,7 +304,7 @@ def port_mode_sweep(
     Args:
         space: The port's discrete port mode problem.
         frequency: The output grid, Hz (any order).
-        mode: Which mode at the lowest frequency, in Palace's order.
+        mode: Which mode at the lowest frequency, in rank order.
         tolerance: Backward error a reduced mode must reach.
 
     Raises:
@@ -313,7 +313,7 @@ def port_mode_sweep(
 
     Warns:
         PortModeTrackingWarning: The tracked mode stops being the ``mode``-th
-            in Palace's order inside the band (a crossing).
+            in rank order inside the band (a crossing).
     """
     f_given = np.asarray(frequency, float)
     section = space.section
@@ -339,7 +339,7 @@ def port_mode_sweep(
 
 @dataclasses.dataclass(frozen=True)
 class _Candidates:
-    """The converged propagating eigenpairs of one exact solve, in Palace's order."""
+    """The converged propagating eigenpairs of one exact solve, in rank order."""
 
     lam: np.ndarray
     vecs: np.ndarray
@@ -500,11 +500,11 @@ class _Greedy:
             if self.pick[j] != self.mode - 1:
                 warnings.warn(
                     f"WavePort {self.name!r}: the tracked mode {self.mode} is mode "
-                    f"{self.pick[j] + 1} in Palace's order at "
+                    f"{self.pick[j] + 1} in rank order at "
                     f"{self.f[j] / 1e9:.6g} GHz (a mode crossing inside the band). "
-                    "gfem keeps following the physical mode; Palace would switch "
-                    "modes there, so S-parameters differ from Palace's beyond the "
-                    "crossing.",
+                    "gfem keeps following the physical mode; a solver that ranks "
+                    "modes at each frequency would switch modes there, so its "
+                    "S-parameters differ beyond the crossing.",
                     PortModeTrackingWarning,
                     stacklevel=6,
                 )

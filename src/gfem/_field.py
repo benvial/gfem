@@ -190,9 +190,9 @@ class Field:
         separately per tetrahedron (so fields that jump across elements show
         their jumps). Coordinates are in metres and values in SI units. A
         real field is the point data ``quantity`` (e.g. ``"V"``); a complex
-        one is ``"<quantity>_real"`` and ``"<quantity>_imag"`` (Palace's
-        names). The cell data ``region`` and ``entity`` give the gmsh
-        physical and entity numbers of the parent tetrahedron.
+        one is ``"<quantity>_real"`` and ``"<quantity>_imag"``. The cell data
+        ``region`` and ``entity`` give the gmsh physical and entity numbers of
+        the parent tetrahedron.
 
         Raises:
             TypeError: The field holds JAX tracers: export concrete values,

@@ -225,11 +225,10 @@ intersphinx_mapping = {
 
 # --- Capabilities: claims derived from the tests at build time -----------------
 # docs/_ext/gfem_capabilities.py imports the verification tests' CELLS,
-# EXPECTED and OUT_OF_SCOPE and AST-reads the reference tolerances, for the
-# gfem-gradient-matrix, gfem-raises and gfem-palace-agreement directives on
-# capabilities.md. A claim that cannot be derived fails the build. Every page
-# template also gets the same dict as `gfem_capabilities` (the front page's
-# compact matrix and Palace rows); no html_context entry is needed.
+# EXPECTED and OUT_OF_SCOPE for the gfem-gradient-matrix and gfem-raises
+# directives on capabilities.md. A claim that cannot be derived fails the
+# build. Every page template also gets the same dict as `gfem_capabilities`
+# (the front page's compact matrix); no html_context entry is needed.
 # docs/_ext is on sys.path (the API reference block above).
 extensions.append("gfem_capabilities")
 # Base URL the test paths are appended to (cells link to their test file).
@@ -243,7 +242,7 @@ gfem_capabilities_source_url = f"{REPO_URL}/blob/main/"
 # Windows x86_64"). Every number and quoted line reaches it from here (the hero
 # data and its model values, the code line, the version status, the Python
 # floor, the install line and its note) or through gfem_capabilities (the
-# compact matrix, the provenance line, the Palace rows, above).
+# compact matrix and the provenance line, above).
 
 # The install line and its note, in one place: the front page and get-started.md
 # (the {{ install }} substitution) show both. At PyPI publishing this becomes
