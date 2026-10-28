@@ -4,8 +4,9 @@ BDDC splits each element's DOFs into a wirebasket (vertices and low-order
 edges) and the rest, and solves a global coarse problem on the wirebasket.
 That coarse problem is factorized with an explicit ``sparsecholesky``
 inverse, never NGSolve's UMFPACK default. The Krylov method follows the
-operator: conjugate gradients for a Hermitian (real symmetric positive
-definite) operator, GMRES otherwise.
+operator: NGSolve's conjugate gradients for a Hermitian (real symmetric
+positive definite) operator, otherwise gfem's GMRES (`gfem._linalg.gmres`),
+which orthogonalizes its Krylov basis by CGS2 on gfem's threads.
 
 Across a sweep the handle keeps its preconditioner (`BddcHandle.refactorize`)
 once a solve on it measured a reference iteration count, caps every warm
@@ -22,6 +23,7 @@ import numpy as np
 from gfem._linalg import Operator, Symmetry
 from gfem._linalg.base import NgsHandle, host_bytes
 from gfem._linalg.direct import INVERSE
+from gfem._linalg.gmres import Gmres
 
 #: Krylov iterations a BDDC setup is worth, summed over the right-hand sides
 #: of a solve: on the driven references (order 2) one setup took as long as
@@ -160,12 +162,8 @@ class BddcHandle(NgsHandle):
         ``reference=None`` stops relative to the first residual instead.
         """
         if reference is None:
-            return ngs.solvers.GMResSolver(
-                matrix, pre.mat, tol=self.tolerance, maxiter=maxiter
-            )
-        return ngs.solvers.GMResSolver(
-            matrix, pre.mat, atol=self.tolerance * reference, maxiter=maxiter
-        )
+            return Gmres(matrix, pre.mat, tol=self.tolerance, maxiter=maxiter)
+        return Gmres(matrix, pre.mat, atol=self.tolerance * reference, maxiter=maxiter)
 
     def refactorize(self, operator: Operator) -> None:
         """Assemble ``operator`` and solve it on the held preconditioner.
@@ -222,12 +220,11 @@ class BddcHandle(NgsHandle):
         """Finish a column's solve: restart it if needed, record, raise.
 
         ``solver`` solved ``b`` into ``x``; a restart updates ``x`` in place.
-        A solve that stopped before its ``maxiter`` above the tolerance
-        restarts once from ``x``, with the iterations left, to ``tolerance``
-        times the same start: NGSolve 6.2.2608's GMRES leaves an Arnoldi
-        breakdown before its stopping test, with an iterate that is wrong
-        after the first step. An exact stop costs the restart one operator
-        and preconditioner apply. ``reference`` is as for `_converged`;
+        A Krylov solve that stops before its ``maxiter`` above the tolerance
+        (CG's silent exit, or any solver's) restarts once from ``x``, with
+        the iterations left, to ``tolerance`` times the same start. (gfem's
+        GMRES returns the right iterate on a lucky breakdown, so it meets the
+        tolerance there.) ``reference`` is as for `_converged`;
         ``iterations`` were spent on the column before ``solver`` (a capped
         solve on a reused preconditioner).
         """

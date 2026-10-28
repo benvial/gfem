@@ -13,6 +13,7 @@ import gfem
 from gfem._engine import quadrature
 from gfem._engine.mesh import to_ngsolve
 from gfem._linalg import Operator, bddc, factorize, low_rank_update, prepare
+from gfem._linalg.gmres import Gmres
 from gfem._linalg.pieces import AssembledPieces, PieceSum
 
 
@@ -494,7 +495,7 @@ def test_bddc_gmres_does_not_accept_a_breakdown_above_the_tolerance(
 ):
     # an early stop restarts once from its iterate, then meets the usual test
     shift = 1 - 2j if symmetry == "complex_symmetric" else 0.0
-    krylov = ngs.solvers.GMResSolver if shift else ngs.solvers.CGSolver
+    krylov = Gmres if shift else ngs.solvers.CGSolver
 
     def operator():
         return _laplace(built, complex_valued=bool(shift), shift=shift, order=4)[0]

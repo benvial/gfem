@@ -1,5 +1,9 @@
 """gfem's GMRES: NGSolve's GMRES iteration, its vector work on gfem's threads."""
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from typing import ClassVar
+
 import ngsolve as ngs
 import numpy as np
 import pytest
@@ -98,7 +102,7 @@ def test_gmres_returns_the_solution_on_a_lucky_breakdown():
 class _Recording(gmres.ThreadPoolExecutor):
     """A thread pool that records how it was made."""
 
-    made: list[dict] = []
+    made: ClassVar[list[dict]] = []
 
     def __init__(self, max_workers=None, *args, **kwargs):
         type(self).made.append({"max_workers": max_workers, **kwargs})
@@ -165,3 +169,98 @@ def test_gmres_kernels_agree(name, dtype):
     expected = q.copy()
     expected[columns] += y @ block[:rows, columns]
     assert _relative(out, expected) < 1e-13
+
+
+class _Probe(ngs.BaseMatrix):
+    """The identity, calling ``probe`` at every apply."""
+
+    def __init__(self, n, probe):
+        super().__init__()
+        self.n, self.probe = n, probe
+
+    def IsComplex(self):  # noqa: N802
+        return False
+
+    def Height(self):  # noqa: N802
+        return self.n
+
+    def Width(self):  # noqa: N802
+        return self.n
+
+    def CreateColVector(self):  # noqa: N802
+        return ngs.BaseVector(self.n, False)
+
+    def CreateRowVector(self):  # noqa: N802
+        return ngs.BaseVector(self.n, False)
+
+    def Mult(self, x, y):  # noqa: N802
+        self.probe()
+        y.data = x
+
+
+@pytest.fixture
+def openblas():
+    """SciPy's OpenBLAS at 3 threads, its count put back after the test."""
+    lib = gmres.scipy_openblas()
+    if lib is None:
+        pytest.skip("SciPy's OpenBLAS not found")
+    threads = lib.get_threads()
+    lib.set_threads(3)
+    yield lib
+    lib.set_threads(threads)
+
+
+def _probed_solve(probe):
+    """A short GMRES solve whose preconditioner calls ``probe``."""
+    diagonal = np.resize([1.0, 2.0, 5.0], 30)
+    A, _ = _diagonal(diagonal)
+    b = A.CreateColVector()
+    b.FV().NumPy()[:] = 1.0
+    x = Gmres(A, _Probe(len(diagonal), probe), tol=1e-10, maxiter=10).Solve(b)
+    assert _relative(x.FV().NumPy(), 1.0 / diagonal) < 1e-12
+
+
+@pytest.mark.parametrize("kernel", ["openblas", "einsum"])
+def test_gmres_holds_scipy_openblas_at_one_thread(openblas, monkeypatch, kernel):
+    if kernel == "einsum":
+        monkeypatch.setattr(gmres, "scipy_openblas", lambda: None)
+    inside = []
+    _probed_solve(lambda: inside.append(openblas.get_threads()))
+    assert inside
+    assert set(inside) == ({1} if kernel == "openblas" else {3})
+    assert openblas.get_threads() == 3
+
+
+def test_gmres_restores_scipy_openblas_after_a_raising_solve(openblas):
+    def fail():
+        raise RuntimeError("probe")
+
+    with pytest.raises(RuntimeError, match="probe"):
+        _probed_solve(fail)
+    assert openblas.get_threads() == 3
+
+
+def test_overlapping_gmres_solves_restore_scipy_openblas_once(openblas):
+    # A enters, B enters, A leaves while B solves, B leaves
+    a_in, b_in, a_out = threading.Event(), threading.Event(), threading.Event()
+    seen = {"A": [], "B": []}
+
+    def probe(name, signal, wait):
+        def call():
+            if not signal.is_set():
+                signal.set()
+                assert wait.wait(timeout=30)
+            seen[name].append(openblas.get_threads())
+
+        return call
+
+    with ThreadPoolExecutor(2) as pool:
+        a = pool.submit(_probed_solve, probe("A", a_in, b_in))
+        assert a_in.wait(timeout=30)
+        b = pool.submit(_probed_solve, probe("B", b_in, a_out))
+        a.result(timeout=60)
+        a_out.set()
+        b.result(timeout=60)
+    assert set(seen["A"]) == {1}
+    assert set(seen["B"]) == {1}  # also after A left
+    assert openblas.get_threads() == 3
