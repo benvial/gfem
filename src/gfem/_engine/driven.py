@@ -125,7 +125,7 @@ DEFAULT_SOLVER = "bddc_gmres"
 LOW_FREQUENCY_FLOOR = 1e-6
 #: k0 * h_min below which MKL PARDISO becomes unreliable (MUMPS and
 #: NGSolve's sparse Cholesky do not), named in the low-frequency warning.
-DIRECT_FLOOR = 3e-7
+_PARDISO_FLOOR = 3e-7
 
 
 @dataclasses.dataclass(eq=False)
@@ -1193,7 +1193,7 @@ def _check_low_frequency(
         "factorization, the capacitive part of S, "
         "carry rounding errors up to about 1e-16/(k0*h_min)^2, and MKL "
         "PARDISO ('direct' with the mkl extra) becomes unreliable below "
-        f"k0*h_min = {DIRECT_FLOOR:g}. For capacitance, solve "
+        f"k0*h_min = {_PARDISO_FLOOR:g}. For capacitance, solve "
         "gfem.Electrostatic instead of reading it from S; otherwise raise the "
         "lowest frequency or coarsen the smallest elements."
     )
