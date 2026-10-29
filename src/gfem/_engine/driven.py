@@ -395,6 +395,7 @@ class DrivenRule:
                 threads=self.options.threads,
                 tolerance=self.options.tolerance,
                 width=width,
+                solves=len(frequencies),
                 petsc_options=self.options.petsc_options,
             ) as handles:
                 for n, f in enumerate(frequencies):
@@ -1397,12 +1398,15 @@ class _Ports:
         width: int,
         threads: int | None = None,
         reuse_preconditioner: bool = True,
+        solves: int = 1,
         petsc_options: Mapping[str, PetscValue] | PetscOptions = (),
     ) -> _SweepHandle:
         """One base handle for a sweep's frequencies (see `_SweepHandle`).
 
         ``reuse_preconditioner=False`` sets an iterative backend's
-        preconditioner up at every frequency (`gfem._linalg.prepare`).
+        preconditioner up at every frequency, and ``solves`` (a uniform
+        sweep's frequencies) is the solve calls the base is expected to serve
+        (`gfem._linalg.prepare`).
         """
         return _SweepHandle(
             self,
@@ -1412,6 +1416,7 @@ class _Ports:
             width=width,
             threads=threads,
             reuse_preconditioner=reuse_preconditioner,
+            solves=solves,
             petsc_options=petsc_options,
         )
 

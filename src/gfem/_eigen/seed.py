@@ -34,7 +34,11 @@ import numpy as np
 
 from gfem._eigen.operator import EigenOperator
 
-__all__ = ["SeedOperator", "seed_operator"]
+__all__ = ["MIN_SUBSPACE", "SeedOperator", "seed_operator"]
+
+#: The smallest subspace (ncv) a seed solve builds: it applies the seed
+#: operator, one ``T(sigma)`` solve, at least this many times per shift.
+MIN_SUBSPACE = 20
 
 
 @dataclasses.dataclass(frozen=True)
@@ -60,7 +64,7 @@ class SeedOperator:
     def dimensions(self, nev: int) -> tuple[int, int]:
         """``(nev, ncv)``: ``nev`` clamped to the operator, and the subspace size."""
         nev = max(1, min(nev, self.size - 2))
-        return nev, min(self.size, max(2 * nev + 1, 20))
+        return nev, min(self.size, max(2 * nev + 1, MIN_SUBSPACE))
 
     def pairs(
         self, theta: np.ndarray, vectors: np.ndarray

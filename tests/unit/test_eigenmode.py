@@ -32,7 +32,7 @@ from eigen_cases import (
     line_roots,
     terminated_line,
 )
-from preconditioners import count_preconditioners
+from preconditioners import coarse_columns, count_preconditioners
 from scipy.optimize import brentq
 
 import gfem
@@ -288,6 +288,15 @@ def test_a_bddc_reshift_sets_the_preconditioner_up_at_the_new_shift(mesh, monkey
     assert len(builds) == 2
     np.testing.assert_allclose(result.omega, fresh.omega, rtol=1e-12)
     np.testing.assert_allclose(result.q, fresh.q, rtol=1e-10)
+
+
+def test_a_bddc_shift_sets_its_coarse_problem_up_for_the_seed_solve(mesh, monkeypatch):
+    # ARPACK's seed solve applies T(sigma)^-1 at least MIN_SUBSPACE times
+    model = terminated_line(mesh, 1000.0)
+    options = gfem.SolverOptions(linear_solver="bddc_gmres")
+    columns = coarse_columns(monkeypatch)
+    gfem.solve(model, gfem.Eigenmode(target=8e9), options=options)
+    assert columns == [20]
 
 
 @pytest.mark.parametrize(
