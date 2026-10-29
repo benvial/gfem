@@ -14,14 +14,7 @@ from gfem._linalg import gmres
 from gfem._linalg.direct import _real_sparse_matrix
 from gfem._linalg.gmres import Gmres
 
-
-@pytest.fixture(autouse=True)
-def _restore_threads():
-    """``SetNumThreads`` is process-wide: put the count back after each test."""
-    with ngs.TaskManager():
-        threads = ngs.GetNumThreads()
-    yield
-    ngs.SetNumThreads(threads)
+pytestmark = pytest.mark.usefixtures("ngsolve_threads")
 
 
 @pytest.fixture(scope="module")

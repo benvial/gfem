@@ -452,15 +452,6 @@ def test_bddc_coarse_problem_is_factored_by_gfem_flagged_pardiso(  # noqa: PLR09
     assert np.linalg.norm(X - ref) <= 1e-10 * np.linalg.norm(ref)
 
 
-@pytest.fixture
-def ngsolve_threads():
-    """Restore NGSolve's thread count, which `task_manager` sets for the session."""
-    with ngs.TaskManager():
-        threads = ngs.GetNumThreads()
-    yield
-    ngs.SetNumThreads(threads)
-
-
 @needs_mkl
 @pytest.mark.usefixtures("ngsolve_threads")
 def test_a_bddc_setup_serving_many_columns_on_16_threads_factors_its_coarse_problem_with_sparse_cholesky(  # noqa: E501
