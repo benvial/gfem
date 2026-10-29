@@ -123,9 +123,8 @@ DEFAULT_SOLVER = "bddc_gmres"
 
 #: k0 * h_min below which a driven solve warns (gfem.LowFrequencyWarning).
 LOW_FREQUENCY_FLOOR = 1e-6
-#: k0 * h_min below which MKL PARDISO becomes unreliable (correctness-caveats
-#: ticket 05; MUMPS and sparse Cholesky do not, petsc-slepc-followups ticket
-#: 04), named in the low-frequency warning.
+#: k0 * h_min below which MKL PARDISO becomes unreliable (MUMPS and
+#: NGSolve's sparse Cholesky do not), named in the low-frequency warning.
 DIRECT_FLOOR = 3e-7
 
 
