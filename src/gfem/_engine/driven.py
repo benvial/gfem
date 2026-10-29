@@ -123,8 +123,9 @@ DEFAULT_SOLVER = "bddc_gmres"
 
 #: k0 * h_min below which a driven solve warns (gfem.LowFrequencyWarning).
 LOW_FREQUENCY_FLOOR = 1e-6
-#: k0 * h_min below which direct solves become unreliable (ticket 05), named
-#: in the low-frequency warning.
+#: k0 * h_min below which MKL PARDISO becomes unreliable (correctness-caveats
+#: ticket 05; MUMPS and sparse Cholesky do not, petsc-slepc-followups ticket
+#: 04), named in the low-frequency warning.
 DIRECT_FLOOR = 3e-7
 
 
@@ -1189,9 +1190,10 @@ def _check_low_frequency(
         f"{f_floor:.4g} Hz (k0*h_min = {k0h[lowest]:.2g} < "
         f"{LOW_FREQUENCY_FLOOR:g}, with h_min = {h_min:.3g} m the shortest edge "
         "in the solve domain). Below it the fields and their gradients, and "
-        "with linear_solver='direct' the capacitive part of S, carry rounding "
-        "errors up to about 1e-16/(k0*h_min)^2, and direct solves become "
-        f"unreliable below k0*h_min = {DIRECT_FLOOR:g}. For capacitance, solve "
+        "with linear_solver='direct' or 'petsc' the capacitive part of S, "
+        "carry rounding errors up to about 1e-16/(k0*h_min)^2, and MKL "
+        "PARDISO ('direct' with the mkl extra) becomes unreliable below "
+        f"k0*h_min = {DIRECT_FLOOR:g}. For capacitance, solve "
         "gfem.Electrostatic instead of reading it from S; otherwise raise the "
         "lowest frequency or coarsen the smallest elements."
     )

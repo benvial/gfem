@@ -12,6 +12,28 @@ after ARPACK, so you get the same modes.
 Both run on the CPU, in one process, without MPI. `"auto"` never picks either,
 and neither is a pip extra: you build the {term}`PETSc stack` once, from source.
 
+(petsc-when-to-choose)=
+## When to choose PETSc
+
+- For speed, keep `"direct"` with the `mkl` extra: on gfem's driven problems
+  its PARDISO factorization is faster than MUMPS through PETSc, at every
+  frequency of a sweep, in about the same memory. Both give the same S to
+  solver precision.
+- Without the `mkl` extra, `"direct"` uses NGSolve's sparse Cholesky.
+  `"petsc"` with no `petsc_options` is faster than it and needs less memory,
+  but installing the `mkl` extra gains more, for less effort.
+- Choose `"petsc"` for what only PETSc gives: MUMPS and its options, or your
+  own Krylov method and preconditioner through `petsc_options`.
+- For a uniform sweep over a narrow band, GMRES on one reused MUMPS
+  factorization ({ref}`petsc-krylov-methods`) skips the refactorization at
+  every later frequency. Over a wide band, keep the default factorization.
+- For eigenmodes, `eigen_solver="slepc"` finds the same modes and Q as ARPACK,
+  damped and nonlinear problems included, after about as many shift-invert
+  solves, in about the same time and memory. Choose it for SLEPc's own
+  controls (`eps_ncv`, `eps_monitor`, `eps_view` and their kin), not for
+  speed. An eigenmode solve's time goes into its linear solves, whichever
+  eigen solver runs, so for speed pair it with `"direct"` and the `mkl` extra.
+
 ## Build the PETSc stack
 
 You need Linux (macOS is not tested, Windows is not supported), uv, curl,
@@ -37,8 +59,10 @@ pip install --no-index --find-links wheelhouse petsc petsc4py slepc slepc4py
 
 - `PYTHON` picks another target Python, as a path or a version
   (`PYTHON=3.12`); `MAKE_NP` sets the number of parallel compile jobs.
-- In a uv project, install with `uv pip install` and run with
-  `uv run --no-sync`: `uv sync` removes packages its lock file does not list.
+- In a uv project, install with `uv pip install`. A plain `uv sync` removes
+  packages its lock file does not list, these four included: sync with
+  `uv sync --inexact`, or rerun the install line after an exact sync. `uv run`
+  leaves them in place.
 - Rebuild for another Python version, and when gfem raises the PETSc version
   it supports: the error message names the oldest one it accepts.
 
@@ -114,6 +138,7 @@ options = gfem.SolverOptions(
   with its reason. An option SLEPc does not read, such as `eps_mpdd`, raises
   `ValueError` after its seed solve.
 
+(petsc-krylov-methods)=
 ### Krylov methods
 
 With only `ksp_type` set, gfem's MUMPS factorization is the preconditioner.
@@ -127,14 +152,21 @@ options = gfem.SolverOptions(
 )
 ```
 
-This works while the frequencies stay close: further away, GMRES needs more
-iterations, and it raises past `ksp_max_it`. Adaptive sweeps set the
-preconditioner up at every sample.
+This pays off over a narrow band, where GMRES needs a few iterations per
+frequency in place of a refactorization. Further from the first frequency the
+iterations grow: over a wide band GMRES reaches `ksp_max_it` after a few
+frequencies, and the sweep raises a `RuntimeError` naming the residual it
+reached, without returning the frequencies it solved. Unlike `bddc_gmres`'s
+preconditioner, which gfem builds again when reusing it stops paying, this one
+is never set up again on its own: split a wide band into narrow sweeps, or keep
+the default factorization. Adaptive sweeps set the preconditioner up at every
+sample.
 
 - `tolerance` (`adjoint_tolerance` for adjoint solves) becomes `ksp_rtol`: the
-  true, unpreconditioned residual relative to the right-hand side, as in
-  gfem's other iterative solves. `ksp_max_it` defaults to 400. Set
-  `ksp_norm_type` for PETSc's own norm.
+  true, unpreconditioned residual relative to the right-hand side.
+  `bddc_gmres` measures its preconditioned residual instead, so the same
+  `tolerance` is a different norm per backend. `ksp_max_it` defaults to 400.
+  Set `ksp_norm_type` for PETSc's own norm.
 - Driven and eigenmode operators are complex symmetric, not Hermitian: use
   GMRES-type methods (`gmres`, `fgmres`, `bcgs`, `tfqmr`). PETSc's CG assumes
   a Hermitian operator, and its `ksp_cg_type symmetric` variant stops when the
@@ -142,7 +174,10 @@ preconditioner up at every sample.
   the electrostatic problem, whose operator is real symmetric positive definite.
 - gfem brings no Krylov preconditioner for curl-curl operators: PETSc's
   algebraic multigrid does not know the curl's null space, and the build has
-  no hypre.
+  no hypre. Incomplete factorizations fail too: GMRES with PETSc's ILU, with or
+  without fill levels, does not converge on gfem's driven problems. To try
+  one anyway, also set `pc_factor_mat_solver_type` to `petsc`: gfem's default
+  MUMPS has no ILU, so `pc_type` `ilu` alone is refused.
 
 ## What gfem refuses, and what to set instead
 
@@ -183,7 +218,8 @@ each worker its share of the threads.
   the PETSc cells of `tests/verification/test_gradient_matrix.py`. They run
   only where the PETSc stack is installed, so the {doc}`../capabilities`
   gradient matrix does not list PETSc.
-- No speed claim: measure on your problem against `"direct"` and ARPACK.
+- For speed, see {ref}`petsc-when-to-choose`: `"petsc"` is slower than
+  `"direct"` with the `mkl` extra, and SLEPc is about as fast as ARPACK.
 
 ## Limits
 

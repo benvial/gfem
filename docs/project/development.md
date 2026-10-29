@@ -24,6 +24,10 @@ uv pip install --no-index --find-links wheelhouse petsc petsc4py slepc slepc4py
 uv run --no-sync pytest -m "unit or (verification and (petsc or slepc))" -rs
 ```
 
+A plain `uv sync`, the docs one below included, removes the four wheels again,
+since the lock file does not list them. Sync with `uv sync --inexact` to keep
+them, or rerun the `uv pip install` line after an exact sync.
+
 ## Docs
 
 The docs site needs Python 3.13 and [just](https://just.systems):
