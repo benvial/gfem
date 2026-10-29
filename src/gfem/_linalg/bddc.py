@@ -253,7 +253,7 @@ class BddcHandle(NgsHandle):
         if self._converged(solver, start):
             return
         name = "CG" if self.symmetry == "hermitian" else "GMRES"
-        reached = f"{solver.residuals[-1] / start:.2g}"
+        reached = f"{solver.residuals[-1] / start:.3e}"
         if early:
             what = (
                 f": it stopped short of the tolerance after {spent} iterations, "
