@@ -13,6 +13,7 @@ import gfem
 from gfem._engine import quadrature
 from gfem._engine.mesh import to_ngsolve
 from gfem._linalg import Operator, bddc, factorize, low_rank_update, prepare
+from gfem._linalg.gmres import Gmres
 from gfem._linalg.pieces import AssembledPieces, PieceSum
 
 
@@ -271,12 +272,6 @@ def test_one_bddc_handle_solves_an_adjoint_at_its_own_tolerance(built):
     np.testing.assert_array_equal(direct.solve(B, tolerance=1e-3), direct.solve(B))
 
 
-def test_bddc_coarse_inverse_is_sparse_cholesky_never_the_default(built):
-    handle = prepare(_laplace(built)[0], symmetry="hermitian", kind="bddc_gmres")
-    flags = handle._preconditioner.flags.ToDict()
-    assert flags["inverse"] == "sparsecholesky"
-
-
 def test_bddc_complex_symmetric_operator_uses_gmres(built):
     op, space = _laplace(built, complex_valued=True, shift=1 - 2j)
     handle = prepare(op, symmetry="complex_symmetric", kind="bddc_gmres")
@@ -494,7 +489,7 @@ def test_bddc_gmres_does_not_accept_a_breakdown_above_the_tolerance(
 ):
     # an early stop restarts once from its iterate, then meets the usual test
     shift = 1 - 2j if symmetry == "complex_symmetric" else 0.0
-    krylov = ngs.solvers.GMResSolver if shift else ngs.solvers.CGSolver
+    krylov = Gmres if shift else ngs.solvers.CGSolver
 
     def operator():
         return _laplace(built, complex_valued=bool(shift), shift=shift, order=4)[0]
@@ -541,7 +536,7 @@ def test_direct_factorizes_a_scipy_spd_matrix():
     B = rng.standard_normal((n, 2))
     np.testing.assert_allclose(A @ handle.solve(B), B, atol=1e-12)
     # the direct backend's factorization (tests/unit/test_linalg_mkl.py)
-    assert type(handle._inverse).__name__.startswith(("SparseCholesky", "MKLPardiso"))
+    assert type(handle._inverse).__name__.startswith(("SparseCholesky", "GfemPardiso"))
     with pytest.raises(ValueError, match="square"):
         factorize(sp.eye(3, 4))
 

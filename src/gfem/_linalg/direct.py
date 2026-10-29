@@ -17,43 +17,24 @@ from typing import Any
 
 import ngsolve as ngs
 import numpy as np
-import pyngcore
 import scipy.sparse as sp
 
 from gfem._linalg import Operator, Symmetry
-from gfem._linalg.base import NgsHandle, host_bytes, same_pattern
+from gfem._linalg.base import (
+    NgsHandle,
+    equals_its_transpose,
+    host_bytes,
+    same_pattern,
+)
+from gfem._linalg.pardiso import (  # noqa: F401 (the first two re-exported)
+    PARDISO_FLAGS,
+    pardiso_available,
+    pardiso_inverse,
+)
 
-#: NGSolve's sparse Cholesky: the factorization without MKL, and the BDDC
-#: coarse solve's.
+#: NGSolve's sparse Cholesky: the factorization without MKL, also the BDDC
+#: coarse factorization's.
 INVERSE = "sparsecholesky"
-#: NGSolve's MKL PARDISO wrapper and its flags: MKL's OpenMP parallel METIS
-#: ordering (the same nested dissection and fill as serial METIS, with a
-#: faster analysis, phase 11, at 2-4 threads), the symmetric matrix type
-#: (gfem stores the full matrix, so NGSolve would otherwise factor it as
-#: unsymmetric LU, with twice the fill), and no iterative refinement.
-#: NGSolve's wrapper asks for up to 16 refinement steps with no
-#: backward-error stop: they stagnate without lowering the residual and make
-#: a solve cost about 4.5 substitutions instead of one. 0 is MKL's default
-#: (two steps only after a perturbed pivot).
-PARDISO = "pardiso"
-PARDISO_FLAGS = {"ordering": "parallel_metis", "symmetric": True, "refinement": 0}
-
-
-@functools.cache
-def pardiso_available() -> bool:
-    """Whether NGSolve found MKL PARDISO in a pip ``mkl`` (the ``mkl`` extra).
-
-    Reads private attributes of NGSolve's wrapper: if they are missing (another
-    NGSolve version), the direct solver stays sparse Cholesky.
-    """
-    try:
-        from ngsolve.solvers import mkl_pardiso
-    except ImportError:
-        return False
-    return (
-        getattr(mkl_pardiso, "_pardiso", None) is not None
-        and getattr(mkl_pardiso, "_mkl_free_buffers", None) is not None
-    )
 
 
 @functools.cache
@@ -90,7 +71,8 @@ class DirectHandle(NgsHandle):
     `gfem._linalg.Refactorable` handle. PARDISO gathers them straight into
     its wrapper's buffer and runs its numeric factorization (phase 22);
     sparse Cholesky, or a wrapper without the private attributes this reads,
-    runs NGSolve's ``Update()``.
+    runs NGSolve's ``Update()``. The gather index is built at the first
+    refactorization, so a handle factored once never builds it.
     """
 
     kind = "direct"
@@ -104,32 +86,55 @@ class DirectHandle(NgsHandle):
         is_complex: bool,
     ) -> None:
         """Factorize an assembled matrix (see `prepare` and `factorize`)."""
-        if symmetry == "general" or (symmetry == "hermitian" and is_complex):
+        if not equals_its_transpose(symmetry, is_complex=is_complex):
             self._refuse(symmetry)
         super().__init__(matrix, freedofs, symmetry, is_complex=is_complex)
-        self._solver = self._factor(matrix, freedofs)
-        self._gather = self._gather_index(matrix, self._solver)
+        self._solver = self._factor(matrix, freedofs, symmetry, is_complex=is_complex)
+        #: Built at the first `refactorize` (`_gather_built`); ``None`` once
+        #: built refactorizes by ``Update()``.
+        self._gather: np.ndarray | None = None
+        self._gather_built = False
         #: The pattern of the pieces whose sums ``matrix`` holds, if summed.
         self._pattern: ngs.BaseMatrix | None = None
 
     @staticmethod
-    def _factor(matrix: ngs.BaseMatrix, freedofs: ngs.BitArray | None):
-        inverse = INVERSE
+    def _factor(
+        matrix: ngs.BaseMatrix,
+        freedofs: ngs.BitArray | None,
+        symmetry: Symmetry,
+        *,
+        is_complex: bool,
+    ):
         free = matrix.height if freedofs is None else freedofs.NumSet()
-        if pardiso_available() and free > 0:  # PARDISO refuses an empty matrix
-            inverse = PARDISO
-            matrix.inverse_flags = pyngcore.Flags(PARDISO_FLAGS)  # ty: ignore[unresolved-attribute]
-        if freedofs is None:
+        # gfem's registered PARDISO type, which applies `PARDISO_FLAGS` and
+        # runs its calls (phases 12, 22 and 33) at OpenMP block time 0; never
+        # on an empty matrix, which PARDISO refuses
+        pardiso = pardiso_inverse(symmetry, is_complex=is_complex) if free > 0 else None
+        inverse = pardiso or INVERSE
+        if freedofs is None or free == matrix.height:
+            # every DOF free: NGSolve factors the matrix itself instead of
+            # projecting it on the free DOFs first
             return matrix.Inverse(inverse=inverse)
         return matrix.Inverse(freedofs, inverse=inverse)
+
+    def _ensure_gather(self, matrix, solver) -> None:
+        """Build the gather index if not yet built; under the lock.
+
+        Call it before ``matrix`` takes new values: the wrapper's buffer
+        then holds the factored matrix's free upper triangle, which the index
+        is checked against.
+        """
+        if not self._gather_built:
+            self._gather = self._gather_index(matrix, solver)
+            self._gather_built = True
 
     def _gather_index(self, matrix, solver) -> np.ndarray | None:
         """Where PARDISO's buffer reads the factored matrix's values, or ``None``.
 
         NGSolve's wrapper factors the free-row, free-column upper triangle in
         CSR order (its ``get_csr``): these are that triangle's positions in
-        the matrix's value vector. Checked once against the buffer the
-        wrapper planned on; ``None`` (refactorize by ``Update()``) on a
+        the matrix's value vector. Checked once against the wrapper's buffer
+        of the factored values; ``None`` (refactorize by ``Update()``) on a
         mismatch, for a solver without the wrapper's ``_data_np`` and
         ``_call_pardiso``, or when reading the matrix or the wrapper fails:
         it never raises.
@@ -164,16 +169,12 @@ class DirectHandle(NgsHandle):
         new matrix of its pieces' pattern instead of assembling its form.
         """
         form = operator.form
-        if symmetry == "general" or (symmetry == "hermitian" and form.space.is_complex):
+        is_complex = bool(form.space.is_complex)
+        if not equals_its_transpose(symmetry, is_complex=is_complex):
             # refuse before paying for the assembly
             cls._refuse(symmetry)
         matrix, pattern = cls._assemble(operator)
-        handle = cls(
-            matrix,
-            operator.freedofs,
-            symmetry,
-            is_complex=bool(form.space.is_complex),
-        )
+        handle = cls(matrix, operator.freedofs, symmetry, is_complex=is_complex)
         handle._pattern = pattern
         return handle
 
@@ -218,7 +219,8 @@ class DirectHandle(NgsHandle):
         on the same solver plan: PARDISO gathers them into its buffer and
         runs its numeric factorization (phase 22), as ``Update()`` would
         after projecting the matrix and extracting its triangle once more;
-        without the gather index, ``Update()``. A changed pattern is
+        without the gather index, ``Update()``. The first refactorization
+        builds the index, before the values change. A changed pattern is
         planned anew.
 
         Raises:
@@ -231,6 +233,7 @@ class DirectHandle(NgsHandle):
             matrix, solver = self._live()
             pattern = self._pattern
             if piece_sum is not None and pattern is not None and summed is pattern:
+                self._ensure_gather(matrix, solver)
                 piece_sum.sum_into(matrix)
                 self._refactor_values(matrix, solver)
                 return
@@ -239,10 +242,13 @@ class DirectHandle(NgsHandle):
             matrix, solver = self._live()
             self._pattern = pattern
             if not same_pattern(matrix, new):
-                solver = self._factor(new, operator.freedofs)
+                solver = self._factor(
+                    new, operator.freedofs, self.symmetry, is_complex=self._complex
+                )
                 self._matrix, self._solver = new, solver
-                self._gather = self._gather_index(new, solver)
+                self._gather, self._gather_built = None, False
                 return
+            self._ensure_gather(matrix, solver)
             matrix.AsVector().data = new.AsVector()
             self._refactor_values(matrix, solver)
 
@@ -261,7 +267,7 @@ class DirectHandle(NgsHandle):
         if self._gather is None:
             solver.Update()
             return
-        # the index is in range (checked at creation); "clip" writes straight
+        # the index is in range (checked when built); "clip" writes straight
         # into the buffer, "raise" through a temporary copy
         buffer = solver._data_np  # noqa: SLF001
         values = np.asarray(matrix.CSR()[0])
@@ -281,7 +287,10 @@ class DirectHandle(NgsHandle):
 
     @property
     def nbytes(self) -> int:
-        """Host memory of the matrix, the factors and the gather index, in bytes."""
+        """Host memory of the matrix, the factors and the gather index, in bytes.
+
+        The gather index counts once built (at the first `refactorize`).
+        """
         if self._solver is None or self._matrix is None:
             return 0
         factors = host_bytes(self._solver)

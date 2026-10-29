@@ -2,10 +2,13 @@
 
 BDDC splits each element's DOFs into a wirebasket (vertices and low-order
 edges) and the rest, and solves a global coarse problem on the wirebasket.
-That coarse problem is factorized with an explicit ``sparsecholesky``
-inverse, never NGSolve's UMFPACK default. The Krylov method follows the
-operator: conjugate gradients for a Hermitian (real symmetric positive
-definite) operator, GMRES otherwise.
+That coarse problem is factorized by an explicitly named inverse, never
+NGSolve's default: gfem's flagged MKL PARDISO with the ``mkl`` extra (see
+`gfem._linalg.pardiso`), ``sparsecholesky`` without it. The Krylov method
+follows the operator: NGSolve's conjugate gradients for a Hermitian (real
+symmetric positive definite) operator, otherwise gfem's GMRES
+(`gfem._linalg.gmres`), which orthogonalizes its Krylov basis by CGS2 on
+gfem's threads.
 
 Across a sweep the handle keeps its preconditioner (`BddcHandle.refactorize`)
 once a solve on it measured a reference iteration count, caps every warm
@@ -20,8 +23,10 @@ import ngsolve as ngs
 import numpy as np
 
 from gfem._linalg import Operator, Symmetry
-from gfem._linalg.base import NgsHandle, host_bytes
+from gfem._linalg.base import NgsHandle, host_bytes, same_free_dofs
 from gfem._linalg.direct import INVERSE
+from gfem._linalg.gmres import Gmres
+from gfem._linalg.pardiso import pardiso_inverse
 
 #: Krylov iterations a BDDC setup is worth, summed over the right-hand sides
 #: of a solve: on the driven references (order 2) one setup took as long as
@@ -29,15 +34,20 @@ from gfem._linalg.direct import INVERSE
 SETUP_ITERATIONS = 30
 
 
-def _set_up(form: ngs.BilinearForm) -> ngs.Preconditioner:
+def _set_up(form: ngs.BilinearForm, symmetry: Symmetry) -> ngs.Preconditioner:
     """Register BDDC on ``form`` and assemble it, which sets BDDC up.
 
-    The coarse (wirebasket) problem's solver is always an explicit sparse
-    Cholesky factorization. (``coarsetype="direct"`` is not set: on the
-    driven H(curl) reference it made the setup 5x slower and GMRES take 68
+    The coarse (wirebasket) problem's solver is an explicitly named direct
+    factorization: gfem's PARDISO (`pardiso_inverse`) when MKL is installed,
+    symmetric when the operator is ``A^T = A`` (complex symmetric, or
+    ``"hermitian"`` on a real space; a complex Hermitian one is not), sparse
+    Cholesky otherwise. (``coarsetype="direct"`` is not set: on the driven
+    H(curl) reference it made the setup 5x slower and GMRES take 68
     iterations, not 49.)
     """
-    preconditioner = ngs.Preconditioner(form, "bddc", inverse=INVERSE)
+    is_complex = bool(form.space.is_complex)
+    inverse = pardiso_inverse(symmetry, is_complex=is_complex) or INVERSE
+    preconditioner = ngs.Preconditioner(form, "bddc", inverse=inverse)
     form.Assemble()
     return preconditioner
 
@@ -80,14 +90,13 @@ class BddcHandle(NgsHandle):
         """
         form = operator.form
         space = form.space
-        free = np.array(list(operator.freedofs), dtype=bool)  # ty: ignore[invalid-argument-type]
-        if not np.array_equal(free, np.array(list(space.FreeDofs()), dtype=bool)):  # ty: ignore[invalid-argument-type]
+        if not same_free_dofs(operator.freedofs, space.FreeDofs()):
             raise ValueError(
                 "BDDC fixes the Dirichlet DOFs of the space, so the operator's free "
                 "DOFs must be the space's FreeDofs(); build the space with "
                 "dirichlet= on the fixed boundaries."
             )
-        preconditioner = _set_up(form)
+        preconditioner = _set_up(form, symmetry)
         is_complex = bool(space.is_complex)
         super().__init__(form.mat, operator.freedofs, symmetry, is_complex=is_complex)
         self.tolerance = tolerance
@@ -110,7 +119,7 @@ class BddcHandle(NgsHandle):
         """Set BDDC up again on ``form`` (assembled again), and hold it."""
         # release the old setup first
         self._solver = self._preconditioner = self._matrix = self._form = None
-        self._hold(form, _set_up(form))
+        self._hold(form, _set_up(form, self.symmetry))
 
     def _held(self) -> tuple[ngs.BaseMatrix, ngs.Preconditioner, ngs.BilinearForm]:
         """The matrix, its preconditioner and its form.
@@ -160,12 +169,8 @@ class BddcHandle(NgsHandle):
         ``reference=None`` stops relative to the first residual instead.
         """
         if reference is None:
-            return ngs.solvers.GMResSolver(
-                matrix, pre.mat, tol=self.tolerance, maxiter=maxiter
-            )
-        return ngs.solvers.GMResSolver(
-            matrix, pre.mat, atol=self.tolerance * reference, maxiter=maxiter
-        )
+            return Gmres(matrix, pre.mat, tol=self.tolerance, maxiter=maxiter)
+        return Gmres(matrix, pre.mat, atol=self.tolerance * reference, maxiter=maxiter)
 
     def refactorize(self, operator: Operator) -> None:
         """Assemble ``operator`` and solve it on the held preconditioner.
@@ -222,12 +227,11 @@ class BddcHandle(NgsHandle):
         """Finish a column's solve: restart it if needed, record, raise.
 
         ``solver`` solved ``b`` into ``x``; a restart updates ``x`` in place.
-        A solve that stopped before its ``maxiter`` above the tolerance
-        restarts once from ``x``, with the iterations left, to ``tolerance``
-        times the same start: NGSolve 6.2.2608's GMRES leaves an Arnoldi
-        breakdown before its stopping test, with an iterate that is wrong
-        after the first step. An exact stop costs the restart one operator
-        and preconditioner apply. ``reference`` is as for `_converged`;
+        A Krylov solve that stops before its ``maxiter`` above the tolerance
+        (CG's silent exit, or any solver's) restarts once from ``x``, with
+        the iterations left, to ``tolerance`` times the same start. (gfem's
+        GMRES returns the right iterate on a lucky breakdown, so it meets the
+        tolerance there.) ``reference`` is as for `_converged`;
         ``iterations`` were spent on the column before ``solver`` (a capped
         solve on a reused preconditioner).
         """
