@@ -114,7 +114,7 @@ def test_a_petsc_solve_without_petsc4py_names_it_and_the_recipe(plate, line, pro
         gfem.solve(model, p, options=options)
     message = str(err.value)
     assert message.startswith("linear_solver='petsc' cannot run: petsc4py is not ")
-    assert "'PETSc and SLEPc' recipe" in message
+    assert "'Solve with PETSc and SLEPc' recipe" in message
     assert "linear_solver='direct'" in message
 
 

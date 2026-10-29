@@ -111,13 +111,14 @@ class SolverUnavailableError(RuntimeError):
     """``SolverOptions`` names PETSc or SLEPc, which this Python cannot use.
 
     ``linear_solver="petsc"`` needs complex petsc4py, ``eigen_solver="slepc"``
-    needs slepc4py on it. Raised when the solve starts, never when the
-    options are built, so a job written without PETSc can run where it is
-    installed. gfem never falls back to another solver silently. The message
-    gives the reason (petsc4py or slepc4py not importable, with the import
-    error; a PETSc built with real scalars; a version older than gfem
-    supports) and the fix: build them as the "PETSc and SLEPc" recipe in the
-    gfem docs describes, or choose another solver.
+    needs slepc4py built on that complex petsc4py. Raised when the solve
+    starts, never when the options are built, so a job written without PETSc
+    can run where it is installed. gfem never falls back to another solver
+    silently. The message gives the reason (petsc4py or slepc4py not
+    importable, with the import error; a PETSc built with real scalars; a
+    version older than gfem supports) and the fix: build them as the "Solve
+    with PETSc and SLEPc" recipe in the gfem docs describes, or choose
+    another solver.
     """
 
 
@@ -178,11 +179,13 @@ class LowFrequencyWarning(UserWarning):
     The floor is k0 * h_min = 1e-6 (f * h_min = 48 Hz*m), with k0 the
     vacuum wavenumber and h_min the shortest edge of the solve domain.
     Below it the E-field formulation's rounding error grows like
-    1e-16 / (k0 * h_min)^2: the fields and their gradients, and with
-    ``linear_solver="direct"`` the capacitive part of S, lose digits, and
-    direct solves become unreliable below k0 * h_min = 3e-7. Inductance
-    read from S and reciprocity are unaffected. For capacitance at low
-    frequency solve `gfem.Electrostatic`; otherwise raise the lowest
-    frequency or coarsen the smallest elements. The solve still runs.
-    Filter it with Python's `warnings` module.
+    1e-16 / (k0 * h_min)^2: the fields and their gradients, and with an
+    exact factorization (``linear_solver="direct"``, or ``"petsc"`` with
+    its default MUMPS factorization) the capacitive part of S, lose
+    digits. MKL PARDISO (``"direct"`` with the ``mkl`` extra) becomes
+    unreliable below k0 * h_min = 3e-7. Inductance read from S and
+    reciprocity are unaffected. For capacitance at low frequency solve
+    `gfem.Electrostatic`; otherwise raise the lowest frequency or coarsen
+    the smallest elements. The solve still runs. Filter it with Python's
+    `warnings` module.
     """

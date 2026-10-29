@@ -951,3 +951,30 @@ def test_frequency_workers_do_not_repeat_the_low_frequency_warning(mesh, line):
     with warnings.catch_warnings():
         warnings.simplefilter("error", gfem.LowFrequencyWarning)
         driven._solve_block(*workers.model_parts(line), problem, options, False)
+
+
+def _pi_model(s, f):
+    """The shunt C and series L of the line's pi model, read from S (F, H)."""
+    i = np.eye(2)
+    y = np.array([(i - sk) @ np.linalg.inv(i + sk) / R for sk in s])
+    w = 2 * np.pi * np.asarray(f)
+    return (y[:, 0, 0] + y[:, 0, 1]).imag / w, (-1 / y[:, 0, 1]).imag / w
+
+
+@pytest.mark.petsc
+def test_petsc_loses_capacitive_digits_below_the_low_frequency_floor(mesh, line):
+    """MUMPS, like the direct solver, loses C read from S like 1e-16/(k0 h)^2
+    below the floor; L and reciprocity keep their digits."""
+    kh = (5e-7, 1e-3)
+    f = [_f(k, mesh) for k in kh]
+    options = gfem.SolverOptions(linear_solver="petsc")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", gfem.LowFrequencyWarning)
+        s = np.asarray(gfem.solve(line, gfem.Driven(f), options=options).s.values)
+    ref = np.array([_s_from_abcd(_abcd_line(fk, L * 1e-3)) for fk in f])
+    (c, l_), (c_ref, l_ref) = _pi_model(s, f), _pi_model(ref, f)
+    c_err, l_err = abs(c / c_ref - 1), abs(l_ / l_ref - 1)
+    assert 1e-7 < c_err[0] < 1e-14 / kh[0] ** 2  # 9.6e-4 measured
+    assert c_err[1] < 1e-8  # 4.8e-11
+    assert l_err.max() < 1e-10  # 4e-14
+    np.testing.assert_allclose(s[:, 0, 1], s[:, 1, 0], rtol=0, atol=1e-12)  # 3e-16

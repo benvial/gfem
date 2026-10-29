@@ -263,8 +263,10 @@ class Driven:
     Low frequencies: below the mesh's low-frequency floor, k0·h_min = 1e-6
     (f·h_min ≈ 48 Hz·m, with h_min the shortest edge, at order 2), the
     E-field formulation's rounding error grows like 1e-16/(k0·h_min)². The
-    fields and gradients lose digits, and with ``linear_solver="direct"``
-    so does the capacitive part of S. Direct solves become unreliable below
+    fields and gradients lose digits, and with an exact factorization
+    (``linear_solver="direct"``, or ``"petsc"`` with its default MUMPS
+    factorization) so does the capacitive part of S. MKL PARDISO
+    (``"direct"`` with the ``mkl`` extra) becomes unreliable below
     k0·h_min ≈ 3e-7. The inductance read from S and reciprocity are
     unaffected. The solve warns with `gfem.LowFrequencyWarning`. With
     ``bddc_gmres``, S stays at ``SolverOptions.tolerance``, but a
