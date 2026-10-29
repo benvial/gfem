@@ -22,14 +22,11 @@ import scipy.sparse as sp
 
 from gfem._linalg import Operator, Symmetry
 from gfem._linalg.base import NgsHandle, host_bytes, same_pattern
-from gfem._linalg.pardiso import PARDISO_FLAGS, pardiso_available
+from gfem._linalg.pardiso import PARDISO_FLAGS, pardiso_available, pardiso_inverse
 
 #: NGSolve's sparse Cholesky: the factorization without MKL, also the BDDC
 #: coarse solve's.
 INVERSE = "sparsecholesky"
-#: NGSolve's MKL PARDISO wrapper, with gfem's `PARDISO_FLAGS` as the
-#: factored matrix's ``inverse_flags``.
-PARDISO = "pardiso"
 #: A gather index not built yet: `DirectHandle.refactorize` builds it.
 _UNBUILT: Any = object()
 
@@ -86,7 +83,7 @@ class DirectHandle(NgsHandle):
         if symmetry == "general" or (symmetry == "hermitian" and is_complex):
             self._refuse(symmetry)
         super().__init__(matrix, freedofs, symmetry, is_complex=is_complex)
-        self._solver = self._factor(matrix, freedofs)
+        self._solver = self._factor(matrix, freedofs, symmetry)
         #: Built at the first `refactorize`; ``None`` refactorizes by
         #: ``Update()``.
         self._gather: np.ndarray | None = _UNBUILT
@@ -94,11 +91,16 @@ class DirectHandle(NgsHandle):
         self._pattern: ngs.BaseMatrix | None = None
 
     @staticmethod
-    def _factor(matrix: ngs.BaseMatrix, freedofs: ngs.BitArray | None):
+    def _factor(
+        matrix: ngs.BaseMatrix, freedofs: ngs.BitArray | None, symmetry: Symmetry
+    ):
         inverse = INVERSE
         free = matrix.height if freedofs is None else freedofs.NumSet()
         if pardiso_available() and free > 0:  # PARDISO refuses an empty matrix
-            inverse = PARDISO
+            # gfem's registered PARDISO type, whose calls (phases 12, 22 and
+            # 33) run at OpenMP block time 0; the flags also as the matrix's
+            # ``inverse_flags``, which NGSolve's wrapper reads
+            inverse = pardiso_inverse(symmetry) or INVERSE
             matrix.inverse_flags = pyngcore.Flags(PARDISO_FLAGS)  # ty: ignore[unresolved-attribute]
         if freedofs is None or free == matrix.height:
             # every DOF free: NGSolve factors the matrix itself instead of
@@ -234,7 +236,7 @@ class DirectHandle(NgsHandle):
             matrix, solver = self._live()
             self._pattern = pattern
             if not same_pattern(matrix, new):
-                solver = self._factor(new, operator.freedofs)
+                solver = self._factor(new, operator.freedofs, self.symmetry)
                 self._matrix, self._solver = new, solver
                 self._gather = _UNBUILT
                 return

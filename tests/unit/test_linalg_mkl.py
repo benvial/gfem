@@ -71,7 +71,12 @@ def test_direct_is_pardiso_with_parallel_metis_exactly_when_mkl_is_installed(
     if not MKL:
         assert type(inverse).__name__.startswith("SparseCholesky")
         return
-    assert type(inverse).__name__ == "MKLPardiso"
+    from ngsolve.solvers import mkl_pardiso
+
+    # gfem's registered PARDISO type (its calls run at OpenMP block time 0),
+    # never NGSolve's own "pardiso"
+    assert isinstance(inverse, mkl_pardiso.MKLPardiso)
+    assert type(inverse).__module__ == "gfem._linalg.pardiso"
     assert inverse._params[1] == 3  # iparm[1] = 3: OpenMP parallel METIS
     # iparm[7] = 0: no iterative refinement (MKL's default), not the up to 16
     # steps of NGSolve's defaults
@@ -211,7 +216,7 @@ def test_a_pardiso_wrapper_gfem_cannot_gather_into_refactorizes_by_update(
             super().Factor()
 
     ngs.la.RegisterInverseType("gfem_older_pardiso", Older)
-    monkeypatch.setattr(direct, "PARDISO", "gfem_older_pardiso")
+    monkeypatch.setattr(direct, "pardiso_inverse", lambda _: "gfem_older_pardiso")
     handle = prepare(
         _laplace(built, complex_valued=True, shift=1 - 2j)[0],
         symmetry="complex_symmetric",
@@ -271,7 +276,9 @@ def test_a_gather_index_gfem_cannot_build_leaves_refactorization_to_update(
 
     ngs.la.RegisterInverseType("gfem_failing_buffer_pardiso", FailingBuffer)
     if failure == "a failing wrapper buffer":
-        monkeypatch.setattr(direct, "PARDISO", "gfem_failing_buffer_pardiso")
+        monkeypatch.setattr(
+            direct, "pardiso_inverse", lambda _: "gfem_failing_buffer_pardiso"
+        )
     else:
         monkeypatch.setattr(matrix_type, "CSR", failing_csr)
     handle = prepare(
@@ -322,7 +329,9 @@ def test_pardiso_factors_an_all_free_operator_without_projecting_it(built, monke
     # DOFs before the handoff
     matrix = op.form.mat
     matrix.inverse_flags = pyngcore.Flags(direct.PARDISO_FLAGS)
-    projected = matrix.Inverse(op.freedofs, inverse=direct.PARDISO)
+    projected = matrix.Inverse(
+        op.freedofs, inverse=pardiso.pardiso_inverse("complex_symmetric")
+    )
     rng = np.random.default_rng(7)
     B = rng.standard_normal(space.ndof) + 1j * rng.standard_normal(space.ndof)
     b, x = matrix.CreateColVector(), matrix.CreateColVector()
@@ -460,6 +469,164 @@ def test_bddc_handles_a_coarse_problem_without_free_dofs(tmp_path, symmetry):
     assert space.FreeDofs().NumSet() == 0
     handle = prepare(op, symmetry=symmetry, kind="bddc_gmres")
     np.testing.assert_array_equal(handle.solve(np.ones(space.ndof)), 0)
+
+
+# --- OpenMP block time 0 around every PARDISO call --------------------------------
+
+
+class _FakeOpenMP:
+    """A libiomp5 binding: the calling thread's block time, as ``kmp_*`` does."""
+
+    def __init__(self, block_time=200):
+        self.block_time = block_time
+
+    def kmp_get_blocktime(self):
+        return self.block_time
+
+    def kmp_set_blocktime(self, value):
+        self.block_time = value
+
+
+@pytest.fixture
+def pardiso_handle(built):
+    op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
+    return prepare(op, symmetry="complex_symmetric", kind="direct")
+
+
+def _record_parent_calls(monkeypatch, openmp, failure=None):
+    """Replace NGSolve's PARDISO call: record each phase and its block time."""
+    from ngsolve.solvers import mkl_pardiso
+
+    calls = []
+
+    def parent(self, phase):  # noqa: ARG001
+        calls.append((phase, None if openmp is None else openmp.block_time))
+        if failure is not None:
+            raise failure
+
+    monkeypatch.setattr(mkl_pardiso.MKLPardiso, "_call_pardiso", parent)
+    return calls
+
+
+@needs_mkl
+def test_a_pardiso_call_runs_at_block_time_0_and_restores_the_previous_value(
+    pardiso_handle, monkeypatch
+):
+    openmp = _FakeOpenMP(block_time=123)
+    monkeypatch.setattr(pardiso, "_openmp", lambda: openmp)
+    calls = _record_parent_calls(monkeypatch, openmp)
+    pardiso_handle._inverse._call_pardiso(33)
+    assert calls == [(33, 0)]
+    assert openmp.block_time == 123
+
+
+@needs_mkl
+def test_a_failing_pardiso_call_still_restores_the_block_time(
+    pardiso_handle, monkeypatch
+):
+    openmp = _FakeOpenMP(block_time=123)
+    monkeypatch.setattr(pardiso, "_openmp", lambda: openmp)
+    calls = _record_parent_calls(monkeypatch, openmp, RuntimeError("phase 33"))
+    with pytest.raises(RuntimeError, match="phase 33"):
+        pardiso_handle._inverse._call_pardiso(33)
+    assert calls == [(33, 0)]
+    assert openmp.block_time == 123
+
+
+@needs_mkl
+def test_without_libiomp5_a_pardiso_call_only_calls_the_wrapper(
+    pardiso_handle, monkeypatch
+):
+    monkeypatch.setattr(pardiso, "_openmp", lambda: None)
+    calls = _record_parent_calls(monkeypatch, None)
+    pardiso_handle._inverse._call_pardiso(33)
+    assert calls == [(33, None)]
+
+
+def _wrap_parent_calls(monkeypatch, block_time):
+    """Record each phase NGSolve's PARDISO call runs and its block time."""
+    from ngsolve.solvers import mkl_pardiso
+
+    calls = []
+    call = mkl_pardiso.MKLPardiso._call_pardiso
+
+    def parent(self, phase):
+        calls.append((phase, block_time()))
+        call(self, phase)
+
+    monkeypatch.setattr(mkl_pardiso.MKLPardiso, "_call_pardiso", parent)
+    return calls
+
+
+@needs_mkl
+def test_a_two_frequency_refactorization_gathers_and_runs_at_block_time_0(
+    pardiso_handle, built, monkeypatch
+):
+    openmp = _FakeOpenMP(block_time=123)
+    monkeypatch.setattr(pardiso, "_openmp", lambda: openmp)
+    calls = _wrap_parent_calls(monkeypatch, openmp.kmp_get_blocktime)
+    op, space = _laplace(built, complex_valued=True, shift=3 + 1j)
+    pardiso_handle.refactorize(op)
+    assert isinstance(pardiso_handle._gather, np.ndarray)  # the gather path
+    X = pardiso_handle.solve(np.ones(space.ndof, complex))
+    assert calls == [(22, 0), (33, 0)]
+    assert openmp.block_time == 123
+    monkeypatch.undo()
+    fresh = prepare(op, symmetry="complex_symmetric", kind="direct")
+    ref = fresh.solve(np.ones(space.ndof, complex))
+    assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
+
+
+@pytest.mark.skipif(
+    not (MKL and sys.platform == "linux"), reason="needs the mkl extra on Linux"
+)
+def test_pardiso_calls_leave_the_real_block_time_as_it_was(built, monkeypatch):
+    op, space = _laplace(built, complex_valued=True, shift=1 - 2j)
+    prepare(op, symmetry="complex_symmetric", kind="direct")  # MKL loads libiomp5
+    openmp = pardiso._load_libiomp5()
+    assert openmp is not None
+    before = openmp.kmp_get_blocktime()
+    calls = _wrap_parent_calls(monkeypatch, openmp.kmp_get_blocktime)
+    handle = prepare(op, symmetry="complex_symmetric", kind="direct")
+    handle.solve(np.ones(space.ndof, complex))
+    assert [phase for phase, _ in calls] == [12, 33]
+    assert all(block_time == 0 for _, block_time in calls)
+    assert openmp.kmp_get_blocktime() == before
+
+
+def test_libiomp5_is_looked_up_until_found_or_a_call_ran_without_it(monkeypatch):
+    lookups = []
+    monkeypatch.setattr(pardiso, "_load_libiomp5", lambda: lookups.append(1))
+    openmp = pardiso._OpenMP()
+    assert openmp.find() is None
+    assert openmp.find() is None  # before any call: looked up again
+    assert len(lookups) == 2
+    openmp.called()  # MKL has loaded its threading layer by now
+    assert openmp.find() is None
+    assert openmp.find() is None  # another threading layer: settled
+    assert len(lookups) == 3
+
+    found = _FakeOpenMP()
+    monkeypatch.setattr(pardiso, "_load_libiomp5", lambda: lookups.append(1) or found)
+    lookups.clear()
+    openmp = pardiso._OpenMP()
+    assert openmp.find() is found
+    assert openmp.find() is found
+    assert len(lookups) == 1
+
+
+def test_a_missing_libiomp5_or_symbol_turns_the_setting_off(monkeypatch):
+    def missing(*args, **kwargs):  # noqa: ARG001
+        raise OSError("libiomp5.so: cannot open shared object file")
+
+    monkeypatch.setattr(pardiso.ctypes, "CDLL", missing)
+    assert pardiso._load_libiomp5() is None
+
+    def without_symbols(*args, **kwargs):  # noqa: ARG001
+        return types.SimpleNamespace()
+
+    monkeypatch.setattr(pardiso.ctypes, "CDLL", without_symbols)
+    assert pardiso._load_libiomp5() is None
 
 
 # --- no reliance on NGSolve's default inverse ---------------------------------------

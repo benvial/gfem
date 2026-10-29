@@ -8,11 +8,22 @@ registers a subclass that applies `PARDISO_FLAGS` itself, under two inverse
 names: one symmetric, one for general operators (without ``symmetric``).
 `pardiso_inverse` gives the name to pass as ``inverse=``. NGSolve's own
 ``"pardiso"`` name is never used for them.
+
+Every call of the subclass runs with the calling thread's Intel OpenMP block
+time at 0 and sets the previous value back after it. NGSolve's wrapper
+suspends the TaskManager only during the call; at the default block time
+(200 ms) MKL's OpenMP threads then busy-wait on the cores the TaskManager
+resumes on. libiomp5 is only ever the copy MKL already loaded: without it
+(another MKL threading layer, or no MKL), the call is left as it is.
 """
 
 from __future__ import annotations
 
+import contextlib
+import ctypes
 import functools
+import os
+import sys
 from typing import Any, ClassVar
 
 import ngsolve as ngs
@@ -83,7 +94,8 @@ def _register() -> None:
             # PARDISO refuses an empty matrix: a coarse problem whose DOFs
             # are all fixed has nothing to factor or solve
             if self._n[0] > 0:  # ty: ignore[unresolved-attribute]
-                super()._call_pardiso(phase)
+                with _block_time_zero():
+                    super()._call_pardiso(phase)
 
     class GfemPardisoGeneral(GfemPardiso):
         """gfem's PARDISO for a general operator: unsymmetric LU."""
@@ -94,3 +106,88 @@ def _register() -> None:
 
     ngs.la.RegisterInverseType(SYMMETRIC, GfemPardiso)
     ngs.la.RegisterInverseType(GENERAL, GfemPardisoGeneral)
+
+
+# --- MKL's OpenMP threads ------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def _block_time_zero():
+    """Run the block with the calling thread's OpenMP block time at 0.
+
+    The block time in force when a PARDISO call starts its parallel regions
+    is how long MKL's threads busy-wait after it; it is a per-thread setting.
+    The previous value is set back after the block, also when it raises.
+    """
+    openmp = _openmp()
+    if openmp is None:
+        try:
+            yield
+        finally:
+            _OPENMP.called()
+        return
+    previous = openmp.kmp_get_blocktime()
+    openmp.kmp_set_blocktime(0)
+    try:
+        yield
+    finally:
+        openmp.kmp_set_blocktime(previous)
+
+
+class _OpenMP:
+    """Intel OpenMP (libiomp5) as MKL loaded it, looked up until settled.
+
+    MKL loads libiomp5 during its first call, so a miss before any PARDISO
+    call has run is looked up again; a hit, or a miss once a call has run
+    (MKL uses another threading layer), is final.
+    """
+
+    def __init__(self) -> None:
+        self._library: Any = None
+        self._settled = False
+        self._called = False
+
+    def find(self) -> Any:
+        """The bound library, or ``None``."""
+        if not self._settled:
+            self._library = _load_libiomp5()
+            self._settled = self._library is not None or self._called
+        return self._library
+
+    def called(self) -> None:
+        """Record that a PARDISO call has run without libiomp5 found."""
+        self._called = True
+
+
+_OPENMP = _OpenMP()
+
+
+def _openmp() -> Any:
+    """libiomp5's ``kmp_get_blocktime``/``kmp_set_blocktime``, or ``None``."""
+    return _OPENMP.find()
+
+
+def _load_libiomp5() -> Any:
+    """libiomp5 if it is already loaded, bound; never loads it, never raises.
+
+    A copy loaded by path could be one MKL is not using. ``None`` when it is
+    not loaded or lacks the block-time functions.
+    """
+    try:
+        if sys.platform == "win32":
+            kernel32 = ctypes.WinDLL("kernel32")
+            kernel32.GetModuleHandleW.argtypes = [ctypes.c_wchar_p]
+            kernel32.GetModuleHandleW.restype = ctypes.c_void_p
+            if not kernel32.GetModuleHandleW("libiomp5md.dll"):
+                return None
+            library = ctypes.CDLL("libiomp5md.dll")
+        else:
+            name = "libiomp5.dylib" if sys.platform == "darwin" else "libiomp5.so"
+            library = ctypes.CDLL(name, mode=os.RTLD_NOLOAD)
+        library.kmp_get_blocktime.argtypes = []
+        library.kmp_get_blocktime.restype = ctypes.c_int
+        library.kmp_set_blocktime.argtypes = [ctypes.c_int]
+        library.kmp_set_blocktime.restype = None
+    except (OSError, AttributeError):
+        return None
+    return library
