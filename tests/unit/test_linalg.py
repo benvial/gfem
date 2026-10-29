@@ -535,7 +535,7 @@ def test_direct_factorizes_a_scipy_spd_matrix():
     B = rng.standard_normal((n, 2))
     np.testing.assert_allclose(A @ handle.solve(B), B, atol=1e-12)
     # the direct backend's factorization (tests/unit/test_linalg_mkl.py)
-    assert type(handle._inverse).__name__.startswith(("SparseCholesky", "MKLPardiso"))
+    assert type(handle._inverse).__name__.startswith(("SparseCholesky", "GfemPardiso"))
     with pytest.raises(ValueError, match="square"):
         factorize(sp.eye(3, 4))
 
