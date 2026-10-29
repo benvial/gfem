@@ -535,6 +535,21 @@ def test_options_petsc_refuses_raise_a_value_error(built, options, reason):
     assert _gfem_keys() == []
 
 
+def test_ilu_needs_petscs_own_factorization_not_mumps(built):
+    # the recipe: MUMPS has no ILU, so pc_type ilu alone is refused
+    op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
+    ilu = (("ksp_type", "gmres"), ("pc_type", "ilu"))
+    with pytest.raises(ValueError, match="refused by PETSc") as err:
+        prepare(op, symmetry="complex_symmetric", kind="petsc", petsc_options=ilu)
+    assert "mumps does not support factorization type ILU" in str(err.value)
+    assert _gfem_keys() == []
+    handle = _krylov(built, options=(*ilu, ("pc_factor_mat_solver_type", "petsc")))
+    pc = handle._ksp.getPC()
+    assert (pc.getType(), pc.getFactorSolverType()) == ("ilu", "petsc")
+    b = np.random.default_rng(17).standard_normal(handle.ndof) + 0j
+    assert _relative_residual(handle, b, handle.solve(b)) <= 1e-8
+
+
 def test_an_error_in_petscs_set_up_raises_a_runtime_error(built):
     # the recipe's MUMPS has no OpenMP
     op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
