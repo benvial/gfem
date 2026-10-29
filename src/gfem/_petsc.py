@@ -51,7 +51,7 @@ MIN_VERSION = (3, 26)
 LOCK = threading.RLock()
 _PREFIXES = itertools.count()
 
-_RECIPE = "the 'PETSc and SLEPc' recipe in the gfem docs"
+_RECIPE = "the 'Solve with PETSc and SLEPc' recipe in the gfem docs"
 #: What a solver field asks for, and the solvers it could use instead.
 _SOLVERS = {
     "linear_solver": ("petsc", "use linear_solver='direct' or 'bddc_gmres'"),
@@ -200,8 +200,8 @@ def unread(prefix: str, names: list[str]) -> list[str]:
 def unwrap(err: BaseException) -> BaseException:
     """The exception a Python callback raised inside a PETSc call.
 
-    petsc4py reports it as a `SystemError` ("returned a result with an
-    exception set") whose cause is the original exception; any other
+    slepc4py's wrapper reports it as a `SystemError` ("returned a result with
+    an exception set") whose cause is the original exception; any other
     exception is returned as it is.
     """
     while isinstance(err, SystemError) and err.__cause__ is not None:

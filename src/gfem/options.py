@@ -223,8 +223,8 @@ class SolverOptions:
             extra is installed, NGSolve's sparse Cholesky otherwise) or
             ``"petsc"`` (PETSc: an exact MUMPS LDL^T factorization unless
             ``petsc_options`` configures another PETSc solver, from the
-            PETSc stack the "PETSc and SLEPc" recipe builds; never chosen by
-            ``"auto"``). A solver this Python cannot use raises
+            PETSc stack the "Solve with PETSc and SLEPc" recipe builds; never
+            chosen by ``"auto"``). A solver this Python cannot use raises
             `gfem.SolverUnavailableError` when the solve starts.
         tolerance: Relative preconditioned residual of iterative solves:
             for BDDC + GMRES ``|P(b - Ax)| / |P b|`` as GMRES estimates it,
@@ -232,7 +232,11 @@ class SolverOptions:
             its first value. S and fields are accurate to about this size;
             the unpreconditioned residual ``|b - Ax| / |b|`` can be orders
             larger at low frequency and does not measure the error. With
-            ``"petsc"`` it is PETSc's ``ksp_rtol``.
+            ``"petsc"`` and a Krylov ``ksp_type`` it is PETSc's ``ksp_rtol``
+            on the unpreconditioned residual ``|b - Ax| / |b|`` (unless
+            ``petsc_options`` sets ``ksp_norm_type``), so the same value is a
+            different norm per backend; PETSc's default exact factorization
+            ignores it.
         device: Where the direct solver runs: ``"cpu"``, ``"cuda"`` or
             ``"cuda:N"`` (the N-th GPU). A GPU needs
             ``linear_solver="direct"`` (NVIDIA cuDSS, from the ``cuda12`` or
@@ -253,16 +257,17 @@ class SolverOptions:
             an exact port mode solve replaces it.
         retain_memory: Bytes of solver factorizations kept for gradients;
             ``None`` is half of the physical memory, 0 always recomputes.
-        adjoint_tolerance: Relative preconditioned residual of adjoint
-            solves, as ``tolerance``; ``None`` is ``tolerance``.
+        adjoint_tolerance: Relative residual of adjoint solves, in the norm
+            ``tolerance`` names for each backend; ``None`` is ``tolerance``.
         eigen_tolerance: Backward error accepted for an eigenmode (the
-            residual over ``|K| + |omega| |C| + |omega|^2 |M|``), shared by the Arnoldi
-            iteration and the refinement; distinct from ``tolerance``, the
-            residual of each linear solve. The norms are set by the highest
-            curl-curl modes, so a resonance's frequency and Q can be much
-            less accurate than this value: on a port-loaded CPW resonator,
-            gsim's default 1e-6 leaves f off by 1e-5 and Q by 0.5 %, while
-            1e-10 brings both errors far below that.
+            residual over ``|K| + |omega| |C| + |omega|^2 |M|``), shared by
+            the seed iteration (ARPACK's, or SLEPc's ``eps_tol`` with
+            ``eigen_solver="slepc"``) and the refinement; distinct from
+            ``tolerance``, the residual of each linear solve. The norms are
+            set by the highest curl-curl modes, so a resonance's frequency
+            and Q can be much less accurate than this value: on a port-loaded
+            CPW resonator, gsim's default 1e-6 leaves f off by 1e-5 and Q by
+            0.5 %, while 1e-10 brings both errors far below that.
         cluster_rtol: Relative distance under which eigenfrequencies form a
             degenerate cluster.
         max_refine_iterations: Most iterations of the eigenmode refinement.
@@ -282,8 +287,8 @@ class SolverOptions:
         eigen_solver: What finds an `gfem.Eigenmode` problem's modes near
             ``target`` from shift-invert solves: ``"auto"`` or ``"arpack"``
             (SciPy ARPACK), or ``"slepc"`` (SLEPc's Krylov-Schur, through
-            slepc4py, from the PETSc stack the "PETSc and SLEPc" recipe
-            builds; never chosen by ``"auto"``). gfem refines and
+            slepc4py, from the PETSc stack the "Solve with PETSc and SLEPc"
+            recipe builds; never chosen by ``"auto"``). gfem refines and
             differentiates the modes the same way after either. Other
             problem types ignore it. SLEPc this Python cannot use raises
             `gfem.SolverUnavailableError` when the solve starts.
