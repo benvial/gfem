@@ -54,12 +54,13 @@ def _coarse_inverse(
     ``sparsecholesky`` when the setup runs on `SPARSE_COARSE_THREADS` threads
     or more and is expected to serve `SPARSE_COARSE_COLUMNS` right-hand-side
     columns or more: there its many applies outweigh PARDISO's faster
-    factorization, and sparse Cholesky's wirebasket solve scales with the
-    threads where PARDISO's one-column solve does not. Otherwise gfem's
-    PARDISO (`pardiso_inverse`) when MKL is installed, symmetric when the
-    operator is ``A^T = A`` (complex symmetric, or ``"hermitian"`` on a real
-    space; a complex Hermitian one is not), sparse Cholesky without it. The
-    rule counts columns, never times, so a run's choice repeats exactly.
+    factorization, and the solve with a sparse Cholesky coarse factorization
+    scales with the threads where PARDISO's one-column solve does not.
+    Otherwise gfem's PARDISO (`pardiso_inverse`) when MKL is installed,
+    symmetric when the operator is ``A^T = A`` (complex symmetric, or
+    ``"hermitian"`` on a real space; a complex Hermitian one is not), sparse
+    Cholesky without it. The rule counts columns, never times, so a run's
+    choice repeats exactly.
     """
     if threads >= SPARSE_COARSE_THREADS and columns >= SPARSE_COARSE_COLUMNS:
         return INVERSE
