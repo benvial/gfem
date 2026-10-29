@@ -7,15 +7,26 @@ orthogonalized by CGS2 against a Krylov basis held in NumPy blocks of
 and complex-scalar update have no threaded kernel) on one thread; here the
 coefficients, updates, norms, scaling, basis copy and ``x += Q y`` run on a
 thread pool of ``ngs.GetNumThreads()`` threads, one column range per thread,
-each calling single-threaded BLAS: SciPy's bundled OpenBLAS through ctypes
-(the calls release the GIL), or NumPy ``einsum`` where that library is not
-found. Vectors shorter than twice `COLUMNS` skip the pool.
+each calling single-threaded BLAS through ctypes (the calls release the GIL):
+SciPy's bundled OpenBLAS, MKL from the ``mkl`` extra past OpenBLAS's thread
+limit (below), or NumPy ``einsum`` without either. Vectors shorter than twice
+`COLUMNS` skip the pool.
+
+MKL's thread count is per calling thread: each pool thread, and the solving
+thread for the solve, set it to one (`_mkl_one_thread`).
 
 OpenBLAS's thread count is process-wide, and its own threads busy-wait after
 each call while NGSolve's TaskManager runs the preconditioner on the same
 cores. So while any gfem GMRES solve runs, SciPy's OpenBLAS is held at one
 thread (`_OneBlasThread`): the first solve to enter saves its count and sets
-1, the last to leave restores it. No BLAS thread pool is woken.
+1, the last to leave restores it. No BLAS thread pool is woken. OpenBLAS also
+has a fixed number of call buffers, two per thread of its build's
+``MAX_THREADS`` (64 in the PyPI wheels); more concurrent callers overflow
+into an auxiliary table that corrupts the heap. So past ``MAX_THREADS``
+(`_ScipyOpenBlas.max_threads`) the pool runs MKL's gemv, which has no such
+limit, and without MKL it has ``MAX_THREADS`` threads. Below the limit
+OpenBLAS stays: its gemv streams about 30 % faster than MKL's on these
+shapes (8 threads, i5-1145G7).
 
 A lucky breakdown (the new direction in the Krylov space) follows NGSolve
 upstream 3c33638dff: a relative test, the rotation applied and the stopping
@@ -30,6 +41,8 @@ import dataclasses
 import functools
 import importlib.metadata
 import itertools
+import os
+import re
 import threading
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
@@ -50,6 +63,9 @@ BREAKDOWN = 1e-12
 #: Fewest vector entries per pool thread: shorter vectors (under twice this)
 #: run inline, without the pool's hand-offs.
 COLUMNS = 1 << 16
+#: OpenBLAS's ``MAX_THREADS`` when its build string does not give it: the
+#: PyPI wheels' (``NUM_THREADS=64`` in MacPython/openblas-libs).
+OPENBLAS_MAX_THREADS = 64
 
 
 @dataclasses.dataclass(frozen=True)
@@ -60,6 +76,30 @@ class _ScipyOpenBlas:
     set_threads: Callable[[int], None]
     zgemv: Any
     dgemv: Any
+    #: Concurrent callers its call buffers serve: the build's ``MAX_THREADS``.
+    max_threads: int = OPENBLAS_MAX_THREADS
+
+
+@dataclasses.dataclass(frozen=True)
+class _MklBlas:
+    """MKL's runtime library: the calling thread's thread count and the gemv kernels."""
+
+    set_threads_local: Callable[[int], int]
+    zgemv: Any
+    dgemv: Any
+
+
+def _bind_gemv(zgemv: Any, dgemv: Any) -> None:
+    """CBLAS ``zgemv``/``dgemv`` signatures with 32-bit integers (LP64)."""
+    P, I, D = ctypes.c_void_p, ctypes.c_int, ctypes.c_double
+    zgemv.argtypes, zgemv.restype = [I, I, I, I, P, P, I, P, I, P, P, I], None
+    dgemv.argtypes, dgemv.restype = [I, I, I, I, D, P, I, P, I, D, P, I], None
+
+
+def _max_threads(config: str) -> int:
+    """``MAX_THREADS`` from an OpenBLAS build string, else `OPENBLAS_MAX_THREADS`."""
+    found = re.search(r"MAX_THREADS=(\d+)", config)
+    return int(found.group(1)) if found else OPENBLAS_MAX_THREADS
 
 
 def _symbol(lib: ctypes.CDLL, name: str) -> Any:
@@ -79,6 +119,7 @@ def scipy_openblas() -> _ScipyOpenBlas | None:
     is the library SciPy already mapped. Needs the thread-count getter and
     setter and the ``scipy_``-prefixed CBLAS ``zgemv``/``dgemv`` of
     scipy-openblas32; anything else (SciPy on Accelerate) is None.
+    ``max_threads`` is read from ``openblas_get_config``.
     """
     from scipy.linalg import blas  # noqa: F401  (maps the library)
 
@@ -96,12 +137,48 @@ def scipy_openblas() -> _ScipyOpenBlas | None:
             zgemv, dgemv = lib.scipy_cblas_zgemv, lib.scipy_cblas_dgemv
         except (OSError, AttributeError):
             return None
-        P, I, D = ctypes.c_void_p, ctypes.c_int, ctypes.c_double
-        get_threads.argtypes, get_threads.restype = [], I
-        set_threads.argtypes, set_threads.restype = [I], None
-        zgemv.argtypes, zgemv.restype = [I, I, I, I, P, P, I, P, I, P, P, I], None
-        dgemv.argtypes, dgemv.restype = [I, I, I, I, D, P, I, P, I, D, P, I], None
-        return _ScipyOpenBlas(get_threads, set_threads, zgemv, dgemv)
+        get_threads.argtypes, get_threads.restype = [], ctypes.c_int
+        set_threads.argtypes, set_threads.restype = [ctypes.c_int], None
+        _bind_gemv(zgemv, dgemv)
+        config = ""
+        with contextlib.suppress(AttributeError):
+            get_config = _symbol(lib, "openblas_get_config")
+            get_config.argtypes, get_config.restype = [], ctypes.c_char_p
+            config = (get_config() or b"").decode(errors="replace")
+        return _ScipyOpenBlas(
+            get_threads, set_threads, zgemv, dgemv, _max_threads(config)
+        )
+    return None
+
+
+@functools.cache
+def mkl_blas() -> _MklBlas | None:
+    """MKL's runtime library from the ``mkl`` distribution through ctypes, or None.
+
+    The ``mkl_rt`` file NGSolve's PARDISO wrapper loads, so the handle is the
+    library already mapped once PARDISO has run. None without the ``mkl``
+    distribution, without the per-thread thread-count setter or the CBLAS
+    gemv kernels, or with ``MKL_INTERFACE_LAYER`` asking for ILP64 (the
+    kernels pass 32-bit integers).
+    """
+    if "ILP64" in os.environ.get("MKL_INTERFACE_LAYER", "").upper():
+        return None
+    try:
+        dist = importlib.metadata.distribution("mkl")
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    for file in dist.files or ():
+        if "mkl_rt" not in file.name:
+            continue
+        try:
+            lib = ctypes.CDLL(str(dist.locate_file(file)))
+            set_local = lib.MKL_Set_Num_Threads_Local
+            zgemv, dgemv = lib.cblas_zgemv, lib.cblas_dgemv
+        except (OSError, AttributeError):
+            return None
+        set_local.argtypes, set_local.restype = [ctypes.c_int], ctypes.c_int
+        _bind_gemv(zgemv, dgemv)
+        return _MklBlas(set_local, zgemv, dgemv)
     return None
 
 
@@ -142,27 +219,47 @@ class _OneBlasThread:
 _ONE_BLAS_THREAD = _OneBlasThread()
 
 
-def _serial_blas() -> None:
+@contextlib.contextmanager
+def _mkl_one_thread(mkl: _MklBlas | None) -> Generator[None]:
+    """The calling thread's MKL at one thread inside the block; nothing without ``mkl``.
+
+    The previous per-thread count (0: MKL's global one) is set back after it.
+    """
+    if mkl is None:
+        yield
+        return
+    previous = mkl.set_threads_local(1)
+    try:
+        yield
+    finally:
+        mkl.set_threads_local(previous)
+
+
+def _serial_blas(mkl: _MklBlas | None) -> None:
     """The pool's thread initializer, and a profiling seam.
 
-    Nothing to set: `_OneBlasThread` holds OpenBLAS at one thread for the
-    solve. It runs once on each pool thread as it starts (looked up when the
-    pool is made), so a profiler can wrap it to record the pool's thread ids.
+    Sets the pool thread's MKL to one thread (the thread ends with the pool,
+    so nothing is set back); on OpenBLAS nothing: `_OneBlasThread` holds it
+    at one thread for the solve. It runs once on each pool thread as it
+    starts (looked up when the pool is made), so a profiler can wrap it to
+    record the pool's thread ids.
     """
+    if mkl is not None:
+        mkl.set_threads_local(1)
 
 
 _COL, _NOTRANS, _TRANS, _CONJTRANS = 102, 111, 112, 113
 _ONE, _ZERO = np.array([1.0 + 0j]), np.array([0j])
 
 
-class _OpenBlas:
-    """``Q_s^H q_s`` and ``q_s += Q_s y`` on one column range, by one gemv.
+class _Gemv:
+    """``Q_s^H q_s`` and ``q_s += Q_s y`` on one column range, by one BLAS gemv.
 
     A ``(BLOCK, n)`` row-major block is an ``n x BLOCK`` column-major matrix
     with leading dimension n; a column range is its rows ``s``.
     """
 
-    def __init__(self, lib: _ScipyOpenBlas) -> None:
+    def __init__(self, lib: _ScipyOpenBlas | _MklBlas) -> None:
         self.lib = lib
 
     def coefficients(
@@ -345,8 +442,10 @@ class Gmres(GMRESSolver):
     """NGSolve's GMRES with its Arnoldi vector work on gfem's thread pool.
 
     The pool is a ``ThreadPoolExecutor`` of as many threads as NGSolve's
-    TaskManager (``ngs.GetNumThreads()``), made for each solve; it is not the
-    TaskManager's own threads, which run the operator and the preconditioner.
+    TaskManager (``ngs.GetNumThreads()``), made for each solve: at most
+    OpenBLAS's ``MAX_THREADS`` when MKL is not there to take over past it.
+    It is not the TaskManager's own threads, which run the operator and the
+    preconditioner.
 
     ``Solve``, ``residuals``, ``iterations``, ``maxiter`` and ``tol``/``atol``
     (read on every solve) are NGSolve's ``GMRESSolver``'s.
@@ -366,15 +465,26 @@ class Gmres(GMRESSolver):
     def _SolveImpl(  # noqa: N802 (NGSolve's name)
         self, rhs: ngs.BaseVector, sol: ngs.BaseVector
     ) -> ngs.BaseVector:
-        lib = scipy_openblas()
-        kernel = _Einsum() if lib is None else _OpenBlas(lib)
         threads = ngs.GetNumThreads()
+        lib = scipy_openblas()
+        mkl = None
+        if lib is None or threads > lib.max_threads:
+            mkl = mkl_blas()
+        if mkl is not None:
+            lib = None
+        elif lib is not None:
+            threads = min(threads, lib.max_threads)
+        blas = mkl or lib
+        kernel = _Einsum() if blas is None else _Gemv(blas)
         n = len(rhs)
-        with _ONE_BLAS_THREAD.held(lib):
+        with _ONE_BLAS_THREAD.held(lib), _mkl_one_thread(mkl):
             if threads < 2 or n < 2 * COLUMNS:
                 return self._gmres(rhs, sol, _Columns(n, 1, None), kernel)
             with ThreadPoolExecutor(
-                threads, thread_name_prefix="gfem-gmres", initializer=_serial_blas
+                threads,
+                thread_name_prefix="gfem-gmres",
+                initializer=_serial_blas,
+                initargs=(mkl,),
             ) as pool:
                 return self._gmres(rhs, sol, _Columns(n, threads, pool), kernel)
 
