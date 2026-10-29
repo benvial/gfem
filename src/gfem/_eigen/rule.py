@@ -86,6 +86,10 @@ DEFAULT_SOLVER = "direct"
 #: Inner solves of an iterative backend run this much tighter than the
 #: eigen tolerance.
 _INNER = 1e-2
+#: ... but never below this: BDDC + GMRES's residual estimate stalls at
+#: 1e-15..2e-14 and the true preconditioned residual at ~1e-13 on the
+#: shift-invert operators, so a tighter inner solve only buys stalls.
+_INNER_FLOOR = 1e-13
 #: Seeds with Re k at or below this fraction of the shift are the curl-curl
 #: null space or relaxation modes, not resonances.
 _STATIC = 1e-6
@@ -268,7 +272,9 @@ class EigenmodeRule:
             kind=self.kind,
             device=opts.device,
             threads=opts.threads,
-            tolerance=min(opts.tolerance, _INNER * opts.eigen_tolerance),
+            tolerance=min(
+                opts.tolerance, max(_INNER * opts.eigen_tolerance, _INNER_FLOOR)
+            ),
             petsc_options=opts.petsc_options,
         )
 

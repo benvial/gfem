@@ -36,6 +36,7 @@ from preconditioners import count_preconditioners
 from scipy.optimize import brentq
 
 import gfem
+from gfem._eigen import rule as eigen_rule
 from gfem._engine import eigen as engine_eigen
 from gfem._engine.driven import driven_operator
 from gfem._engine.eigen import projector
@@ -287,6 +288,27 @@ def test_a_bddc_reshift_sets_the_preconditioner_up_at_the_new_shift(mesh, monkey
     assert len(builds) == 2
     np.testing.assert_allclose(result.omega, fresh.omega, rtol=1e-12)
     np.testing.assert_allclose(result.q, fresh.q, rtol=1e-10)
+
+
+@pytest.mark.parametrize(
+    ("tolerances", "inner"),
+    [({"eigen_tolerance": 1e-12, "tolerance": 1e-12}, 1e-13), ({}, 1e-12)],
+)
+def test_inner_solves_are_not_asked_below_the_round_off_floor(
+    mesh, monkeypatch, tolerances, inner
+):
+    # a tight eigen tolerance would ask BDDC + GMRES for 1e-14, where its
+    # residual estimate stalls; the defaults ask 1e-2 * 1e-10
+    options = gfem.SolverOptions(linear_solver="bddc_gmres", **tolerances)
+    rule = eigen_rule.EigenmodeRule(line(mesh), gfem.Eigenmode(target=F1), options)
+    asked = []
+
+    def capture(*_, tolerance, **__):
+        asked.append(tolerance)
+
+    monkeypatch.setattr(eigen_rule, "eigen_operator", capture)
+    rule.operator(None, 1.0)
+    np.testing.assert_allclose(asked, [inner], rtol=1e-12)
 
 
 # --- inductive ports -----------------------------------------------------------------
