@@ -396,6 +396,19 @@ def test_a_krylov_solve_that_does_not_converge_raises(built):
     assert "1e-14 in 3 iterations" in str(err.value)
 
 
+def test_a_krylov_solve_that_does_not_converge_reports_four_digits(built):
+    # at two digits a stall just above the tolerance can print as the
+    # tolerance itself, hiding how far off it is
+    handle = _krylov(built, tolerance=1e-14, maxiter=10)
+    b = np.ones(handle.ndof, complex)
+    with pytest.raises(RuntimeError, match="DIVERGED_MAX_IT") as err:
+        handle.solve(b)
+    stalled = handle._ksp.getResidualNorm() / np.linalg.norm(b[handle._free])
+    reached = re.search(r"reached (\S+)\)", str(err.value))
+    assert reached is not None
+    assert float(reached.group(1)) == pytest.approx(stalled, rel=1e-3)
+
+
 def test_cg_on_a_complex_symmetric_operator_points_to_gmres(built):
     handle = _krylov(
         built, shift=-40 + 1j, options=(("ksp_type", "cg"), ("pc_type", "none"))

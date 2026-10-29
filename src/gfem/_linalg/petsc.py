@@ -444,7 +444,7 @@ class PetscHandle(NgsHandle):
         message = (
             f"PETSc {ksp.getType()} + {ksp.getPC().getType()} did not converge to "
             f"the relative tolerance {rtol:g} in {max_it} iterations ({name}, "
-            f"reached {reached:.2g}). Use linear_solver='direct', a looser "
+            f"reached {reached:.3e}). Use linear_solver='direct', a looser "
             "tolerance, or other petsc_options."
         )
         if reason == PETSc.KSP.ConvergedReason.DIVERGED_INDEFINITE_MAT:
