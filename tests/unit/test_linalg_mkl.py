@@ -601,7 +601,7 @@ def test_libiomp5_is_looked_up_until_found_or_a_call_ran_without_it(monkeypatch)
     assert openmp.find() is None
     assert openmp.find() is None  # before any call: looked up again
     assert len(lookups) == 2
-    openmp.called()  # MKL has loaded its threading layer by now
+    openmp.record_completed_call()  # MKL has loaded its threading layer by now
     assert openmp.find() is None
     assert openmp.find() is None  # another threading layer: settled
     assert len(lookups) == 3
@@ -613,6 +613,24 @@ def test_libiomp5_is_looked_up_until_found_or_a_call_ran_without_it(monkeypatch)
     assert openmp.find() is found
     assert openmp.find() is found
     assert len(lookups) == 1
+
+
+def test_a_raising_pardiso_call_leaves_libiomp5_to_be_looked_up_again(monkeypatch):
+    # a first call that raised may not have loaded MKL's threading layer: only
+    # a call that completed settles a miss
+    lookups = []
+    monkeypatch.setattr(pardiso, "_load_libiomp5", lambda: lookups.append(1))
+    monkeypatch.setattr(pardiso, "_OPENMP", pardiso._OpenMP())
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="PARDISO failed"):
+            with pardiso._block_time_zero():
+                raise RuntimeError("PARDISO failed")
+    assert len(lookups) == 2  # looked up again after the first call raised
+    for _ in range(3):
+        with pardiso._block_time_zero():
+            pass
+    # the first lookup after a completed call is the last
+    assert len(lookups) == 4
 
 
 def test_a_missing_libiomp5_or_symbol_turns_the_setting_off(monkeypatch):

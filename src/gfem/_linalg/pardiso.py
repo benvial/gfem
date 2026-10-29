@@ -118,13 +118,13 @@ def _block_time_zero():
     The block time in force when a PARDISO call starts its parallel regions
     is how long MKL's threads busy-wait after it; it is a per-thread setting.
     The previous value is set back after the block, also when it raises.
+    Without libiomp5, a block that completes settles the lookup (`_OpenMP`);
+    one that raises does not.
     """
     openmp = _openmp()
     if openmp is None:
-        try:
-            yield
-        finally:
-            _OPENMP.called()
+        yield
+        _OPENMP.record_completed_call()
         return
     previous = openmp.kmp_get_blocktime()
     openmp.kmp_set_blocktime(0)
@@ -138,25 +138,26 @@ class _OpenMP:
     """Intel OpenMP (libiomp5) as MKL loaded it, looked up until settled.
 
     MKL loads libiomp5 during its first call, so a miss before any PARDISO
-    call has run is looked up again; a hit, or a miss once a call has run
-    (MKL uses another threading layer), is final.
+    call has completed is looked up again (a call that raised may have
+    stopped before MKL loaded it); a hit, or a miss once a call has
+    completed (MKL uses another threading layer), is final.
     """
 
     def __init__(self) -> None:
         self._library: Any = None
         self._settled = False
-        self._called = False
+        self._completed = False
 
     def find(self) -> Any:
         """The bound library, or ``None``."""
         if not self._settled:
             self._library = _load_libiomp5()
-            self._settled = self._library is not None or self._called
+            self._settled = self._library is not None or self._completed
         return self._library
 
-    def called(self) -> None:
-        """Record that a PARDISO call has run without libiomp5 found."""
-        self._called = True
+    def record_completed_call(self) -> None:
+        """Record that a PARDISO call completed without libiomp5 found."""
+        self._completed = True
 
 
 _OPENMP = _OpenMP()
