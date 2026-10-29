@@ -47,6 +47,7 @@ from gfem._boundaries import WavePort
 from gfem._engine import terms
 from gfem._engine.mesh import EngineMesh
 from gfem._engine.port_mode import PortModeSpace
+from gfem._linalg.base import free_mask
 from gfem._port_section import PortSection, port_section
 from gfem._sweep.port_mode import PortModeSweep, port_mode_sweep
 from gfem.model import Model
@@ -168,7 +169,7 @@ def wave_port_couplings(
         modes = PortModeSpace(section, order)
         sweep = port_mode_sweep(modes, frequency, port.mode, tolerance=tolerance)
         idx3, idx2 = trace_dofs(model, section, modes, built, space)
-        free = np.array(list(space.FreeDofs()), dtype=bool)  # ty: ignore[invalid-argument-type]
+        free = free_mask(space.FreeDofs(), space.ndof)
         idx3, idx2 = idx3[free[idx3]], idx2[free[idx3]]
         g_form, t_form = modes.coupling_forms
         w = sweep.basis[modes.free]

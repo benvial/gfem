@@ -32,12 +32,13 @@ Backends:
   NGSolve's default inverse: MKL PARDISO with METIS ordering when the ``mkl``
   extra is installed, NGSolve sparse Cholesky otherwise. One factorization
   serves every right-hand side.
-- ``"bddc_gmres"``: NGSolve BDDC with a sparse Cholesky coarse problem, and
-  conjugate gradients (Hermitian operators) or GMRES (the others) to the
-  relative preconditioned residual ``tolerance``. GMRES, cold or warm, stops
-  at ``|P(b - Ax)| <= tolerance |P b|`` (the residual estimate of its
-  left-preconditioned iteration); CG at the P-norm of the residual over its
-  first value. The solution is accurate to about ``tolerance``; the
+- ``"bddc_gmres"``: NGSolve BDDC, its coarse problem factored by MKL PARDISO
+  with gfem's flags when the ``mkl`` extra is installed, by sparse Cholesky
+  otherwise, and conjugate gradients (Hermitian operators) or GMRES (the
+  others) to the relative preconditioned residual ``tolerance``. GMRES, cold
+  or warm, stops at ``|P(b - Ax)| <= tolerance |P b|`` (the residual estimate
+  of its left-preconditioned iteration); CG at the P-norm of the residual
+  over its first value. The solution is accurate to about ``tolerance``; the
   unpreconditioned ``|b - Ax| / |b|`` can be orders larger at low frequency
   and does not measure the error. A solve that stops early above the
   tolerance (a Krylov breakdown) restarts once from its iterate, and raises

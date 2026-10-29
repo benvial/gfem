@@ -10,6 +10,17 @@ import numpy as np
 from gfem._linalg import Operator, Symmetry
 
 
+def equals_its_transpose(symmetry: Symmetry, *, is_complex: bool) -> bool:
+    """Whether an operator of ``symmetry`` has ``A^T = A``.
+
+    A complex symmetric operator, or a ``"hermitian"`` one on a real space
+    (real symmetric); not a complex Hermitian or a general one.
+    """
+    return symmetry == "complex_symmetric" or (
+        symmetry == "hermitian" and not is_complex
+    )
+
+
 def host_bytes(obj) -> int:
     """Host memory NGSolve reports for a matrix or an inverse, in bytes."""
     return sum(int(u.host) for u in obj.GetMemoryUsage())
@@ -47,6 +58,39 @@ def assemble_operator(
     return operator.form.mat, None
 
 
+def free_mask(freedofs: ngs.BitArray | None, ndof: int) -> np.ndarray:
+    """The free DOFs as a NumPy boolean mask; ``None`` means every DOF is free.
+
+    No per-DOF Python loop: every bit set gives ``np.ones``; otherwise an
+    NGSolve vector is set to 1 on the BitArray (in C++) and compared with 0.
+
+    Raises:
+        ValueError: ``freedofs`` does not have ``ndof`` bits.
+    """
+    if freedofs is not None and len(freedofs) != ndof:
+        raise ValueError(
+            f"The free-DOF set has {len(freedofs)} bits, the space {ndof} DOFs."
+        )
+    if freedofs is None or freedofs.NumSet() == ndof:
+        return np.ones(ndof, dtype=bool)
+    marks = ngs.la.CreateVVector(len(freedofs))
+    marks[:] = 0.0
+    marks[freedofs] = 1.0
+    return marks.FV().NumPy() != 0.0
+
+
+def same_free_dofs(a: ngs.BitArray, b: ngs.BitArray) -> bool:
+    """Whether two free-DOF sets are equal, without building masks.
+
+    The same object short-circuits; otherwise equal lengths, equal counts
+    and no bit of ``a`` outside ``b`` (``a`` within ``b`` and as many bits
+    means ``a == b``).
+    """
+    return a is b or (
+        len(a) == len(b) and a.NumSet() == b.NumSet() and (a & ~b).NumSet() == 0
+    )
+
+
 class NgsHandle:
     """A handle on an assembled NGSolve matrix with free DOFs.
 
@@ -70,11 +114,7 @@ class NgsHandle:
         self.symmetry: Symmetry = symmetry
         self.ndof = int(matrix.height)
         self._matrix: ngs.BaseMatrix | None = matrix
-        self._free = (
-            np.ones(self.ndof, dtype=bool)
-            if freedofs is None
-            else np.array(list(freedofs), dtype=bool)  # ty: ignore[invalid-argument-type]
-        )
+        self._free = free_mask(freedofs, self.ndof)
         self._complex = is_complex
         self._solver = None
         self._lock = threading.RLock()
