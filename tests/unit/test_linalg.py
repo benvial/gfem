@@ -447,16 +447,16 @@ def test_bddc_needs_the_fixed_dofs_marked_in_the_space(built):
 
 def test_bddc_raises_when_it_does_not_converge(built, monkeypatch):
     tol = 1e-14
-    handle = prepare(
+    cg = prepare(
         _laplace(built, order=4)[0],
         symmetry="hermitian",
         kind="bddc_gmres",
         tolerance=tol,
         maxiter=2,
     )
-    b = np.random.default_rng(6).standard_normal(handle.ndof)
-    with pytest.raises(RuntimeError, match="converge"):
-        handle.solve(b)
+    rng = np.random.default_rng(6)
+    with pytest.raises(RuntimeError, match=r"BDDC \+ CG did not converge"):
+        cg.solve(rng.standard_normal(cg.ndof))
 
     # an estimate stalled just above the tolerance reads as above it
     def stall(self, **_):
@@ -464,9 +464,16 @@ def test_bddc_raises_when_it_does_not_converge(built, monkeypatch):
         while not self.CheckResidual(1.04 * tol):
             pass
 
-    monkeypatch.setattr(ngs.solvers.CGSolver, "_SolveImpl", stall)
-    with pytest.raises(RuntimeError, match="converge") as raised:
-        handle.solve(b)
+    gmres = prepare(
+        _laplace(built, complex_valued=True, shift=1 - 2j, order=4)[0],
+        symmetry="complex_symmetric",
+        kind="bddc_gmres",
+        tolerance=tol,
+        maxiter=2,
+    )
+    monkeypatch.setattr(Gmres, "_SolveImpl", stall)
+    with pytest.raises(RuntimeError, match=r"BDDC \+ GMRES did not converge") as raised:
+        gmres.solve(rng.standard_normal(gmres.ndof) + 0j)
     reached = re.search(r"reached (\S+)\)", str(raised.value))
     assert reached is not None
     assert float(reached.group(1)) > tol
