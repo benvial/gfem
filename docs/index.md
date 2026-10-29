@@ -50,6 +50,7 @@ recipes/remesh-and-restart
 
 recipes/measurements
 recipes/gpu-direct-solver
+recipes/petsc-slepc
 recipes/gsim
 ```
 

@@ -150,17 +150,20 @@ class PortModeRule:
 
         Raises:
             ValueError: ``problem.port`` is not a wave port of the model, or
-                ``options`` asks for a linear solver or a device: the 2D
-                port mode problem always runs SuperLU on the CPU.
+                ``options`` asks for a linear solver, an eigen solver or a
+                device: the 2D port mode problem always runs SuperLU and
+                SciPy on the CPU.
         """
         if not isinstance(problem, PortMode):
             raise TypeError(f"Expected gfem.PortMode, got {problem!r}.")
-        if options.device != "cpu" or options.linear_solver != "auto":
+        chosen = (options.device, options.linear_solver, options.eigen_solver)
+        if chosen != ("cpu", "auto", "auto"):
             raise ValueError(
-                "The port mode problem always uses SuperLU on the CPU (a 2D "
-                f"problem), but the options ask for device={options.device!r}, "
-                f"linear_solver={options.linear_solver!r}. Solve PortMode with "
-                "the default device and linear_solver."
+                "The port mode problem always uses SuperLU and SciPy on the CPU "
+                f"(a 2D problem), but the options ask for device={options.device!r}, "
+                f"linear_solver={options.linear_solver!r}, "
+                f"eigen_solver={options.eigen_solver!r}. Solve PortMode with the "
+                "default device, linear_solver and eigen_solver."
             )
         self.problem = problem
         self.options = options

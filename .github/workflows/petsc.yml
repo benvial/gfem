@@ -1,0 +1,88 @@
+name: PETSc
+# The tests marked petsc and slepc, on the PETSc stack that
+# tools/petsc_wheelhouse.sh builds (the script users run). Its cold build is
+# long, so the wheelhouse is cached on the script's hash, and the job runs
+# only on demand, twice a week and on pull requests that touch the PETSc
+# paths. Informational: no merge waits on it.
+on:
+  workflow_dispatch:
+  schedule:
+  # Monday and Thursday: the cache is read within GitHub's 7-day eviction,
+  # and a run on main makes the entry pull requests can restore.
+  - cron: "0 5 * * 1,4"
+  pull_request:
+    paths:
+    - src/gfem/_petsc.py
+    - src/gfem/_linalg/**
+    - src/gfem/_eigen/**
+    - src/gfem/options.py
+    - tests/conftest.py
+    - tests/**/*petsc*
+    - tests/**/*slepc*
+    - tests/verification/test_gradient_matrix.py
+    - tools/petsc_wheelhouse.sh
+    - pyproject.toml
+    - uv.lock
+    - .github/workflows/petsc.yml
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  UV_VERSION: "0.13.1"
+jobs:
+  petsc:
+    name: PETSc and SLEPc tests (ubuntu-24.04, py3.12)
+    # Pinned, not ubuntu-latest: a new image brings a new GCC, and so a new
+    # wheelhouse.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+    - uses: actions/checkout@v6
+    - uses: astral-sh/setup-uv@v6
+      with:
+        version: ${{ env.UV_VERSION }}
+        python-version: "3.12"
+        enable-cache: true
+    - name: Record the image and compiler
+      run: |
+        echo "IMAGE_OS=$ImageOS" >> "$GITHUB_ENV"
+        echo "GCC=$(gcc -dumpversion)" >> "$GITHUB_ENV"
+    - name: Restore the wheelhouse
+      id: wheelhouse
+      uses: actions/cache/restore@v4
+      with:
+        path: wheelhouse
+        # The script pins the versions and the configure options, so its
+        # hash covers both. No restore-keys: a near match can be a wheel
+        # built with other options (another scalar type).
+        key: petsc-wheelhouse-${{ env.IMAGE_OS }}-gcc${{ env.GCC }}-py3.12-${{ hashFiles('tools/petsc_wheelhouse.sh') }}
+    - name: Build the wheelhouse
+      if: steps.wheelhouse.outputs.cache-hit != 'true'
+      env:
+        PYTHON: "3.12"
+        MAKE_NP: "2"
+      run: bash tools/petsc_wheelhouse.sh wheelhouse
+    - name: Save the wheelhouse
+      # Before the tests: a failing test run keeps the build.
+      if: steps.wheelhouse.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: wheelhouse
+        key: ${{ steps.wheelhouse.outputs.cache-primary-key }}
+    - name: Install
+      # Later steps use `uv run --no-sync`: a sync would remove the wheels.
+      run: |
+        uv sync --locked
+        uv pip install --no-index --find-links wheelhouse petsc petsc4py slepc slepc4py
+    - name: The PETSc stack is usable
+      # Fail rather than skip every PETSc test on a broken stack.
+      run: >-
+        uv run --no-sync python -c "from gfem import _petsc;
+        _petsc.require_petsc('linear_solver'); _petsc.require_slepc('eigen_solver')"
+    - name: Unit tier and the PETSc verification tests
+      # The whole unit tier runs with PETSc initialised at collection: gfem's
+      # PETSc coexists with every other test (each PETSc object has its own
+      # options prefix and gfem removes the options it inserts).
+      run: uv run --no-sync pytest -m "unit or (verification and (petsc or slepc))" -rs

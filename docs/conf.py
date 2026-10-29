@@ -203,7 +203,11 @@ nitpick_ignore = [
             "Extension",
             "InterfaceKind",
             "LinearSolver",
+            "EigenSolver",
             "Device",
+            # SolverOptions.petsc_options' types, which its Attributes text describes
+            "PetscValue",
+            "PetscOptions",
         )
     ],
     # meshio publishes no objects.inv.

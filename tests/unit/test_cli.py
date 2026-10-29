@@ -9,7 +9,7 @@ import pytest
 import structured_meshes as sm
 
 import gfem
-from gfem import _cuda
+from gfem import _cuda, _petsc
 from gfem.__main__ import main
 
 LAYERS = (("oxide", 0.5), ("nitride", 0.25))
@@ -92,6 +92,19 @@ def test_a_gpu_job_without_a_gpu_names_the_cuda_error(
     assert "CUDA_ERROR_NO_DEVICE" in err
     assert "--device cpu" in err
     _cuda.probe.cache_clear()
+
+
+def test_a_petsc_job_without_petsc4py_exits_1(model, tmp_path, capsys, monkeypatch):
+    monkeypatch.setitem(sys.modules, "petsc4py", None)
+    _petsc.require_petsc.cache_clear()
+    job = _job(model, tmp_path, linear_solver="petsc")
+    out = tmp_path / "r"
+    assert main(["run", str(job), "--out", str(out)]) == 1
+    err = capsys.readouterr().err
+    assert "SolverUnavailableError" in err
+    assert "petsc4py" in err
+    assert not (out / "result.json").exists()
+    _petsc.require_petsc.cache_clear()
 
 
 def test_a_broken_job_exits_1(model, tmp_path, capsys):

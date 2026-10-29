@@ -22,4 +22,5 @@ orphan: true
 
 - {doc}`measurements`
 - {doc}`gpu-direct-solver`
+- {doc}`petsc-slepc`
 - {doc}`gsim`

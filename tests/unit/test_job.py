@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import structured_meshes as sm
+from petsc_recipe import SOLVER_OPTIONS
 
 import gfem
 
@@ -68,6 +69,27 @@ def test_job_round_trips_model_problem_and_options(model, tmp_path):
     _assert_same_model(job.model, back.model)
     assert back.problem == PROBLEM
     assert back.options == options
+
+
+def test_job_round_trips_petsc_options(model, tmp_path):
+    # PETSc is not needed to write or read the job, only to run it; the
+    # options are the job file the PETSc and SLEPc recipe shows
+    options = gfem.SolverOptions(**SOLVER_OPTIONS["job"])
+    path = gfem.Job(model, PROBLEM, options).to_json(tmp_path / "job.json")
+    doc = json.loads(path.read_text())
+    written = doc["job"]["options"]
+    assert written["petsc_options"] == {"ksp_view": None, "pc_type": "lu"}
+    assert (written["linear_solver"], written["eigen_solver"]) == ("petsc", "slepc")
+    assert gfem.Job.from_json(path).options == options
+
+
+def test_a_job_written_before_the_petsc_fields_reads_their_defaults(model, tmp_path):
+    path = gfem.Job(model, PROBLEM).to_json(tmp_path / "job.json")
+    doc = json.loads(path.read_text())
+    del doc["job"]["options"]["eigen_solver"]
+    del doc["job"]["options"]["petsc_options"]
+    path.write_text(json.dumps(doc))
+    assert gfem.Job.from_json(path).options == gfem.SolverOptions()
 
 
 def test_options_default_to_solver_defaults(model, tmp_path):

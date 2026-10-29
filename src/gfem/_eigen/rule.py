@@ -7,13 +7,15 @@ in ``k^2``; with lumped or impedance resistance, conductivity or a
 first-order absorbing boundary it is quadratic; a `Conductor` or a
 second-order absorbing boundary adds the nonpolynomial ``A(k)``, which the
 seed freezes at the target. One factorization of ``T(sigma)`` at the
-target serves the shift-invert Arnoldi of the seed (`gfem._eigen.arpack`,
-with the divergence-free projection), the Rayleigh functional and the
-residual inverse iteration that refines every seed on the true ``T(k)``
-(`gfem._eigen.refine`). A `WavePort` raises: its propagation constant
-would have to be solved at the complex eigenfrequency. Everything that
-touches NGSolve (the assembly of ``T(k)``, the divergence-free projection,
-the energy per element) is in `gfem._engine.eigen`.
+target serves the shift-invert Arnoldi of the seed (`gfem._eigen.arpack`
+or `gfem._eigen.slepc`, chosen by `SolverOptions.eigen_solver`, on the
+shared `gfem._eigen.seed` operator, with the divergence-free projection),
+the Rayleigh functional and the residual inverse iteration that refines
+every seed on the true ``T(k)`` (`gfem._eigen.refine`). A `WavePort`
+raises: its propagation constant would have to be solved at the complex
+eigenfrequency. Everything that touches NGSolve (the assembly of ``T(k)``,
+the divergence-free projection, the energy per element) is in
+`gfem._engine.eigen`.
 
 Gradients (``omega``, so frequency and Q) need no solve: a simple mode's
 ``dk/dp = -x^T (dT/dp) x / x^T T'(k) x``, ``T'(k) = D + 2 k M + Σ θ_p'(k)
@@ -43,7 +45,9 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.constants as const
 
+from gfem import _petsc
 from gfem._boundaries import LumpedPort, WavePort
+from gfem._eigen import slepc
 from gfem._eigen.arpack import shift_invert
 from gfem._eigen.operator import EigenOperator
 from gfem._eigen.refine import Refined, refine
@@ -82,6 +86,12 @@ DEFAULT_SOLVER = "direct"
 #: Inner solves of an iterative backend run this much tighter than the
 #: eigen tolerance.
 _INNER = 1e-2
+#: ... but never below this: the true preconditioned residual of the
+#: shift-invert operators stays near 1e-13, a double-precision limit of the
+#: operator, and BDDC + GMRES ends within 0.1 % of 1e-14, too thin a margin
+#: to ask for. It also bounds PETSc Krylov inner solves, whose ``ksp_rtol``
+#: floor is no lower.
+_INNER_FLOOR = 1e-13
 #: Seeds with Re k at or below this fraction of the shift are the curl-curl
 #: null space or relaxation modes, not resonances.
 _STATIC = 1e-6
@@ -90,8 +100,8 @@ _STATIC = 1e-6
 #: same mode.
 _DUPLICATE = 10.0
 _OVERLAP = 0.9
-#: Ritz values this close (relative) are one multiple eigenvalue. ARPACK
-#: returns an arbitrary basis of its eigenspace, as nearly parallel as
+#: Ritz values this close (relative) are one multiple eigenvalue. The seed
+#: solver returns an arbitrary basis of its eigenspace, as nearly parallel as
 #: round-off makes it: the seeds are orthonormalized, or two members would
 #: overlap like one mode refined twice.
 _MULTIPLE = 1e-8
@@ -133,6 +143,8 @@ class EigenmodeRule:
 
         Raises:
             NotImplementedError: A feature this version cannot solve.
+            gfem.SolverUnavailableError: ``linear_solver="petsc"`` or
+                ``eigen_solver="slepc"`` names a library that cannot be used.
         """
         if not isinstance(problem, Eigenmode):
             raise TypeError(f"Expected gfem.Eigenmode, got {problem!r}.")
@@ -144,6 +156,11 @@ class EigenmodeRule:
             raise NotImplementedError(
                 f"linear_solver={kind!r} is not available for eigenmode problems."
             )
+        # before any assembly
+        if self.kind == "petsc":
+            _petsc.require_petsc("linear_solver")
+        if options.eigen_solver == "slepc":
+            _petsc.require_slepc("eigen_solver")
         _check_supported(model)
         lumped = [p for p in model.ports if isinstance(p, LumpedPort)]
         #: Ports with a resistance (coupling Q) and with an inductance
@@ -202,7 +219,9 @@ class EigenmodeRule:
                     seed_tolerance = max(seed_tolerance, _SEED_TOLERANCE)
                 guard = None
                 for _ in range(_ATTEMPTS):
-                    k, vectors = shift_invert(eop, divfree, nev, tol=seed_tolerance)
+                    k, vectors = self._shift_invert(
+                        eop, divfree, nev, tol=seed_tolerance
+                    )
                     modes, failed, guard = self._select(
                         eop, k, vectors, sigma, guard=keep
                     )
@@ -232,6 +251,16 @@ class EigenmodeRule:
                     divfree.free()
         return outputs, entry
 
+    def _shift_invert(
+        self, op: EigenOperator, project, nev: int, *, tol: float
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """The seed solve on ``SolverOptions.eigen_solver`` (see `shift_invert`)."""
+        if self.options.eigen_solver == "slepc":
+            options = self.options.petsc_options
+            return slepc.shift_invert(op, project, nev, tol=tol, options=options)
+        # the module's name, looked up now: tests replace it
+        return shift_invert(op, project, nev, tol=tol)
+
     def operator(self, op: DrivenOperator, sigma: float) -> EigenOperator:
         """The eigen operator ``T(k)`` of the driven operator, shifted at ``sigma``.
 
@@ -245,7 +274,10 @@ class EigenmodeRule:
             kind=self.kind,
             device=opts.device,
             threads=opts.threads,
-            tolerance=min(opts.tolerance, _INNER * opts.eigen_tolerance),
+            tolerance=min(
+                opts.tolerance, max(_INNER * opts.eigen_tolerance, _INNER_FLOOR)
+            ),
+            petsc_options=opts.petsc_options,
         )
 
     def _entry(

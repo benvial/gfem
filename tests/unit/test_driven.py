@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 import scipy.constants as const
 import structured_meshes as sm
+from petsc_recipe import SOLVER_OPTIONS
 from preconditioners import count_preconditioners
 
 import gfem
@@ -26,6 +27,7 @@ from gfem._linalg import bddc, prepare
 from gfem._linalg.base import same_pattern
 from gfem._linalg.bddc import BddcHandle
 from gfem._linalg.direct import DirectHandle
+from gfem._linalg.petsc import PetscHandle
 
 L, W, H = 10.0, 2.0, 1.0  # mm
 EPS = 4.0
@@ -286,19 +288,49 @@ def _count_prepares(monkeypatch) -> list[int]:
     return calls
 
 
+EXACT = [
+    ("direct", DirectHandle),
+    pytest.param("petsc", PetscHandle, marks=pytest.mark.petsc),
+]
+
+
+@pytest.mark.parametrize(("linear_solver", "handle"), EXACT)
 @pytest.mark.parametrize("sweep", ["uniform", "adaptive"])
-def test_a_direct_sweep_plans_once_and_matches_fresh_handles(line, monkeypatch, sweep):
+def test_an_exact_sweep_plans_once_and_matches_fresh_handles(
+    line, monkeypatch, sweep, linear_solver, handle
+):
     problem = gfem.Driven(frequency=(3e9, 4e9, 5e9, 6e9), sweep=sweep)
     calls = _count_prepares(monkeypatch)
-    s = np.asarray(_s(line, problem).s.values)
+    s = np.asarray(_s(line, problem, linear_solver=linear_solver).s.values)
     assert len(calls) == 1
     # a handle that cannot refactorize is prepared afresh at each frequency
-    monkeypatch.delattr(DirectHandle, "refactorize")
+    monkeypatch.delattr(handle, "refactorize")
     calls.clear()
-    result = _s(line, problem)
+    result = _s(line, problem, linear_solver=linear_solver)
     solved = 4 if sweep == "uniform" else len(result.sweep.sampled_frequencies)
     assert len(calls) == solved > 1
     np.testing.assert_allclose(result.s.values, s, rtol=0, atol=1e-12)
+
+
+@pytest.mark.petsc
+def test_petsc_gmres_on_the_first_frequencys_factors_matches_direct(line):
+    # the recipe's Krylov example: one MUMPS factorization, at the first
+    # frequency, preconditions GMRES at every frequency of a uniform sweep
+    from gfem import _petsc
+
+    PETSc = _petsc.require_petsc()
+    PETSc.Log.begin()
+    factorizations = PETSc.Log.Event("MatCholFctrNum")
+    problem = gfem.Driven(frequency=(3e9, 3.5e9, 4e9, 4.5e9))
+    direct = np.asarray(_s(line, problem).s.values)
+    rule = DrivenRule(
+        line, problem, gfem.SolverOptions(**SOLVER_OPTIONS["krylov_reuse"])
+    )
+    before = factorizations.getPerfInfo()["count"]
+    outputs, _ = rule.forward(line, keep=False)
+    assert factorizations.getPerfInfo()["count"] - before == 1
+    assert all(its for its in outputs["iterations"])  # GMRES ran at each frequency
+    np.testing.assert_allclose(outputs["s"], direct, atol=1e-6)  # tolerance 1e-6
 
 
 def test_a_bddc_sweep_keeps_its_preconditioner_and_matches_fresh_setups(
@@ -606,23 +638,28 @@ def test_a_piece_restriction_is_one_boolean_per_element(line):
         driven.driven_operator(line, 1, faces=np.arange(len(line.mesh.triangles)))
 
 
+@pytest.mark.parametrize(
+    "linear_solver", ["direct", pytest.param("petsc", marks=pytest.mark.petsc)]
+)
 @pytest.mark.parametrize("sweep", ["uniform", "adaptive"])
 def test_a_direct_sweep_by_piece_sums_matches_assembled_operators(
-    line, monkeypatch, sweep
+    line, monkeypatch, sweep, linear_solver
 ):
     problem = gfem.Driven(frequency=(3e9, 4e9, 5e9, 6e9), sweep=sweep)
-    summed = np.asarray(_s(line, problem).s.values)
+    summed = np.asarray(_s(line, problem, linear_solver=linear_solver).s.values)
     operator_at = driven._Ports.operator_at
 
     def assembled(ports, omega):  # the operator without its piece sum
         return dataclasses.replace(operator_at(ports, omega), piece_sum=None)
 
     monkeypatch.setattr(driven._Ports, "operator_at", assembled)
-    s = np.asarray(_s(line, problem).s.values)
+    s = np.asarray(_s(line, problem, linear_solver=linear_solver).s.values)
     np.testing.assert_allclose(summed, s, rtol=0, atol=1e-12)
 
 
-@pytest.mark.parametrize("kind", ["direct", "bddc_gmres"])
+@pytest.mark.parametrize(
+    "kind", ["direct", "bddc_gmres", pytest.param("petsc", marks=pytest.mark.petsc)]
+)
 @pytest.mark.parametrize("keep", [True, False])
 def test_a_forward_holds_its_assembled_pieces_with_its_handles(
     line, monkeypatch, kind, keep
@@ -643,7 +680,7 @@ def test_a_forward_holds_its_assembled_pieces_with_its_handles(
     vectors = sum(t.vectors.nbytes for t in (*system.excitation, *system.outputs))
     form = ports.operator.form(1.0)
     form.Assemble()
-    if not (kind == "direct" and keep):
+    if not (kind in ("direct", "petsc") and keep):
         # BDDC assembles forms; a forward that keeps nothing drops its pieces
         assert entry is None or entry.handle.nbytes == vectors
         assert ports.nbytes == vectors
@@ -878,7 +915,10 @@ def test_a_frequency_below_the_low_frequency_floor_warns_once_per_sweep(mesh, li
 
 
 @pytest.mark.parametrize("sweep", ["uniform", "adaptive"])
-@pytest.mark.parametrize("linear_solver", ["auto", "bddc_gmres", "direct"])
+@pytest.mark.parametrize(
+    "linear_solver",
+    ["auto", "bddc_gmres", "direct", pytest.param("petsc", marks=pytest.mark.petsc)],
+)
 def test_the_low_frequency_warning_ignores_the_linear_solver(
     mesh, line, linear_solver, sweep
 ):
@@ -911,3 +951,30 @@ def test_frequency_workers_do_not_repeat_the_low_frequency_warning(mesh, line):
     with warnings.catch_warnings():
         warnings.simplefilter("error", gfem.LowFrequencyWarning)
         driven._solve_block(*workers.model_parts(line), problem, options, False)
+
+
+def _pi_model(s, f):
+    """The shunt C and series L of the line's pi model, read from S (F, H)."""
+    i = np.eye(2)
+    y = np.array([(i - sk) @ np.linalg.inv(i + sk) / R for sk in s])
+    w = 2 * np.pi * np.asarray(f)
+    return (y[:, 0, 0] + y[:, 0, 1]).imag / w, (-1 / y[:, 0, 1]).imag / w
+
+
+@pytest.mark.petsc
+def test_petsc_loses_capacitive_digits_below_the_low_frequency_floor(mesh, line):
+    """MUMPS, like the direct solver, loses C read from S like 1e-16/(k0 h)^2
+    below the floor; L and reciprocity keep their digits."""
+    kh = (5e-7, 1e-3)
+    f = [_f(k, mesh) for k in kh]
+    options = gfem.SolverOptions(linear_solver="petsc")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", gfem.LowFrequencyWarning)
+        s = np.asarray(gfem.solve(line, gfem.Driven(f), options=options).s.values)
+    ref = np.array([_s_from_abcd(_abcd_line(fk, L * 1e-3)) for fk in f])
+    (c, l_), (c_ref, l_ref) = _pi_model(s, f), _pi_model(ref, f)
+    c_err, l_err = abs(c / c_ref - 1), abs(l_ / l_ref - 1)
+    assert 1e-7 < c_err[0] < 1e-14 / kh[0] ** 2  # 9.6e-4 measured
+    assert c_err[1] < 1e-8  # 4.8e-11
+    assert l_err.max() < 1e-10  # 4e-14
+    np.testing.assert_allclose(s[:, 0, 1], s[:, 1, 0], rtol=0, atol=1e-12)  # 3e-16

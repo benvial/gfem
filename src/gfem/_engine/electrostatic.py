@@ -27,6 +27,7 @@ import ngsolve as ngs
 import numpy as np
 import scipy.constants
 
+from gfem import _petsc
 from gfem._adjoint import adjoint_tolerance
 from gfem._boundaries import PEC, Conductor, sheet_of
 from gfem._engine import quadrature
@@ -70,7 +71,12 @@ class ElectrostaticRule:
     def __init__(
         self, model: Model, problem: Electrostatic, options: SolverOptions
     ) -> None:
-        """Check that the problem fits the model (see `gfem.Electrostatic`)."""
+        """Check that the problem fits the model (see `gfem.Electrostatic`).
+
+        Raises:
+            gfem.SolverUnavailableError: ``linear_solver="petsc"`` and PETSc
+                cannot be used.
+        """
         if not isinstance(problem, Electrostatic):
             raise TypeError(f"Expected gfem.Electrostatic, got {problem!r}.")
         self.problem = problem
@@ -83,6 +89,8 @@ class ElectrostaticRule:
                 "problems in this version of gfem; use one of "
                 f"{', '.join(repr(k) for k in KINDS)}."
             )
+        if self.kind == "petsc":  # before any assembly
+            _petsc.require_petsc("linear_solver")
         for b in model.boundaries:
             if sheet_of(b) is not None:
                 raise NotImplementedError(
@@ -181,6 +189,7 @@ class ElectrostaticRule:
             threads=self.options.threads,
             tolerance=tolerance,
             width=len(self.problem.terminals),
+            petsc_options=self.options.petsc_options,
         )
 
     def _space(self, model: Model) -> tuple[ngs.FESpace, EngineMesh]:

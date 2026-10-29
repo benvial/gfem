@@ -445,10 +445,13 @@ def test_port_mode_stop_gradient_opts_a_read_input_out(plate_mesh):
         {"linear_solver": "direct"},
         {"linear_solver": "bddc_gmres"},
         {"linear_solver": "direct", "device": "cuda"},
+        {"linear_solver": "petsc"},
+        {"eigen_solver": "slepc"},
+        {"eigen_solver": "arpack"},
     ],
 )
 def test_port_mode_rejects_solver_choices_it_does_not_use(plate_mesh, options):
-    with pytest.raises(ValueError, match="SuperLU on the CPU"):
+    with pytest.raises(ValueError, match="SuperLU and SciPy on the CPU"):
         gfem.solve(
             plate(plate_mesh),
             gfem.PortMode("p1", 1e9),

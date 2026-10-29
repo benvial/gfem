@@ -9,6 +9,9 @@ The reference data (Palace runs, imported meshes) is found through the
 gives its path and skips the test when it is unset, and a test taking a
 ``palace_case`` argument runs once per case directory holding a
 ``palace.msh``.
+
+Tests marked ``petsc`` or ``slepc`` need gfem's PETSc or SLEPc solver: they
+are skipped, with the user-facing reason, where `gfem._petsc` cannot use it.
 """
 
 import os
@@ -23,7 +26,11 @@ REFERENCE_ENV = "GFEM_REFERENCE_DIR"
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Add the tier marker before pytest's `-m` deselection runs."""
+    """Add the tier marker before pytest's `-m` deselection runs.
+
+    Then skip the `petsc` / `slepc` tests where gfem cannot use PETSc /
+    SLEPc.
+    """
     for item in items:
         tier = item.path.relative_to(TESTS_DIR).parts[0]
         if tier not in TIERS:
@@ -31,6 +38,32 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
                 f"{item.nodeid}: tests must live in tests/<tier>/ with tier in {TIERS}"
             )
         item.add_marker(tier)
+    _skip_without_petsc(items)
+
+
+def _skip_without_petsc(items: list[pytest.Item]) -> None:
+    """Skip `petsc` / `slepc` tests with the `gfem.SolverUnavailableError` message.
+
+    The probe is gfem's own, which initialises PETSc without pytest's command
+    line, and it runs only when some test carries either marker.
+    """
+    marked = [
+        (item, name)
+        for item in items
+        for name in ("petsc", "slepc")
+        if item.get_closest_marker(name) is not None
+    ]
+    if not marked:
+        return
+    from gfem import _petsc
+    from gfem.errors import SolverUnavailableError
+
+    probes = {"petsc": _petsc.require_petsc, "slepc": _petsc.require_slepc}
+    for item, name in marked:
+        try:
+            probes[name]()
+        except SolverUnavailableError as err:
+            item.add_marker(pytest.mark.skip(reason=str(err)))
 
 
 def _reference_root() -> Path | None:

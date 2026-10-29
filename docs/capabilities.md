@@ -46,17 +46,23 @@ gradient that would be wrong:
 - **Measurements**: {py:obj}`gfem.characteristic_impedance`,
   {py:obj}`gfem.interface_participation` and {py:obj}`gfem.power_flow`
   ({doc}`recipes/measurements`).
-- **Linear solvers**: direct, BDDC + GMRES, and the experimental cuDSS
-  direct solver on an NVIDIA GPU ({doc}`recipes/gpu-direct-solver`).
+- **Linear solvers**: direct, BDDC + GMRES, PETSc (an exact MUMPS
+  factorization unless you configure another PETSc solver; built from source,
+  {doc}`recipes/petsc-slepc`), and the experimental cuDSS direct solver on an
+  NVIDIA GPU ({doc}`recipes/gpu-direct-solver`). The gradient matrix above
+  covers the direct and BDDC solvers.
+- **Eigen solvers**: ARPACK, or SLEPc ({doc}`recipes/petsc-slepc`); mode
+  refinement, Q and gradients are the same for both.
 
 ## Limits
 
 - **Low frequency**: below the low-frequency floor, k0·h_min = 1e-6 (f·h_min ≈
   48 Hz·m, with h_min the shortest edge: 48 MHz with 1 µm elements, 5 GHz with
   10 nm elements), a driven solve's fields, gradients and, with the direct
-  solver, the capacitive part of S lose digits, and it warns with
-  {py:obj}`gfem.LowFrequencyWarning`. For capacitance at low frequency, solve
-  {py:obj}`gfem.Electrostatic`; the details are under {py:obj}`gfem.Driven`.
+  solver or PETSc's default MUMPS factorization, the capacitive part of S
+  lose digits, and it warns with {py:obj}`gfem.LowFrequencyWarning`. For
+  capacitance at low frequency, solve {py:obj}`gfem.Electrostatic`; the
+  details are under {py:obj}`gfem.Driven`.
 
 ## Platforms
 

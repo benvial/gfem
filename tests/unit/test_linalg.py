@@ -1,6 +1,7 @@
 """The solver-handle seam: prepare once, solve many right-hand sides, free."""
 
 import dataclasses
+import re
 import threading
 
 import ngsolve as ngs
@@ -444,16 +445,38 @@ def test_bddc_needs_the_fixed_dofs_marked_in_the_space(built):
         prepare(Operator(form, free), symmetry="hermitian", kind="bddc_gmres")
 
 
-def test_bddc_raises_when_it_does_not_converge(built):
-    handle = prepare(
+def test_bddc_raises_when_it_does_not_converge(built, monkeypatch):
+    tol = 1e-14
+    cg = prepare(
         _laplace(built, order=4)[0],
         symmetry="hermitian",
         kind="bddc_gmres",
-        tolerance=1e-14,
+        tolerance=tol,
         maxiter=2,
     )
-    with pytest.raises(RuntimeError, match="converge"):
-        handle.solve(np.random.default_rng(6).standard_normal(handle.ndof))
+    rng = np.random.default_rng(6)
+    with pytest.raises(RuntimeError, match=r"BDDC \+ CG did not converge"):
+        cg.solve(rng.standard_normal(cg.ndof))
+
+    # an estimate stalled just above the tolerance reads as above it
+    def stall(self, **_):
+        self.CheckResidual(1.0)
+        while not self.CheckResidual(1.04 * tol):
+            pass
+
+    gmres = prepare(
+        _laplace(built, complex_valued=True, shift=1 - 2j, order=4)[0],
+        symmetry="complex_symmetric",
+        kind="bddc_gmres",
+        tolerance=tol,
+        maxiter=2,
+    )
+    monkeypatch.setattr(Gmres, "_SolveImpl", stall)
+    with pytest.raises(RuntimeError, match=r"BDDC \+ GMRES did not converge") as raised:
+        gmres.solve(rng.standard_normal(gmres.ndof) + 0j)
+    reached = re.search(r"reached (\S+)\)", str(raised.value))
+    assert reached is not None
+    assert float(reached.group(1)) > tol
 
 
 def _break_down(monkeypatch, solver, *, times):
@@ -552,7 +575,9 @@ def _update(space, rng, p=2):
     return U, C, free
 
 
-@pytest.mark.parametrize("kind", ["direct", "bddc_gmres"])
+@pytest.mark.parametrize(
+    "kind", ["direct", "bddc_gmres", pytest.param("petsc", marks=pytest.mark.petsc)]
+)
 def test_a_low_rank_update_solves_the_updated_operator(built, kind):
     op, space = _laplace(built, complex_valued=True, shift=1 - 2j)
     rng = np.random.default_rng(9)

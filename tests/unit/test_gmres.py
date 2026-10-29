@@ -11,6 +11,7 @@ from netgen.geom2d import unit_square
 
 from gfem._engine.runtime import task_manager
 from gfem._linalg import gmres
+from gfem._linalg.direct import _real_sparse_matrix
 from gfem._linalg.gmres import Gmres
 
 
@@ -44,8 +45,9 @@ def _diagonal(values):
     """A sparse diagonal matrix and the identity of its size."""
     n = len(values)
     index = list(range(n))
-    A = ngs.la.SparseMatrixd.CreateFromCOO(index, index, list(values), n, n)
-    eye = ngs.la.SparseMatrixd.CreateFromCOO(index, index, [1.0] * n, n, n)
+    sparse = _real_sparse_matrix()  # not SparseMatrixd on Windows
+    A = sparse.CreateFromCOO(index, index, list(values), n, n)
+    eye = sparse.CreateFromCOO(index, index, [1.0] * n, n, n)
     return A, eye
 
 

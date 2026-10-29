@@ -178,8 +178,8 @@ class PortMode:
     `gfem.solve` raises `PortModeError` when the mode is below cutoff
     somewhere in the band (naming the estimated cutoff) or degenerate, and
     warns with `PortModeTrackingWarning` when it crosses another mode. The
-    2D problem always runs SuperLU on the CPU: options with another
-    ``device`` or ``linear_solver`` raise `ValueError`.
+    2D problem always runs SuperLU and SciPy on the CPU: options with another
+    ``device``, ``linear_solver`` or ``eigen_solver`` raise `ValueError`.
 
     Port modes are constants: under `jax.grad` an input the problem reads
     (an electromagnetic material property, the node coordinates) raises
@@ -263,14 +263,19 @@ class Driven:
     Low frequencies: below the mesh's low-frequency floor, k0·h_min = 1e-6
     (f·h_min ≈ 48 Hz·m, with h_min the shortest edge, at order 2), the
     E-field formulation's rounding error grows like 1e-16/(k0·h_min)². The
-    fields and gradients lose digits, and with ``linear_solver="direct"``
-    so does the capacitive part of S. Direct solves become unreliable below
+    fields and gradients lose digits, and with an exact factorization
+    (``linear_solver="direct"``, or ``"petsc"`` with its default MUMPS
+    factorization) so does the capacitive part of S. MKL PARDISO
+    (``"direct"`` with the ``mkl`` extra) becomes unreliable below
     k0·h_min ≈ 3e-7. The inductance read from S and reciprocity are
     unaffected. The solve warns with `gfem.LowFrequencyWarning`. With
     ``bddc_gmres``, S stays at ``SolverOptions.tolerance``, but a
     capacitance read from S is good only to about tolerance/(ωCZ0). For
     capacitance at low frequency, solve `gfem.Electrostatic`. Examples: the
     floor is 48 MHz with 1 µm elements and 5 GHz with 10 nm elements.
+
+    A driven solve has no eigen solve: it ignores
+    ``SolverOptions.eigen_solver``.
 
     Args:
         frequency: One frequency or a 1D sequence of them, Hz.

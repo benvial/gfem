@@ -46,6 +46,24 @@ def test_double_precision_holds_when_jax_was_imported_first():
     assert out == "float64"
 
 
+def test_importing_gfem_never_imports_petsc():
+    out = _run_fresh(
+        "import gfem, sys; print([m for m in ('petsc4py', 'slepc4py') "
+        "if m in sys.modules])"
+    )
+    assert out == "[]"
+
+
+def test_petsc_is_imported_only_by_gfem_petsc():
+    root = Path(gfem.__file__).parent
+    offenders = [
+        str(p.relative_to(root))
+        for p in root.rglob("*.py")
+        if p.name != "_petsc.py" and {"petsc4py", "slepc4py"} & _imports(p)
+    ]
+    assert offenders == []
+
+
 def test_version_comes_from_installed_metadata():
     import gfem
 

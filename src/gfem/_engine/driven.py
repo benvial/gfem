@@ -57,6 +57,7 @@ import dataclasses
 import functools
 import math
 import warnings
+from collections.abc import Mapping
 from typing import Any, Self
 
 import jax
@@ -65,6 +66,7 @@ import ngsolve as ngs
 import numpy as np
 import scipy.constants
 
+from gfem import _petsc
 from gfem._adjoint import adjoint_tolerance
 from gfem._boundaries import (
     LumpedPort,
@@ -93,7 +95,7 @@ from gfem._sweep.adaptive import AffineSystem, AffineTerm, adaptive_sweep
 from gfem.errors import LowFrequencyWarning, PortGeometryError
 from gfem.mesh import Mesh, _shortest_edges
 from gfem.model import Model
-from gfem.options import SolverOptions
+from gfem.options import PetscOptions, PetscValue, SolverOptions
 from gfem.problems import Driven
 from gfem.results import (
     DrivenResult,
@@ -121,9 +123,9 @@ DEFAULT_SOLVER = "bddc_gmres"
 
 #: k0 * h_min below which a driven solve warns (gfem.LowFrequencyWarning).
 LOW_FREQUENCY_FLOOR = 1e-6
-#: k0 * h_min below which direct solves become unreliable (ticket 05), named
-#: in the low-frequency warning.
-DIRECT_FLOOR = 3e-7
+#: k0 * h_min below which MKL PARDISO becomes unreliable (MUMPS and
+#: NGSolve's sparse Cholesky do not), named in the low-frequency warning.
+_PARDISO_FLOOR = 3e-7
 
 
 @dataclasses.dataclass(eq=False)
@@ -261,6 +263,8 @@ class DrivenRule:
         Raises:
             NotImplementedError: A feature this version cannot solve.
             ValueError: The problem does not fit the model.
+            gfem.SolverUnavailableError: ``linear_solver="petsc"`` and PETSc
+                cannot be used.
         """
         if not isinstance(problem, Driven):
             raise TypeError(f"Expected gfem.Driven, got {problem!r}.")
@@ -274,6 +278,8 @@ class DrivenRule:
                 "this version of gfem; use one of "
                 f"{', '.join(repr(k) for k in KINDS)}."
             )
+        if self.kind == "petsc":  # before any assembly, and before any worker
+            _petsc.require_petsc("linear_solver")
         _check_supported(model)
         if not model.ports:
             raise ValueError(
@@ -362,7 +368,8 @@ class DrivenRule:
         Returns:
             ``{"s": (n_freq, n_ports, n_excited) complex, "z_ref":
             (n_freq, n_ports) ohm, "iterations": Krylov iterations per
-            frequency and excited port (empty for direct)}``, plus
+            frequency and excited port (empty for direct solves, including
+            linear_solver='petsc' with ksp_type preonly)}``, plus
             ``"e_field"``, ``(ndof, n_kept * n_excited)`` complex, when
             fields are kept (frequency-major), the wave ports' modes (see
             `_port_outputs`) when there are wave ports, and the cache entry
@@ -388,6 +395,7 @@ class DrivenRule:
                 threads=self.options.threads,
                 tolerance=self.options.tolerance,
                 width=width,
+                petsc_options=self.options.petsc_options,
             ) as handles:
                 for n, f in enumerate(frequencies):
                     omega = 2 * math.pi * f
@@ -610,6 +618,7 @@ class DrivenRule:
                 width=len(self.excite),
                 # samples lie far apart: a reused BDDC would mostly hit its cap
                 reuse_preconditioner=False,
+                petsc_options=options.petsc_options,
             ) as handles:
 
                 def solve(
@@ -888,6 +897,7 @@ class DrivenRule:
                         threads=self.options.threads,
                         tolerance=adjoint_tolerance(self.options),
                         width=width,
+                        petsc_options=self.options.petsc_options,
                     )
                     adjoint += handle.solve(
                         load, tolerance=adjoint_tolerance(self.options)
@@ -1179,9 +1189,11 @@ def _check_low_frequency(
         f"{f_floor:.4g} Hz (k0*h_min = {k0h[lowest]:.2g} < "
         f"{LOW_FREQUENCY_FLOOR:g}, with h_min = {h_min:.3g} m the shortest edge "
         "in the solve domain). Below it the fields and their gradients, and "
-        "with linear_solver='direct' the capacitive part of S, carry rounding "
-        "errors up to about 1e-16/(k0*h_min)^2, and direct solves become "
-        f"unreliable below k0*h_min = {DIRECT_FLOOR:g}. For capacitance, solve "
+        "with linear_solver='direct', or 'petsc' with its default "
+        "factorization, the capacitive part of S, "
+        "carry rounding errors up to about 1e-16/(k0*h_min)^2, and MKL "
+        "PARDISO ('direct' with the mkl extra) becomes unreliable below "
+        f"k0*h_min = {_PARDISO_FLOOR:g}. For capacitance, solve "
         "gfem.Electrostatic instead of reading it from S; otherwise raise the "
         "lowest frequency or coarsen the smallest elements."
     )
@@ -1331,7 +1343,8 @@ class _Ports:
     def operator_at(self, omega: float) -> Operator:
         """``A(ω)``, the operator without the modal corrections, to prepare.
 
-        Its form, and its piece sum over `pieces` for the direct backend.
+        Its form, and its piece sum over `pieces` for the ``direct`` and
+        ``petsc`` linear solvers.
         """
         op = self.operator
         weights = tuple(complex(piece.theta(omega)) for piece in op.pieces)
@@ -1360,6 +1373,7 @@ class _Ports:
         tolerance: float,
         width: int,
         threads: int | None = None,
+        petsc_options: Mapping[str, PetscValue] | PetscOptions = (),
     ) -> Handle:
         """A handle of the system operator ``A(ω) + W(ω)`` (see `_Ports`)."""
         handle = prepare(
@@ -1370,6 +1384,7 @@ class _Ports:
             tolerance=tolerance,
             width=width,
             threads=threads,
+            petsc_options=petsc_options,
         )
         return self.system_handle(handle, omega, borrow=False)
 
@@ -1382,6 +1397,7 @@ class _Ports:
         width: int,
         threads: int | None = None,
         reuse_preconditioner: bool = True,
+        petsc_options: Mapping[str, PetscValue] | PetscOptions = (),
     ) -> _SweepHandle:
         """One base handle for a sweep's frequencies (see `_SweepHandle`).
 
@@ -1396,6 +1412,7 @@ class _Ports:
             width=width,
             threads=threads,
             reuse_preconditioner=reuse_preconditioner,
+            petsc_options=petsc_options,
         )
 
     def functional(self, omega: float) -> np.ndarray:
@@ -1552,6 +1569,7 @@ class _Handles:
         tolerance: float,
         width: int,
         threads: int | None = None,
+        petsc_options: Mapping[str, PetscValue] | PetscOptions = (),
     ) -> Handle:
         """The handle of frequency ``n`` at ``ω`` (the options as `_Ports.prepare`).
 
@@ -1568,6 +1586,7 @@ class _Handles:
                     tolerance=tolerance,
                     width=width,
                     threads=threads,
+                    petsc_options=petsc_options,
                 )
             return self._sweep.at(omega)
         if n not in self._handles:
@@ -1578,6 +1597,7 @@ class _Handles:
                 tolerance=tolerance,
                 width=width,
                 threads=threads,
+                petsc_options=petsc_options,
             )
         return self._handles[n]
 
