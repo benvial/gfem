@@ -59,6 +59,12 @@ def test_no_free_dof_set_means_every_dof_is_free():
     np.testing.assert_array_equal(free_mask(None, 5), np.ones(5, dtype=bool))
 
 
+@pytest.mark.parametrize("mask", [np.ones(4, bool), np.zeros(6, bool)])
+def test_a_free_dof_set_of_another_length_is_refused(mask):
+    with pytest.raises(ValueError, match="5"):
+        free_mask(_bits(mask), 5)
+
+
 def test_a_free_dof_set_is_the_same_as_itself_and_its_copy(constrained):
     assert same_free_dofs(constrained, constrained)
     assert same_free_dofs(constrained, ngs.BitArray(constrained))
@@ -73,6 +79,18 @@ def test_one_flipped_dof_makes_the_free_dof_sets_differ(constrained):
             flipped.Set(i)
         assert not same_free_dofs(constrained, flipped), i
         assert not same_free_dofs(flipped, constrained), i
+
+
+def test_two_swapped_dofs_make_the_free_dof_sets_differ(constrained):
+    # as many free DOFs in both: the counts alone cannot tell them apart
+    mask = _reference(constrained)
+    i, j = int(np.flatnonzero(mask)[0]), int(np.flatnonzero(~mask)[0])
+    swapped = ngs.BitArray(constrained)
+    swapped.Clear(i)
+    swapped.Set(j)
+    assert swapped.NumSet() == constrained.NumSet()
+    assert not same_free_dofs(constrained, swapped)
+    assert not same_free_dofs(swapped, constrained)
 
 
 def test_free_dof_sets_of_different_lengths_differ():

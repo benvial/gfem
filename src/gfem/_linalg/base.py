@@ -35,9 +35,16 @@ def free_mask(freedofs: ngs.BitArray | None, ndof: int) -> np.ndarray:
 
     No per-DOF Python loop: every bit set gives ``np.ones``; otherwise an
     NGSolve vector is set to 1 on the BitArray (in C++) and compared with 0.
+
+    Raises:
+        ValueError: ``freedofs`` does not have ``ndof`` bits.
     """
-    if freedofs is None or freedofs.NumSet() == len(freedofs):
-        return np.ones(ndof if freedofs is None else len(freedofs), dtype=bool)
+    if freedofs is not None and len(freedofs) != ndof:
+        raise ValueError(
+            f"The free-DOF set has {len(freedofs)} bits, the space {ndof} DOFs."
+        )
+    if freedofs is None or freedofs.NumSet() == ndof:
+        return np.ones(ndof, dtype=bool)
     marks = ngs.la.CreateVVector(len(freedofs))
     marks[:] = 0.0
     marks[freedofs] = 1.0
