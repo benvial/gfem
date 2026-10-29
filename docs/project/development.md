@@ -15,18 +15,18 @@ data from `GFEM_REFERENCE_DIR` and skip when it is unset.
 
 Tests marked `petsc` and `slepc` sit in the unit and verification tiers and
 skip unless the {term}`PETSc stack` is installed. To run them, add the
-wheelhouse that {doc}`../recipes/petsc-slepc` builds, and keep uv from
-removing it:
+wheelhouse that {doc}`../recipes/petsc-slepc` builds:
 
 ```bash
 uv sync
 uv pip install --no-index --find-links wheelhouse petsc petsc4py slepc slepc4py
-uv run --no-sync pytest -m "unit or (verification and (petsc or slepc))" -rs
+uv run pytest -m "unit or (verification and (petsc or slepc))" -rs
 ```
 
-A plain `uv sync`, the docs one below included, removes the four wheels again,
-since the lock file does not list them. Sync with `uv sync --inexact` to keep
-them, or rerun the `uv pip install` line after an exact sync.
+`uv run` leaves the four wheels in place. A plain `uv sync`, the docs one
+below included, removes them again, since the lock file does not list them.
+Sync with `uv sync --inexact` to keep them, or rerun the `uv pip install` line
+after an exact sync.
 
 ## Docs
 
