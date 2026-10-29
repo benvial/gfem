@@ -24,7 +24,13 @@ import numpy as np
 
 from gfem import _petsc
 from gfem._linalg import MAXITER, Operator, Symmetry
-from gfem._linalg.base import NgsHandle, assemble_operator, host_bytes, same_pattern
+from gfem._linalg.base import (
+    NgsHandle,
+    assemble_operator,
+    equals_its_transpose,
+    host_bytes,
+    same_pattern,
+)
 
 if TYPE_CHECKING:
     from gfem.options import PetscOptions
@@ -502,7 +508,7 @@ def _refuse(symmetry: Symmetry, *, is_complex: bool, matrix=None) -> None:
     and, when given, ``matrix`` as NGSolve's full sparse matrix: its free
     block becomes the AIJ as it is, never mirrored from a triangle.
     """
-    if symmetry == "general" or (symmetry == "hermitian" and is_complex):
+    if not equals_its_transpose(symmetry, is_complex=is_complex):
         raise ValueError(
             "linear_solver='petsc' needs A^T = A: a real symmetric or complex "
             f"symmetric operator, not {symmetry!r}."
