@@ -178,11 +178,13 @@ class LowFrequencyWarning(UserWarning):
     The floor is k0 * h_min = 1e-6 (f * h_min = 48 Hz*m), with k0 the
     vacuum wavenumber and h_min the shortest edge of the solve domain.
     Below it the E-field formulation's rounding error grows like
-    1e-16 / (k0 * h_min)^2: the fields and their gradients, and with
-    ``linear_solver="direct"`` the capacitive part of S, lose digits, and
-    direct solves become unreliable below k0 * h_min = 3e-7. Inductance
-    read from S and reciprocity are unaffected. For capacitance at low
-    frequency solve `gfem.Electrostatic`; otherwise raise the lowest
-    frequency or coarsen the smallest elements. The solve still runs.
-    Filter it with Python's `warnings` module.
+    1e-16 / (k0 * h_min)^2: the fields and their gradients, and with an
+    exact factorization (``linear_solver="direct"``, or ``"petsc"`` with
+    its default MUMPS factorization) the capacitive part of S, lose
+    digits. MKL PARDISO (``"direct"`` with the ``mkl`` extra) becomes
+    unreliable below k0 * h_min = 3e-7. Inductance read from S and
+    reciprocity are unaffected. For capacitance at low frequency solve
+    `gfem.Electrostatic`; otherwise raise the lowest frequency or coarsen
+    the smallest elements. The solve still runs. Filter it with Python's
+    `warnings` module.
     """
