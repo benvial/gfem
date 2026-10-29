@@ -117,7 +117,9 @@ class _Recording(gmres.ThreadPoolExecutor):
         (3, 2 * gmres.COLUMNS - 1, 0),
     ],
 )
-def test_gmres_runs_on_the_task_manager_threads(monkeypatch, threads, n, pools):
+def test_gmres_runs_on_a_pool_of_the_task_manager_thread_count(
+    monkeypatch, threads, n, pools
+):
     monkeypatch.setattr(gmres, "ThreadPoolExecutor", _Recording)
     monkeypatch.setattr(_Recording, "made", [])
     diagonal = np.resize([1.0, 2.0, 5.0], n)

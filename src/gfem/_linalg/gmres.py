@@ -53,7 +53,7 @@ COLUMNS = 1 << 16
 
 
 @dataclasses.dataclass(frozen=True)
-class _Library:
+class _ScipyOpenBlas:
     """SciPy's bundled OpenBLAS: its thread count and the gemv kernels."""
 
     get_threads: Callable[[], int]
@@ -71,7 +71,7 @@ def _symbol(lib: ctypes.CDLL, name: str) -> Any:
 
 
 @functools.cache
-def scipy_openblas() -> _Library | None:
+def scipy_openblas() -> _ScipyOpenBlas | None:
     """SciPy's bundled OpenBLAS through ctypes, or None.
 
     Found among the ``scipy`` distribution's files (``scipy.libs``,
@@ -101,7 +101,7 @@ def scipy_openblas() -> _Library | None:
         set_threads.argtypes, set_threads.restype = [I], None
         zgemv.argtypes, zgemv.restype = [I, I, I, I, P, P, I, P, I, P, P, I], None
         dgemv.argtypes, dgemv.restype = [I, I, I, I, D, P, I, P, I, D, P, I], None
-        return _Library(get_threads, set_threads, zgemv, dgemv)
+        return _ScipyOpenBlas(get_threads, set_threads, zgemv, dgemv)
     return None
 
 
@@ -120,7 +120,7 @@ class _OneBlasThread:
         self._saved = 1
 
     @contextlib.contextmanager
-    def held(self, lib: _Library | None) -> Generator[None]:
+    def held(self, lib: _ScipyOpenBlas | None) -> Generator[None]:
         """One OpenBLAS thread inside the block; nothing without ``lib``."""
         if lib is None:
             yield
@@ -143,10 +143,11 @@ _ONE_BLAS_THREAD = _OneBlasThread()
 
 
 def _serial_blas() -> None:
-    """The pool's thread initializer.
+    """The pool's thread initializer, and a profiling seam.
 
     Nothing to set: `_OneBlasThread` holds OpenBLAS at one thread for the
-    solve. Profilers wrap it to count the pool's threads.
+    solve. It runs once on each pool thread as it starts (looked up when the
+    pool is made), so a profiler can wrap it to record the pool's thread ids.
     """
 
 
@@ -161,7 +162,7 @@ class _OpenBlas:
     with leading dimension n; a column range is its rows ``s``.
     """
 
-    def __init__(self, lib: _Library) -> None:
+    def __init__(self, lib: _ScipyOpenBlas) -> None:
         self.lib = lib
 
     def coefficients(
@@ -341,7 +342,11 @@ def _rotate(h, cs, sn, k: int) -> None:
 
 
 class Gmres(GMRESSolver):
-    """NGSolve's GMRES with its Arnoldi vector work on the TaskManager's threads.
+    """NGSolve's GMRES with its Arnoldi vector work on gfem's thread pool.
+
+    The pool is a ``ThreadPoolExecutor`` of as many threads as NGSolve's
+    TaskManager (``ngs.GetNumThreads()``), made for each solve; it is not the
+    TaskManager's own threads, which run the operator and the preconditioner.
 
     ``Solve``, ``residuals``, ``iterations``, ``maxiter`` and ``tol``/``atol``
     (read on every solve) are NGSolve's ``GMRESSolver``'s.
