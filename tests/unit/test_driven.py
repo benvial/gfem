@@ -444,20 +444,25 @@ def test_an_adaptive_bddc_sweep_sets_its_coarse_problem_up_for_one_sample(
 
 
 def test_a_bddc_adjoint_sets_its_coarse_problem_up_for_one_solve(line, monkeypatch):
-    # port 1 excited over 2 frequencies; the S row of port 2 takes one
-    # adjoint solve per frequency, on its own handle of width 1
-    problem = gfem.Driven(frequency=(3e9, 3.5e9), excite="p1")
+    # both ports excited over 2 frequencies; the kept fields' cotangents take
+    # one adjoint solve per frequency, on its own handle of width 2
+    frequency = (3e9, 3.5e9)
+    problem = gfem.Driven(frequency=frequency, keep_fields=True)
     options = gfem.SolverOptions(linear_solver="bddc_gmres")
 
     def objective(eps):
         model = line.with_material("dielectric", gfem.MaterialField(eps_r=eps))
-        s = gfem.solve(model, problem, options=options).s.values
-        return jnp.sum(jnp.abs(s[:, 1, 0]) ** 2)
+        result = gfem.solve(model, problem, options=options)
+        return sum(
+            jnp.sum(jnp.abs(result.e_field(f, excite=p).coefficients) ** 2)
+            for f in frequency
+            for p in ("p1", "p2")
+        )
 
     eps = jnp.full(len(line.mesh.tetrahedra), EPS)
     columns = coarse_columns(monkeypatch)
     jax.grad(objective)(eps)
-    assert columns == [2, 1, 1]  # the forward sweep's, then the adjoint's
+    assert columns == [4, 2, 2]  # the forward sweep's, then the adjoint's
 
 
 def test_excite_selects_the_columns_of_s(line):
