@@ -216,7 +216,9 @@ def test_a_pardiso_wrapper_gfem_cannot_gather_into_refactorizes_by_update(
             super().Factor()
 
     ngs.la.RegisterInverseType("gfem_older_pardiso", Older)
-    monkeypatch.setattr(direct, "pardiso_inverse", lambda _: "gfem_older_pardiso")
+    monkeypatch.setattr(
+        direct, "pardiso_inverse", lambda *_, **__: "gfem_older_pardiso"
+    )
     handle = prepare(
         _laplace(built, complex_valued=True, shift=1 - 2j)[0],
         symmetry="complex_symmetric",
@@ -277,7 +279,7 @@ def test_a_gather_index_gfem_cannot_build_leaves_refactorization_to_update(
     ngs.la.RegisterInverseType("gfem_failing_buffer_pardiso", FailingBuffer)
     if failure == "a failing wrapper buffer":
         monkeypatch.setattr(
-            direct, "pardiso_inverse", lambda _: "gfem_failing_buffer_pardiso"
+            direct, "pardiso_inverse", lambda *_, **__: "gfem_failing_buffer_pardiso"
         )
     else:
         monkeypatch.setattr(matrix_type, "CSR", failing_csr)
@@ -330,7 +332,8 @@ def test_pardiso_factors_an_all_free_operator_without_projecting_it(built, monke
     matrix = op.form.mat
     matrix.inverse_flags = pyngcore.Flags(direct.PARDISO_FLAGS)
     projected = matrix.Inverse(
-        op.freedofs, inverse=pardiso.pardiso_inverse("complex_symmetric")
+        op.freedofs,
+        inverse=pardiso.pardiso_inverse("complex_symmetric", is_complex=True),
     )
     rng = np.random.default_rng(7)
     B = rng.standard_normal(space.ndof) + 1j * rng.standard_normal(space.ndof)
@@ -453,7 +456,7 @@ def test_bddc_coarse_problem_without_mkl_is_sparse_cholesky(
     built, monkeypatch, symmetry
 ):
     monkeypatch.setattr(pardiso, "pardiso_available", lambda: False)
-    assert pardiso.pardiso_inverse(symmetry) is None
+    assert pardiso.pardiso_inverse(symmetry, is_complex=True) is None
     op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
     handle = prepare(op, symmetry=symmetry, kind="bddc_gmres")
     assert handle._preconditioner.flags.ToDict()["inverse"] == "sparsecholesky"
@@ -622,9 +625,11 @@ def test_a_raising_pardiso_call_leaves_libiomp5_to_be_looked_up_again(monkeypatc
     monkeypatch.setattr(pardiso, "_load_libiomp5", lambda: lookups.append(1))
     monkeypatch.setattr(pardiso, "_OPENMP", pardiso._OpenMP())
     for _ in range(2):
-        with pytest.raises(RuntimeError, match="PARDISO failed"):
-            with pardiso._block_time_zero():
-                raise RuntimeError("PARDISO failed")
+        with (
+            pytest.raises(RuntimeError, match="PARDISO failed"),
+            pardiso._block_time_zero(),
+        ):
+            raise RuntimeError("PARDISO failed")
     assert len(lookups) == 2  # looked up again after the first call raised
     for _ in range(3):
         with pardiso._block_time_zero():
@@ -718,7 +723,7 @@ DIRECT = gfem.SolverOptions(linear_solver="direct")
 def test_pardiso_s_matches_sparse_cholesky(line, monkeypatch):
     problem = gfem.Driven(frequency=(3e9, 5e9, 7e9))
     s = np.asarray(gfem.solve(line, problem, options=DIRECT).s.values)
-    monkeypatch.setattr(direct, "pardiso_available", lambda: False)
+    monkeypatch.setattr(pardiso, "pardiso_available", lambda: False)
     ref = np.asarray(gfem.solve(line, problem, options=DIRECT).s.values)
     np.testing.assert_allclose(s, ref, rtol=0, atol=1e-10)
 
@@ -727,7 +732,7 @@ def test_pardiso_s_matches_sparse_cholesky(line, monkeypatch):
 def test_pardiso_eigenmodes_match_sparse_cholesky(line, monkeypatch):
     problem = gfem.Eigenmode(target=8e9, n_modes=2)
     result = gfem.solve(line, problem, options=DIRECT)
-    monkeypatch.setattr(direct, "pardiso_available", lambda: False)
+    monkeypatch.setattr(pardiso, "pardiso_available", lambda: False)
     ref = gfem.solve(line, problem, options=DIRECT)
     np.testing.assert_allclose(result.omega, ref.omega, rtol=1e-10)
     np.testing.assert_allclose(result.q, ref.q, rtol=1e-8)

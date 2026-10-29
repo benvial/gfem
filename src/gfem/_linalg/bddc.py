@@ -45,9 +45,8 @@ def _set_up(form: ngs.BilinearForm, symmetry: Symmetry) -> ngs.Preconditioner:
     H(curl) reference it made the setup 5x slower and GMRES take 68
     iterations, not 49.)
     """
-    if symmetry == "hermitian" and form.space.is_complex:
-        symmetry = "general"  # PARDISO's symmetric types need A^T = A
-    inverse = pardiso_inverse(symmetry) or INVERSE
+    is_complex = bool(form.space.is_complex)
+    inverse = pardiso_inverse(symmetry, is_complex=is_complex) or INVERSE
     preconditioner = ngs.Preconditioner(form, "bddc", inverse=inverse)
     form.Assemble()
     return preconditioner

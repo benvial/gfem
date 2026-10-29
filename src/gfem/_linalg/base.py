@@ -10,6 +10,17 @@ import numpy as np
 from gfem._linalg import Symmetry
 
 
+def equals_its_transpose(symmetry: Symmetry, *, is_complex: bool) -> bool:
+    """Whether an operator of ``symmetry`` has ``A^T = A``.
+
+    A complex symmetric operator, or a ``"hermitian"`` one on a real space
+    (real symmetric); not a complex Hermitian or a general one.
+    """
+    return symmetry == "complex_symmetric" or (
+        symmetry == "hermitian" and not is_complex
+    )
+
+
 def host_bytes(obj) -> int:
     """Host memory NGSolve reports for a matrix or an inverse, in bytes."""
     return sum(int(u.host) for u in obj.GetMemoryUsage())

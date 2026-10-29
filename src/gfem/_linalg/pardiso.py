@@ -29,6 +29,7 @@ from typing import Any, ClassVar
 import ngsolve as ngs
 
 from gfem._linalg import Symmetry
+from gfem._linalg.base import equals_its_transpose
 
 #: gfem's flags for NGSolve's MKL PARDISO wrapper: MKL's OpenMP parallel METIS
 #: ordering (the same nested dissection and fill as serial METIS, with a
@@ -64,16 +65,20 @@ def pardiso_available() -> bool:
     )
 
 
-def pardiso_inverse(symmetry: Symmetry) -> str | None:
+def pardiso_inverse(symmetry: Symmetry, *, is_complex: bool) -> str | None:
     """The PARDISO inverse name for an operator of ``symmetry``, or ``None``.
 
-    `GENERAL` for ``"general"``, `SYMMETRIC` otherwise; ``None`` without MKL
-    PARDISO (`pardiso_available`). The type is registered on first use.
+    `SYMMETRIC` when the operator has ``A^T = A`` (`equals_its_transpose`),
+    `GENERAL` otherwise (a complex Hermitian or a general operator); ``None``
+    without MKL PARDISO (`pardiso_available`). The type is registered on
+    first use.
     """
     if not pardiso_available():
         return None
     _register()
-    return GENERAL if symmetry == "general" else SYMMETRIC
+    return (
+        SYMMETRIC if equals_its_transpose(symmetry, is_complex=is_complex) else GENERAL
+    )
 
 
 @functools.cache
