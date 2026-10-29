@@ -226,17 +226,17 @@ class SolverOptions:
             PETSc stack the "Solve with PETSc and SLEPc" recipe builds; never
             chosen by ``"auto"``). A solver this Python cannot use raises
             `gfem.SolverUnavailableError` when the solve starts.
-        tolerance: Relative preconditioned residual of iterative solves:
-            for BDDC + GMRES ``|P(b - Ax)| / |P b|`` as GMRES estimates it,
-            for BDDC + conjugate gradients the P-norm of the residual over
-            its first value. S and fields are accurate to about this size;
-            the unpreconditioned residual ``|b - Ax| / |b|`` can be orders
-            larger at low frequency and does not measure the error. With
-            ``"petsc"`` and a Krylov ``ksp_type`` it is PETSc's ``ksp_rtol``
-            on the unpreconditioned residual ``|b - Ax| / |b|`` (unless
-            ``petsc_options`` sets ``ksp_norm_type``), so the same value is a
-            different norm per backend; PETSc's default exact factorization
-            ignores it.
+        tolerance: With BDDC, the relative preconditioned residual of the
+            iterative solve: for BDDC + GMRES ``|P(b - Ax)| / |P b|`` as
+            GMRES estimates it, for BDDC + conjugate gradients the P-norm of
+            the residual over its first value. S and fields are accurate to
+            about this size; the unpreconditioned residual ``|b - Ax| / |b|``
+            can be orders larger at low frequency and does not measure the
+            error. With ``"petsc"`` and a Krylov ``ksp_type`` it is PETSc's
+            ``ksp_rtol`` on the unpreconditioned residual ``|b - Ax| / |b|``
+            (unless ``petsc_options`` sets ``ksp_norm_type``), so the same
+            value is a different norm per backend; PETSc's default exact
+            factorization ignores it.
         device: Where the direct solver runs: ``"cpu"``, ``"cuda"`` or
             ``"cuda:N"`` (the N-th GPU). A GPU needs
             ``linear_solver="direct"`` (NVIDIA cuDSS, from the ``cuda12`` or
