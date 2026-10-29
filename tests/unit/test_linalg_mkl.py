@@ -21,6 +21,7 @@ import structured_meshes as sm
 import gfem
 from gfem._engine import quadrature
 from gfem._engine.mesh import to_ngsolve
+from gfem._engine.runtime import task_manager
 from gfem._linalg import Operator, direct, pardiso, prepare
 from gfem._linalg.base import host_bytes
 
@@ -449,6 +450,55 @@ def test_bddc_coarse_problem_is_factored_by_gfem_flagged_pardiso(  # noqa: PLR09
     assert handle.iterations == ref_handle.iterations
     assert handle.iterations[-1] > 1  # order 4: the coarse problem is not all of A
     assert np.linalg.norm(X - ref) <= 1e-10 * np.linalg.norm(ref)
+
+
+@pytest.fixture
+def ngsolve_threads():
+    """Restore NGSolve's thread count, which `task_manager` sets for the session."""
+    with ngs.TaskManager():
+        threads = ngs.GetNumThreads()
+    yield
+    ngs.SetNumThreads(threads)
+
+
+@needs_mkl
+@pytest.mark.usefixtures("ngsolve_threads")
+def test_a_bddc_setup_serving_many_columns_on_16_threads_factors_its_coarse_problem_with_sparse_cholesky(  # noqa: E501
+    built, coarse_wrappers
+):
+    # 4 columns x 4 solves on one reused preconditioner: 16 columns per setup
+    def operator(shift):
+        return _laplace(built, complex_valued=True, shift=shift)[0]
+
+    def setup(threads, **options):
+        with task_manager(threads):
+            return prepare(
+                operator(1 - 2j),
+                symmetry="complex_symmetric",
+                kind="bddc_gmres",
+                width=4,
+                solves=4,
+                **options,
+            )
+
+    def inverse(handle):
+        return handle._preconditioner.flags.ToDict()["inverse"]
+
+    many = setup(16)
+    assert inverse(many) == "sparsecholesky"
+    assert coarse_wrappers == []
+    # without reuse one setup serves only its 4 columns; 8 threads keep PARDISO
+    few = setup(16, reuse_preconditioner=False)
+    assert inverse(few) == "gfem_pardiso"
+    assert inverse(setup(8)) == "gfem_pardiso"
+    assert len(coarse_wrappers) == 2
+    # a rebuild (n_ref unset, or reuse off) chooses as the first setup did
+    with task_manager(16):
+        many.refactorize(operator(1.1 - 2j))
+        few.refactorize(operator(1.1 - 2j))
+    assert inverse(many) == "sparsecholesky"
+    assert inverse(few) == "gfem_pardiso"
+    assert len(coarse_wrappers) == 3
 
 
 @pytest.mark.parametrize("symmetry", ["complex_symmetric", "general"])

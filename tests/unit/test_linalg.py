@@ -13,7 +13,14 @@ from preconditioners import count_preconditioners
 import gfem
 from gfem._engine import quadrature
 from gfem._engine.mesh import to_ngsolve
-from gfem._linalg import Operator, bddc, factorize, low_rank_update, prepare
+from gfem._linalg import (
+    Operator,
+    bddc,
+    factorize,
+    low_rank_update,
+    pardiso,
+    prepare,
+)
 from gfem._linalg.gmres import Gmres
 from gfem._linalg.pieces import AssembledPieces, PieceSum
 
@@ -355,6 +362,23 @@ def test_bddc_handle_without_reuse_sets_up_at_every_refactorization(built, monke
     fresh = prepare(operator(1.1 - 2j), symmetry="complex_symmetric", kind="bddc_gmres")
     fresh.solve(B, x0=previous)
     assert handle.iterations[2:] == fresh.iterations
+
+
+@pytest.mark.parametrize("threads", [8, 15, 16, 32])
+@pytest.mark.parametrize("columns", [1, 15, 16, 24])
+def test_bddc_coarse_inverse_is_sparse_cholesky_only_for_many_columns_on_16_threads(
+    threads, columns
+):
+    # gfem's PARDISO (sparse Cholesky without MKL) unless the setup runs on
+    # 16 threads or more and serves 16 right-hand-side columns or more
+    chosen = bddc._coarse_inverse(
+        "complex_symmetric", is_complex=True, threads=threads, columns=columns
+    )
+    if threads >= 16 and columns >= 16:
+        assert chosen == "sparsecholesky"
+    else:
+        shipped = pardiso.pardiso_inverse("complex_symmetric", is_complex=True)
+        assert chosen == (shipped or "sparsecholesky")
 
 
 def test_a_bddc_solve_at_another_tolerance_never_sets_the_preconditioner_up_again(

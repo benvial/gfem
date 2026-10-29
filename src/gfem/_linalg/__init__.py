@@ -212,6 +212,7 @@ def prepare(
     tolerance: float = 1e-6,
     maxiter: int = MAXITER,
     width: int = 1,
+    solves: int = 1,
     threads: int | None = None,
     reuse_preconditioner: bool = True,
     petsc_options: Mapping[str, PetscValue] | PetscOptions = (),
@@ -230,9 +231,15 @@ def prepare(
             residual over its first value for CG).
         maxiter: Most iterations of iterative backends; a solve that does
             not converge in them raises RuntimeError.
-        width: Right-hand-side columns the GPU solver solves at once (the
-            usual block width: terminals, ports); wider blocks go in chunks,
-            narrower ones are zero-padded. CPU backends ignore it.
+        width: Right-hand-side columns of a usual solve (the block width:
+            terminals, ports). The GPU solver solves that many at once; wider
+            blocks go in chunks, narrower ones are zero-padded. BDDC chooses
+            its coarse factorization from it (see ``solves``); the other CPU
+            backends ignore it.
+        solves: Solve calls the handle is expected to serve: a uniform
+            sweep's frequencies, an eigen shift's seed solve. BDDC chooses
+            its coarse factorization from ``width * solves`` (``width``
+            without preconditioner reuse); other backends ignore it.
         threads: ``SolverOptions.threads``. ``1`` keeps the GPU solver's
             host-side planning on one thread; otherwise it is multithreaded
             when the cuDSS threading library is installed. CPU backends
@@ -299,6 +306,8 @@ def prepare(
             tolerance=tolerance,
             maxiter=maxiter,
             reuse=reuse_preconditioner,
+            width=width,
+            solves=solves,
         )
     raise NotImplementedError(
         f"linear_solver={kind!r} is not available in this version of gfem; use "

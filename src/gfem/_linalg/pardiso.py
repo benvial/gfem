@@ -35,11 +35,11 @@ from gfem._linalg.base import equals_its_transpose
 #: ordering (the same nested dissection and fill as serial METIS, with a
 #: faster analysis, phase 11, at 2-4 threads), the symmetric matrix type
 #: (gfem stores the full matrix, so NGSolve would otherwise factor it as
-#: unsymmetric LU, with twice the fill), and no iterative refinement.
+#: unsymmetric LU, with twice the fill), and refinement 0: none unless a
+#: pivot was perturbed (``iparm[13] > 0``), then two steps per solve.
 #: NGSolve's wrapper asks for up to 16 refinement steps with no
 #: backward-error stop: they stagnate without lowering the residual and make
-#: a solve cost about 4.5 substitutions instead of one. 0 is MKL's default
-#: (two steps only after a perturbed pivot).
+#: a solve cost about 4.5 substitutions instead of one. 0 is MKL's default.
 PARDISO_FLAGS = {"ordering": "parallel_metis", "symmetric": True, "refinement": 0}
 #: The inverse name of gfem's PARDISO with `PARDISO_FLAGS` (``A^T = A``).
 SYMMETRIC = "gfem_pardiso"

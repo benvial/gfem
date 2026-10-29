@@ -4,11 +4,12 @@ BDDC splits each element's DOFs into a wirebasket (vertices and low-order
 edges) and the rest, and solves a global coarse problem on the wirebasket.
 That coarse problem is factorized by an explicitly named inverse, never
 NGSolve's default: gfem's flagged MKL PARDISO with the ``mkl`` extra (see
-`gfem._linalg.pardiso`), ``sparsecholesky`` without it. The Krylov method
-follows the operator: NGSolve's conjugate gradients for a Hermitian (real
-symmetric positive definite) operator, otherwise gfem's GMRES
-(`gfem._linalg.gmres`), which orthogonalizes its Krylov basis by CGS2 on
-gfem's threads.
+`gfem._linalg.pardiso`), ``sparsecholesky`` without it, or when a setup on
+16 threads or more is expected to serve 16 right-hand-side columns or more
+(`_coarse_inverse`). The Krylov method follows the operator: NGSolve's
+conjugate gradients for a Hermitian (real symmetric positive definite)
+operator, otherwise gfem's GMRES (`gfem._linalg.gmres`), which
+orthogonalizes its Krylov basis by CGS2 on gfem's threads.
 
 Across a sweep the handle keeps its preconditioner (`BddcHandle.refactorize`)
 once a solve on it measured a reference iteration count, caps every warm
@@ -32,21 +33,54 @@ from gfem._linalg.pardiso import pardiso_inverse
 #: of a solve: on the driven references (order 2) one setup took as long as
 #: about 30 GMRES iterations of one right-hand side.
 SETUP_ITERATIONS = 30
+#: Threads from which a setup serving many columns factors its coarse problem
+#: with sparse Cholesky: at 16 threads PARDISO's one-column solve broke even
+#: with sparse Cholesky's after 154-365 applies of one factorization on the
+#: Modal CPUs measured (43-110 at 32 threads); up to 8 threads PARDISO's solve
+#: was no slower, and 9-15 threads are unmeasured.
+SPARSE_COARSE_THREADS = 16
+#: Right-hand-side columns a setup is expected to serve (each about 60 applies
+#: cold, 33 warm) from which it factors its coarse problem with sparse
+#: Cholesky: 16 columns are about 555 applies, 1.5x the largest break-even
+#: at 16 threads; every measured single solve (1-4 ports) stays below it.
+SPARSE_COARSE_COLUMNS = 16
 
 
-def _set_up(form: ngs.BilinearForm, symmetry: Symmetry) -> ngs.Preconditioner:
+def _coarse_inverse(
+    symmetry: Symmetry, *, is_complex: bool, threads: int, columns: int
+) -> str:
+    """The inverse that factors BDDC's coarse problem.
+
+    ``sparsecholesky`` when the setup runs on `SPARSE_COARSE_THREADS` threads
+    or more and is expected to serve `SPARSE_COARSE_COLUMNS` right-hand-side
+    columns or more: there its many applies outweigh PARDISO's faster
+    factorization, and sparse Cholesky's wirebasket solve scales with the
+    threads where PARDISO's one-column solve does not. Otherwise gfem's
+    PARDISO (`pardiso_inverse`) when MKL is installed, symmetric when the
+    operator is ``A^T = A`` (complex symmetric, or ``"hermitian"`` on a real
+    space; a complex Hermitian one is not), sparse Cholesky without it. The
+    rule counts columns, never times, so a run's choice repeats exactly.
+    """
+    if threads >= SPARSE_COARSE_THREADS and columns >= SPARSE_COARSE_COLUMNS:
+        return INVERSE
+    return pardiso_inverse(symmetry, is_complex=is_complex) or INVERSE
+
+
+def _set_up(
+    form: ngs.BilinearForm, symmetry: Symmetry, *, columns: int
+) -> ngs.Preconditioner:
     """Register BDDC on ``form`` and assemble it, which sets BDDC up.
 
     The coarse (wirebasket) problem's solver is an explicitly named direct
-    factorization: gfem's PARDISO (`pardiso_inverse`) when MKL is installed,
-    symmetric when the operator is ``A^T = A`` (complex symmetric, or
-    ``"hermitian"`` on a real space; a complex Hermitian one is not), sparse
-    Cholesky otherwise. (``coarsetype="direct"`` is not set: on the driven
-    H(curl) reference it made the setup 5x slower and GMRES take 68
-    iterations, not 49.)
+    factorization (`_coarse_inverse`), chosen from NGSolve's threads and the
+    ``columns`` the setup is expected to serve. (``coarsetype="direct"`` is
+    not set: on the driven H(curl) reference it made the setup 5x slower and
+    GMRES take 68 iterations, not 49.)
     """
     is_complex = bool(form.space.is_complex)
-    inverse = pardiso_inverse(symmetry, is_complex=is_complex) or INVERSE
+    inverse = _coarse_inverse(
+        symmetry, is_complex=is_complex, threads=ngs.GetNumThreads(), columns=columns
+    )
     preconditioner = ngs.Preconditioner(form, "bddc", inverse=inverse)
     form.Assemble()
     return preconditioner
@@ -67,7 +101,10 @@ class BddcHandle(NgsHandle):
     (preconditioner reuse across a sweep) when a solve on it measured a
     reference iteration count, setting it up again when reusing it costs
     more than a setup: a `gfem._linalg.Refactorable` handle. With
-    ``reuse=False`` it sets BDDC up at every refactorization.
+    ``reuse=False`` it sets BDDC up at every refactorization. Every setup
+    chooses its coarse factorization (`_coarse_inverse`) from the columns
+    one setup is expected to serve: ``width * solves`` with reuse, ``width``
+    without it.
 
     Attributes:
         iterations: Krylov iterations of every column solved so far.
@@ -83,10 +120,14 @@ class BddcHandle(NgsHandle):
         tolerance: float,
         maxiter: int,
         reuse: bool = True,
+        width: int = 1,
+        solves: int = 1,
     ) -> None:
         """Register BDDC on the form, assemble, and set up the Krylov solver.
 
-        ``reuse=False`` sets BDDC up again at every `refactorize`.
+        ``reuse=False`` sets BDDC up again at every `refactorize`. ``width``
+        right-hand-side columns per solve and ``solves`` solve calls are
+        expected; they choose the coarse factorization only.
         """
         form = operator.form
         space = form.space
@@ -96,7 +137,9 @@ class BddcHandle(NgsHandle):
                 "DOFs must be the space's FreeDofs(); build the space with "
                 "dirichlet= on the fixed boundaries."
             )
-        preconditioner = _set_up(form, symmetry)
+        # without reuse every refactorization sets BDDC up for one solve
+        self._expected_columns = width * (solves if reuse else 1)
+        preconditioner = _set_up(form, symmetry, columns=self._expected_columns)
         is_complex = bool(space.is_complex)
         super().__init__(form.mat, operator.freedofs, symmetry, is_complex=is_complex)
         self.tolerance = tolerance
@@ -119,7 +162,7 @@ class BddcHandle(NgsHandle):
         """Set BDDC up again on ``form`` (assembled again), and hold it."""
         # release the old setup first
         self._solver = self._preconditioner = self._matrix = self._form = None
-        self._hold(form, _set_up(form, self.symmetry))
+        self._hold(form, _set_up(form, self.symmetry, columns=self._expected_columns))
 
     def _held(self) -> tuple[ngs.BaseMatrix, ngs.Preconditioner, ngs.BilinearForm]:
         """The matrix, its preconditioner and its form.
