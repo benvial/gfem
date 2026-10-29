@@ -297,8 +297,9 @@ def test_a_bddc_reshift_sets_the_preconditioner_up_at_the_new_shift(mesh, monkey
 def test_inner_solves_are_not_asked_below_the_round_off_floor(
     mesh, monkeypatch, tolerances, inner
 ):
-    # a tight eigen tolerance would ask BDDC + GMRES for 1e-14, where its
-    # residual estimate stalls; the defaults ask 1e-2 * 1e-10
+    # a tight eigen tolerance would ask BDDC + GMRES for 1e-14, below the
+    # ~1e-13 true preconditioned residual the shift-invert operator allows
+    # in double precision; the defaults ask 1e-2 * 1e-10
     options = gfem.SolverOptions(linear_solver="bddc_gmres", **tolerances)
     rule = eigen_rule.EigenmodeRule(line(mesh), gfem.Eigenmode(target=F1), options)
     asked = []

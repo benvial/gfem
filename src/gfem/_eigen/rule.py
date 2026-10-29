@@ -86,9 +86,11 @@ DEFAULT_SOLVER = "direct"
 #: Inner solves of an iterative backend run this much tighter than the
 #: eigen tolerance.
 _INNER = 1e-2
-#: ... but never below this: BDDC + GMRES's residual estimate stalls at
-#: 1e-15..2e-14 and the true preconditioned residual at ~1e-13 on the
-#: shift-invert operators, so a tighter inner solve only buys stalls.
+#: ... but never below this: the true preconditioned residual of the
+#: shift-invert operators stays near 1e-13, a double-precision limit of the
+#: operator, and BDDC + GMRES ends within 0.1 % of 1e-14, too thin a margin
+#: to ask for. It also bounds PETSc Krylov inner solves, whose ``ksp_rtol``
+#: floor is no lower.
 _INNER_FLOOR = 1e-13
 #: Seeds with Re k at or below this fraction of the shift are the curl-curl
 #: null space or relaxation modes, not resonances.
