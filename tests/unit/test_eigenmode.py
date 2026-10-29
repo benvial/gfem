@@ -37,6 +37,7 @@ from scipy.optimize import brentq
 
 import gfem
 from gfem._eigen import rule as eigen_rule
+from gfem._eigen.seed import MIN_SUBSPACE
 from gfem._engine import eigen as engine_eigen
 from gfem._engine.driven import driven_operator
 from gfem._engine.eigen import projector
@@ -296,7 +297,7 @@ def test_a_bddc_shift_sets_its_coarse_problem_up_for_the_seed_solve(mesh, monkey
     options = gfem.SolverOptions(linear_solver="bddc_gmres")
     columns = coarse_columns(monkeypatch)
     gfem.solve(model, gfem.Eigenmode(target=8e9), options=options)
-    assert columns == [20]
+    assert columns == [MIN_SUBSPACE]
 
 
 @pytest.mark.parametrize(
