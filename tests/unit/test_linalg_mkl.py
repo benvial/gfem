@@ -14,6 +14,7 @@ from pathlib import Path
 
 import ngsolve as ngs
 import numpy as np
+import pyngcore
 import pytest
 import structured_meshes as sm
 
@@ -49,10 +50,8 @@ def built(tmp_path_factory):
     return to_ngsolve(gfem.Mesh.from_gmsh(path))
 
 
-def _laplace(built, complex_valued=False, shift=0.0, order=2):
-    space = ngs.H1(
-        built.mesh, order=order, dirichlet="bottom|top", complex=complex_valued
-    )
+def _laplace(built, complex_valued=False, shift=0.0, dirichlet="bottom|top", order=2):
+    space = ngs.H1(built.mesh, order=order, dirichlet=dirichlet, complex=complex_valued)
     u, v = space.TnT()
     form = ngs.BilinearForm(space, symmetric=True)
     form += (ngs.grad(u) * ngs.grad(v) + shift * u * v) * quadrature.dx(order)
@@ -244,8 +243,8 @@ def test_a_pardiso_wrapper_gfem_cannot_gather_into_refactorizes_by_update(
 def test_a_gather_index_gfem_cannot_build_leaves_refactorization_to_update(
     built, monkeypatch, failure
 ):
-    # building the gather index never raises: without one, PARDISO stays and
-    # refactorizes through Update()
+    # building the gather index (at the first refactorization) never raises:
+    # without one, PARDISO stays and refactorizes through Update()
     from ngsolve.solvers import mkl_pardiso
 
     def from_gfem():
@@ -257,7 +256,8 @@ def test_a_gather_index_gfem_cannot_build_leaves_refactorization_to_update(
     csr = matrix_type.CSR
 
     def failing_csr(self):
-        if not from_gfem():
+        # only the gather index's read fails: the pattern check reads the CSR too
+        if sys._getframe(1).f_globals.get("__name__") != direct.__name__:
             return csr(self)
         if failure == "a matrix without CSR":
             raise AttributeError("CSR")
@@ -279,11 +279,11 @@ def test_a_gather_index_gfem_cannot_build_leaves_refactorization_to_update(
         symmetry="complex_symmetric",
         kind="direct",
     )
-    assert handle._gather is None
-    monkeypatch.undo()
     assert isinstance(handle._inverse, mkl_pardiso.MKLPardiso)
     op, space = _laplace(built, complex_valued=True, shift=3 + 1j)
     handle.refactorize(op)
+    assert handle._gather is None
+    monkeypatch.undo()
     fresh = prepare(
         _laplace(built, complex_valued=True, shift=3 + 1j)[0],
         symmetry="complex_symmetric",
@@ -299,10 +299,66 @@ def test_a_gather_index_gfem_cannot_build_leaves_refactorization_to_update(
 def test_pardiso_memory_counts_the_gather_index(built):
     op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
     handle = prepare(op, symmetry="complex_symmetric", kind="direct")
-    index = handle._gather
+    assert not isinstance(handle._gather, np.ndarray)  # one frequency: no index
     held = handle.nbytes
-    handle._gather = None
-    assert held - handle.nbytes == index.nbytes > 0
+    handle.refactorize(_laplace(built, complex_valued=True, shift=3 + 1j)[0])
+    index = handle._gather
+    assert isinstance(index, np.ndarray)
+    assert handle.nbytes - held == index.nbytes > 0
+
+
+@needs_mkl
+def test_pardiso_factors_an_all_free_operator_without_projecting_it(built, monkeypatch):
+    # every DOF free: PARDISO factors the handle's own matrix, and a sweep
+    # refactorizes through the gather index, built once
+    op, space = _laplace(built, complex_valued=True, shift=1 - 2j, dirichlet="")
+    assert op.freedofs.NumSet() == space.ndof
+    handle = prepare(op, symmetry="complex_symmetric", kind="direct")
+    inverse = handle._inverse
+    inner = np.asarray(inverse.GetInnerMatrix().AsVector().FV())
+    assert np.shares_memory(inner, np.asarray(handle._matrix.AsVector().FV()))
+
+    # the constrained path's answer: the matrix projected on the (all-set) free
+    # DOFs before the handoff
+    matrix = op.form.mat
+    matrix.inverse_flags = pyngcore.Flags(direct.PARDISO_FLAGS)
+    projected = matrix.Inverse(op.freedofs, inverse=direct.PARDISO)
+    rng = np.random.default_rng(7)
+    B = rng.standard_normal(space.ndof) + 1j * rng.standard_normal(space.ndof)
+    b, x = matrix.CreateColVector(), matrix.CreateColVector()
+    b.FV().NumPy()[:] = B
+    x.data = projected * b
+    ref = x.FV().NumPy().copy()
+    X = handle.solve(B)
+    assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
+
+    builds = []
+    gather_index = direct.DirectHandle._gather_index
+
+    def counted(self, *args):
+        builds.append(self)
+        return gather_index(self, *args)
+
+    def no_extraction(self):  # noqa: ARG001
+        raise AssertionError("the wrapper extracted the upper triangle again")
+
+    monkeypatch.setattr(direct.DirectHandle, "_gather_index", counted)
+    monkeypatch.setattr(type(inverse), "get_csr", no_extraction)
+    for shift in (3 + 1j, 2 - 1j):
+        handle.refactorize(
+            _laplace(built, complex_valued=True, shift=shift, dirichlet="")[0]
+        )
+    monkeypatch.undo()
+    assert builds == [handle]
+    assert isinstance(handle._gather, np.ndarray)
+    assert handle._inverse is inverse
+    fresh = prepare(
+        _laplace(built, complex_valued=True, shift=2 - 1j, dirichlet="")[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+    )
+    X, ref = handle.solve(B), fresh.solve(B)
+    assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
 
 
 # --- BDDC's coarse factorization ---------------------------------------------------
