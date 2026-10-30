@@ -94,10 +94,10 @@ _INNER = 1e-2
 #: floor is no lower.
 _INNER_FLOOR = 1e-13
 #: Seeds with Re k at or below this fraction of the shift are the curl-curl
-#: null space, relaxation modes, mirror roots or a conductor's linearization
-#: cluster (Re k near -sigma), not resonances. A second-order absorbing
-#: wall's cluster lies near Re k = 2 sigma: this test keeps it, and only the
-#: distance to the target ranks the modes ahead of it.
+#: null space, a lossy medium's relaxation modes (Re k = 0), mirror roots or
+#: a conductor's linearization cluster (Re k near -sigma), not resonances. A
+#: second-order absorbing wall's cluster lies near Re k = 2 sigma: this test
+#: keeps it, and only the distance to the target ranks the modes ahead of it.
 _STATIC = 1e-6
 #: Two refined modes closer than this many eigen tolerances (relative, and
 #: at least ``SolverOptions.cluster_rtol``), with overlapping fields, are the
@@ -119,12 +119,9 @@ _CONTRACTION = 0.5
 _ATTEMPTS = 3
 #: Arnoldi tolerance of a nonlinear problem's frozen seeds. Their roots are
 #: off the true ones by the freeze error anyway and every seed is refined,
-#: so converging them further only spends shift solves. (The solves a larger
-#: request spends on the linearization cluster, the spurious pairs piled up
-#: where a frozen term vanishes, k = sigma - theta(sigma) / theta'(sigma):
-#: -sigma for a conductor's sqrt(omega), 2 sigma for a second-order
-#: absorbing wall's 1/k, are avoided by asking for few pairs, not by this
-#: tolerance.)
+#: so converging them further only spends shift solves. The linearization
+#: cluster's solves are avoided by asking for few pairs (see the nev comment
+#: in the forward pass, ADR 0035), not by this tolerance.
 _SEED_TOLERANCE = 1e-3
 #: Cotangents on the members of a cluster that agree to this (relative to
 #: the largest) make an objective symmetric in the cluster to first order
@@ -218,6 +215,7 @@ class EigenmodeRule:
             try:
                 eop.factorize()  # before the projector's setup
                 divfree = projector(model, op)
+                seed_tolerance = opts.eigen_tolerance
                 # the companion problem also holds each mode's mirror root
                 # -conj(k), |k + sigma| from the shift (behind its mode, about
                 # 2 sigma away for a mode near the target), and pairs near
@@ -229,12 +227,10 @@ class EigenmodeRule:
                 # and holds no mode (ADR 0035).
                 if eop.nonpolynomial:
                     nev = n_modes + 1
+                    seed_tolerance = max(seed_tolerance, _SEED_TOLERANCE)
                 else:
                     nev = max(2 * n_modes, n_modes + 2)
                     nev *= 2 if eop.seed_damped else 1
-                seed_tolerance = opts.eigen_tolerance
-                if eop.nonpolynomial:
-                    seed_tolerance = max(seed_tolerance, _SEED_TOLERANCE)
                 guard = None
                 for _ in range(_ATTEMPTS):
                     k, vectors = self._shift_invert(
@@ -348,8 +344,9 @@ class EigenmodeRule:
         """Refine the seeds nearest ``sigma`` until ``n_modes`` distinct ones.
 
         Seeds (and refined pairs) with ``Re k`` near zero or negative are the
-        curl-curl null space, relaxation modes, mirror images or a
-        conductor's linearization cluster, not resonances: they are dropped.
+        curl-curl null space, a lossy medium's relaxation modes, mirror
+        roots or a conductor's linearization cluster, not resonances: they
+        are dropped.
         A second-order absorbing wall's cluster has ``Re k`` near ``2
         sigma``, so it is not dropped; the modes nearer the target come
         first. With ``guard``, the remaining seeds are refined (without
