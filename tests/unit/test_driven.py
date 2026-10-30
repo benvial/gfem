@@ -19,6 +19,7 @@ import scipy.constants as const
 import structured_meshes as sm
 from petsc_recipe import SOLVER_OPTIONS
 from preconditioners import count_preconditioners
+from solver_misses import cannot_converge_at
 
 import gfem
 from gfem._engine import driven, terms, workers
@@ -378,6 +379,75 @@ def test_a_bddc_sweep_rebuilds_at_the_same_iterations_every_run(line):
     second, _ = rule.forward(line, keep=False)
     assert first["iterations"] == second["iterations"]
     assert max(map(max, first["iterations"])) > 45  # a capped solve, set up again
+
+
+#: The Krylov linear solvers a sweep can miss on, as SolverOptions keywords
+KRYLOV = [
+    pytest.param({"linear_solver": "bddc_gmres"}, id="bddc_gmres"),
+    pytest.param(SOLVER_OPTIONS["krylov_reuse"], id="petsc", marks=pytest.mark.petsc),
+]
+
+
+def _count_setups(monkeypatch, options):
+    """Count preconditioner setups: BDDC builds, or PETSc's PCSetUp events."""
+    if options["linear_solver"] == "bddc_gmres":
+        builds = count_preconditioners(monkeypatch)
+        return lambda: len(builds)
+    from gfem import _petsc
+
+    PETSc = _petsc.require_petsc()
+    PETSc.Log.begin()
+    event = PETSc.Log.Event("PCSetUp")
+    before = event.getPerfInfo()["count"]
+    return lambda: event.getPerfInfo()["count"] - before
+
+
+@pytest.mark.parametrize("options", KRYLOV)
+def test_a_uniform_sweep_that_does_not_converge_keeps_the_frequencies_it_solved(
+    line, monkeypatch, options
+):
+    f = (2e9, 3e9, 4e9, 5e9, 6e9)
+    problem = gfem.Driven(frequency=f, keep_fields=[f[0], f[3]])
+    clean = _s(line, problem, **options)
+    setups = _count_setups(monkeypatch, options)
+    cannot_converge_at(monkeypatch, (f[2],))
+    with pytest.raises(gfem.LinearSolverConvergenceError) as caught:
+        _s(line, problem, **options)
+    err = caught.value
+    assert err.frequency == f[2]
+    assert err.unsolved == f[2:]
+    assert "4e+09 Hz" in str(err)
+    assert "linear_solver='direct'" in str(err)
+    # set up at 2 GHz, and again at 4 GHz before the fresh solve misses
+    assert setups() == 2
+    result = err.result
+    assert result.s.frequency == f[:2]
+    assert result.sweep.solved == (True, True)
+    np.testing.assert_allclose(
+        result.s.values, np.asarray(clean.s.values)[:2], rtol=0, atol=1e-12
+    )
+    np.testing.assert_allclose(result.s.z_ref, np.asarray(clean.s.z_ref)[:2])
+    assert result.kept == ((f[0], "p1"), (f[0], "p2"))
+    for port in ("p1", "p2"):
+        np.testing.assert_allclose(
+            result.e_field(f[0], port).coefficients,
+            clean.e_field(f[0], port).coefficients,
+            rtol=0,
+            atol=1e-12,
+        )
+
+
+@pytest.mark.parametrize("options", KRYLOV)
+def test_a_sweep_that_cannot_converge_at_its_first_frequency_has_no_partial_result(
+    line, monkeypatch, options
+):
+    f = (2e9, 3e9, 4e9)
+    cannot_converge_at(monkeypatch, (f[0],))
+    with pytest.raises(gfem.LinearSolverConvergenceError) as caught:
+        _s(line, gfem.Driven(frequency=f), **options)
+    assert caught.value.result is None
+    assert caught.value.unsolved == f
+    assert caught.value.frequency == f[0]
 
 
 def _bddc_forward(model, problem):

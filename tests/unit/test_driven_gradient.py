@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 import structured_meshes as sm
 from finite_differences import assert_gradient_matches, unit_directions
+from solver_misses import cannot_converge_at
 
 import gfem
 from gfem._engine import driven, sensitivity, terms
@@ -138,6 +139,25 @@ def test_unexcited_port_rows_use_an_adjoint_solve(line):
         rtol=1e-9,
     )
     assert np.abs(np.asarray(full)).max() > 0
+
+
+def test_a_gradient_through_a_solve_that_does_not_converge_raises(line, monkeypatch):
+    # the adjoint needs every frequency: JAX keeps the message, not the class
+    values, _ = _values(line)
+    problem = gfem.Driven(frequency=(20e9, 21e9))
+    options = gfem.SolverOptions(linear_solver="bddc_gmres")
+
+    def objective(p):
+        model = line.with_material(
+            "dielectric", gfem.MaterialField(**{**values, "eps_r": p})
+        )
+        return jnp.sum(jnp.abs(gfem.solve(model, problem, options=options).s.values))
+
+    cannot_converge_at(monkeypatch, (21e9,))
+    with pytest.raises(
+        jax.errors.JaxRuntimeError, match=r"At 2\.1e\+10 Hz.*did not converge"
+    ):
+        jax.grad(objective)(values["eps_r"])
 
 
 def test_pair_weights_are_the_thetas_of_the_operator_pieces(line):
