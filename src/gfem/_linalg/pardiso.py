@@ -15,6 +15,16 @@ suspends the TaskManager only during the call; at the default block time
 (200 ms) MKL's OpenMP threads then busy-wait on the cores the TaskManager
 resumes on. libiomp5 is only ever the copy MKL already loaded: without it
 (another MKL threading layer, or no MKL), the call is left as it is.
+
+A handle runs on the thread count of its analysis (phases 11-13). NGSolve's
+wrapper sets MKL's thread count to the caller's TaskManager's at every call
+(1 outside one), and once a solve runs on fewer threads than the analysis,
+MKL solves that handle sequentially for good. The subclass records
+``GetNumThreads()`` at each analysis and runs the handle's other phases
+(refactorizations, solves) on it: it makes the wrapper's ``pardiso`` call
+itself, with ``MKL_Set_Num_Threads_Local`` set to that count and the
+TaskManager suspended. Without the wrapper's private symbols or fields, the
+call is NGSolve's, on the caller's count.
 """
 
 from __future__ import annotations
@@ -27,6 +37,7 @@ import sys
 from typing import Any, ClassVar
 
 import ngsolve as ngs
+import pyngcore
 
 from gfem._linalg import Symmetry
 from gfem._linalg.base import equals_its_transpose
@@ -87,7 +98,11 @@ def _register() -> None:
     from ngsolve.solvers.mkl_pardiso import MKLPardiso
 
     class GfemPardiso(MKLPardiso):
-        """NGSolve's MKL PARDISO wrapper with `PARDISO_FLAGS`."""
+        """NGSolve's MKL PARDISO wrapper with `PARDISO_FLAGS`.
+
+        Its calls run at OpenMP block time 0, and every phase after an
+        analysis on the analysis's thread count (see the module docstring).
+        """
 
         flags: ClassVar[dict[str, Any]] = PARDISO_FLAGS
 
@@ -98,8 +113,17 @@ def _register() -> None:
         def _call_pardiso(self, phase: int) -> None:
             # PARDISO refuses an empty matrix: a coarse problem whose DOFs
             # are all fixed has nothing to factor or solve
-            if self._n[0] > 0:  # ty: ignore[unresolved-attribute]
-                with _block_time_zero():
+            if self._n[0] <= 0:  # ty: ignore[unresolved-attribute]
+                return
+            if phase in _ANALYSIS_PHASES:
+                self._gfem_threads = max(1, pyngcore.GetNumThreads())
+            threads = getattr(self, "_gfem_threads", None)
+            with _block_time_zero():
+                if (
+                    phase in _ANALYSIS_PHASES
+                    or threads is None
+                    or not _call_on_threads(self, phase, threads)
+                ):
                     super()._call_pardiso(phase)
 
     class GfemPardisoGeneral(GfemPardiso):
@@ -111,6 +135,76 @@ def _register() -> None:
 
     ngs.la.RegisterInverseType(SYMMETRIC, GfemPardiso)
     ngs.la.RegisterInverseType(GENERAL, GfemPardisoGeneral)
+
+
+# --- A handle's thread count ---------------------------------------------------------
+
+#: The PARDISO phases that start with the analysis (reordering and symbolic
+#: factorization): the thread count they run on is the handle's.
+_ANALYSIS_PHASES = frozenset({11, 12, 13})
+#: The fields of NGSolve's wrapper it passes to ``pardiso``, in argument
+#: order (``pt`` to ``error``); ``None`` is ``perm``, passed as null.
+_ARGUMENTS = (
+    "_pt",
+    "_maxfct",
+    "_mnum",
+    "_matrixtype",
+    "_phase",
+    "_n",
+    "_data",
+    "_indptr",
+    "_indices",
+    None,
+    "_nrhs",
+    "_params",
+    "_msglevel",
+    "_b",
+    "_x",
+    "_error",
+)
+
+
+def _call_on_threads(solver: Any, phase: int, threads: int) -> bool:
+    """Run PARDISO ``phase`` of ``solver`` with MKL on ``threads`` threads.
+
+    The same call as NGSolve's ``MKLPardiso._call_pardiso``, with MKL's
+    thread count set to ``threads`` instead of the caller's TaskManager's
+    (``GetNumThreads()``), and the TaskManager suspended. Both are set back
+    after the call, also when it raises.
+
+    Returns:
+        ``False``, having called nothing, when NGSolve's wrapper lacks
+        ``_pardiso``, ``_mkl_set_num_threads_local`` or one of the fields
+        it passes; ``True`` once the call ran.
+
+    Raises:
+        RuntimeError: PARDISO reported an error, as NGSolve's call raises.
+    """
+    from ngsolve.solvers import mkl_pardiso
+
+    call = getattr(mkl_pardiso, "_pardiso", None)
+    set_threads = getattr(mkl_pardiso, "_mkl_set_num_threads_local", None)
+    if call is None or set_threads is None:
+        return False
+    null = ctypes.c_void_p(0)
+    try:
+        solver._phase[0] = phase  # noqa: SLF001
+        arguments = [
+            null if name is None else getattr(solver, name) for name in _ARGUMENTS
+        ]
+        error = solver._error  # noqa: SLF001
+    except (AttributeError, TypeError):
+        return False
+    previous = set_threads(threads)
+    suspend = pyngcore.SuspendTaskManager()
+    try:
+        call(*arguments)
+    finally:
+        del suspend
+        set_threads(previous)
+    if error[0] != 0:
+        raise RuntimeError(f"MKL Pardiso error in phase {phase}: {error[0]}")
+    return True
 
 
 # --- MKL's OpenMP threads ------------------------------------------------------------
