@@ -755,6 +755,24 @@ def test_gradient_matrix_cluster_cut_by_n_modes_raises(designs):
         jax.grad(objective)(_uniform(cavity))
 
 
+def test_gradient_matrix_conductor_cluster_cut_by_n_modes_raises(designs):
+    # a conductor's seed asks for one pair beyond n_modes: the pair's other
+    # member takes that slot and shows the cut
+    cavity = designs.mirrored_cavity
+
+    def objective(eps):
+        model = gfem.Model(
+            cavity,
+            materials={"fill": gfem.MaterialField(eps_r=eps)},
+            boundaries=[gfem.Conductor("wall", 5.8e7)],
+        )
+        problem = gfem.Eigenmode(target=MIRRORED_TARGET, n_modes=1)
+        return jnp.real(gfem.solve(model, problem, options=CLUSTER_OPTIONS).omega[0])
+
+    with pytest.raises(DEGENERATE, match=r"DegenerateModeError.*n_modes"):
+        jax.grad(objective)(_uniform(cavity))
+
+
 def test_gradient_matrix_simple_mode_beside_a_cluster_differentiates(designs):
     # TM110 alone: no cotangent reaches the pair
     cavity = designs.mirrored_cavity
