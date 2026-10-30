@@ -156,16 +156,22 @@ class BddcHandle(NgsHandle):
                 "dirichlet= on the fixed boundaries."
             )
         self._width = width
-        # without reuse every refactorization sets BDDC up for one solve
-        self._expected_columns = width * (solves if reuse else 1)
+        self.reuse = reuse
+        self._expected_columns = self._columns_per_setup(solves)
         preconditioner = _set_up(form, symmetry, columns=self._expected_columns)
         is_complex = bool(space.is_complex)
         super().__init__(form.mat, operator.freedofs, symmetry, is_complex=is_complex)
         self.tolerance = tolerance
         self.maxiter = maxiter
-        self.reuse = reuse
         self.iterations: list[int] = []
         self._hold(form, preconditioner)
+
+    def _columns_per_setup(self, solves: int) -> int:
+        """The columns one setup serves when ``solves`` solve calls are expected.
+
+        Without reuse every refactorization sets BDDC up for one solve.
+        """
+        return self._width * (solves if self.reuse else 1)
 
     def _hold(self, form: ngs.BilinearForm, preconditioner) -> None:
         """Solve ``form``'s matrix on a preconditioner just set up from it."""
@@ -262,7 +268,7 @@ class BddcHandle(NgsHandle):
         with self._lock:
             _, pre, _ = self._held()
             if solves is not None:
-                self._expected_columns = self._width * (solves if self.reuse else 1)
+                self._expected_columns = self._columns_per_setup(solves)
             if self._rebuild or not self.reuse or self._reference_iterations is None:
                 self._build(form)
                 return
