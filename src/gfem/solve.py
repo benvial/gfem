@@ -92,13 +92,15 @@ def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -
         return rule.result(solve_vjp(rule, model, problem))
     # A moved mesh must still be valid on the solve domain.
     _check_quality(model.mesh, model._domain.active, stacklevel=3)  # noqa: SLF001
+    # a uniform sweep's partial result, built here: never in a JAX callback
+    partial_result = getattr(rule, "partial_result", None)
+    if partial_result is not None:
+        rule.keeps_partial = True
     try:
         outputs, _ = rule.forward(model, keep=False)
     except LinearSolverConvergenceError as err:
-        # a uniform sweep's partial result, built here: never in a JAX callback
-        partial = getattr(rule, "partial_result", None)
-        if partial is not None:
-            err.result = partial()
+        if partial_result is not None:
+            err.result = partial_result()
         raise
     return rule.result(outputs)
 

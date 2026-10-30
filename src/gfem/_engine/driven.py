@@ -342,8 +342,13 @@ class DrivenRule:
         # The fields live on the mesh as given (traced or not).
         self._mesh = model.mesh
         self._excluded = model._domain.excluded  # noqa: SLF001
+        #: Whether a uniform sweep whose linear solve does not converge keeps
+        #: what it solved for `partial_result`: set by `gfem.solve`'s eager
+        #: path and by a frequency worker, never under JAX, where no caller
+        #: reads it.
+        self.keeps_partial = False
         #: What the last forward's uniform sweep solved before a linear solve
-        #: did not converge (see `partial_result`).
+        #: did not converge (see `partial_result`); only with `keeps_partial`.
         self._partial: _Partial | None = None
         _check_low_frequency(model, problem.frequency, stacklevel=3)
 
@@ -389,8 +394,9 @@ class DrivenRule:
                 A uniform sweep stops at that frequency (each frequency
                 worker's block at its own first one), sets the error's
                 ``frequency`` and ``unsolved``, and keeps the outputs at
-                the solved frequencies for `partial_result`. An adaptive
-                sweep sets ``frequency`` to the sample's.
+                the solved frequencies for `partial_result` (with
+                `keeps_partial`). An adaptive sweep sets ``frequency`` to the
+                sample's.
         """
         self._partial = None
         if self.adaptive:
@@ -403,6 +409,7 @@ class DrivenRule:
         fields: list[np.ndarray] = []
         solutions: list[np.ndarray] = []
         miss: LinearSolverConvergenceError | None = None
+        n_solved = len(frequencies)
         with task_manager(self.options.threads):
             ports = self._ports(model)
             s = np.zeros((len(frequencies), len(self.port_names), width), complex)
@@ -422,7 +429,7 @@ class DrivenRule:
                             omega, ports.system.rhs(omega), x0=previous
                         )
                     except LinearSolverConvergenceError as err:
-                        miss = err
+                        miss, n_solved = err, n
                         break
                     iterations.append(its)
                     previous = x
@@ -434,22 +441,25 @@ class DrivenRule:
                         np.asarray(t.coefficients(omega)) @ (t.vectors.T @ x)
                         for t in ports.system.outputs
                     )
-        if not keep or miss is not None:  # no backward pass will prepare
-            ports.release()  # from the pieces
-        solved = len(iterations)
+        # no backward pass will prepare from the pieces
+        if not keep or miss is not None:
+            ports.release()
         outputs = {
-            "s": ports.scattering(s)[:solved],
-            "z_ref": ports.z_ref[:solved],
+            "s": ports.scattering(s)[:n_solved],
+            "z_ref": ports.z_ref[:n_solved],
             "iterations": iterations,
+            # the port mode fields' coordinates are trimmed in `_port_modes`
             **{
-                name: value[:solved] if isinstance(value, np.ndarray) else value
+                name: value[:n_solved] if isinstance(value, np.ndarray) else value
                 for name, value in self._port_outputs(ports.waves).items()
             },
         }
         if fields:
             outputs["e_field"] = np.concatenate(fields, axis=1)
         if miss is not None:
-            self._missed(outputs, tuple(range(solved)), [(solved, str(miss))], miss)
+            self._raise_unsolved(
+                outputs, tuple(range(n_solved)), [(n_solved, str(miss))], miss
+            )
         entry = None
         if keep:
             entry = Entry(
@@ -505,19 +515,20 @@ class DrivenRule:
         kept = [r["e_field"] for r in results if "e_field" in r]
         if kept:
             outputs["e_field"] = np.concatenate(kept, axis=1)
+        # each block stopped at its first miss: its solved rows lead it
+        n_solved = [len(r["s"]) for r in results]
         misses = [
-            (int(block[len(r["s"])]), r["miss"]["message"])
-            for block, r in zip(indices, results, strict=True)
+            (int(block[n]), r["miss"]["message"])
+            for block, n, r in zip(indices, n_solved, results, strict=True)
             if "miss" in r
         ]
         if misses:
-            # each block stopped at its first miss: its solved rows lead it
             solved = tuple(
                 int(i)
-                for block, r in zip(indices, results, strict=True)
-                for i in block[: len(r["s"])]
+                for block, n in zip(indices, n_solved, strict=True)
+                for i in block[:n]
             )
-            self._missed(outputs, solved, misses)
+            self._raise_unsolved(outputs, solved, misses)
         entry = None
         if keep:
             solution = np.concatenate([r["solution"] for r in results], axis=1)
@@ -528,7 +539,7 @@ class DrivenRule:
             )
         return outputs, entry
 
-    def _missed(
+    def _raise_unsolved(
         self,
         outputs: dict[str, object],
         solved: tuple[int, ...],
@@ -537,20 +548,21 @@ class DrivenRule:
     ) -> NoReturn:
         """Raise a uniform sweep's `LinearSolverConvergenceError`.
 
-        Keeps ``outputs``, the forward outputs at the grid indices
-        ``solved`` only, for `partial_result`.
+        With `keeps_partial`, keeps ``outputs``, the forward outputs at the
+        grid indices ``solved`` only, for `partial_result`.
 
         Args:
             outputs: The forward outputs over the solved frequencies.
             solved: Grid indices of the solved frequencies, in order.
-            misses: ``(grid index, the backend's message)`` of each
+            misses: ``(grid index, the linear solver's message)`` of each
                 frequency where a block's linear solve did not converge
                 (one per frequency worker that stopped).
-            cause: The backend's error, when there is one.
+            cause: The linear solver's error, when there is one.
         """
         frequencies = self.problem.frequency
         first, reason = min(misses)
-        self._partial = _Partial(solved, outputs, reason)
+        if self.keeps_partial:
+            self._partial = _Partial(solved, outputs, reason)
         where = "there"
         if len(misses) > 1:
             stops = " and ".join(f"{frequencies[i]:g} Hz" for i, _ in sorted(misses))
@@ -570,9 +582,10 @@ class DrivenRule:
 
         `gfem.solve`'s eager path sets it as the error's ``result``, outside
         any JAX host callback. ``None`` when the last forward solved every
-        frequency, was adaptive, or solved none.
+        frequency, was adaptive, or solved none. It is read once: the
+        outputs it was built from are dropped.
         """
-        partial = self._partial
+        partial, self._partial = self._partial, None
         if partial is None or not partial.solved:
             return None
         return self._uniform_result(partial.outputs, partial.solved)
@@ -721,7 +734,7 @@ class DrivenRule:
                     try:
                         x, its = handles.solve(omega, rhs, x0=x0)
                     except LinearSolverConvergenceError as err:
-                        raise _sample_missed(frequencies, omega, err) from err
+                        raise _sample_error(frequencies, omega, err) from err
                     iterations.append(its)
                     return x
 
@@ -1145,6 +1158,7 @@ class DrivenRule:
             field = None
             if self.kept and sweeps is not None:
                 sweep = sweeps[k]
+                # `forward` trims the other port outputs to the solved rows
                 coords = sweep.coords if solved is None else sweep.coords[rows]
                 field = PortModeField(sweep.space, sweep.basis, coords)
             out[name] = PortModeResult(
@@ -1334,26 +1348,27 @@ def _solve_block(
 
     ``aux`` and ``children`` are the model's parts (`gfem._engine.workers`).
     A block whose linear solve does not converge at some frequency stops
-    there and returns the rows it solved, plus ``"miss"``: ``{"frequency":
-    Hz, "message": the backend's message}``, plain data that pickles (the
-    parent raises once for every block).
+    there and returns the rows it solved, plus ``"miss"``: ``{"message":
+    the linear solver's message}``, plain data that pickles (the parent
+    raises once for every block).
     """
     model = workers.model_from_parts(aux, children)
     with warnings.catch_warnings():
         # the parent's rule already warned for the whole sweep
         warnings.simplefilter("ignore", LowFrequencyWarning)
         rule = DrivenRule(model, problem, options)
+    rule.keeps_partial = True
     names = ("s", "z_ref", "iterations", "e_field")
     try:
         outputs, entry = rule.forward(model, keep=keep)
-    except LinearSolverConvergenceError as err:
+    except LinearSolverConvergenceError:
         partial = rule._partial  # noqa: SLF001
         if partial is None:  # pragma: no cover - a uniform sweep always sets it
             raise
         block = {
             name: partial.outputs[name] for name in names if name in partial.outputs
         }
-        block["miss"] = {"frequency": err.frequency, "message": partial.reason}
+        block["miss"] = {"message": partial.reason}
         return block
     block = {name: outputs[name] for name in names if name in outputs}
     if entry is not None:
@@ -1362,7 +1377,7 @@ def _solve_block(
     return block
 
 
-def _sample_missed(
+def _sample_error(
     frequencies: tuple[float, ...], omega: float, err: LinearSolverConvergenceError
 ) -> LinearSolverConvergenceError:
     """An adaptive sweep's error where a sample's linear solve did not converge.
@@ -1662,7 +1677,8 @@ class _Partial:
     solved: tuple[int, ...]
     #: The forward outputs at the solved frequencies only.
     outputs: dict[str, object]
-    #: The backend's message where the (first) linear solve did not converge.
+    #: The linear solver's message where the (first) linear solve did not
+    #: converge.
     reason: str
 
 
