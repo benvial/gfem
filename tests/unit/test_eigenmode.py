@@ -312,6 +312,32 @@ def test_a_bddc_reshift_sets_its_coarse_problem_up_for_the_refinement(
     assert columns == [MIN_SUBSPACE, RESHIFT_SOLVES]
 
 
+def test_a_retry_after_a_reshift_seeds_at_the_target(mesh, monkeypatch):
+    # too few modes after refinement reshifted: the wider seed solve runs
+    # at the target again, on a coarse problem counted for the seed
+    model = terminated_line(mesh, 1000.0)
+    options = gfem.SolverOptions(linear_solver="bddc_gmres")
+    rule = eigen_rule.EigenmodeRule
+    shifts, select, shift_invert = [], rule._select, rule._shift_invert
+
+    def seed(self, op, *args, **kwargs):
+        shifts.append(op.shift)
+        return shift_invert(self, op, *args, **kwargs)
+
+    def too_few(self, *args, **kwargs):
+        accepted, failed, guard = select(self, *args, **kwargs)
+        if len(shifts) == 1:  # the first seed solve's modes: one short
+            return accepted[:-1], [], None
+        return accepted, failed, guard
+
+    monkeypatch.setattr(rule, "_shift_invert", seed)
+    monkeypatch.setattr(rule, "_select", too_few)
+    columns = coarse_columns(monkeypatch)
+    gfem.solve(model, gfem.Eigenmode(target=8e9, n_modes=2), options=options)
+    assert shifts == [shifts[0], shifts[0]]
+    assert columns == [MIN_SUBSPACE, RESHIFT_SOLVES, MIN_SUBSPACE, RESHIFT_SOLVES]
+
+
 @pytest.mark.parametrize(
     ("tolerances", "inner"),
     [({"eigen_tolerance": 1e-12, "tolerance": 1e-12}, 1e-13), ({}, 1e-12)],

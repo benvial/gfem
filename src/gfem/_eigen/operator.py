@@ -210,21 +210,25 @@ class EigenOperator:
             self._handle = self.prepare(self.operator(self.shift))
         return self._handle
 
-    def reshift(self, k: complex) -> None:
+    def reshift(self, k: complex, *, solves: int = RESHIFT_SOLVES) -> None:
         """Refactorize at ``k``.
 
         A prepared handle factorizes ``T(k)`` on its solver plan when it can,
         or is replaced by a new one
         (`gfem._linalg.refactorize_or_prepare`); either way it is told it
-        serves `RESHIFT_SOLVES` solves. An operator not prepared yet is
-        prepared on first use.
+        serves ``solves`` solves. An operator not prepared yet is prepared on
+        first use.
+
+        ``solves``: the shift-invert solves the new factorization is expected
+        to serve: `RESHIFT_SOLVES` for a refinement reshift; the rule passes
+        the seed's count when it moves back to the target for a seed solve.
         """
         if self._handle is not None:
             self._handle = refactorize_or_prepare(
                 self._handle,
                 self.operator(k),
-                lambda t: self.prepare(t, RESHIFT_SOLVES),
-                solves=RESHIFT_SOLVES,
+                lambda t: self.prepare(t, solves),
+                solves=solves,
             )
         self.shift = k
         self.shifts += 1

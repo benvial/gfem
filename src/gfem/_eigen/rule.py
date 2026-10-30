@@ -7,15 +7,16 @@ in ``k^2``; with lumped or impedance resistance, conductivity or a
 first-order absorbing boundary it is quadratic; a `Conductor` or a
 second-order absorbing boundary adds the nonpolynomial ``A(k)``, which the
 seed freezes at the target. One factorization of ``T(sigma)`` at the
-target serves the shift-invert Arnoldi of the seed (`gfem._eigen.arpack`
-or `gfem._eigen.slepc`, chosen by `SolverOptions.eigen_solver`, on the
-shared `gfem._eigen.seed` operator, with the divergence-free projection),
-the Rayleigh functional and the residual inverse iteration that refines
-every seed on the true ``T(k)`` (`gfem._eigen.refine`). A `WavePort`
-raises: its propagation constant would have to be solved at the complex
-eigenfrequency. Everything that touches NGSolve (the assembly of ``T(k)``,
-the divergence-free projection, the energy per element) is in
-`gfem._engine.eigen`.
+target serves the shift-invert Arnoldi of the seed (a retry with a wider
+subspace, after refinement reshifted, first refactorizes at the target)
+(`gfem._eigen.arpack` or `gfem._eigen.slepc`, chosen by
+`SolverOptions.eigen_solver`, on the shared `gfem._eigen.seed` operator,
+with the divergence-free projection), the Rayleigh functional and the
+residual inverse iteration that refines every seed on the true ``T(k)``
+(`gfem._eigen.refine`). A `WavePort` raises: its propagation constant would
+have to be solved at the complex eigenfrequency. Everything that touches
+NGSolve (the assembly of ``T(k)``, the divergence-free projection, the
+energy per element) is in `gfem._engine.eigen`.
 
 Gradients (``omega``, so frequency and Q) need no solve: a simple mode's
 ``dk/dp = -x^T (dT/dp) x / x^T T'(k) x``, ``T'(k) = D + 2 k M + Σ θ_p'(k)
@@ -51,6 +52,7 @@ from gfem._eigen import slepc
 from gfem._eigen.arpack import shift_invert
 from gfem._eigen.operator import EigenOperator
 from gfem._eigen.refine import Refined, refine
+from gfem._eigen.seed import MIN_SUBSPACE
 from gfem._engine import terms
 from gfem._engine.cache import Entry
 from gfem._engine.domain import em_region
@@ -219,6 +221,11 @@ class EigenmodeRule:
                     seed_tolerance = max(seed_tolerance, _SEED_TOLERANCE)
                 guard = None
                 for _ in range(_ATTEMPTS):
+                    if eop.shift != sigma:
+                        # a retry is a seed solve: at the target, on a
+                        # factorization counted for the seed (refinement
+                        # reshifted it)
+                        eop.reshift(sigma, solves=MIN_SUBSPACE)
                     k, vectors = self._shift_invert(
                         eop, divfree, nev, tol=seed_tolerance
                     )
