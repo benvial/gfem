@@ -349,9 +349,9 @@ class EigenmodeRule:
         are dropped.
         A second-order absorbing wall's cluster has ``Re k`` near ``2
         sigma``, so it is not dropped; the modes nearer the target come
-        first. A seed far from the current shift whose refinement converges
-        to an accepted mode it is not near is refined again on a
-        factorization at its own Ritz value. With ``guard``, the remaining
+        first. A seed far from the current shift whose refinement gives
+        nothing to accept (see `_lost`) is refined again on a factorization
+        at its own Ritz value. With ``guard``, the remaining
         seeds are refined (without
         refactorizing) until one more distinct mode converges: the guard
         mode. It is best-effort: none is found when no remaining seed
@@ -386,10 +386,10 @@ class EigenmodeRule:
                 reshift=not full,
                 reshift_first=far,
             )
-            if far and not full and _drifted(mode, seed, accepted, window):
-                # a seed rougher than TRUSTED was refined on a shift nearer
-                # an accepted mode and converged to it: refine it again on a
-                # factorization at its own Ritz value
+            if far and not full and _lost(mode, seed, sigma, accepted, window):
+                # a seed rougher than TRUSTED, refined on a shift nearer
+                # another mode, wanders where round-off takes it: refine it
+                # again on a factorization at its own Ritz value
                 op.reshift(seed)
                 mode = refine(
                     op,
@@ -758,11 +758,21 @@ def _same(a: Refined, b: Refined, window: float) -> bool:
     return overlap > _OVERLAP
 
 
-def _drifted(
-    mode: Refined, seed: complex, accepted: list[Refined], window: float
+def _lost(
+    mode: Refined,
+    seed: complex,
+    sigma: float,
+    accepted: list[Refined],
+    window: float,
 ) -> bool:
-    """Whether ``mode`` converged to an accepted mode its ``seed`` is not."""
-    return mode.converged and any(
+    """Whether ``seed``'s refinement gave nothing to accept.
+
+    It did not converge, converged to a static or mirror root, or converged
+    to an accepted mode the seed is not near.
+    """
+    if not mode.converged or mode.k.real <= _STATIC * sigma:
+        return True
+    return any(
         _same(mode, other, window) and not _close(seed, other.k, window)
         for other in accepted
     )
