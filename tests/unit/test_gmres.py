@@ -1,5 +1,6 @@
 """gfem's GMRES: NGSolve's GMRES iteration, its vector work on gfem's threads."""
 
+import dataclasses
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import ClassVar
@@ -135,6 +136,44 @@ def test_gmres_runs_on_a_pool_of_the_task_manager_thread_count(
     for made in _Recording.made:
         assert made["max_workers"] == threads
         assert made["initializer"] is gmres._serial_blas
+
+
+def test_gmres_pool_on_openblas_has_at_most_its_max_threads(monkeypatch):
+    # PyPI's OpenBLAS serves 64 concurrent callers; more corrupt its heap
+    lib = gmres.scipy_openblas()
+    if lib is None:
+        pytest.skip("SciPy's OpenBLAS not found")
+    small = dataclasses.replace(lib, max_threads=2)
+    monkeypatch.setattr(gmres, "scipy_openblas", lambda: small)
+    monkeypatch.setattr(gmres, "ThreadPoolExecutor", _Recording)
+    monkeypatch.setattr(_Recording, "made", [])
+    diagonal = np.resize([1.0, 2.0, 5.0], 3 * gmres.COLUMNS)
+    A, eye = _diagonal(diagonal)
+    b = A.CreateColVector()
+    b.FV().NumPy()[:] = 1.0
+    with task_manager(3):
+        x = Gmres(A, eye, tol=1e-10, maxiter=10).Solve(b)
+    assert _relative(x.FV().NumPy(), 1.0 / diagonal) < 1e-12
+    assert [made["max_workers"] for made in _Recording.made] == [2]
+
+
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        ("OpenBLAS 0.3.31.dev DYNAMIC_ARCH NO_AFFINITY SkylakeX MAX_THREADS=64", 64),
+        ("OpenBLAS 0.3.30 USE64BITINT DYNAMIC_ARCH Haswell MAX_THREADS=128", 128),
+        ("OpenBLAS 0.3.20 DYNAMIC_ARCH Haswell", gmres.OPENBLAS_MAX_THREADS),
+    ],
+)
+def test_openblas_max_threads_is_read_from_its_build_string(config, expected):
+    assert gmres._max_threads(config) == expected
+
+
+def test_scipy_openblas_reads_its_max_threads():
+    lib = gmres.scipy_openblas()
+    if lib is None:
+        pytest.skip("SciPy's OpenBLAS not found")
+    assert lib.max_threads >= 1
 
 
 def _kernels():

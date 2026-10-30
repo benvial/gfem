@@ -17,6 +17,11 @@ cores. So while any gfem GMRES solve runs, SciPy's OpenBLAS is held at one
 thread (`_OneBlasThread`): the first solve to enter saves its count and sets
 1, the last to leave restores it. No BLAS thread pool is woken.
 
+OpenBLAS also has a fixed number of call buffers, two per thread of its
+build's ``MAX_THREADS`` (64 in the PyPI wheels); more concurrent callers
+overflow into an auxiliary table that corrupts the heap. So on OpenBLAS the
+pool has at most ``MAX_THREADS`` threads (`_ScipyOpenBlas.max_threads`).
+
 A lucky breakdown (the new direction in the Krylov space) follows NGSolve
 upstream 3c33638dff: a relative test, the rotation applied and the stopping
 test called before the loop leaves, so the iterate is right.
@@ -30,6 +35,7 @@ import dataclasses
 import functools
 import importlib.metadata
 import itertools
+import re
 import threading
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
@@ -50,6 +56,9 @@ BREAKDOWN = 1e-12
 #: Fewest vector entries per pool thread: shorter vectors (under twice this)
 #: run inline, without the pool's hand-offs.
 COLUMNS = 1 << 16
+#: OpenBLAS's ``MAX_THREADS`` when its build string does not give it: the
+#: PyPI wheels' (``NUM_THREADS=64`` in MacPython/openblas-libs).
+OPENBLAS_MAX_THREADS = 64
 
 
 @dataclasses.dataclass(frozen=True)
@@ -60,6 +69,14 @@ class _ScipyOpenBlas:
     set_threads: Callable[[int], None]
     zgemv: Any
     dgemv: Any
+    #: Concurrent callers its call buffers serve: the build's ``MAX_THREADS``.
+    max_threads: int = OPENBLAS_MAX_THREADS
+
+
+def _max_threads(config: str) -> int:
+    """``MAX_THREADS`` from an OpenBLAS build string, else `OPENBLAS_MAX_THREADS`."""
+    found = re.search(r"MAX_THREADS=(\d+)", config)
+    return int(found.group(1)) if found else OPENBLAS_MAX_THREADS
 
 
 def _symbol(lib: ctypes.CDLL, name: str) -> Any:
@@ -79,6 +96,7 @@ def scipy_openblas() -> _ScipyOpenBlas | None:
     is the library SciPy already mapped. Needs the thread-count getter and
     setter and the ``scipy_``-prefixed CBLAS ``zgemv``/``dgemv`` of
     scipy-openblas32; anything else (SciPy on Accelerate) is None.
+    ``max_threads`` is read from ``openblas_get_config``.
     """
     from scipy.linalg import blas  # noqa: F401  (maps the library)
 
@@ -101,7 +119,14 @@ def scipy_openblas() -> _ScipyOpenBlas | None:
         set_threads.argtypes, set_threads.restype = [I], None
         zgemv.argtypes, zgemv.restype = [I, I, I, I, P, P, I, P, I, P, P, I], None
         dgemv.argtypes, dgemv.restype = [I, I, I, I, D, P, I, P, I, D, P, I], None
-        return _ScipyOpenBlas(get_threads, set_threads, zgemv, dgemv)
+        config = ""
+        with contextlib.suppress(AttributeError):
+            get_config = _symbol(lib, "openblas_get_config")
+            get_config.argtypes, get_config.restype = [], ctypes.c_char_p
+            config = (get_config() or b"").decode(errors="replace")
+        return _ScipyOpenBlas(
+            get_threads, set_threads, zgemv, dgemv, _max_threads(config)
+        )
     return None
 
 
@@ -345,8 +370,9 @@ class Gmres(GMRESSolver):
     """NGSolve's GMRES with its Arnoldi vector work on gfem's thread pool.
 
     The pool is a ``ThreadPoolExecutor`` of as many threads as NGSolve's
-    TaskManager (``ngs.GetNumThreads()``), made for each solve; it is not the
-    TaskManager's own threads, which run the operator and the preconditioner.
+    TaskManager (``ngs.GetNumThreads()``), at most OpenBLAS's ``MAX_THREADS``
+    on OpenBLAS, made for each solve; it is not the TaskManager's own
+    threads, which run the operator and the preconditioner.
 
     ``Solve``, ``residuals``, ``iterations``, ``maxiter`` and ``tol``/``atol``
     (read on every solve) are NGSolve's ``GMRESSolver``'s.
@@ -369,6 +395,8 @@ class Gmres(GMRESSolver):
         lib = scipy_openblas()
         kernel = _Einsum() if lib is None else _OpenBlas(lib)
         threads = ngs.GetNumThreads()
+        if lib is not None:
+            threads = min(threads, lib.max_threads)
         n = len(rhs)
         with _ONE_BLAS_THREAD.held(lib):
             if threads < 2 or n < 2 * COLUMNS:
