@@ -349,7 +349,10 @@ class EigenmodeRule:
         are dropped.
         A second-order absorbing wall's cluster has ``Re k`` near ``2
         sigma``, so it is not dropped; the modes nearer the target come
-        first. With ``guard``, the remaining seeds are refined (without
+        first. A seed far from the current shift whose refinement converges
+        to an accepted mode it is not near is refined again on a
+        factorization at its own Ritz value. With ``guard``, the remaining
+        seeds are refined (without
         refactorizing) until one more distinct mode converges: the guard
         mode. It is best-effort: none is found when no remaining seed
         converges to a mode.
@@ -367,26 +370,40 @@ class EigenmodeRule:
         accepted: list[Refined] = []
         failed: list[Refined] = []
         extra = None
+        window = max(_DUPLICATE * tolerance, self.options.cluster_rtol)
         for j in seeds:
             full = len(accepted) == n_modes
             if full and not guard:
                 break
+            seed = complex(k[j])
+            far = _contraction(seed, op.shift, k) > _CONTRACTION
             mode = refine(
                 op,
-                complex(k[j]),
+                seed,
                 vectors[:, j],
                 tolerance=tolerance,
                 max_iterations=self.options.max_refine_iterations,
                 reshift=not full,
-                reshift_first=_contraction(complex(k[j]), op.shift, k) > _CONTRACTION,
+                reshift_first=far,
             )
+            if far and not full and _drifted(mode, seed, accepted, window):
+                # a seed rougher than TRUSTED was refined on a shift nearer
+                # an accepted mode and converged to it: refine it again on a
+                # factorization at its own Ritz value
+                op.reshift(seed)
+                mode = refine(
+                    op,
+                    seed,
+                    vectors[:, j],
+                    tolerance=tolerance,
+                    max_iterations=self.options.max_refine_iterations,
+                )
             if mode.k.real <= _STATIC * sigma:
                 continue
             if not mode.converged:
                 if not full:
                     failed.append(mode)
                 continue
-            window = max(_DUPLICATE * tolerance, self.options.cluster_rtol)
             if any(_same(mode, other, window) for other in accepted):
                 continue
             if full:
@@ -739,6 +756,16 @@ def _same(a: Refined, b: Refined, window: float) -> bool:
         return False
     overlap = abs(np.vdot(a.x, b.x)) / (np.linalg.norm(a.x) * np.linalg.norm(b.x))
     return overlap > _OVERLAP
+
+
+def _drifted(
+    mode: Refined, seed: complex, accepted: list[Refined], window: float
+) -> bool:
+    """Whether ``mode`` converged to an accepted mode its ``seed`` is not."""
+    return mode.converged and any(
+        _same(mode, other, window) and not _close(seed, other.k, window)
+        for other in accepted
+    )
 
 
 def _is_real(op: EigenOperator) -> bool:
