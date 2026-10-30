@@ -996,9 +996,12 @@ class DrivenRule:
                         width=width,
                         petsc_options=self.options.petsc_options,
                     )
-                    adjoint += handle.solve(
-                        load, tolerance=adjoint_tolerance(self.options)
-                    )
+                    try:
+                        adjoint += handle.solve(
+                            load, tolerance=adjoint_tolerance(self.options)
+                        )
+                    except LinearSolverConvergenceError as err:
+                        raise _adjoint_error(f, err) from err
                 adjoint[:, undefined] = np.nan
                 pairs.append(
                     FieldPair(
@@ -1372,6 +1375,19 @@ def _sample_missed(
         f"At the adaptive sweep's sample {f:g} Hz, {err} The reduced model needs "
         "every sample, so no frequency has a result: use linear_solver='direct', "
         "or a uniform sweep to find the frequencies that converge.",
+        frequency=f,
+    )
+
+
+def _adjoint_error(
+    f: float, err: LinearSolverConvergenceError
+) -> LinearSolverConvergenceError:
+    """A backward pass's error where the adjoint solve at ``f`` Hz did not converge.
+
+    No partial result: a gradient needs every frequency's adjoint.
+    """
+    return LinearSolverConvergenceError(
+        f"At {f:g} Hz, the adjoint solve of the gradient's backward pass: {err}",
         frequency=f,
     )
 
