@@ -27,6 +27,7 @@ from gfem._linalg.base import NgsHandle, host_bytes, same_free_dofs
 from gfem._linalg.direct import INVERSE
 from gfem._linalg.gmres import Gmres
 from gfem._linalg.pardiso import pardiso_inverse
+from gfem.errors import LinearSolverConvergenceError
 
 #: Krylov iterations a BDDC setup is worth, summed over the right-hand sides
 #: of a solve: on the driven references (order 2) one setup took as long as
@@ -261,7 +262,7 @@ class BddcHandle(NgsHandle):
             )
         else:
             what = f" in {self.maxiter} iterations (reached {reached})"
-        raise RuntimeError(
+        raise LinearSolverConvergenceError(
             f"BDDC + {name} did not converge to the relative tolerance "
             f"{self.tolerance:g}{what}. Use linear_solver='direct', or a looser "
             "tolerance."

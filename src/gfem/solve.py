@@ -71,6 +71,9 @@ def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -
             the remedy.
         NonDifferentiableError: Under `jax.grad`, an input or output gfem
             does not differentiate is perturbed or used.
+        LinearSolverConvergenceError: An iterative linear solve
+            (``linear_solver="bddc_gmres"``, or ``"petsc"`` with a Krylov
+            ``ksp_type``) did not converge; the message gives the remedy.
     """
     if not isinstance(model, Model):
         raise TypeError(f"solve needs a gfem.Model, got {type(model).__name__}.")

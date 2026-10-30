@@ -389,9 +389,15 @@ def test_a_krylov_initial_guess_saves_iterations(built):
 def test_a_krylov_solve_that_does_not_converge_raises(built):
     handle = _krylov(built, tolerance=1e-14, maxiter=3)
     with pytest.raises(
-        RuntimeError, match=r"PETSc gmres \+ jacobi did not converge"
+        gfem.LinearSolverConvergenceError,
+        match=r"PETSc gmres \+ jacobi did not converge",
     ) as err:
         handle.solve(np.ones(handle.ndof, complex))
+    assert isinstance(err.value, RuntimeError)
+    # outside a sweep the error carries no frequency and no partial result
+    assert err.value.frequency is None
+    assert err.value.unsolved is None
+    assert err.value.result is None
     assert "DIVERGED_MAX_IT" in str(err.value)
     assert "1e-14 in 3 iterations" in str(err.value)
 
@@ -401,7 +407,9 @@ def test_a_krylov_solve_that_does_not_converge_reports_four_digits(built):
     # tolerance itself, hiding how far off it is
     handle = _krylov(built, tolerance=1e-14, maxiter=10)
     b = np.ones(handle.ndof, complex)
-    with pytest.raises(RuntimeError, match="DIVERGED_MAX_IT") as err:
+    with pytest.raises(
+        gfem.LinearSolverConvergenceError, match="DIVERGED_MAX_IT"
+    ) as err:
         handle.solve(b)
     stalled = handle._ksp.getResidualNorm() / np.linalg.norm(b[handle._free])
     reached = re.search(r"reached (\S+)\)", str(err.value))
@@ -414,7 +422,9 @@ def test_cg_on_a_complex_symmetric_operator_points_to_gmres(built):
         built, shift=-40 + 1j, options=(("ksp_type", "cg"), ("pc_type", "none"))
     )
     b = np.random.default_rng(16).standard_normal(handle.ndof) + 0j
-    with pytest.raises(RuntimeError, match="DIVERGED_INDEFINITE_MAT") as err:
+    with pytest.raises(
+        gfem.LinearSolverConvergenceError, match="DIVERGED_INDEFINITE_MAT"
+    ) as err:
         handle.solve(b)
     assert "use ksp_type gmres" in str(err.value)
 
@@ -575,6 +585,8 @@ def test_a_singular_operator_raises_a_factorization_error(built):
         )
     assert "MUMPS INFOG(1)=" in str(err.value)
     assert "mat_mumps_icntl_14" in str(err.value)
+    # a factorization failure is not a Krylov convergence question
+    assert not isinstance(err.value, gfem.LinearSolverConvergenceError)
 
 
 def _aijs(monkeypatch, error=None) -> list:

@@ -31,6 +31,7 @@ from gfem._linalg.base import (
     host_bytes,
     same_pattern,
 )
+from gfem.errors import LinearSolverConvergenceError
 
 if TYPE_CHECKING:
     from gfem.options import PetscOptions
@@ -434,7 +435,7 @@ class PetscHandle(NgsHandle):
             ksp.setTolerances(*prepared)
         return X
 
-    def _not_converged(self, norm: float) -> RuntimeError:
+    def _not_converged(self, norm: float) -> LinearSolverConvergenceError:
         PETSc = _petsc.require_petsc()
         ksp = self._ksp
         reason = ksp.getConvergedReason()
@@ -449,7 +450,7 @@ class PetscHandle(NgsHandle):
         )
         if reason == PETSc.KSP.ConvergedReason.DIVERGED_INDEFINITE_MAT:
             message += f" {CG_HINT}"
-        return RuntimeError(message)
+        return LinearSolverConvergenceError(message)
 
     @property
     def nbytes(self) -> int:

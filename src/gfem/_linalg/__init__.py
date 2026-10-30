@@ -42,10 +42,10 @@ Backends:
   unpreconditioned ``|b - Ax| / |b|`` can be orders larger at low frequency
   and does not measure the error. A solve that stops early above the
   tolerance (a Krylov breakdown) restarts once from its iterate, and raises
-  RuntimeError if it stops short again. GMRES takes an initial guess
-  (``solve(B, x0=...)``, e.g. the previous frequency's solution). BDDC reads
-  the fixed DOFs from the space, so the operator's free DOFs must be the
-  space's ``FreeDofs()``.
+  `gfem.LinearSolverConvergenceError` if it stops short again. GMRES takes
+  an initial guess (``solve(B, x0=...)``, e.g. the previous frequency's
+  solution). BDDC reads the fixed DOFs from the space, so the operator's
+  free DOFs must be the space's ``FreeDofs()``.
 - ``"cudss"``: the ``direct`` solver on a GPU (``device="cuda"`` or
   ``"cuda:N"``), NVIDIA cuDSS. The host holds all data; the factors stay on
   the GPU. Symmetric and Hermitian operators only. Needs the cuda extra; an
@@ -229,7 +229,7 @@ def prepare(
             (``|P(b - Ax)| / |P b|`` for BDDC + GMRES, the P-norm of the
             residual over its first value for CG).
         maxiter: Most iterations of iterative backends; a solve that does
-            not converge in them raises RuntimeError.
+            not converge in them raises `gfem.LinearSolverConvergenceError`.
         width: Right-hand-side columns the GPU solver solves at once (the
             usual block width: terminals, ports); wider blocks go in chunks,
             narrower ones are zero-padded. CPU backends ignore it.

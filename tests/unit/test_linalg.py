@@ -455,8 +455,15 @@ def test_bddc_raises_when_it_does_not_converge(built, monkeypatch):
         maxiter=2,
     )
     rng = np.random.default_rng(6)
-    with pytest.raises(RuntimeError, match=r"BDDC \+ CG did not converge"):
+    with pytest.raises(
+        gfem.LinearSolverConvergenceError, match=r"BDDC \+ CG did not converge"
+    ) as raised:
         cg.solve(rng.standard_normal(cg.ndof))
+    assert isinstance(raised.value, RuntimeError)
+    # outside a sweep the error carries no frequency and no partial result
+    assert raised.value.frequency is None
+    assert raised.value.unsolved is None
+    assert raised.value.result is None
 
     # an estimate stalled just above the tolerance reads as above it
     def stall(self, **_):
@@ -472,7 +479,9 @@ def test_bddc_raises_when_it_does_not_converge(built, monkeypatch):
         maxiter=2,
     )
     monkeypatch.setattr(Gmres, "_SolveImpl", stall)
-    with pytest.raises(RuntimeError, match=r"BDDC \+ GMRES did not converge") as raised:
+    with pytest.raises(
+        gfem.LinearSolverConvergenceError, match=r"BDDC \+ GMRES did not converge"
+    ) as raised:
         gmres.solve(rng.standard_normal(gmres.ndof) + 0j)
     reached = re.search(r"reached (\S+)\)", str(raised.value))
     assert reached is not None
@@ -531,7 +540,7 @@ def test_bddc_gmres_does_not_accept_a_breakdown_above_the_tolerance(
     assert handle.iterations[-1] == sum(iterations)
     # a restart that stops short too raises
     _break_down(monkeypatch, krylov, times=2)
-    with pytest.raises(RuntimeError, match="converge") as raised:
+    with pytest.raises(gfem.LinearSolverConvergenceError, match="converge") as raised:
         handle.solve(B, x0=x0)
     assert "stopped short of the tolerance after 4 iterations" in str(raised.value)
 
