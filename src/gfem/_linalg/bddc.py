@@ -4,12 +4,13 @@ BDDC splits each element's DOFs into a wirebasket (vertices and low-order
 edges) and the rest, and solves a global coarse problem on the wirebasket.
 That coarse problem is factorized by an explicitly named inverse, never
 NGSolve's default: gfem's flagged MKL PARDISO with the ``mkl`` extra (see
-`gfem._linalg.pardiso`), ``sparsecholesky`` without it, or when a setup on
-16 threads or more is expected to serve 16 right-hand-side columns or more
-(`_coarse_inverse`). The Krylov method follows the operator: NGSolve's
-conjugate gradients for a Hermitian (real symmetric positive definite)
-operator, otherwise gfem's GMRES (`gfem._linalg.gmres`), which
-orthogonalizes its Krylov basis by CGS2 on gfem's threads.
+`gfem._linalg.pardiso`), ``sparsecholesky`` without it, or when a setup is
+expected to serve enough right-hand-side columns for its threads: 16 or more
+on 16 threads or more, 6 or more on 56 threads or more (`_coarse_inverse`).
+The Krylov method follows the operator: NGSolve's conjugate gradients for a
+Hermitian (real symmetric positive definite) operator, otherwise gfem's
+GMRES (`gfem._linalg.gmres`), which orthogonalizes its Krylov basis by CGS2
+on gfem's threads.
 
 Across a sweep the handle keeps its preconditioner (`BddcHandle.refactorize`)
 once a solve on it measured a reference iteration count, caps every warm
@@ -36,14 +37,25 @@ SETUP_ITERATIONS = 30
 #: Threads from which a setup serving many columns factors its coarse problem
 #: with sparse Cholesky: at 16 threads PARDISO's one-column solve broke even
 #: with sparse Cholesky's after 154-365 applies of one factorization on the
-#: Modal CPUs measured (43-110 at 32 threads); up to 8 threads PARDISO's solve
-#: was no slower, and 9-15 threads are unmeasured.
+#: Modal CPUs, 306-429 on MareNostrum 5's Xeon 8480+; up to 8 threads
+#: PARDISO's solve was no slower, and 9-15 threads are unmeasured.
 SPARSE_COARSE_THREADS = 16
 #: Right-hand-side columns a setup is expected to serve (each about 60 applies
 #: cold, 33 warm) from which it factors its coarse problem with sparse
-#: Cholesky: 16 columns are about 555 applies, 1.5x the largest break-even
-#: at 16 threads; every measured single solve (1-4 ports) stays below it.
+#: Cholesky: 16 columns are about 555 applies, 1.3x the largest break-even
+#: at 16 threads (MareNostrum 5); every measured single solve (1-4 ports)
+#: stays below it.
 SPARSE_COARSE_COLUMNS = 16
+#: Threads from which a setup factors its coarse problem with sparse Cholesky
+#: at fewer columns (`SPARSE_COARSE_WIDE_COLUMNS`): on MareNostrum 5 (Xeon
+#: 8480+) the break-even fell to 95-133 applies at 56 and 112 threads, against
+#: 156-216 at 32 and 306-429 at 16. 33-55 threads are unmeasured.
+SPARSE_COARSE_WIDE_THREADS = 56
+#: Columns from which a setup on `SPARSE_COARSE_WIDE_THREADS` threads or more
+#: factors with sparse Cholesky: 6 columns are at least about 225 applies,
+#: 1.7x the largest break-even there. A 2-port single solve (2 columns, about
+#: 128 applies, at the break-even) stays on PARDISO.
+SPARSE_COARSE_WIDE_COLUMNS = 6
 
 
 def _coarse_inverse(
@@ -53,16 +65,20 @@ def _coarse_inverse(
 
     ``sparsecholesky`` when the setup runs on `SPARSE_COARSE_THREADS` threads
     or more and is expected to serve `SPARSE_COARSE_COLUMNS` right-hand-side
-    columns or more: there its many applies outweigh PARDISO's faster
-    factorization, and the solve with a sparse Cholesky coarse factorization
-    scales with the threads where PARDISO's one-column solve does not.
+    columns or more, or on `SPARSE_COARSE_WIDE_THREADS` or more and
+    `SPARSE_COARSE_WIDE_COLUMNS` or more: there its many applies outweigh
+    PARDISO's faster factorization, and the solve with a sparse Cholesky
+    coarse factorization scales with the threads where PARDISO's one-column
+    solve does not.
     Otherwise gfem's PARDISO (`pardiso_inverse`) when MKL is installed,
     symmetric when the operator is ``A^T = A`` (complex symmetric, or
     ``"hermitian"`` on a real space; a complex Hermitian one is not), sparse
     Cholesky without it. The rule counts columns, never times, so a run's
     choice repeats exactly.
     """
-    if threads >= SPARSE_COARSE_THREADS and columns >= SPARSE_COARSE_COLUMNS:
+    if (threads >= SPARSE_COARSE_THREADS and columns >= SPARSE_COARSE_COLUMNS) or (
+        threads >= SPARSE_COARSE_WIDE_THREADS and columns >= SPARSE_COARSE_WIDE_COLUMNS
+    ):
         return INVERSE
     return pardiso_inverse(symmetry, is_complex=is_complex) or INVERSE
 

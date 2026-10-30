@@ -22,12 +22,12 @@ threads on large problems. Results change only to the solver's precision.
   its coarse problem with sparse Cholesky.** MKL PARDISO's solve does not
   speed up past 16 threads, while sparse Cholesky's does, so once one setup
   serves enough solves, sparse Cholesky is faster overall and uses less
-  memory. This applies when the solve runs on 16 or more threads and one
-  BDDC setup expects 16 or more right-hand sides: a uniform driven sweep
-  whose excited ports times frequencies reach 16, and every shift of an
-  eigenmode solve with `linear_solver="bddc_gmres"`. The threads are
-  `SolverOptions.threads` (or the machine's default), except that a
-  {term}`frequency worker` counts its own share of them and its own
+  memory. This applies when one BDDC setup expects 16 or more right-hand
+  sides on 16 or more threads, or 6 or more on 56 or more threads: a uniform
+  driven sweep whose excited ports times frequencies reach that count, and
+  every shift of an eigenmode solve with `linear_solver="bddc_gmres"`. The
+  threads are `SolverOptions.threads` (or the machine's default), except
+  that a {term}`frequency worker` counts its own share of them and its own
   frequencies. A single-frequency solve or an {term}`adaptive sweep` counts
   its excited ports only, an electrostatic solve its terminals. Below 16
   threads, or without the `mkl` extra, nothing changes. The choice depends
