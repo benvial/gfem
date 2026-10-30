@@ -99,7 +99,7 @@ sheet plasmon at the mesh scale). Grey and exponentially interpolated fills
 of an inductive sheet put some faces there. On the test line (`h` = 0.5 mm,
 tolerance 1e-6) such designs took 60-175 GMRES iterations where an empty
 sheet takes 23; with the mesh halved, some solves stopped at the
-400-iteration limit, which raises `RuntimeError` naming `direct`, and so did
+400-iteration limit, which raises `gfem.LinearSolverConvergenceError` naming `direct`, and so did
 a uniform fill tuned onto the resonance, on the coarser mesh already. The iterations grow
 with refinement because a finer mesh resonates over a wider range of fills. Solves that converge, and their gradients, still match the
 direct solver to about ten times the tolerance. Resistive films and

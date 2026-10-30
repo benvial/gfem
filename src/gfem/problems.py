@@ -275,6 +275,14 @@ class Driven:
     capacitance at low frequency, solve `gfem.Electrostatic`. Examples: the
     floor is 48 MHz with 1 µm elements and 5 GHz with 10 nm elements.
 
+    An iterative linear solve (``linear_solver="bddc_gmres"``, or
+    ``"petsc"`` with a Krylov ``ksp_type``) that does not converge at some
+    frequency raises `gfem.LinearSolverConvergenceError`. A uniform sweep
+    stops there and keeps what it solved: the error's ``.result`` holds the
+    frequencies solved before it, its ``.unsolved`` the rest, ready to solve
+    again, e.g. with ``linear_solver="direct"``. An adaptive sweep raises
+    with neither, since its reduced model needs every sample.
+
     A driven solve has no eigen solve: it ignores
     ``SolverOptions.eigen_solver``.
 
@@ -320,7 +328,8 @@ class Driven:
         NonDifferentiableError: ``frequency``, ``samples`` or
             ``keep_fields`` is traced by JAX.
         LinearSolverConvergenceError: Raised by `gfem.solve`: an iterative
-            linear solve did not converge at some frequency.
+            linear solve did not converge at some frequency; a uniform
+            sweep's error holds the frequencies it solved.
 
     Example:
         ``gfem.Driven(frequency=np.linspace(1e9, 100e9, 100))`` solves all
