@@ -61,6 +61,49 @@ jobs:
     - name: Verification tier
       run: uv run pytest -m verification
 
+  mkl:
+    # The mkl extra: MKL PARDISO (the direct backend, BDDC's coarse problem) and
+    # MKL's BLAS for GMRES. The mkl wheel exists for Linux x86_64 and Windows
+    # AMD64 only (PyPI), so no macOS entry: there the extra installs nothing.
+    name: ${{ matrix.tier }} (${{ matrix.os }}, py3.12, mkl)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - {os: ubuntu-latest, tier: unit}
+        - {os: windows-latest, tier: unit}
+        - {os: ubuntu-latest, tier: verification}
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@v6
+    - uses: astral-sh/setup-uv@v6
+      with:
+        version: ${{ env.UV_VERSION }}
+        python-version: "3.12"
+        enable-cache: true
+        # its own cache: the unit job's key has no mkl wheels (setup-uv README)
+        cache-suffix: mkl
+    - name: Install
+      run: uv sync --locked --extra viz --extra mkl
+    - name: MKL is live
+      # The needs_mkl tests skip without the mkl distribution and the GMRES MKL
+      # tests without MKL's BLAS: fail here instead of passing on skips.
+      # (`import mkl` is mkl-service, not this wheel.)
+      run: >-
+        uv run python -c "import importlib.metadata as md;
+        from gfem._linalg import gmres, pardiso;
+        assert pardiso.pardiso_available(), 'MKL PARDISO not found';
+        assert gmres.mkl_blas() is not None, 'MKL BLAS not found';
+        print('mkl', md.version('mkl'), ': PARDISO and BLAS live')"
+    - name: MKL tests
+      if: matrix.tier == 'unit'
+      run: uv run pytest -v -rs tests/unit/test_linalg_mkl.py tests/unit/test_gmres.py
+    - name: ${{ matrix.tier }} tier
+      run: uv run pytest -m ${{ matrix.tier }} -rs
+
   tutorials:
     name: tutorial notebooks (ubuntu, py3.12)
     runs-on: ubuntu-latest
