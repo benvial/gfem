@@ -18,6 +18,8 @@ with the case's order.
   walls. gfem's textbook second-order term agrees with Palace's second
   order (the opposite sign) to 1e-4 in ``Re f`` and 1 % in Q, and with
   gfem's own first order to 1 % in Q.
+- Golden baseline: gfem's own (``Re f``, Q) of the three solves, frozen at
+  `GOLDEN_RTOL`, so a seed change that moves a mode fails.
 - Wall time within 1.5x Palace's.
 """
 
@@ -38,6 +40,15 @@ THREADS = 4
 PARITY_F, PARITY_Q = 1e-5, 1e-3
 #: The physics tolerances of the large box (relative).
 PHYSICS_F, PHYSICS_Q = 1e-4, 1e-2
+#: Relative tolerances (Re f, Q) of the golden check, as in test_eigenmode.py.
+GOLDEN_RTOL = 1e-7, 5e-5
+#: gfem's first mode (Re f in Hz, Q) per (case, absorbing order), the order
+#: None being the config's.
+GOLDEN = {
+    ("ihp_hw_r8_abc1", None): (104.2234118392e9, 22.6060634475),
+    ("ihp_hw_box150", None): (105.912802227369e9, 46.0786769620),
+    ("ihp_hw_box150", 1): (105.907317037842e9, 45.8770382120),
+}
 
 
 @pytest.fixture(scope="module")
@@ -114,15 +125,29 @@ def _solve(case: Path, absorbing_order: int | None = None):
     return result, wall, palace_run
 
 
+@pytest.fixture(scope="module")
+def solved(reference):
+    """Solve a case once per module: the tests below share the solves."""
+    cache = {}
+
+    def solve(name: str, absorbing_order: int | None = None):
+        key = name, absorbing_order
+        if key not in cache:
+            cache[key] = _solve(reference / name, absorbing_order)
+        return cache[key]
+
+    return solve
+
+
 def _gap(result, palace_row) -> tuple[float, float]:
     f = float(result.frequency[0]) / 1e9
     q = float(result.q[0])
     return abs(f / palace_row[1] - 1), abs(q / palace_row[3] - 1)
 
 
-def test_nonlinear_parity_with_palace_on_the_same_mesh(reference):
+def test_nonlinear_parity_with_palace_on_the_same_mesh(reference, solved):
     case = reference / "ihp_hw_r8_abc1"
-    result, wall, palace_run = _solve(case)
+    result, wall, palace_run = solved(case.name)
     gap_f, gap_q = _gap(result, _palace(case)[0])
     print(f"ihp_hw_r8_abc1 vs Palace: Re f {gap_f:.2e}, Q {gap_q:.2e}")  # noqa: T201
     assert gap_f <= PARITY_F
@@ -131,11 +156,11 @@ def test_nonlinear_parity_with_palace_on_the_same_mesh(reference):
     assert math.isfinite(wall)
 
 
-def test_second_order_absorbing_physics_on_the_large_box(reference):
+def test_second_order_absorbing_physics_on_the_large_box(reference, solved):
     case = reference / "ihp_hw_box150"
-    second, wall, palace_run = _solve(case)
+    second, wall, palace_run = solved(case.name)
     gap_f, gap_q = _gap(second, _palace(case)[0])
-    first, _, _ = _solve(case, absorbing_order=1)
+    first, _, _ = solved(case.name, absorbing_order=1)
     q2, q1 = float(second.q[0]), float(first.q[0])
     print(  # noqa: T201
         f"ihp_hw_box150 order 2 vs Palace order 2: Re f {gap_f:.2e}, Q "
@@ -145,3 +170,16 @@ def test_second_order_absorbing_physics_on_the_large_box(reference):
     assert gap_q <= PHYSICS_Q
     assert abs(q2 / q1 - 1) <= PHYSICS_Q
     assert wall <= 1.5 * palace_run["wall_s"]
+
+
+@pytest.mark.parametrize(
+    ("name", "absorbing_order"),
+    list(GOLDEN),
+    ids=["ihp_hw_r8_abc1", "ihp_hw_box150-order2", "ihp_hw_box150-order1"],
+)
+def test_nonlinear_golden_baseline(solved, name, absorbing_order):
+    result, _, _ = solved(name, absorbing_order)
+    golden_f, golden_q = GOLDEN[name, absorbing_order]
+    rtol_f, rtol_q = GOLDEN_RTOL
+    np.testing.assert_allclose(float(result.frequency[0]), golden_f, rtol=rtol_f)
+    np.testing.assert_allclose(float(result.q[0]), golden_q, rtol=rtol_q)
