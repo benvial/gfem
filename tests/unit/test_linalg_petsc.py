@@ -513,6 +513,24 @@ def test_a_reused_preconditioner_that_misses_again_once_set_up_raises(built):
     assert setups() - before == 1  # set up again once, then raised
 
 
+def test_a_miss_after_a_set_up_anew_reports_the_columns_iterations(built):
+    # an unreachable tolerance: GMRES misses on the stale factors and again
+    # on the new ones, 3 iterations each
+    options = (*MUMPS_REUSE, ("ksp_max_it", 3))
+    handle = _krylov(built, tolerance=1e-300, options=options)
+    b = np.ones(handle.ndof, complex)
+    with pytest.raises(gfem.LinearSolverConvergenceError):
+        handle.solve(b)  # current factors: one solve, no set-up anew
+    handle.refactorize(_far(built))
+    with pytest.raises(
+        gfem.LinearSolverConvergenceError, match="DIVERGED_MAX_IT"
+    ) as err:
+        handle.solve(b)
+    spent = handle.iterations[-1]
+    assert spent == 6  # both solves of the column
+    assert f"in {spent} iterations" in str(err.value)
+
+
 @pytest.mark.parametrize(
     ("options", "reuse"),
     [
