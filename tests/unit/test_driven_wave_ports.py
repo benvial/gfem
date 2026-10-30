@@ -266,10 +266,12 @@ def test_a_sweep_that_does_not_converge_keeps_its_solved_port_modes(
         gfem.solve(line(plate_mesh), problem, options=options)
     mode = caught.value.result.port_modes["p1"]
     np.testing.assert_array_equal(mode.frequency, F[:1])
-    np.testing.assert_array_equal(mode.gamma, np.asarray(clean.gamma)[:1])
+    # the port mode sweeps of two solves agree to rounding, not bit for bit
+    np.testing.assert_allclose(mode.gamma, np.asarray(clean.gamma)[:1], rtol=1e-12)
     point = [W / 4, D / 2, 0.0]
-    np.testing.assert_array_equal(
-        mode.e_field.at(point), np.asarray(clean.e_field.at(point))[:1]
+    expected = np.asarray(clean.e_field.at(point))[:1]
+    np.testing.assert_allclose(
+        mode.e_field.at(point), expected, rtol=0, atol=1e-10 * np.abs(expected).max()
     )
 
 
