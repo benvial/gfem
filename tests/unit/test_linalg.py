@@ -368,6 +368,7 @@ def test_bddc_handle_without_reuse_sets_up_at_every_refactorization(built, monke
     ("threads", "columns", "sparse"),
     [
         (8, 1, False),
+        (8, 6, False),
         (8, 16, False),
         (8, 24, False),
         (15, 16, False),
@@ -376,11 +377,20 @@ def test_bddc_handle_without_reuse_sets_up_at_every_refactorization(built, monke
         (16, 15, False),
         (16, 16, True),
         (16, 24, True),
+        (32, 6, False),
         (32, 15, False),
         (32, 16, True),
+        (55, 6, False),
+        (55, 15, False),
+        (56, 2, False),
+        (56, 5, False),
+        (56, 6, True),
+        (56, 15, True),
+        (112, 5, False),
+        (112, 6, True),
     ],
 )
-def test_bddc_coarse_inverse_is_sparse_cholesky_only_for_many_columns_on_16_threads(
+def test_bddc_coarse_inverse_is_sparse_cholesky_only_for_enough_columns_for_its_threads(
     threads, columns, sparse
 ):
     # otherwise gfem's PARDISO, or sparse Cholesky without MKL
