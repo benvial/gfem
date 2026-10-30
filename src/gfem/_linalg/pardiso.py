@@ -37,7 +37,10 @@ import sys
 from typing import Any, ClassVar
 
 import ngsolve as ngs
-import pyngcore
+
+# ngsolve does not re-export SuspendTaskManager: NGSolve's own MKL PARDISO
+# wrapper (ngsolve.solvers.mkl_pardiso) imports it from pyngcore too
+from pyngcore import SuspendTaskManager
 
 from gfem._linalg import Symmetry
 from gfem._linalg.base import equals_its_transpose
@@ -116,7 +119,7 @@ def _register() -> None:
             if self._n[0] <= 0:  # ty: ignore[unresolved-attribute]
                 return
             if phase in _ANALYSIS_PHASES:
-                self._gfem_threads = max(1, pyngcore.GetNumThreads())
+                self._gfem_threads = max(1, ngs.GetNumThreads())
             threads = getattr(self, "_gfem_threads", None)
             with _block_time_zero():
                 if (
@@ -196,7 +199,7 @@ def _call_on_threads(solver: Any, phase: int, threads: int) -> bool:
     except (AttributeError, TypeError):
         return False
     previous = set_threads(threads)
-    suspend = pyngcore.SuspendTaskManager()
+    suspend = SuspendTaskManager()
     try:
         call(*arguments)
     finally:
