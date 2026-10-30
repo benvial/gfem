@@ -621,9 +621,7 @@ def test_a_two_frequency_refactorization_gathers_and_runs_at_block_time_0(
     assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
 
 
-@pytest.mark.skipif(
-    not (MKL and sys.platform == "linux"), reason="needs the mkl extra on Linux"
-)
+@needs_mkl
 def test_pardiso_calls_leave_the_real_block_time_as_it_was(built, monkeypatch):
     op, space = _laplace(built, complex_valued=True, shift=1 - 2j)
     prepare(op, symmetry="complex_symmetric", kind="direct")  # MKL loads libiomp5
