@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 import structured_meshes as sm
 from finite_differences import assert_gradient_matches, unit_directions
-from solver_misses import cannot_converge_at
+from solver_misses import adjoint_cannot_converge_at, cannot_converge_at
 
 import gfem
 from gfem._engine import driven, sensitivity, terms
@@ -156,6 +156,45 @@ def test_a_gradient_through_a_solve_that_does_not_converge_raises(line, monkeypa
     cannot_converge_at(monkeypatch, (21e9,))
     with pytest.raises(
         jax.errors.JaxRuntimeError, match=r"At 2\.1e\+10 Hz.*did not converge"
+    ):
+        jax.grad(objective)(values["eps_r"])
+
+
+#: Excites p1 only: the S21 cotangent takes an adjoint solve (no reciprocity)
+ADJOINT = gfem.Driven(frequency=(20e9, 21e9), excite="p1")
+
+
+def test_an_adjoint_solve_that_does_not_converge_names_its_frequency(line, monkeypatch):
+    options = gfem.SolverOptions(linear_solver="bddc_gmres")
+    rule = driven.DrivenRule(line, ADJOINT, options)
+    _, entry = rule.forward(line, keep=True)
+    ct = np.zeros((2, 2, 1), complex)
+    ct[:, 1, 0] = 1.0  # S21 at both frequencies
+    adjoint_cannot_converge_at(monkeypatch, (21e9,))
+    with pytest.raises(
+        gfem.LinearSolverConvergenceError, match=r"At 2\.1e\+10 Hz, the adjoint"
+    ) as err:
+        rule.backward(line, entry, {"s": ct})
+    assert err.value.frequency == 21e9
+    assert err.value.unsolved is None
+    assert err.value.result is None
+    assert "did not converge" in str(err.value)
+
+
+def test_a_gradient_whose_adjoint_solve_does_not_converge_raises(line, monkeypatch):
+    values, _ = _values(line)
+    options = gfem.SolverOptions(linear_solver="bddc_gmres")
+
+    def objective(p):
+        model = line.with_material(
+            "dielectric", gfem.MaterialField(**{**values, "eps_r": p})
+        )
+        s = gfem.solve(model, ADJOINT, options=options).s
+        return jnp.sum(jnp.abs(s["p2", "p1"]) ** 2)
+
+    adjoint_cannot_converge_at(monkeypatch, (21e9,))
+    with pytest.raises(
+        jax.errors.JaxRuntimeError, match=r"At 2\.1e\+10 Hz, the adjoint"
     ):
         jax.grad(objective)(values["eps_r"])
 
