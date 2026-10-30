@@ -153,6 +153,17 @@ Run record
   settings, environment and the hash of the script that produced them), which a
   docs page reads instead of solving.
 
+Partial result
+  The result of a uniform sweep restricted to the frequencies it solved before
+  the linear solver stopped converging, carried by the error that reports it
+  (`gfem.LinearSolverConvergenceError`).
+
+Unsolved frequency
+  A frequency of a uniform sweep that has no entry in the
+  {term}`partial result`: the linear solve did not converge there, or the sweep
+  (or its {term}`frequency worker`'s block) stopped at an earlier frequency that
+  did not converge.
+
 Reference impedance
   The impedance per {term}`port` that S-parameters are normalized to: the port
   resistance for a lumped port, the power-voltage impedance for a wave port with

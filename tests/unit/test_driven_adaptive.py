@@ -13,6 +13,7 @@ import jax
 import numpy as np
 import pytest
 import structured_meshes as sm
+from solver_misses import cannot_converge_at
 
 import gfem
 
@@ -168,6 +169,23 @@ def test_bddc_gmres_samples_match_direct(line, adaptive):
     problem = gfem.Driven(frequency=GRID, sweep="adaptive")
     result = gfem.solve(line, problem)
     np.testing.assert_allclose(result.s.values, adaptive.s.values, atol=1e-5)
+
+
+def test_an_adaptive_sweep_that_does_not_converge_has_no_partial_result(
+    line, monkeypatch
+):
+    # the first sample misses; the reduced model needs every sample
+    problem = gfem.Driven(frequency=GRID, sweep="adaptive", samples=[GRID[7], GRID[30]])
+    cannot_converge_at(monkeypatch, (GRID[7],))
+    options = gfem.SolverOptions(linear_solver="bddc_gmres")
+    with pytest.raises(
+        gfem.LinearSolverConvergenceError, match="did not converge"
+    ) as caught:
+        gfem.solve(line, problem, options=options)
+    assert caught.value.frequency == GRID[7]
+    assert f"{GRID[7]:g} Hz" in str(caught.value)
+    assert caught.value.result is None
+    assert caught.value.unsolved is None
 
 
 def test_a_greedy_sweep_cannot_be_traced(line):

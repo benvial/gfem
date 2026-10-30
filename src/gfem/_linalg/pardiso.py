@@ -54,7 +54,15 @@ from gfem._linalg.base import equals_its_transpose
 #: NGSolve's wrapper asks for up to 16 refinement steps with no
 #: backward-error stop: they stagnate without lowering the residual and make
 #: a solve cost about 4.5 substitutions instead of one. 0 is MKL's default.
-PARDISO_FLAGS = {"ordering": "parallel_metis", "symmetric": True, "refinement": 0}
+#: iparm(10) = 16: perturb a pivot only below 1e-16 ‖A‖, not NGSolve's
+#: 1e-13; a perturbed pivot triggers MKL's two refinement steps, which break
+#: A^T = A in the solution near the low-frequency floor (ADR 0029).
+PARDISO_FLAGS = {
+    "ordering": "parallel_metis",
+    "symmetric": True,
+    "refinement": 0,
+    "iparm9": 16,
+}
 #: The inverse name of gfem's PARDISO with `PARDISO_FLAGS` (``A^T = A``).
 SYMMETRIC = "gfem_pardiso"
 #: The inverse name of gfem's PARDISO for a general operator: `PARDISO_FLAGS`

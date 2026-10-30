@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import structured_meshes as sm
+from solver_misses import cannot_converge_at
 
 import gfem
 from gfem._engine import driven
@@ -252,6 +253,26 @@ def test_kept_fields_keep_the_port_mode_fields(plate_mesh):
     field = r.port_modes["p1"].e_field
     e = np.asarray(field.at([W / 4, D / 2, 0.0]))  # (n_freq, 3)
     np.testing.assert_allclose(np.abs(e[:, 1]), math.sqrt(2 * z_tem()) / D, rtol=1e-8)
+
+
+def test_a_sweep_that_does_not_converge_keeps_its_solved_port_modes(
+    plate_mesh, monkeypatch
+):
+    problem = gfem.Driven(F, excite="p1", keep_fields=F[0])
+    options = gfem.SolverOptions(order=3, linear_solver="bddc_gmres")
+    clean = gfem.solve(line(plate_mesh), problem, options=options).port_modes["p1"]
+    cannot_converge_at(monkeypatch, (F[1],))
+    with pytest.raises(gfem.LinearSolverConvergenceError) as caught:
+        gfem.solve(line(plate_mesh), problem, options=options)
+    mode = caught.value.result.port_modes["p1"]
+    np.testing.assert_array_equal(mode.frequency, F[:1])
+    # the port mode sweeps of two solves agree to rounding, not bit for bit
+    np.testing.assert_allclose(mode.gamma, np.asarray(clean.gamma)[:1], rtol=1e-12)
+    point = [W / 4, D / 2, 0.0]
+    expected = np.asarray(clean.e_field.at(point))[:1]
+    np.testing.assert_allclose(
+        mode.e_field.at(point), expected, rtol=0, atol=1e-10 * np.abs(expected).max()
+    )
 
 
 def test_wave_port_results_round_trip_through_a_bundle(plate_mesh, tmp_path):

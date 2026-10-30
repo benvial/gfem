@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import difflib
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from gfem.results import DrivenResult
 
 
 class RegionNotFoundError(LookupError):
@@ -183,9 +187,75 @@ class LowFrequencyWarning(UserWarning):
     exact factorization (``linear_solver="direct"``, or ``"petsc"`` with
     its default MUMPS factorization) the capacitive part of S, lose
     digits. MKL PARDISO (``"direct"`` with the ``mkl`` extra) becomes
-    unreliable below k0 * h_min = 3e-7. Inductance read from S and
-    reciprocity are unaffected. For capacitance at low frequency solve
+    unreliable below k0 * h_min = 3e-8. Above that, and down to at least
+    k0 * h_min = 1e-8 with the other exact factorizations, inductance read
+    from S and reciprocity are unaffected. For capacitance at low frequency solve
     `gfem.Electrostatic`; otherwise raise the lowest frequency or coarsen
     the smallest elements. The solve still runs. Filter it with Python's
     `warnings` module.
     """
+
+
+class LinearSolverConvergenceError(RuntimeError):
+    """A Krylov linear solve stopped above its tolerance.
+
+    Raised by every iterative linear solve that does not converge
+    (``linear_solver="bddc_gmres"``, or ``"petsc"`` with a Krylov
+    ``ksp_type``) in every problem type. It is a `RuntimeError`, so
+    ``except RuntimeError`` still catches it. A factorization that fails (a
+    singular operator, a MUMPS or PARDISO error) raises a plain
+    `RuntimeError` instead. The message names the solver, the tolerance,
+    the residual reached and the remedies, such as
+    ``linear_solver="direct"`` or a looser tolerance.
+
+    A uniform `gfem.Driven` sweep stops at the first frequency that does
+    not converge and keeps what it solved before it: ``result`` is the
+    partial result, a `gfem.DrivenResult` over exactly the solved
+    frequencies, in order, with no NaN padding, and ``unsolved`` lists the
+    rest, ready to solve again with another linear solver, e.g.
+    ``gfem.solve(model, gfem.Driven(err.unsolved, excite=...),
+    options=gfem.SolverOptions(linear_solver="direct"))``. With frequency
+    workers each block stops at its own first such frequency and the error
+    holds the union of the blocks. An adaptive sweep, an eigenmode or
+    electrostatic solve, and any solve under `jax.grad`, `jax.jit` or
+    `jax.vmap` (forward or adjoint) return no partial result; under JAX the
+    error reaches the user as ``jax.errors.JaxRuntimeError`` with this
+    message.
+
+    Attributes:
+        frequency: The frequency in Hz where the solve did not converge
+            (the lowest one when several frequency workers failed, the
+            sample frequency in an adaptive sweep, the adjoint solve's
+            frequency in a driven gradient's backward pass), or ``None``
+            outside a driven solve.
+        unsolved: Every frequency of a uniform sweep without a result, in
+            Hz and in ``Driven.frequency`` order: the one that failed and
+            those after it or, with frequency workers, each block's failing
+            frequency and those after it in that block. ``None`` outside a
+            uniform sweep.
+        result: The partial result of a uniform sweep: S, the kept fields
+            and the wave-port modes at the solved frequencies only.
+            ``None`` when no frequency was solved, and outside a uniform
+            sweep.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        frequency: float | None = None,
+        unsolved: tuple[float, ...] | None = None,
+        result: DrivenResult | None = None,
+    ) -> None:
+        """Hold the message and what the sweep knows about the failure.
+
+        Args:
+            message: What did not converge, and the remedies.
+            frequency: The frequency in Hz where the solve did not converge.
+            unsolved: The sweep's frequencies without a result, in Hz.
+            result: The partial result over the solved frequencies.
+        """
+        super().__init__(message)
+        self.frequency = frequency
+        self.unsolved = unsolved
+        self.result = result

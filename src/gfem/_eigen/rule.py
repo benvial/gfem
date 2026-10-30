@@ -27,8 +27,9 @@ degenerate cluster (frequencies within ``SolverOptions.cluster_rtol``) are
 an arbitrary basis of their eigenspace: only an objective symmetric in them
 differentiates, through the basis-invariant
 ``d Σ k = -tr((X^T T' X)^-1 X^T (dT/dp) X)``. A differentiated solve
-refines one guard mode beyond ``n_modes``, so a cluster cut by the request
-is detected.
+refines one guard mode beyond ``n_modes`` from the seed solve's remaining
+pairs, so a cluster cut by the request is detected when its next member is
+among them (best-effort: no Arnoldi attempt is added for it).
 
 Post-processing follows Palace: electric energy ``E = 1/2 Re ∫ D* . E`` per
 volume region plus ``C |V|^2 / 2`` per capacitive lumped port; a port's
@@ -95,7 +96,10 @@ _INNER = 1e-2
 #: floor is no lower.
 _INNER_FLOOR = 1e-13
 #: Seeds with Re k at or below this fraction of the shift are the curl-curl
-#: null space or relaxation modes, not resonances.
+#: null space, a lossy medium's relaxation modes (Re k = 0), mirror roots or
+#: a conductor's linearization cluster (Re k near -sigma), not resonances. A
+#: second-order absorbing wall's cluster lies near Re k = 2 sigma: this test
+#: keeps it, and only the distance to the target ranks the modes ahead of it.
 _STATIC = 1e-6
 #: Two refined modes closer than this many eigen tolerances (relative, and
 #: at least ``SolverOptions.cluster_rtol``), with overlapping fields, are the
@@ -117,8 +121,9 @@ _CONTRACTION = 0.5
 _ATTEMPTS = 3
 #: Arnoldi tolerance of a nonlinear problem's frozen seeds. Their roots are
 #: off the true ones by the freeze error anyway and every seed is refined,
-#: so converging them further only spends shift solves (most of them on the
-#: cluster of near-static relaxation modes the frozen surface terms leave).
+#: so converging them further only spends shift solves. The linearization
+#: cluster's solves are avoided by asking for few pairs (see the nev comment
+#: in the forward pass, ADR 0035), not by this tolerance.
 _SEED_TOLERANCE = 1e-3
 #: Cotangents on the members of a cluster that agree to this (relative to
 #: the largest) make an objective symmetric in the cluster to first order
@@ -212,13 +217,22 @@ class EigenmodeRule:
             try:
                 eop.factorize()  # before the projector's setup
                 divfree = projector(model, op)
-                # the companion problem also holds each mode's mirror image
-                # -conj(k), as near the shift as the mode's Re k is
-                nev = max(2 * n_modes, n_modes + 2)
-                nev *= 2 if eop.seed_damped else 1
                 seed_tolerance = opts.eigen_tolerance
+                # the companion problem also holds each mode's mirror root
+                # -conj(k), |k + sigma| from the shift (behind its mode, about
+                # 2 sigma away for a mode near the target), and pairs near
+                # k = 0 about sigma away; they take slots in front of wanted
+                # modes farther than that, so a damped linear seed asks for
+                # twice as many pairs. A nonpolynomial seed asks for one pair
+                # beyond n_modes, the guard's slot: behind its modes lies the
+                # linearization cluster, which costs shift solves to converge
+                # and holds no mode (ADR 0035).
                 if eop.nonpolynomial:
+                    nev = n_modes + 1
                     seed_tolerance = max(seed_tolerance, _SEED_TOLERANCE)
+                else:
+                    nev = max(2 * n_modes, n_modes + 2)
+                    nev *= 2 if eop.seed_damped else 1
                 guard = None
                 for _ in range(_ATTEMPTS):
                     if eop.shift != sigma:
@@ -337,10 +351,18 @@ class EigenmodeRule:
         """Refine the seeds nearest ``sigma`` until ``n_modes`` distinct ones.
 
         Seeds (and refined pairs) with ``Re k`` near zero or negative are the
-        curl-curl null space, relaxation modes or mirror images, not
-        resonances: they are dropped. With ``guard``, the remaining seeds
-        are refined (without refactorizing) until one more distinct mode
-        converges: the guard mode.
+        curl-curl null space, a lossy medium's relaxation modes, mirror
+        roots or a conductor's linearization cluster, not resonances: they
+        are dropped.
+        A second-order absorbing wall's cluster has ``Re k`` near ``2
+        sigma``, so it is not dropped; the modes nearer the target come
+        first. A seed far from the current shift whose refinement gives
+        nothing to accept (see `_lost`) is refined again on a factorization
+        at its own Ritz value. With ``guard``, the remaining
+        seeds are refined (without
+        refactorizing) until one more distinct mode converges: the guard
+        mode. It is best-effort: none is found when no remaining seed
+        converges to a mode.
 
         Returns:
             The accepted modes, nearest ``sigma`` first (at most
@@ -355,26 +377,40 @@ class EigenmodeRule:
         accepted: list[Refined] = []
         failed: list[Refined] = []
         extra = None
+        window = max(_DUPLICATE * tolerance, self.options.cluster_rtol)
         for j in seeds:
             full = len(accepted) == n_modes
             if full and not guard:
                 break
+            seed = complex(k[j])
+            far = _contraction(seed, op.shift, k) > _CONTRACTION
             mode = refine(
                 op,
-                complex(k[j]),
+                seed,
                 vectors[:, j],
                 tolerance=tolerance,
                 max_iterations=self.options.max_refine_iterations,
                 reshift=not full,
-                reshift_first=_contraction(complex(k[j]), op.shift, k) > _CONTRACTION,
+                reshift_first=far,
             )
+            if far and not full and _lost(mode, seed, sigma, accepted, window):
+                # a seed rougher than TRUSTED, refined on a shift nearer
+                # another mode, wanders where round-off takes it: refine it
+                # again on a factorization at its own Ritz value
+                op.reshift(seed)
+                mode = refine(
+                    op,
+                    seed,
+                    vectors[:, j],
+                    tolerance=tolerance,
+                    max_iterations=self.options.max_refine_iterations,
+                )
             if mode.k.real <= _STATIC * sigma:
                 continue
             if not mode.converged:
                 if not full:
                     failed.append(mode)
                 continue
-            window = max(_DUPLICATE * tolerance, self.options.cluster_rtol)
             if any(_same(mode, other, window) for other in accepted):
                 continue
             if full:
@@ -727,6 +763,26 @@ def _same(a: Refined, b: Refined, window: float) -> bool:
         return False
     overlap = abs(np.vdot(a.x, b.x)) / (np.linalg.norm(a.x) * np.linalg.norm(b.x))
     return overlap > _OVERLAP
+
+
+def _lost(
+    mode: Refined,
+    seed: complex,
+    sigma: float,
+    accepted: list[Refined],
+    window: float,
+) -> bool:
+    """Whether ``seed``'s refinement gave nothing to accept.
+
+    It did not converge, converged to a static or mirror root, or converged
+    to an accepted mode the seed is not near.
+    """
+    if not mode.converged or mode.k.real <= _STATIC * sigma:
+        return True
+    return any(
+        _same(mode, other, window) and not _close(seed, other.k, window)
+        for other in accepted
+    )
 
 
 def _is_real(op: EigenOperator) -> bool:

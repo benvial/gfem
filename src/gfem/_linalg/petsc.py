@@ -13,6 +13,12 @@ PETSc's options database under the handle's own prefix, so a user's
 ``petsc_options`` override them; they are in the database only while the
 handle reads them (`gfem._petsc.scoped_options`). A user option PETSc did
 not read raises.
+
+With ``ksp_reuse_preconditioner`` a refactorization keeps the preconditioner
+set up at an earlier operator. Where a Krylov solve on it does not converge,
+the handle sets it up once at the current operator and solves that column
+again from the partial iterate; only a solve on a preconditioner set up at
+the current operator raises `gfem.LinearSolverConvergenceError`.
 """
 
 from __future__ import annotations
@@ -31,6 +37,7 @@ from gfem._linalg.base import (
     host_bytes,
     same_pattern,
 )
+from gfem.errors import LinearSolverConvergenceError
 
 if TYPE_CHECKING:
     from gfem.options import PetscOptions
@@ -70,7 +77,8 @@ class PetscHandle(NgsHandle):
 
     Attributes:
         iterations: Krylov iterations of every column solved so far (empty
-            for ``ksp_type preonly``).
+            for ``ksp_type preonly``); a column solved again on a
+            preconditioner set up anew counts both solves.
     """
 
     kind = "petsc"
@@ -100,9 +108,20 @@ class PetscHandle(NgsHandle):
         #: The KSP and the AIJ (petsc4py objects); ``None`` once freed.
         self._ksp: Any = None
         self._mat: Any = None
+        #: ``ksp_reuse_preconditioner`` holds (petsc4py has no getter for it):
+        #: a refactorization keeps the preconditioner set up earlier
+        self._reuses = False
+        #: The preconditioner was set up at the current operator.
+        self._pc_is_current = True
         PETSc = _petsc.require_petsc("linear_solver")
         self._prefix = _petsc.next_prefix()
-        defaults = (*DEFAULTS, ("ksp_max_it", maxiter), ("ksp_rtol", tolerance))
+        # plain numbers: the database holds strings, and a NumPy scalar's is
+        # its repr (``np.float64(1e-08)``), which PETSc refuses
+        defaults = (
+            *DEFAULTS,
+            ("ksp_max_it", int(maxiter)),
+            ("ksp_rtol", float(tolerance)),
+        )
         self._options = tuple({**dict(defaults), **dict(options)}.items())
         with self._lock:
             try:
@@ -136,11 +155,8 @@ class PetscHandle(NgsHandle):
             ) from err
         self._direct = ksp.getType() == "preonly"
         name = "ksp_reuse_preconditioner"
-        if (
-            self._direct
-            and name in user
-            and PETSc.Options().getBool(f"{self._prefix}{name}", False)
-        ):
+        asked = PETSc.Options().getBool(f"{self._prefix}{name}", False)
+        if self._direct and name in user and asked:
             raise ValueError(
                 f"SolverOptions.petsc_options[{name!r}] with ksp_type preonly would "
                 "solve the previous operator after each refactorization; use a "
@@ -150,6 +166,7 @@ class PetscHandle(NgsHandle):
             ksp.setNormType(PETSc.KSP.NormType.UNPRECONDITIONED)
         if not reuse:
             ksp.getPC().setReusePreconditioner(False)
+        self._reuses = reuse and not self._direct and asked
 
     def _check_read(self, names: list[str]) -> None:
         """Raise if PETSc did not read some of the user's ``names``.
@@ -254,6 +271,7 @@ class PetscHandle(NgsHandle):
                 self._set_up()  # symbolic and numeric, with the options read
             finally:
                 old.destroy()  # the KSP let go of it at setOperators
+            self._pc_is_current = not self._reuses
 
     def _live(self) -> ngs.BaseMatrix:
         """The held NGSolve matrix; call under the lock.
@@ -270,6 +288,21 @@ class PetscHandle(NgsHandle):
         self._gather(matrix.CSR()[0], self._index, self._values)
         self._mat.assemble()  # marks the new values: PETSc sets up again
         self._set_up()
+        self._pc_is_current = not self._reuses  # a reused preconditioner was kept
+
+    def _set_up_anew(self) -> None:
+        """Set a reused preconditioner up at the current operator; under the lock.
+
+        The preconditioner set up here is the one reused afterwards.
+        """
+        pc = self._ksp.getPC()
+        pc.setReusePreconditioner(False)
+        try:
+            self._set_up()
+        finally:
+            # only called while ``_reuses`` holds, so reuse was on before
+            pc.setReusePreconditioner(True)
+        self._pc_is_current = True
 
     def _set_up(self) -> None:
         """`_set_up_now` with the handle's options in PETSc's database."""
@@ -412,8 +445,12 @@ class PetscHandle(NgsHandle):
     def _krylov(
         self, rhs: np.ndarray, tolerance: float | None, guesses: np.ndarray | None
     ) -> np.ndarray:
-        """A Krylov solve per column, recording its iterations."""
-        PETSc = _petsc.require_petsc()
+        """A Krylov solve per column, recording its iterations.
+
+        A column that does not converge on a reused preconditioner set up at
+        an earlier operator is solved again, from its partial iterate, once
+        the preconditioner is set up at this one (`_set_up_anew`).
+        """
         ksp = self._ksp
         prepared = ksp.getTolerances()
         _, atol, divtol, max_it = prepared
@@ -427,13 +464,18 @@ class PetscHandle(NgsHandle):
                 ksp.setInitialGuessNonzero(guesses is not None)
                 if guesses is not None:
                     x.array[:] = guesses[:, j]
-                try:
-                    ksp.solve(b, x)
-                except PETSc.Error as err:
-                    raise self._failed("KSPSolve", err) from err
-                self.iterations.append(int(ksp.getIterationNumber()))
+                spent = self._solve(b, x)
+                if ksp.getConvergedReason() < 0 and not self._pc_is_current:
+                    self._set_up_anew()
+                    if not np.isfinite(x.array).all():  # start again
+                        ksp.setInitialGuessNonzero(guesses is not None)
+                        x.array[:] = 0 if guesses is None else guesses[:, j]
+                    else:
+                        ksp.setInitialGuessNonzero(True)
+                    spent += self._solve(b, x)
+                self.iterations.append(spent)
                 if ksp.getConvergedReason() < 0:
-                    raise self._not_converged(b.norm())
+                    raise self._not_converged(b.norm(), spent)
                 X[:, j] = x.array
         finally:
             x.destroy()
@@ -441,22 +483,36 @@ class PetscHandle(NgsHandle):
             ksp.setTolerances(*prepared)
         return X
 
-    def _not_converged(self, norm: float) -> RuntimeError:
+    def _solve(self, b, x) -> int:
+        """``KSPSolve`` of ``b`` into ``x``; its iterations."""
+        PETSc = _petsc.require_petsc()
+        try:
+            self._ksp.solve(b, x)
+        except PETSc.Error as err:
+            raise self._failed("KSPSolve", err) from err
+        return int(self._ksp.getIterationNumber())
+
+    def _not_converged(self, norm: float, spent: int) -> LinearSolverConvergenceError:
+        """The error of a column that did not converge in ``spent`` iterations.
+
+        ``spent`` counts every solve of the column (stale and fresh
+        preconditioner), as `iterations` records it.
+        """
         PETSc = _petsc.require_petsc()
         ksp = self._ksp
         reason = ksp.getConvergedReason()
         name = _name(PETSc.KSP.ConvergedReason, reason)
-        rtol, _, _, max_it = ksp.getTolerances()
+        rtol = ksp.getTolerances()[0]
         reached = ksp.getResidualNorm() / (norm or 1.0)
         message = (
             f"PETSc {ksp.getType()} + {ksp.getPC().getType()} did not converge to "
-            f"the relative tolerance {rtol:g} in {max_it} iterations ({name}, "
+            f"the relative tolerance {rtol:g} in {spent} iterations ({name}, "
             f"reached {reached:.3e}). Use linear_solver='direct', a looser "
             "tolerance, or other petsc_options."
         )
         if reason == PETSc.KSP.ConvergedReason.DIVERGED_INDEFINITE_MAT:
             message += f" {CG_HINT}"
-        return RuntimeError(message)
+        return LinearSolverConvergenceError(message)
 
     @property
     def nbytes(self) -> int:

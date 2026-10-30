@@ -83,6 +83,9 @@ def test_direct_is_pardiso_with_parallel_metis_exactly_when_mkl_is_installed(
     # iparm[7] = 0: no iterative refinement (MKL's default), not the up to 16
     # steps of NGSolve's defaults
     assert inverse._params[7] == 0
+    # iparm[9] = 16: perturb a pivot only below 1e-16 |A|, not NGSolve's
+    # 1e-13, which keeps A^T = A in the solution near the low-frequency floor
+    assert inverse._params[9] == 16
     # the symmetric (LDL^T) matrix type, not the unsymmetric LU of NGSolve's
     # defaults for a fully stored matrix
     assert inverse._matrixtype[0] == matrix_type
@@ -480,6 +483,7 @@ def coarse_wrappers(monkeypatch):
                 "symmetric": self._force_symmetric,
                 "ordering": self._params[1],
                 "refinement": self._params[7],
+                "pivot_perturbation": self._params[9],
                 "matrix_type": self._matrixtype[0],
             }
         )
@@ -528,6 +532,7 @@ def test_bddc_coarse_problem_is_factored_by_gfem_flagged_pardiso(  # noqa: PLR09
     assert wrapper["symmetric"] is symmetric
     assert wrapper["ordering"] == 3  # OpenMP parallel METIS
     assert wrapper["refinement"] == 0
+    assert wrapper["pivot_perturbation"] == 16  # 1e-16, not NGSolve's 1e-13
     assert wrapper["matrix_type"] == matrix_type
     # the same iterations and solution as a sparse Cholesky coarse problem
     monkeypatch.setattr(pardiso, "pardiso_available", lambda: False)

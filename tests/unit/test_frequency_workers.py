@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import structured_meshes as sm
+from solver_misses import cannot_converge_at
 
 import gfem
 from gfem._engine import driven, workers
@@ -115,6 +116,70 @@ def test_two_bddc_workers_agree_to_the_solver_tolerance(line):
     np.testing.assert_allclose(
         two["e_field"], one["e_field"], rtol=0, atol=1e-5 * scale
     )
+
+
+SIX = (3e9, 3.5e9, 4e9, 4.5e9, 5e9, 5.5e9)  # two blocks of three
+
+
+def _in_process(monkeypatch):
+    """Run each worker's block in this process, so test seams reach it."""
+
+    def run(function, arguments, _labels, *, threads):  # noqa: ARG001
+        return [function(*args) for args in arguments]
+
+    monkeypatch.setattr(workers, "run", run)
+
+
+@pytest.mark.parametrize(
+    ("misses", "solved"),
+    [
+        pytest.param((4,), (0, 1, 2, 3), id="second-block"),
+        pytest.param((1, 4), (0, 3), id="both-blocks"),
+    ],
+)
+def test_each_worker_keeps_the_frequencies_it_solved_before_a_miss(
+    line, monkeypatch, misses, solved
+):
+    _in_process(monkeypatch)
+    options = gfem.SolverOptions(linear_solver="bddc_gmres", frequency_workers=2)
+    problem = gfem.Driven(SIX, keep_fields=(SIX[0], SIX[3]))
+    clean = gfem.solve(line, problem, options=options)
+    cannot_converge_at(monkeypatch, [SIX[i] for i in misses])
+    with pytest.raises(gfem.LinearSolverConvergenceError) as caught:
+        gfem.solve(line, problem, options=options)
+    err = caught.value
+    assert err.frequency == SIX[misses[0]]
+    assert err.unsolved == tuple(f for i, f in enumerate(SIX) if i not in solved)
+    for i in misses:
+        assert f"{SIX[i]:g} Hz" in str(err)
+    assert err.result.s.frequency == tuple(SIX[i] for i in solved)
+    np.testing.assert_allclose(
+        err.result.s.values,
+        np.asarray(clean.s.values)[list(solved)],
+        rtol=0,
+        atol=1e-12,
+    )
+    assert err.result.kept == (
+        (SIX[0], "p1"),
+        (SIX[0], "p2"),
+        (SIX[3], "p1"),
+        (SIX[3], "p2"),
+    )
+
+
+@pytest.mark.petsc
+def test_workers_that_miss_at_their_first_frequencies_raise_one_error(line):
+    # spawned workers: Jacobi with one GMRES iteration misses everywhere
+    options = gfem.SolverOptions(
+        linear_solver="petsc",
+        petsc_options={"ksp_type": "gmres", "pc_type": "jacobi", "ksp_max_it": 1},
+        frequency_workers=2,
+    )
+    with pytest.raises(gfem.LinearSolverConvergenceError) as caught:
+        gfem.solve(line, gfem.Driven(FREQUENCIES), options=options)
+    assert caught.value.result is None
+    assert caught.value.unsolved == FREQUENCIES
+    assert caught.value.frequency == FREQUENCIES[0]
 
 
 def test_a_killed_worker_names_its_frequencies():

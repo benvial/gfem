@@ -20,11 +20,12 @@ import scipy.constants as const
 import structured_meshes as sm
 from petsc_recipe import SOLVER_OPTIONS
 from preconditioners import coarse_columns, count_preconditioners
+from solver_misses import cannot_converge_at
 
 import gfem
 from gfem._engine import driven, terms, workers
 from gfem._engine.driven import DrivenRule
-from gfem._linalg import bddc, prepare
+from gfem._linalg import bddc, pardiso, prepare
 from gfem._linalg.base import same_pattern
 from gfem._linalg.bddc import BddcHandle
 from gfem._linalg.direct import DirectHandle
@@ -379,6 +380,97 @@ def test_a_bddc_sweep_rebuilds_at_the_same_iterations_every_run(line):
     second, _ = rule.forward(line, keep=False)
     assert first["iterations"] == second["iterations"]
     assert max(map(max, first["iterations"])) > 45  # a capped solve, set up again
+
+
+#: The Krylov linear solvers a sweep can miss on, as SolverOptions keywords
+KRYLOV = [
+    pytest.param({"linear_solver": "bddc_gmres"}, id="bddc_gmres"),
+    pytest.param(SOLVER_OPTIONS["krylov_reuse"], id="petsc", marks=pytest.mark.petsc),
+]
+
+
+def _count_setups(monkeypatch, options):
+    """Count preconditioner setups: BDDC builds, or PETSc's PCSetUp events."""
+    if options["linear_solver"] == "bddc_gmres":
+        builds = count_preconditioners(monkeypatch)
+        return lambda: len(builds)
+    from gfem import _petsc
+
+    PETSc = _petsc.require_petsc()
+    PETSc.Log.begin()
+    event = PETSc.Log.Event("PCSetUp")
+    before = event.getPerfInfo()["count"]
+    return lambda: event.getPerfInfo()["count"] - before
+
+
+@pytest.mark.parametrize("options", KRYLOV)
+def test_a_uniform_sweep_that_does_not_converge_keeps_the_frequencies_it_solved(
+    line, monkeypatch, options
+):
+    f = (2e9, 3e9, 4e9, 5e9, 6e9)
+    problem = gfem.Driven(frequency=f, keep_fields=[f[0], f[3]])
+    clean = _s(line, problem, **options)
+    setups = _count_setups(monkeypatch, options)
+    cannot_converge_at(monkeypatch, (f[2],))
+    with pytest.raises(gfem.LinearSolverConvergenceError) as caught:
+        _s(line, problem, **options)
+    err = caught.value
+    assert err.frequency == f[2]
+    assert err.unsolved == f[2:]
+    assert "4e+09 Hz" in str(err)
+    assert "linear_solver='direct'" in str(err)
+    # set up at 2 GHz, and again at 4 GHz before the fresh solve misses
+    assert setups() == 2
+    result = err.result
+    assert result.s.frequency == f[:2]
+    assert result.sweep.solved == (True, True)
+    np.testing.assert_allclose(
+        result.s.values, np.asarray(clean.s.values)[:2], rtol=0, atol=1e-12
+    )
+    np.testing.assert_allclose(result.s.z_ref, np.asarray(clean.s.z_ref)[:2])
+    assert result.kept == ((f[0], "p1"), (f[0], "p2"))
+    for port in ("p1", "p2"):
+        np.testing.assert_allclose(
+            result.e_field(f[0], port).coefficients,
+            clean.e_field(f[0], port).coefficients,
+            rtol=0,
+            atol=1e-12,
+        )
+
+
+@pytest.mark.parametrize("options", KRYLOV)
+def test_a_sweep_that_cannot_converge_at_its_first_frequency_has_no_partial_result(
+    line, monkeypatch, options
+):
+    f = (2e9, 3e9, 4e9)
+    cannot_converge_at(monkeypatch, (f[0],))
+    with pytest.raises(gfem.LinearSolverConvergenceError) as caught:
+        _s(line, gfem.Driven(frequency=f), **options)
+    assert caught.value.result is None
+    assert caught.value.unsolved == f
+    assert caught.value.frequency == f[0]
+
+
+@pytest.mark.parametrize("keeps", [True, False])
+def test_a_rule_holds_a_missed_sweeps_outputs_only_until_they_are_read(
+    line, monkeypatch, keeps
+):
+    # the JAX path never asks for them: nothing outlives the error there
+    f = (2e9, 3e9, 4e9)
+    rule = DrivenRule(
+        line, gfem.Driven(frequency=f), gfem.SolverOptions(linear_solver="bddc_gmres")
+    )
+    rule.keeps_partial = keeps
+    cannot_converge_at(monkeypatch, (f[1],))
+    with pytest.raises(gfem.LinearSolverConvergenceError):
+        rule.forward(line, keep=False)
+    partial = rule.partial_result()
+    if keeps:
+        assert partial is not None
+        assert partial.s.frequency == f[:1]
+    else:
+        assert partial is None
+    assert rule.partial_result() is None  # read once
 
 
 def _bddc_forward(model, problem):
@@ -1022,3 +1114,23 @@ def test_petsc_loses_capacitive_digits_below_the_low_frequency_floor(mesh, line)
     assert c_err[1] < 1e-8  # 4.8e-11
     assert l_err.max() < 1e-10  # 4e-14
     np.testing.assert_allclose(s[:, 0, 1], s[:, 1, 0], rtol=0, atol=1e-12)  # 3e-16
+
+
+@pytest.mark.skipif(not pardiso.pardiso_available(), reason="needs the mkl extra")
+def test_pardiso_keeps_reciprocity_below_the_low_frequency_floor(mesh, line):
+    """MKL PARDISO, like MUMPS, keeps reciprocity and L below the floor (down
+    to k0 h = 3e-8) and loses C read from S like 1e-16/(k0 h)^2. The sweep
+    factors at the first frequency and refactorizes at the second."""
+    kh = (5e-7, 1e-3)
+    f = [_f(k, mesh) for k in kh]
+    options = gfem.SolverOptions(linear_solver="direct")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", gfem.LowFrequencyWarning)
+        s = np.asarray(gfem.solve(line, gfem.Driven(f), options=options).s.values)
+    np.testing.assert_allclose(s[:, 0, 1], s[:, 1, 0], rtol=0, atol=1e-12)  # 4e-16
+    ref = np.array([_s_from_abcd(_abcd_line(fk, L * 1e-3)) for fk in f])
+    (c, l_), (c_ref, l_ref) = _pi_model(s, f), _pi_model(ref, f)
+    c_err, l_err = abs(c / c_ref - 1), abs(l_ / l_ref - 1)
+    assert 1e-7 < c_err[0] < 1e-14 / kh[0] ** 2  # 6e-4 measured
+    assert c_err[1] < 1e-8
+    assert l_err.max() < 1e-10  # 3e-14

@@ -357,6 +357,15 @@ def test_a_krylov_solve_stops_at_the_true_relative_residual(built):
     np.testing.assert_array_equal(X[~handle._free], 0)
 
 
+def test_a_krylov_solve_accepts_numpy_numbers_for_its_defaults(built):
+    handle = _krylov(built, tolerance=np.float64(1e-8), maxiter=np.int64(400))
+    rtol, _, _, max_it = handle._ksp.getTolerances()
+    assert (rtol, max_it) == (1e-8, 400)
+    b = np.random.default_rng(16).standard_normal(handle.ndof) + 0j
+    x = handle.solve(b)
+    assert _relative_residual(handle, b, x) <= 1e-8
+
+
 def test_a_user_norm_type_is_kept(built):
     PETSc = _petsc.require_petsc()
     handle = _krylov(built, options=(*GMRES, ("ksp_norm_type", "preconditioned")))
@@ -389,9 +398,15 @@ def test_a_krylov_initial_guess_saves_iterations(built):
 def test_a_krylov_solve_that_does_not_converge_raises(built):
     handle = _krylov(built, tolerance=1e-14, maxiter=3)
     with pytest.raises(
-        RuntimeError, match=r"PETSc gmres \+ jacobi did not converge"
+        gfem.LinearSolverConvergenceError,
+        match=r"PETSc gmres \+ jacobi did not converge",
     ) as err:
         handle.solve(np.ones(handle.ndof, complex))
+    assert isinstance(err.value, RuntimeError)
+    # outside a sweep the error carries no frequency and no partial result
+    assert err.value.frequency is None
+    assert err.value.unsolved is None
+    assert err.value.result is None
     assert "DIVERGED_MAX_IT" in str(err.value)
     assert "1e-14 in 3 iterations" in str(err.value)
 
@@ -401,7 +416,9 @@ def test_a_krylov_solve_that_does_not_converge_reports_four_digits(built):
     # tolerance itself, hiding how far off it is
     handle = _krylov(built, tolerance=1e-14, maxiter=10)
     b = np.ones(handle.ndof, complex)
-    with pytest.raises(RuntimeError, match="DIVERGED_MAX_IT") as err:
+    with pytest.raises(
+        gfem.LinearSolverConvergenceError, match="DIVERGED_MAX_IT"
+    ) as err:
         handle.solve(b)
     stalled = handle._ksp.getResidualNorm() / np.linalg.norm(b[handle._free])
     reached = re.search(r"reached (\S+)\)", str(err.value))
@@ -414,7 +431,9 @@ def test_cg_on_a_complex_symmetric_operator_points_to_gmres(built):
         built, shift=-40 + 1j, options=(("ksp_type", "cg"), ("pc_type", "none"))
     )
     b = np.random.default_rng(16).standard_normal(handle.ndof) + 0j
-    with pytest.raises(RuntimeError, match="DIVERGED_INDEFINITE_MAT") as err:
+    with pytest.raises(
+        gfem.LinearSolverConvergenceError, match="DIVERGED_INDEFINITE_MAT"
+    ) as err:
         handle.solve(b)
     assert "use ksp_type gmres" in str(err.value)
 
@@ -438,6 +457,101 @@ def test_reuse_preconditioner_false_overrides_petscs_reuse(built, reuse):
     handle.refactorize(op)
     handle.solve(b)
     assert setups() - before == (0 if reuse else 1)
+
+
+#: GMRES on gfem's MUMPS Cholesky, its factors kept across refactorizations
+MUMPS_REUSE = (("ksp_type", "gmres"), ("ksp_reuse_preconditioner", True))
+
+
+def _far(built):
+    """An operator far from `_krylov`'s: GMRES on its factors needs many iterations."""
+    return _laplace(built, complex_valued=True, shift=-40 + 1j, order=4)[0]
+
+
+def _no_iterations(handle):
+    """Cap the handle's Krylov solves at 0 iterations: every solve misses."""
+    rtol, atol, divtol, _ = handle._ksp.getTolerances()
+    handle._ksp.setTolerances(rtol=rtol, atol=atol, divtol=divtol, max_it=0)
+
+
+def test_a_reused_preconditioner_is_set_up_again_where_gmres_misses(built):
+    handle = _krylov(built, options=(*MUMPS_REUSE, ("ksp_max_it", 5)))
+    b = np.random.default_rng(17).standard_normal(handle.ndof) + 0j
+    handle.solve(b)
+    setups = _pc_setups()
+    handle.refactorize(_far(built))
+    before = setups()
+    x = handle.solve(b)  # 5 iterations on the old factors, then on new ones
+    assert setups() - before == 1
+    assert handle.iterations[-1] > 5  # both solves of the column
+    assert _relative_residual(handle, b, x) <= 1e-8
+    exact = prepare(_far(built), symmetry="complex_symmetric", kind="petsc").solve(b)
+    np.testing.assert_allclose(x, exact, atol=1e-6 * np.abs(exact).max())
+    # the new factors are the ones kept: a nearby operator converges on them
+    op, _ = _laplace(built, complex_valued=True, shift=-40.001 + 1j, order=4)
+    handle.refactorize(op)
+    after = setups()
+    x = handle.solve(b)
+    assert setups() == after
+    assert handle.iterations[-1] <= 5
+    assert _relative_residual(handle, b, x) <= 1e-8
+
+
+def test_a_reused_preconditioner_that_misses_again_once_set_up_raises(built):
+    handle = _krylov(built, options=MUMPS_REUSE)
+    b = np.ones(handle.ndof, complex)
+    handle.solve(b)
+    setups = _pc_setups()
+    handle.refactorize(_far(built))
+    _no_iterations(handle)
+    before = setups()
+    with pytest.raises(
+        gfem.LinearSolverConvergenceError, match="DIVERGED_MAX_IT"
+    ) as err:
+        handle.solve(b)
+    assert isinstance(err.value, RuntimeError)
+    assert setups() - before == 1  # set up again once, then raised
+
+
+def test_a_miss_after_a_set_up_anew_reports_the_columns_iterations(built):
+    # an unreachable tolerance: GMRES misses on the stale factors and again
+    # on the new ones, 3 iterations each
+    options = (*MUMPS_REUSE, ("ksp_max_it", 3))
+    handle = _krylov(built, tolerance=1e-300, options=options)
+    b = np.ones(handle.ndof, complex)
+    with pytest.raises(gfem.LinearSolverConvergenceError):
+        handle.solve(b)  # current factors: one solve, no set-up anew
+    handle.refactorize(_far(built))
+    with pytest.raises(
+        gfem.LinearSolverConvergenceError, match="DIVERGED_MAX_IT"
+    ) as err:
+        handle.solve(b)
+    spent = handle.iterations[-1]
+    assert spent == 6  # both solves of the column
+    assert f"in {spent} iterations" in str(err.value)
+
+
+@pytest.mark.parametrize(
+    ("options", "reuse"),
+    [
+        ((("ksp_type", "gmres"),), True),  # PETSc's reuse not asked for
+        (MUMPS_REUSE, False),  # asked for, overridden as the adaptive sweep does
+    ],
+)
+def test_a_handle_without_reuse_never_sets_its_preconditioner_up_twice(
+    built, options, reuse
+):
+    handle = _krylov(built, options=options, reuse_preconditioner=reuse)
+    b = np.ones(handle.ndof, complex)
+    handle.solve(b)
+    setups = _pc_setups()
+    before = setups()
+    handle.refactorize(_far(built))
+    assert setups() - before == 1  # the refactorization's own set-up
+    _no_iterations(handle)
+    with pytest.raises(gfem.LinearSolverConvergenceError, match="DIVERGED_MAX_IT"):
+        handle.solve(b)
+    assert setups() - before == 1
 
 
 def test_preonly_refuses_petscs_preconditioner_reuse(built):
@@ -575,6 +689,8 @@ def test_a_singular_operator_raises_a_factorization_error(built):
         )
     assert "MUMPS INFOG(1)=" in str(err.value)
     assert "mat_mumps_icntl_14" in str(err.value)
+    # a factorization failure is not a Krylov convergence question
+    assert not isinstance(err.value, gfem.LinearSolverConvergenceError)
 
 
 def _aijs(monkeypatch, error=None) -> list:

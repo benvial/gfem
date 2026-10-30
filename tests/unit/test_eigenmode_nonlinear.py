@@ -28,7 +28,15 @@ import numpy as np
 import pytest
 import scipy.constants as const
 import structured_meshes as sm
-from eigen_cases import EPS, F1, SIGMA, H, conductor_line, line_mesh
+from eigen_cases import (
+    EPS,
+    F1,
+    SIGMA,
+    H,
+    conductor_line,
+    line_mesh,
+    terminated_line,
+)
 
 import gfem
 
@@ -132,8 +140,8 @@ def guide(tmp_path_factory):
     return gfem.Mesh.from_gmsh(path, length_unit="mm")
 
 
-def _guide_modes(mesh, order, targets):
-    model = gfem.Model(
+def _guide(mesh, order):
+    return gfem.Model(
         mesh,
         materials={
             "core": gfem.Material(eps_r=EPS_CORE),
@@ -145,9 +153,12 @@ def _guide_modes(mesh, order, targets):
             gfem.Absorbing("end", order=order),
         ],
     )
-    options = gfem.SolverOptions(eigen_tolerance=1e-10)
+
+
+def _guide_modes(mesh, order, targets):
+    model = _guide(mesh, order)
     return [
-        complex(gfem.solve(model, gfem.Eigenmode(target=f), options=options).omega[0])
+        complex(gfem.solve(model, gfem.Eigenmode(target=f), options=TIGHT).omega[0])
         for f in targets
     ]
 
@@ -191,3 +202,58 @@ def test_second_order_absorbing_mode_does_not_depend_on_the_target(guide):
     # the curl term moves the mode: Q 9.8 against 12.1 at first order
     (first,) = _guide_modes(guide, 1, (F_GUIDE,))
     assert abs(first - high) > 1e-2 * abs(high)
+
+
+# --- the seed's request ------------------------------------------------------------
+
+
+@pytest.fixture
+def seed_solves(monkeypatch):
+    """What each seed solve asks for and spends.
+
+    One ``(nev, solves)`` per Arnoldi attempt: the pairs the rule asks the
+    eigen solver for, and the ``T(sigma)^-1`` solves the seed made.
+    """
+    import gfem._eigen.rule as eigen_rule
+    from gfem._eigen.operator import EigenOperator
+
+    solves = [0]
+    solve = EigenOperator.solve
+
+    def counted(self, b):
+        solves[0] += 1
+        return solve(self, b)
+
+    shift_invert = eigen_rule.shift_invert
+    seen = []
+
+    def spy(op, project, nev, **kwargs):
+        before = solves[0]
+        out = shift_invert(op, project, nev, **kwargs)
+        seen.append((nev, solves[0] - before))
+        return out
+
+    monkeypatch.setattr(EigenOperator, "solve", counted)
+    monkeypatch.setattr(eigen_rule, "shift_invert", spy)
+    return seen
+
+
+def test_a_nonlinear_seed_asks_for_one_pair_beyond_n_modes(mesh, guide, seed_solves):
+    # behind its modes a frozen seed has the linearization cluster: the one
+    # pair beyond n_modes is the guard's slot; a damped linear seed asks for
+    # twice its mirror-root allowance, as before
+    for f in TARGETS:
+        gfem.solve(conductor_line(mesh), gfem.Eigenmode(target=f), options=TIGHT)
+    problem = gfem.Eigenmode(target=F_GUIDE, n_modes=2)
+    gfem.solve(_guide(guide, 2), problem, options=TIGHT)
+    gfem.solve(terminated_line(mesh, 1000.0), gfem.Eigenmode(target=8e9))
+    assert [nev for nev, _ in seed_solves] == [2, 2, 3, 6]
+
+
+def test_a_nonlinear_seed_spends_few_shift_solves(mesh, seed_solves):
+    # 38 and 21 measured; 115 and 151 when the seed asked for 6 pairs
+    for f in TARGETS:
+        gfem.solve(conductor_line(mesh), gfem.Eigenmode(target=f), options=TIGHT)
+    assert len(seed_solves) == 2
+    for _, solves in seed_solves:
+        assert solves <= 50

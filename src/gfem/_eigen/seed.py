@@ -17,8 +17,10 @@ y1)`` and ``b = y1 + sigma a``. The 2n system is never factorized.
 ``K``, ``D`` and ``M`` are the seed's: a nonlinear problem's nonpolynomial
 terms frozen at the shift (`EigenOperator.seed_damping`, `seed_mass`).
 
-Every output of the operator (each half of a companion vector) goes through
-the divergence-free projection, and the start vector is a fixed, projected
+``P`` is the divergence-free projection. The undamped output is projected.
+A companion output is ``[P a; y1 + sigma P a]``, one projection per apply:
+it equals the projected step ``[P a; P b]`` wherever ``P y1 = y1``, which
+every output satisfies (ADR 0035). The start vector is a fixed, projected
 vector, so a seed solve is deterministic. The eigen solvers
 (`gfem._eigen.arpack`, `gfem._eigen.slepc`) only find the largest
 eigenvalues ``theta`` of `SeedOperator.apply`; `SeedOperator.pairs` maps them
@@ -101,10 +103,13 @@ def seed_operator(op: EigenOperator, project) -> SeedOperator:
         size = 2 * n
 
         def apply(y):
+            # [P a; y1 + s P a]: equal to [P a; P(y1 + s a)] where P y1 = y1,
+            # which holds for every Krylov vector from the projected start,
+            # and both map into that set (ADR 0035)
             y1, y2 = y[:n], y[n:]
-            d1 = op.seed_damping(y1)
-            a = -op.solve(mass(y2) + d1 + s * mass(y1))
-            return np.concatenate([project(a), project(y1 + s * a)])
+            a = -op.solve(mass(y2 + s * y1) + op.seed_damping(y1))
+            pa = project(a)
+            return np.concatenate([pa, y1 + s * pa])
 
         x0 = project(free.astype(complex))
         start = np.concatenate([x0, s * x0])

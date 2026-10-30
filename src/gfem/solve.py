@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, overload
 
 from gfem._adjoint import solve_vjp
 from gfem._checks import is_traced
+from gfem.errors import LinearSolverConvergenceError
 from gfem.model import Model
 from gfem.options import SolverOptions
 from gfem.shape import _check_quality
@@ -71,6 +72,12 @@ def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -
             the remedy.
         NonDifferentiableError: Under `jax.grad`, an input or output gfem
             does not differentiate is perturbed or used.
+        LinearSolverConvergenceError: An iterative linear solve
+            (``linear_solver="bddc_gmres"``, or ``"petsc"`` with a Krylov
+            ``ksp_type``) did not converge; the message gives the remedy. A
+            uniform `gfem.Driven` sweep stops there, and the error's
+            ``result`` holds the frequencies it solved, ``unsolved`` the
+            rest.
     """
     if not isinstance(model, Model):
         raise TypeError(f"solve needs a gfem.Model, got {type(model).__name__}.")
@@ -85,7 +92,16 @@ def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -
         return rule.result(solve_vjp(rule, model, problem))
     # A moved mesh must still be valid on the solve domain.
     _check_quality(model.mesh, model._domain.active, stacklevel=3)  # noqa: SLF001
-    outputs, _ = rule.forward(model, keep=False)
+    # a uniform sweep's partial result, built here: never in a JAX callback
+    partial_result = getattr(rule, "partial_result", None)
+    if partial_result is not None:
+        rule.keeps_partial = True
+    try:
+        outputs, _ = rule.forward(model, keep=False)
+    except LinearSolverConvergenceError as err:
+        if partial_result is not None:
+            err.result = partial_result()
+        raise
     return rule.result(outputs)
 
 
