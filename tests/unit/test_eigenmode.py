@@ -37,7 +37,9 @@ from scipy.optimize import brentq
 
 import gfem
 from gfem._eigen import rule as eigen_rule
+from gfem._eigen.seed import seed_operator
 from gfem._engine import eigen as engine_eigen
+from gfem._engine import terms
 from gfem._engine.driven import driven_operator
 from gfem._engine.eigen import projector
 from gfem._engine.runtime import task_manager
@@ -420,6 +422,54 @@ def test_divfree_projection_matches_the_complex_product(tmp_path, order):
         project.free()
     assert np.linalg.norm(projected - x) > 0.1 * np.linalg.norm(x)
     np.testing.assert_allclose(projected, expected, rtol=1e-13, atol=1e-13)
+
+
+def test_the_companion_apply_projects_once(mesh, monkeypatch):
+    # on vectors whose first half is projected, [P a; y1 + sigma P a] is the
+    # companion step [P a; P(y1 + sigma a)], a = -T(sigma)^-1 (M (y2 + sigma
+    # y1) + D' y1), for one projection and one seed-mass product (ADR 0035)
+    model = terminated_line(mesh, 1000.0)
+    problem = gfem.Eigenmode(target=8e9)
+    rule = eigen_rule.EigenmodeRule(model, problem, gfem.SolverOptions())
+    with task_manager(1):
+        op = driven_operator(model, rule.options.order)
+        sigma = terms.wavenumber(2 * math.pi * problem.target, op.built.scale)
+        eop = rule.operator(op, sigma)
+        eop.factorize()
+        divfree = projector(model, op)
+        try:
+            assert eop.seed_damped
+            n = len(eop.free)
+            rng = np.random.default_rng(0)
+            r = rng.standard_normal((2, n)) + 1j * rng.standard_normal((2, n))
+            y1, y2 = divfree(r[0]), r[1]
+            a = -eop.solve(
+                eop.seed_mass(y2) + eop.seed_damping(y1) + sigma * eop.seed_mass(y1)
+            )
+            expected = np.concatenate([divfree(a), divfree(y1 + sigma * a)])
+
+            calls = {"project": 0, "mass": 0}
+            mass = eop.seed_mass
+
+            def project(x):
+                calls["project"] += 1
+                return divfree(x)
+
+            def counted_mass(x):
+                calls["mass"] += 1
+                return mass(x)
+
+            monkeypatch.setattr(eop, "seed_mass", counted_mass)
+            seed = seed_operator(eop, project)
+            calls.update(project=0, mass=0)
+            applied = seed.apply(np.concatenate([y1, y2]))
+        finally:
+            eop.free_handle()
+            divfree.free()
+    assert calls == {"project": 1, "mass": 1}
+    np.testing.assert_allclose(
+        applied, expected, rtol=0, atol=1e-12 * np.linalg.norm(expected)
+    )
 
 
 # --- serialization -----------------------------------------------------------------

@@ -187,8 +187,9 @@ class LowFrequencyWarning(UserWarning):
     exact factorization (``linear_solver="direct"``, or ``"petsc"`` with
     its default MUMPS factorization) the capacitive part of S, lose
     digits. MKL PARDISO (``"direct"`` with the ``mkl`` extra) becomes
-    unreliable below k0 * h_min = 3e-7. Inductance read from S and
-    reciprocity are unaffected. For capacitance at low frequency solve
+    unreliable below k0 * h_min = 3e-8. Above that, and down to at least
+    k0 * h_min = 1e-8 with the other exact factorizations, inductance read
+    from S and reciprocity are unaffected. For capacitance at low frequency solve
     `gfem.Electrostatic`; otherwise raise the lowest frequency or coarsen
     the smallest elements. The solve still runs. Filter it with Python's
     `warnings` module.

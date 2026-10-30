@@ -357,6 +357,15 @@ def test_a_krylov_solve_stops_at_the_true_relative_residual(built):
     np.testing.assert_array_equal(X[~handle._free], 0)
 
 
+def test_a_krylov_solve_accepts_numpy_numbers_for_its_defaults(built):
+    handle = _krylov(built, tolerance=np.float64(1e-8), maxiter=np.int64(400))
+    rtol, _, _, max_it = handle._ksp.getTolerances()
+    assert (rtol, max_it) == (1e-8, 400)
+    b = np.random.default_rng(16).standard_normal(handle.ndof) + 0j
+    x = handle.solve(b)
+    assert _relative_residual(handle, b, x) <= 1e-8
+
+
 def test_a_user_norm_type_is_kept(built):
     PETSc = _petsc.require_petsc()
     handle = _krylov(built, options=(*GMRES, ("ksp_norm_type", "preconditioned")))

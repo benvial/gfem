@@ -23,7 +23,7 @@ from preconditioners import count_preconditioners
 import gfem
 from gfem._engine import driven, terms, workers
 from gfem._engine.driven import DrivenRule
-from gfem._linalg import bddc, prepare
+from gfem._linalg import bddc, pardiso, prepare
 from gfem._linalg.base import same_pattern
 from gfem._linalg.bddc import BddcHandle
 from gfem._linalg.direct import DirectHandle
@@ -978,3 +978,23 @@ def test_petsc_loses_capacitive_digits_below_the_low_frequency_floor(mesh, line)
     assert c_err[1] < 1e-8  # 4.8e-11
     assert l_err.max() < 1e-10  # 4e-14
     np.testing.assert_allclose(s[:, 0, 1], s[:, 1, 0], rtol=0, atol=1e-12)  # 3e-16
+
+
+@pytest.mark.skipif(not pardiso.pardiso_available(), reason="needs the mkl extra")
+def test_pardiso_keeps_reciprocity_below_the_low_frequency_floor(mesh, line):
+    """MKL PARDISO, like MUMPS, keeps reciprocity and L below the floor (down
+    to k0 h = 3e-8) and loses C read from S like 1e-16/(k0 h)^2. The sweep
+    factors at the first frequency and refactorizes at the second."""
+    kh = (5e-7, 1e-3)
+    f = [_f(k, mesh) for k in kh]
+    options = gfem.SolverOptions(linear_solver="direct")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", gfem.LowFrequencyWarning)
+        s = np.asarray(gfem.solve(line, gfem.Driven(f), options=options).s.values)
+    np.testing.assert_allclose(s[:, 0, 1], s[:, 1, 0], rtol=0, atol=1e-12)  # 4e-16
+    ref = np.array([_s_from_abcd(_abcd_line(fk, L * 1e-3)) for fk in f])
+    (c, l_), (c_ref, l_ref) = _pi_model(s, f), _pi_model(ref, f)
+    c_err, l_err = abs(c / c_ref - 1), abs(l_ / l_ref - 1)
+    assert 1e-7 < c_err[0] < 1e-14 / kh[0] ** 2  # 6e-4 measured
+    assert c_err[1] < 1e-8
+    assert l_err.max() < 1e-10  # 3e-14
