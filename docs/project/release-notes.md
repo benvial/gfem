@@ -25,7 +25,9 @@ threads on large problems. Results change only to the solver's precision.
   memory. This applies when one BDDC setup expects 16 or more right-hand
   sides on 16 or more threads, or 6 or more on 56 or more threads: a uniform
   driven sweep whose excited ports times frequencies reach that count, and
-  every shift of an eigenmode solve with `linear_solver="bddc_gmres"`. The
+  an eigenmode solve's seed shift with `linear_solver="bddc_gmres"`; its
+  refinement reshifts count a few solves, so they join only the 56-thread
+  tier. The
   threads are `SolverOptions.threads` (or the machine's default), except
   that a {term}`frequency worker` counts its own share of them and its own
   frequencies. A single-frequency solve or an {term}`adaptive sweep` counts

@@ -37,6 +37,7 @@ from scipy.optimize import brentq
 
 import gfem
 from gfem._eigen import rule as eigen_rule
+from gfem._eigen.operator import RESHIFT_SOLVES
 from gfem._eigen.seed import MIN_SUBSPACE
 from gfem._engine import eigen as engine_eigen
 from gfem._engine.driven import driven_operator
@@ -298,6 +299,17 @@ def test_a_bddc_shift_sets_its_coarse_problem_up_for_the_seed_solve(mesh, monkey
     columns = coarse_columns(monkeypatch)
     gfem.solve(model, gfem.Eigenmode(target=8e9), options=options)
     assert columns == [MIN_SUBSPACE]
+
+
+def test_a_bddc_reshift_sets_its_coarse_problem_up_for_the_refinement(
+    mesh, monkeypatch
+):
+    # the second mode is refined at its own shift, which serves a few solves
+    model = terminated_line(mesh, 1000.0)
+    options = gfem.SolverOptions(linear_solver="bddc_gmres")
+    columns = coarse_columns(monkeypatch)
+    gfem.solve(model, gfem.Eigenmode(target=8e9, n_modes=2), options=options)
+    assert columns == [MIN_SUBSPACE, RESHIFT_SOLVES]
 
 
 @pytest.mark.parametrize(

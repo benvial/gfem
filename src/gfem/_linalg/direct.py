@@ -195,7 +195,12 @@ class DirectHandle(NgsHandle):
         )
         return cls(assembled, None, "hermitian", is_complex=False)
 
-    def refactorize(self, operator: Operator) -> None:
+    def refactorize(
+        self,
+        operator: Operator,
+        *,
+        solves: int | None = None,  # noqa: ARG002
+    ) -> None:
         """Refactorize on ``operator``'s values (see `gfem._linalg.Refactorable`).
 
         An operator whose piece sum shares this handle's pieces is summed
@@ -208,6 +213,8 @@ class DirectHandle(NgsHandle):
         without the gather index, ``Update()``. The first refactorization
         builds the index, before the values change. A changed pattern is
         planned anew.
+
+        ``solves`` is ignored: only BDDC's coarse choice reads it.
 
         Raises:
             RuntimeError: The handle was freed.

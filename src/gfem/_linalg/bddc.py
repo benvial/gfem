@@ -121,7 +121,8 @@ class BddcHandle(NgsHandle):
     ``reuse=False`` it sets BDDC up at every refactorization. Every setup
     chooses its coarse factorization (`_coarse_inverse`) from the columns
     one setup is expected to serve: ``width * solves`` with reuse, ``width``
-    without it.
+    without it; a `refactorize` may state its own ``solves``, which later
+    setups count until another `refactorize` states one.
 
     Attributes:
         iterations: Krylov iterations of every column solved so far.
@@ -154,6 +155,7 @@ class BddcHandle(NgsHandle):
                 "DOFs must be the space's FreeDofs(); build the space with "
                 "dirichlet= on the fixed boundaries."
             )
+        self._width = width
         # without reuse every refactorization sets BDDC up for one solve
         self._expected_columns = width * (solves if reuse else 1)
         preconditioner = _set_up(form, symmetry, columns=self._expected_columns)
@@ -232,7 +234,7 @@ class BddcHandle(NgsHandle):
             return Gmres(matrix, pre.mat, tol=self.tolerance, maxiter=maxiter)
         return Gmres(matrix, pre.mat, atol=self.tolerance * reference, maxiter=maxiter)
 
-    def refactorize(self, operator: Operator) -> None:
+    def refactorize(self, operator: Operator, *, solves: int | None = None) -> None:
         """Assemble ``operator`` and solve it on the held preconditioner.
 
         Preconditioner reuse (see `gfem._linalg.Refactorable`): only the
@@ -250,10 +252,17 @@ class BddcHandle(NgsHandle):
         preconditioner serves warm GMRES solves only; a solve without an
         initial guess sets it up again first. The rule counts iterations,
         never times, so runs repeat exactly.
+
+        ``solves`` restates the solve calls the next setups are expected to
+        serve (``prepare``'s ``solves``), for the coarse factorization only;
+        ``None`` keeps the count. A setup may come later than this call, at
+        the first cold solve.
         """
         form = operator.form
         with self._lock:
             _, pre, _ = self._held()
+            if solves is not None:
+                self._expected_columns = self._width * (solves if self.reuse else 1)
             if self._rebuild or not self.reuse or self._reference_iterations is None:
                 self._build(form)
                 return

@@ -8,7 +8,7 @@ import ngsolve as ngs
 import numpy as np
 import pytest
 import structured_meshes as sm
-from preconditioners import count_preconditioners
+from preconditioners import coarse_columns, count_preconditioners
 
 import gfem
 from gfem._engine import quadrature
@@ -362,6 +362,27 @@ def test_bddc_handle_without_reuse_sets_up_at_every_refactorization(built, monke
     fresh = prepare(operator(1.1 - 2j), symmetry="complex_symmetric", kind="bddc_gmres")
     fresh.solve(B, x0=previous)
     assert handle.iterations[2:] == fresh.iterations
+
+
+def test_a_bddc_refactorization_may_state_the_solves_its_setup_serves(
+    built, monkeypatch
+):
+    # an eigen reshift serves fewer solves than its seed shift: the next setup
+    # counts the stated solves, and a refactorization stating none keeps them
+    def operator(shift):
+        return _laplace(built, complex_valued=True, shift=shift)[0]
+
+    columns = coarse_columns(monkeypatch)
+    handle = prepare(
+        operator(1 - 2j),
+        symmetry="complex_symmetric",
+        kind="bddc_gmres",
+        width=2,
+        solves=20,
+    )
+    handle.refactorize(operator(1.1 - 2j), solves=3)
+    handle.refactorize(operator(1.2 - 2j))
+    assert columns == [40, 6, 6]
 
 
 @pytest.mark.parametrize(

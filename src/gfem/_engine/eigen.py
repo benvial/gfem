@@ -68,10 +68,11 @@ def eigen_operator(
     def operator(k: complex) -> Operator:
         return Operator(op.form(k * const.c / scale), space.FreeDofs())
 
-    def prepare_shift(t: Operator) -> Handle:
-        """Prepare ``t``: ``T(k)`` at one shift (`operator`).
+    def prepare_shift(t: Operator, solves: int = MIN_SUBSPACE) -> Handle:
+        """Prepare ``t``: ``T(k)`` at one shift (`operator`), for ``solves``.
 
-        The seed solve applies it `MIN_SUBSPACE` times or more.
+        The seed solve applies it `MIN_SUBSPACE` times or more; a refinement
+        reshift `gfem._eigen.operator.RESHIFT_SOLVES` times.
         """
         return prepare(
             t,
@@ -81,7 +82,7 @@ def eigen_operator(
             threads=threads,
             tolerance=tolerance,
             width=1,
-            solves=MIN_SUBSPACE,
+            solves=solves,
             petsc_options=petsc_options,
         )
 

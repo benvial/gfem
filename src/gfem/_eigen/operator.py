@@ -34,6 +34,7 @@ from __future__ import annotations
 import dataclasses
 import math
 from collections.abc import Callable
+from typing import Protocol
 
 import numpy as np
 import scipy.constants as const
@@ -41,7 +42,14 @@ import scipy.constants as const
 from gfem._engine import terms
 from gfem._linalg import Handle, Operator, refactorize_or_prepare
 
-__all__ = ["EigenOperator", "LinearMap", "NonPolynomial", "Split", "split"]
+__all__ = [
+    "RESHIFT_SOLVES",
+    "EigenOperator",
+    "LinearMap",
+    "NonPolynomial",
+    "Split",
+    "split",
+]
 
 #: A matrix of the H(curl) space as ``x -> A x`` on NumPy vectors over all its
 #: DOFs (`gfem._engine.eigen` builds them from the NGSolve forms).
@@ -55,6 +63,10 @@ _NORM_ITERATIONS = 20
 #: at convergence.
 _NEWTON_STEPS = 50
 _NEWTON_RTOL = 1e-15
+#: Solves one refinement reshift's factorization is expected to serve: its
+#: mode's remaining correction steps and the next modes' (1-7 measured on the
+#: unit cases, the guard mode included).
+RESHIFT_SOLVES = 7
 
 
 @dataclasses.dataclass(frozen=True)
@@ -142,6 +154,16 @@ class NonPolynomial:
         )
 
 
+class Prepare(Protocol):
+    """Prepares a `gfem._linalg` handle of ``T(k)`` at one shift.
+
+    ``solves`` is the solve calls the handle is expected to serve; it
+    defaults to the seed solve's.
+    """
+
+    def __call__(self, operator: Operator, solves: int = ..., /) -> Handle: ...
+
+
 @dataclasses.dataclass(eq=False)
 class EigenOperator:
     """``T(k) = K + k D + k^2 M + Σ θ_p(k) A_p`` on the free DOFs.
@@ -154,7 +176,8 @@ class EigenOperator:
         shift: ``sigma``, the wavenumber per file unit of the prepared
             operator: the target's, until `reshift`.
         operator: ``k -> T(k)``, not yet assembled (``k`` may be complex).
-        prepare: A `gfem._linalg` handle of an operator from ``operator``.
+        prepare: A `gfem._linalg` handle of an operator from ``operator``,
+            for the seed solve unless it is told the solves it serves.
         damping: ``D`` (a linear map, applied matrix-free), or ``None``
             when undamped.
         mass: ``M``, a linear map.
@@ -166,7 +189,7 @@ class EigenOperator:
 
     shift: complex
     operator: Callable[[complex], Operator]
-    prepare: Callable[[Operator], Handle]
+    prepare: Prepare
     damping: LinearMap | None
     mass: LinearMap
     free: np.ndarray
@@ -192,12 +215,16 @@ class EigenOperator:
 
         A prepared handle factorizes ``T(k)`` on its solver plan when it can,
         or is replaced by a new one
-        (`gfem._linalg.refactorize_or_prepare`); an operator not prepared
-        yet is prepared on first use.
+        (`gfem._linalg.refactorize_or_prepare`); either way it is told it
+        serves `RESHIFT_SOLVES` solves. An operator not prepared yet is
+        prepared on first use.
         """
         if self._handle is not None:
             self._handle = refactorize_or_prepare(
-                self._handle, self.operator(k), self.prepare
+                self._handle,
+                self.operator(k),
+                lambda t: self.prepare(t, RESHIFT_SOLVES),
+                solves=RESHIFT_SOLVES,
             )
         self.shift = k
         self.shifts += 1
