@@ -102,7 +102,13 @@ class PetscHandle(NgsHandle):
         self._mat: Any = None
         PETSc = _petsc.require_petsc("linear_solver")
         self._prefix = _petsc.next_prefix()
-        defaults = (*DEFAULTS, ("ksp_max_it", maxiter), ("ksp_rtol", tolerance))
+        # plain numbers: the database holds strings, and a NumPy scalar's is
+        # its repr (``np.float64(1e-08)``), which PETSc refuses
+        defaults = (
+            *DEFAULTS,
+            ("ksp_max_it", int(maxiter)),
+            ("ksp_rtol", float(tolerance)),
+        )
         self._options = tuple({**dict(defaults), **dict(options)}.items())
         with self._lock:
             try:
