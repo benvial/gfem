@@ -459,6 +459,83 @@ def test_reuse_preconditioner_false_overrides_petscs_reuse(built, reuse):
     assert setups() - before == (0 if reuse else 1)
 
 
+#: GMRES on gfem's MUMPS Cholesky, its factors kept across refactorizations
+MUMPS_REUSE = (("ksp_type", "gmres"), ("ksp_reuse_preconditioner", True))
+
+
+def _far(built):
+    """An operator far from `_krylov`'s: GMRES on its factors needs many iterations."""
+    return _laplace(built, complex_valued=True, shift=-40 + 1j, order=4)[0]
+
+
+def _no_iterations(handle):
+    """Cap the handle's Krylov solves at 0 iterations: every solve misses."""
+    rtol, atol, divtol, _ = handle._ksp.getTolerances()
+    handle._ksp.setTolerances(rtol=rtol, atol=atol, divtol=divtol, max_it=0)
+
+
+def test_a_reused_preconditioner_is_set_up_again_where_gmres_misses(built):
+    handle = _krylov(built, options=(*MUMPS_REUSE, ("ksp_max_it", 5)))
+    b = np.random.default_rng(17).standard_normal(handle.ndof) + 0j
+    handle.solve(b)
+    setups = _pc_setups()
+    handle.refactorize(_far(built))
+    before = setups()
+    x = handle.solve(b)  # 5 iterations on the old factors, then on new ones
+    assert setups() - before == 1
+    assert handle.iterations[-1] > 5  # both solves of the column
+    assert _relative_residual(handle, b, x) <= 1e-8
+    exact = prepare(_far(built), symmetry="complex_symmetric", kind="petsc").solve(b)
+    np.testing.assert_allclose(x, exact, atol=1e-6 * np.abs(exact).max())
+    # the new factors are the ones kept: a nearby operator converges on them
+    op, _ = _laplace(built, complex_valued=True, shift=-40.001 + 1j, order=4)
+    handle.refactorize(op)
+    after = setups()
+    x = handle.solve(b)
+    assert setups() == after
+    assert handle.iterations[-1] <= 5
+    assert _relative_residual(handle, b, x) <= 1e-8
+
+
+def test_a_reused_preconditioner_that_misses_again_once_set_up_raises(built):
+    handle = _krylov(built, options=MUMPS_REUSE)
+    b = np.ones(handle.ndof, complex)
+    handle.solve(b)
+    setups = _pc_setups()
+    handle.refactorize(_far(built))
+    _no_iterations(handle)
+    before = setups()
+    with pytest.raises(
+        gfem.LinearSolverConvergenceError, match="DIVERGED_MAX_IT"
+    ) as err:
+        handle.solve(b)
+    assert isinstance(err.value, RuntimeError)
+    assert setups() - before == 1  # set up again once, then raised
+
+
+@pytest.mark.parametrize(
+    ("options", "reuse"),
+    [
+        ((("ksp_type", "gmres"),), True),  # PETSc's reuse not asked for
+        (MUMPS_REUSE, False),  # asked for, overridden as the adaptive sweep does
+    ],
+)
+def test_a_handle_without_reuse_never_sets_its_preconditioner_up_twice(
+    built, options, reuse
+):
+    handle = _krylov(built, options=options, reuse_preconditioner=reuse)
+    b = np.ones(handle.ndof, complex)
+    handle.solve(b)
+    setups = _pc_setups()
+    before = setups()
+    handle.refactorize(_far(built))
+    assert setups() - before == 1  # the refactorization's own set-up
+    _no_iterations(handle)
+    with pytest.raises(gfem.LinearSolverConvergenceError, match="DIVERGED_MAX_IT"):
+        handle.solve(b)
+    assert setups() - before == 1
+
+
 def test_preonly_refuses_petscs_preconditioner_reuse(built):
     op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
     with pytest.raises(
