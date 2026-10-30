@@ -236,6 +236,26 @@ def test_shift_solves_on_each_linear_solver_give_the_direct_modes(mesh, linear_s
     np.testing.assert_allclose(other.omega, direct.omega, rtol=1e-9)
 
 
+@pytest.mark.parametrize("n_modes", [3, 4])
+@pytest.mark.parametrize("linear_solver", ["direct", "bddc_gmres"])
+def test_seeds_far_from_the_last_reshift_still_give_their_own_modes(
+    mesh, linear_solver, n_modes
+):
+    # after mode 2's reshift, the seeds of roots 3 and 4 are rougher than
+    # TRUSTED: refined on mode 2's shift, they used to drift onto mode 2 and
+    # be dropped as duplicates (or onto a mirror root), so a farther root
+    # took their place
+    model = terminated_line(mesh, 1000.0)
+    result = gfem.solve(
+        model,
+        gfem.Eigenmode(target=8e9, n_modes=n_modes),
+        options=gfem.SolverOptions(linear_solver=linear_solver),
+    )
+    # the dispersion error grows with frequency: 1.1e-4 at root 4
+    expected = line_roots(1000.0, range(1, n_modes + 1))
+    np.testing.assert_allclose(result.omega, expected, rtol=3e-4)
+
+
 def _count_shift_prepares(monkeypatch) -> list[int]:
     """Spy on the eigen operator's `prepare`: one entry per ``T(k)`` handle."""
     calls = []
