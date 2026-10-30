@@ -1,5 +1,8 @@
 """gfem's GMRES: NGSolve's GMRES iteration, its vector work on gfem's threads."""
 
+import ctypes
+import dataclasses
+import importlib.metadata
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import ClassVar
@@ -48,14 +51,25 @@ def _relative(x, y):
     return np.linalg.norm(x - y) / np.linalg.norm(y)
 
 
+def _use(monkeypatch, kernel):
+    """Make GMRES pick ``kernel``: "mkl", "openblas" or "einsum"."""
+    if kernel in {"openblas", "einsum"}:
+        monkeypatch.setattr(gmres, "mkl_blas", lambda: None)
+    if kernel in {"mkl", "einsum"}:
+        monkeypatch.setattr(gmres, "scipy_openblas", lambda: None)
+    if kernel == "mkl" and gmres.mkl_blas() is None:
+        pytest.skip("MKL (the mkl extra) not found")
+    if kernel == "openblas" and gmres.scipy_openblas() is None:
+        pytest.skip("SciPy's OpenBLAS not found")
+
+
 @pytest.mark.parametrize("threads", [1, 4])
 @pytest.mark.parametrize("complex_valued", [True, False])
-@pytest.mark.parametrize("kernel", ["auto", "einsum"])
+@pytest.mark.parametrize("kernel", ["mkl", "openblas", "einsum"])
 def test_gmres_matches_ngsolve_gmres(
     mesh, monkeypatch, threads, complex_valued, kernel
 ):
-    if kernel == "einsum":
-        monkeypatch.setattr(gmres, "scipy_openblas", lambda: None)
+    _use(monkeypatch, kernel)
     # a small problem: lower the minimum so that 4 threads run the pool
     monkeypatch.setattr(gmres, "COLUMNS", 64)
     A, pre, b = _helmholtz(mesh, complex_valued)
@@ -130,23 +144,92 @@ def test_gmres_runs_on_a_pool_of_the_task_manager_thread_count(
         assert made["initializer"] is gmres._serial_blas
 
 
-def _kernels():
+def _pool(monkeypatch, threads):
+    """How the pool of a solve at ``threads`` TaskManager threads was made."""
+    monkeypatch.setattr(gmres, "ThreadPoolExecutor", _Recording)
+    monkeypatch.setattr(_Recording, "made", [])
+    diagonal = np.resize([1.0, 2.0, 5.0], 3 * gmres.COLUMNS)
+    A, eye = _diagonal(diagonal)
+    b = A.CreateColVector()
+    b.FV().NumPy()[:] = 1.0
+    with task_manager(threads):
+        x = Gmres(A, eye, tol=1e-10, maxiter=10).Solve(b)
+    assert _relative(x.FV().NumPy(), 1.0 / diagonal) < 1e-12
+    (made,) = _Recording.made
+    return made
+
+
+def _openblas_limited_to(monkeypatch, max_threads):
+    """SciPy's OpenBLAS as if built with ``MAX_THREADS=max_threads``."""
     lib = gmres.scipy_openblas()
-    openblas = pytest.param(
-        "openblas",
-        marks=pytest.mark.skipif(lib is None, reason="SciPy's OpenBLAS not found"),
-    )
-    return [openblas, "einsum"]
+    if lib is None:
+        pytest.skip("SciPy's OpenBLAS not found")
+    small = dataclasses.replace(lib, max_threads=max_threads)
+    monkeypatch.setattr(gmres, "scipy_openblas", lambda: small)
+
+
+def test_gmres_runs_openblas_up_to_its_max_threads(monkeypatch):
+    if gmres.mkl_blas() is None:
+        pytest.skip("MKL (the mkl extra) not found")
+    _openblas_limited_to(monkeypatch, 3)
+    made = _pool(monkeypatch, 3)
+    assert made["max_workers"] == 3
+    assert made["initargs"] == (None,)  # OpenBLAS, not MKL
+
+
+def test_gmres_runs_mkl_past_openblas_max_threads(monkeypatch):
+    # PyPI's OpenBLAS serves 64 concurrent callers; more corrupt its heap
+    if gmres.mkl_blas() is None:
+        pytest.skip("MKL (the mkl extra) not found")
+    _openblas_limited_to(monkeypatch, 2)
+    made = _pool(monkeypatch, 3)
+    assert made["max_workers"] == 3
+    assert made["initargs"] == (gmres.mkl_blas(),)
+
+
+def test_gmres_pool_without_mkl_has_openblas_max_threads(monkeypatch):
+    monkeypatch.setattr(gmres, "mkl_blas", lambda: None)
+    _openblas_limited_to(monkeypatch, 2)
+    made = _pool(monkeypatch, 3)
+    assert made["max_workers"] == 2
+    assert made["initargs"] == (None,)
+
+
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        ("OpenBLAS 0.3.31.dev DYNAMIC_ARCH NO_AFFINITY SkylakeX MAX_THREADS=64", 64),
+        ("OpenBLAS 0.3.30 USE64BITINT DYNAMIC_ARCH Haswell MAX_THREADS=128", 128),
+        ("OpenBLAS 0.3.20 DYNAMIC_ARCH Haswell", gmres.OPENBLAS_MAX_THREADS),
+    ],
+)
+def test_openblas_max_threads_is_read_from_its_build_string(config, expected):
+    assert gmres._max_threads(config) == expected
+
+
+def test_scipy_openblas_reads_its_max_threads():
+    lib = gmres.scipy_openblas()
+    if lib is None:
+        pytest.skip("SciPy's OpenBLAS not found")
+    assert lib.max_threads >= 1
+
+
+def test_mkl_blas_refuses_the_ilp64_interface(monkeypatch):
+    monkeypatch.setenv("MKL_INTERFACE_LAYER", "ILP64")
+    gmres.mkl_blas.cache_clear()
+    try:
+        assert gmres.mkl_blas() is None
+    finally:
+        monkeypatch.delenv("MKL_INTERFACE_LAYER")
+        gmres.mkl_blas.cache_clear()
 
 
 @pytest.mark.parametrize("dtype", [np.complex128, np.float64])
-@pytest.mark.parametrize("name", _kernels())
-def test_gmres_kernels_agree(name, dtype):
-    kernel = (
-        gmres._OpenBlas(gmres.scipy_openblas())
-        if name == "openblas"
-        else gmres._Einsum()
-    )
+@pytest.mark.parametrize("name", ["mkl", "openblas", "einsum"])
+def test_gmres_kernels_agree(monkeypatch, name, dtype):
+    _use(monkeypatch, name)
+    lib = {"mkl": gmres.mkl_blas, "openblas": gmres.scipy_openblas}.get(name)
+    kernel = gmres._Gemv(lib()) if lib else gmres._Einsum()
     rng = np.random.default_rng(3)
 
     def random(*shape):
@@ -217,10 +300,10 @@ def _probed_solve(probe):
     assert _relative(x.FV().NumPy(), 1.0 / diagonal) < 1e-12
 
 
-@pytest.mark.parametrize("kernel", ["openblas", "einsum"])
+@pytest.mark.parametrize("kernel", ["mkl", "openblas", "einsum"])
 def test_gmres_holds_scipy_openblas_at_one_thread(openblas, monkeypatch, kernel):
-    if kernel == "einsum":
-        monkeypatch.setattr(gmres, "scipy_openblas", lambda: None)
+    # only the OpenBLAS kernel calls OpenBLAS: the others leave it as it is
+    _use(monkeypatch, kernel)
     inside = []
     _probed_solve(lambda: inside.append(openblas.get_threads()))
     assert inside
@@ -228,7 +311,46 @@ def test_gmres_holds_scipy_openblas_at_one_thread(openblas, monkeypatch, kernel)
     assert openblas.get_threads() == 3
 
 
-def test_gmres_restores_scipy_openblas_after_a_raising_solve(openblas):
+def _mkl_max_threads():
+    """MKL's thread count for the calling thread (its per-thread one if set)."""
+    if gmres.mkl_blas() is None:
+        pytest.skip("MKL (the mkl extra) not found")
+    get = ctypes.CDLL(_mkl_path()).MKL_Get_Max_Threads
+    get.restype = ctypes.c_int
+    return get()
+
+
+def _mkl_path():
+    dist = importlib.metadata.distribution("mkl")
+    return next(str(dist.locate_file(f)) for f in dist.files if "mkl_rt" in f.name)
+
+
+def test_gmres_holds_mkl_at_one_thread_in_the_solving_thread(monkeypatch):
+    _use(monkeypatch, "mkl")
+    mkl = gmres.mkl_blas()
+    previous = mkl.set_threads_local(3)
+    try:
+        inside = []
+        _probed_solve(lambda: inside.append(_mkl_max_threads()))
+        assert inside
+        assert set(inside) == {1}
+        assert _mkl_max_threads() == 3
+    finally:
+        mkl.set_threads_local(previous)
+
+
+def test_gmres_pool_threads_run_mkl_at_one_thread():
+    if gmres.mkl_blas() is None:
+        pytest.skip("MKL (the mkl extra) not found")
+    with ThreadPoolExecutor(
+        1, initializer=gmres._serial_blas, initargs=(gmres.mkl_blas(),)
+    ) as pool:
+        assert pool.submit(_mkl_max_threads).result(timeout=30) == 1
+
+
+def test_gmres_restores_scipy_openblas_after_a_raising_solve(openblas, monkeypatch):
+    _use(monkeypatch, "openblas")
+
     def fail():
         raise RuntimeError("probe")
 
@@ -237,7 +359,8 @@ def test_gmres_restores_scipy_openblas_after_a_raising_solve(openblas):
     assert openblas.get_threads() == 3
 
 
-def test_overlapping_gmres_solves_restore_scipy_openblas_once(openblas):
+def test_overlapping_gmres_solves_restore_scipy_openblas_once(openblas, monkeypatch):
+    _use(monkeypatch, "openblas")
     # A enters, B enters, A leaves while B solves, B leaves
     a_in, b_in, a_out = threading.Event(), threading.Event(), threading.Event()
     seen = {"A": [], "B": []}
