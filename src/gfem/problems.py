@@ -327,9 +327,6 @@ class Driven:
             of ``frequency``.
         NonDifferentiableError: ``frequency``, ``samples`` or
             ``keep_fields`` is traced by JAX.
-        LinearSolverConvergenceError: Raised by `gfem.solve`: an iterative
-            linear solve did not converge at some frequency; a uniform
-            sweep's error holds the frequencies it solved.
 
     Example:
         ``gfem.Driven(frequency=np.linspace(1e9, 100e9, 100))`` solves all

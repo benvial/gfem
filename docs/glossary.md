@@ -161,8 +161,8 @@ Partial result
 Unsolved frequency
   A frequency of a uniform sweep that has no entry in the
   {term}`partial result`: the linear solve did not converge there, or the sweep
-  (or its frequency worker's block) stopped at an earlier frequency that did not
-  converge.
+  (or its {term}`frequency worker`'s block) stopped at an earlier frequency that
+  did not converge.
 
 Reference impedance
   The impedance per {term}`port` that S-parameters are normalized to: the port

@@ -154,11 +154,12 @@ options = gfem.SolverOptions(
 
 This pays off over a narrow band, where GMRES needs a few iterations per
 frequency in place of a refactorization. Further from the factored frequency
-the iterations grow. Where GMRES reaches `ksp_max_it`, gfem factorizes again at
-that frequency, finishes its solve from where GMRES stopped, and reuses the new
-factors for the frequencies after it. Over a wide band reuse therefore pays
-only between these refactorizations, each of which also costs the `ksp_max_it`
-iterations spent before it: lower `ksp_max_it` to refactorize sooner. A solve
+the iterations grow. Where GMRES does not converge (for example at
+`ksp_max_it`), gfem factorizes again at that frequency, finishes its solve from
+where GMRES stopped, and reuses the new factors for the frequencies after it.
+Over a wide band reuse therefore pays only between these refactorizations, each
+of which also costs the iterations spent before it: lower `ksp_max_it` to
+refactorize sooner. A solve
 that still does not converge on the new factors raises
 `gfem.LinearSolverConvergenceError`, which carries the frequencies the sweep
 solved. Adaptive sweeps set the preconditioner up at every sample.

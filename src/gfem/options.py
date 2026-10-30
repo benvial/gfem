@@ -308,8 +308,9 @@ class SolverOptions:
             starts; one SLEPc does not read raises it after SLEPc's seed
             solve. With ``ksp_reuse_preconditioner``, a reused
             preconditioner is set up again at the frequency or shift where
-            a Krylov solve on it reaches ``ksp_max_it``. Stored as
-            ``(name, value)`` pairs sorted by name.
+            a Krylov solve on it does not converge (for example at
+            ``ksp_max_it``). Stored as ``(name, value)`` pairs sorted by
+            name.
     """
 
     order: int = 2

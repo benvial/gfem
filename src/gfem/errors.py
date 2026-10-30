@@ -225,11 +225,14 @@ class LinearSolverConvergenceError(RuntimeError):
     Attributes:
         frequency: The frequency in Hz where the solve did not converge
             (the lowest one when several frequency workers failed, the
-            sample frequency in an adaptive sweep), or ``None`` outside a
-            driven sweep.
+            sample frequency in an adaptive sweep, the adjoint solve's
+            frequency in a driven gradient's backward pass), or ``None``
+            outside a driven solve.
         unsolved: Every frequency of a uniform sweep without a result, in
             Hz and in ``Driven.frequency`` order: the one that failed and
-            those after it. ``None`` outside a uniform sweep.
+            those after it or, with frequency workers, each block's failing
+            frequency and those after it in that block. ``None`` outside a
+            uniform sweep.
         result: The partial result of a uniform sweep: S, the kept fields
             and the wave-port modes at the solved frequencies only.
             ``None`` when no frequency was solved, and outside a uniform
