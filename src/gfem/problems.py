@@ -267,8 +267,9 @@ class Driven:
     (``linear_solver="direct"``, or ``"petsc"`` with its default MUMPS
     factorization) so does the capacitive part of S. MKL PARDISO
     (``"direct"`` with the ``mkl`` extra) becomes unreliable below
-    k0·h_min ≈ 3e-7. The inductance read from S and reciprocity are
-    unaffected. The solve warns with `gfem.LowFrequencyWarning`. With
+    k0·h_min ≈ 3e-8. Above that, and down to at least k0·h_min = 1e-8 with
+    the other exact factorizations, the inductance read from S and
+    reciprocity are unaffected. The solve warns with `gfem.LowFrequencyWarning`. With
     ``bddc_gmres``, S stays at ``SolverOptions.tolerance``, but a
     capacitance read from S is good only to about tolerance/(ωCZ0). For
     capacitance at low frequency, solve `gfem.Electrostatic`. Examples: the

@@ -123,9 +123,10 @@ DEFAULT_SOLVER = "bddc_gmres"
 
 #: k0 * h_min below which a driven solve warns (gfem.LowFrequencyWarning).
 LOW_FREQUENCY_FLOOR = 1e-6
-#: k0 * h_min below which MKL PARDISO becomes unreliable (MUMPS and
-#: NGSolve's sparse Cholesky do not), named in the low-frequency warning.
-_PARDISO_FLOOR = 3e-7
+#: k0 * h_min below which MKL PARDISO becomes unreliable (with iparm(10) =
+#: 16; MUMPS and NGSolve's sparse Cholesky hold to 1e-8, the lowest point
+#: measured), named in the low-frequency warning.
+_PARDISO_FLOOR = 3e-8
 
 
 @dataclasses.dataclass(eq=False)
