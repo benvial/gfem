@@ -334,6 +334,8 @@ def test_a_retry_after_a_reshift_seeds_at_the_target(mesh, monkeypatch):
     monkeypatch.setattr(rule, "_select", too_few)
     columns = coarse_columns(monkeypatch)
     gfem.solve(model, gfem.Eigenmode(target=8e9, n_modes=2), options=options)
+    target = 2 * math.pi * 8e9 * 1e-3 / const.c  # k0 per mm
+    assert shifts[0] == pytest.approx(target, rel=1e-12)
     assert shifts == [shifts[0], shifts[0]]
     assert columns == [MIN_SUBSPACE, RESHIFT_SOLVES, MIN_SUBSPACE, RESHIFT_SOLVES]
 
