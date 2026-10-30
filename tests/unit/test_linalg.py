@@ -8,12 +8,19 @@ import ngsolve as ngs
 import numpy as np
 import pytest
 import structured_meshes as sm
-from preconditioners import count_preconditioners
+from preconditioners import coarse_columns, count_preconditioners
 
 import gfem
 from gfem._engine import quadrature
 from gfem._engine.mesh import to_ngsolve
-from gfem._linalg import Operator, bddc, factorize, low_rank_update, prepare
+from gfem._linalg import (
+    Operator,
+    bddc,
+    factorize,
+    low_rank_update,
+    pardiso,
+    prepare,
+)
 from gfem._linalg.gmres import Gmres
 from gfem._linalg.pieces import AssembledPieces, PieceSum
 
@@ -355,6 +362,65 @@ def test_bddc_handle_without_reuse_sets_up_at_every_refactorization(built, monke
     fresh = prepare(operator(1.1 - 2j), symmetry="complex_symmetric", kind="bddc_gmres")
     fresh.solve(B, x0=previous)
     assert handle.iterations[2:] == fresh.iterations
+
+
+def test_a_bddc_refactorization_may_state_the_solves_its_setup_serves(
+    built, monkeypatch
+):
+    # an eigen reshift serves fewer solves than its seed shift: the next setup
+    # counts the stated solves, and a refactorization stating none keeps them
+    def operator(shift):
+        return _laplace(built, complex_valued=True, shift=shift)[0]
+
+    columns = coarse_columns(monkeypatch)
+    handle = prepare(
+        operator(1 - 2j),
+        symmetry="complex_symmetric",
+        kind="bddc_gmres",
+        width=2,
+        solves=20,
+    )
+    handle.refactorize(operator(1.1 - 2j), solves=3)
+    handle.refactorize(operator(1.2 - 2j))
+    assert columns == [40, 6, 6]
+
+
+@pytest.mark.parametrize(
+    ("threads", "columns", "sparse"),
+    [
+        (8, 1, False),
+        (8, 6, False),
+        (8, 16, False),
+        (8, 24, False),
+        (15, 16, False),
+        (15, 24, False),
+        (16, 1, False),
+        (16, 15, False),
+        (16, 16, True),
+        (16, 24, True),
+        (32, 6, False),
+        (32, 15, False),
+        (32, 16, True),
+        (55, 6, False),
+        (55, 15, False),
+        (56, 2, False),
+        (56, 5, False),
+        (56, 6, True),
+        (56, 15, True),
+        (112, 5, False),
+        (112, 6, True),
+    ],
+)
+def test_bddc_coarse_inverse_is_sparse_cholesky_only_for_enough_columns_for_its_threads(
+    threads, columns, sparse
+):
+    # otherwise gfem's PARDISO, or sparse Cholesky without MKL
+    shipped = pardiso.pardiso_inverse("complex_symmetric", is_complex=True)
+    expected = "sparsecholesky" if sparse else (shipped or "sparsecholesky")
+    chosen = bddc._coarse_inverse(
+        "complex_symmetric", is_complex=True, threads=threads, columns=columns
+    )
+    assert chosen == expected
 
 
 def test_a_bddc_solve_at_another_tolerance_never_sets_the_preconditioner_up_again(

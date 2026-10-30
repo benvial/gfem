@@ -12,6 +12,9 @@ gives its path and skips the test when it is unset, and a test taking a
 
 Tests marked ``petsc`` or ``slepc`` need gfem's PETSc or SLEPc solver: they
 are skipped, with the user-facing reason, where `gfem._petsc` cannot use it.
+
+A test that sets NGSolve's thread count uses the `ngsolve_threads` fixture,
+which puts the count back afterwards.
 """
 
 import os
@@ -64,6 +67,17 @@ def _skip_without_petsc(items: list[pytest.Item]) -> None:
             probes[name]()
         except SolverUnavailableError as err:
             item.add_marker(pytest.mark.skip(reason=str(err)))
+
+
+@pytest.fixture
+def ngsolve_threads():
+    """``SetNumThreads`` is process-wide: put NGSolve's thread count back after."""
+    import ngsolve as ngs
+
+    with ngs.TaskManager():
+        threads = ngs.GetNumThreads()
+    yield
+    ngs.SetNumThreads(threads)
 
 
 def _reference_root() -> Path | None:

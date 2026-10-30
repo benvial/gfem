@@ -7,6 +7,7 @@ MKL PARDISO, and the answers agree to the direct solve's accuracy.
 
 import ast
 import importlib.metadata
+import os
 import platform
 import sys
 import types
@@ -21,6 +22,7 @@ import structured_meshes as sm
 import gfem
 from gfem._engine import quadrature
 from gfem._engine.mesh import to_ngsolve
+from gfem._engine.runtime import task_manager
 from gfem._linalg import Operator, direct, pardiso, prepare
 from gfem._linalg.base import host_bytes
 
@@ -155,6 +157,92 @@ def test_pardiso_refactorization_keeps_its_plan_and_solves_like_a_fresh_handle(
     rng = np.random.default_rng(4)
     B = rng.standard_normal(space.ndof) + 1j * rng.standard_normal(space.ndof)
     X, ref = handle.solve(B), fresh.solve(B)
+    assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
+
+
+def _spd_laplacian(n=12):
+    """A real SPD 3D 7-point Laplacian with ``n**3`` unknowns, as SciPy CSR."""
+    import scipy.sparse as sp
+
+    e = np.ones(n)
+    t = sp.diags_array([-e[:-1], 2 * e, -e[:-1]], offsets=[-1, 0, 1])
+    i = sp.eye_array(n)
+    return sp.csr_array(
+        sp.kron(sp.kron(t, i), i)
+        + sp.kron(sp.kron(i, t), i)
+        + sp.kron(sp.kron(i, i), t)
+    )
+
+
+needs_two_cores = pytest.mark.skipif(
+    (os.cpu_count() or 1) < 2, reason="needs 2 CPU cores"
+)
+
+
+@needs_mkl
+@needs_two_cores
+@pytest.mark.usefixtures("ngsolve_threads")
+def test_a_pardiso_handle_solves_on_its_factorization_threads_outside_a_task_manager():
+    # NGSolve's wrapper sets MKL's threads to the caller's count (1 outside a
+    # TaskManager) at every call; a solve on fewer threads than the analysis
+    # leaves the handle sequential for good. MKL writes the count it was
+    # given into iparm[2].
+    matrix = _spd_laplacian()
+    rhs = np.random.default_rng(7).standard_normal(matrix.shape[0])
+    with task_manager(2):
+        handle = gfem._linalg.factorize(matrix)
+        ref = handle.solve(rhs)
+    solver = handle._solver
+    outside = handle.solve(rhs)
+    assert solver._params[2] == 2
+    with task_manager(2):
+        inside = handle.solve(rhs)
+    assert solver._params[2] == 2
+    for X in (outside, inside):
+        assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
+
+
+@needs_mkl
+@needs_two_cores
+@pytest.mark.usefixtures("ngsolve_threads")
+def test_a_pardiso_handle_factored_outside_a_task_manager_keeps_its_factorization_threads():  # noqa: E501
+    # the factorization's count, not the larger one
+    matrix = _spd_laplacian()
+    rhs = np.random.default_rng(8).standard_normal(matrix.shape[0])
+    handle = gfem._linalg.factorize(matrix)
+    ref = handle.solve(rhs)
+    with task_manager(2):
+        X = handle.solve(rhs)
+    assert handle._solver._params[2] == 1
+    assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
+
+
+@needs_mkl
+@pytest.mark.usefixtures("ngsolve_threads")
+def test_without_mkl_s_local_thread_setting_a_pardiso_handle_drops_its_factorization_threads(  # noqa: E501
+    monkeypatch,
+):
+    # another MKL or NGSolve may lack the symbol: the wrapper's own call
+    # runs, and the solve still succeeds
+    from ngsolve.solvers import mkl_pardiso
+
+    matrix = _spd_laplacian()
+    rhs = np.random.default_rng(9).standard_normal(matrix.shape[0])
+    with task_manager(2):
+        ref = gfem._linalg.factorize(matrix).solve(rhs)
+    monkeypatch.setattr(mkl_pardiso, "_mkl_set_num_threads_local", None)
+    parent = mkl_pardiso.MKLPardiso._call_pardiso
+    phases = []
+
+    def recorded(self, phase):
+        phases.append(phase)
+        parent(self, phase)
+
+    monkeypatch.setattr(mkl_pardiso.MKLPardiso, "_call_pardiso", recorded)
+    with task_manager(2):
+        handle = gfem._linalg.factorize(matrix)
+    X = handle.solve(rhs)
+    assert phases == [12, 33]
     assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
 
 
@@ -451,6 +539,46 @@ def test_bddc_coarse_problem_is_factored_by_gfem_flagged_pardiso(  # noqa: PLR09
     assert np.linalg.norm(X - ref) <= 1e-10 * np.linalg.norm(ref)
 
 
+@needs_mkl
+@pytest.mark.usefixtures("ngsolve_threads")
+def test_a_bddc_setup_serving_many_columns_on_16_threads_factors_its_coarse_problem_with_sparse_cholesky(  # noqa: E501
+    built, coarse_wrappers
+):
+    # 4 columns x 4 solves on one reused preconditioner: 16 columns per setup
+    def operator(shift):
+        return _laplace(built, complex_valued=True, shift=shift)[0]
+
+    def setup(threads, **options):
+        with task_manager(threads):
+            return prepare(
+                operator(1 - 2j),
+                symmetry="complex_symmetric",
+                kind="bddc_gmres",
+                width=4,
+                solves=4,
+                **options,
+            )
+
+    def inverse(handle):
+        return handle._preconditioner.flags.ToDict()["inverse"]
+
+    many = setup(16)
+    assert inverse(many) == "sparsecholesky"
+    assert coarse_wrappers == []
+    # without reuse one setup serves only its 4 columns; 8 threads keep PARDISO
+    few = setup(16, reuse_preconditioner=False)
+    assert inverse(few) == "gfem_pardiso"
+    assert inverse(setup(8)) == "gfem_pardiso"
+    assert len(coarse_wrappers) == 2
+    # a rebuild (n_ref unset, or reuse off) chooses as the first setup did
+    with task_manager(16):
+        many.refactorize(operator(1.1 - 2j))
+        few.refactorize(operator(1.1 - 2j))
+    assert inverse(many) == "sparsecholesky"
+    assert inverse(few) == "gfem_pardiso"
+    assert len(coarse_wrappers) == 3
+
+
 @pytest.mark.parametrize("symmetry", ["complex_symmetric", "general"])
 def test_bddc_coarse_problem_without_mkl_is_sparse_cholesky(
     built, monkeypatch, symmetry
@@ -496,18 +624,23 @@ def pardiso_handle(built):
     return prepare(op, symmetry="complex_symmetric", kind="direct")
 
 
-def _record_parent_calls(monkeypatch, openmp, failure=None):
-    """Replace NGSolve's PARDISO call: record each phase and its block time."""
+def _record_pardiso_calls(monkeypatch, openmp, failure=None):
+    """Replace MKL's ``pardiso`` in NGSolve's wrapper: record each phase and its
+    block time.
+
+    Every PARDISO call runs through it: NGSolve's ``_call_pardiso`` and gfem's
+    own call on a handle's thread count.
+    """
     from ngsolve.solvers import mkl_pardiso
 
     calls = []
 
-    def parent(self, phase):  # noqa: ARG001
-        calls.append((phase, None if openmp is None else openmp.block_time))
+    def fake(*args):
+        calls.append((args[4][0], None if openmp is None else openmp.block_time))
         if failure is not None:
             raise failure
 
-    monkeypatch.setattr(mkl_pardiso.MKLPardiso, "_call_pardiso", parent)
+    monkeypatch.setattr(mkl_pardiso, "_pardiso", fake)
     return calls
 
 
@@ -517,7 +650,7 @@ def test_a_pardiso_call_runs_at_block_time_0_and_restores_the_previous_value(
 ):
     openmp = _FakeOpenMP(block_time=123)
     monkeypatch.setattr(pardiso, "_openmp", lambda: openmp)
-    calls = _record_parent_calls(monkeypatch, openmp)
+    calls = _record_pardiso_calls(monkeypatch, openmp)
     pardiso_handle._inverse._call_pardiso(33)
     assert calls == [(33, 0)]
     assert openmp.block_time == 123
@@ -529,7 +662,7 @@ def test_a_failing_pardiso_call_still_restores_the_block_time(
 ):
     openmp = _FakeOpenMP(block_time=123)
     monkeypatch.setattr(pardiso, "_openmp", lambda: openmp)
-    calls = _record_parent_calls(monkeypatch, openmp, RuntimeError("phase 33"))
+    calls = _record_pardiso_calls(monkeypatch, openmp, RuntimeError("phase 33"))
     with pytest.raises(RuntimeError, match="phase 33"):
         pardiso_handle._inverse._call_pardiso(33)
     assert calls == [(33, 0)]
@@ -541,23 +674,24 @@ def test_without_libiomp5_a_pardiso_call_only_calls_the_wrapper(
     pardiso_handle, monkeypatch
 ):
     monkeypatch.setattr(pardiso, "_openmp", lambda: None)
-    calls = _record_parent_calls(monkeypatch, None)
+    calls = _record_pardiso_calls(monkeypatch, None)
     pardiso_handle._inverse._call_pardiso(33)
     assert calls == [(33, None)]
 
 
-def _wrap_parent_calls(monkeypatch, block_time):
-    """Record each phase NGSolve's PARDISO call runs and its block time."""
+def _wrap_pardiso_calls(monkeypatch, block_time):
+    """Record each phase MKL's ``pardiso`` runs in NGSolve's wrapper, and its
+    block time."""
     from ngsolve.solvers import mkl_pardiso
 
     calls = []
-    call = mkl_pardiso.MKLPardiso._call_pardiso
+    call = mkl_pardiso._pardiso
 
-    def parent(self, phase):
-        calls.append((phase, block_time()))
-        call(self, phase)
+    def wrapped(*args):
+        calls.append((args[4][0], block_time()))
+        call(*args)
 
-    monkeypatch.setattr(mkl_pardiso.MKLPardiso, "_call_pardiso", parent)
+    monkeypatch.setattr(mkl_pardiso, "_pardiso", wrapped)
     return calls
 
 
@@ -567,7 +701,7 @@ def test_a_two_frequency_refactorization_gathers_and_runs_at_block_time_0(
 ):
     openmp = _FakeOpenMP(block_time=123)
     monkeypatch.setattr(pardiso, "_openmp", lambda: openmp)
-    calls = _wrap_parent_calls(monkeypatch, openmp.kmp_get_blocktime)
+    calls = _wrap_pardiso_calls(monkeypatch, openmp.kmp_get_blocktime)
     op, space = _laplace(built, complex_valued=True, shift=3 + 1j)
     pardiso_handle.refactorize(op)
     assert isinstance(pardiso_handle._gather, np.ndarray)  # the gather path
@@ -580,16 +714,14 @@ def test_a_two_frequency_refactorization_gathers_and_runs_at_block_time_0(
     assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
 
 
-@pytest.mark.skipif(
-    not (MKL and sys.platform == "linux"), reason="needs the mkl extra on Linux"
-)
+@needs_mkl
 def test_pardiso_calls_leave_the_real_block_time_as_it_was(built, monkeypatch):
     op, space = _laplace(built, complex_valued=True, shift=1 - 2j)
     prepare(op, symmetry="complex_symmetric", kind="direct")  # MKL loads libiomp5
     openmp = pardiso._load_libiomp5()
     assert openmp is not None
     before = openmp.kmp_get_blocktime()
-    calls = _wrap_parent_calls(monkeypatch, openmp.kmp_get_blocktime)
+    calls = _wrap_pardiso_calls(monkeypatch, openmp.kmp_get_blocktime)
     handle = prepare(op, symmetry="complex_symmetric", kind="direct")
     handle.solve(np.ones(space.ndof, complex))
     assert [phase for phase, _ in calls] == [12, 33]

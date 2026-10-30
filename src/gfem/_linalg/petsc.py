@@ -202,7 +202,12 @@ class PetscHandle(NgsHandle):
         handle._pattern = pattern
         return handle
 
-    def refactorize(self, operator: Operator) -> None:
+    def refactorize(
+        self,
+        operator: Operator,
+        *,
+        solves: int | None = None,  # noqa: ARG002
+    ) -> None:
         """Refactorize on ``operator``'s values (see `gfem._linalg.Refactorable`).
 
         An operator whose piece sum shares this handle's pieces is summed
@@ -212,6 +217,8 @@ class PetscHandle(NgsHandle):
         gathered into the AIJ's arrays and set up again on the same solver
         plan (a numeric factorization by default). A changed pattern is
         planned anew: a new AIJ under the same KSP.
+
+        ``solves`` is ignored: only BDDC's coarse choice reads it.
 
         Raises:
             RuntimeError: The handle was freed, or PETSc failed (as `prepare`).

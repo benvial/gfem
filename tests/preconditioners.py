@@ -1,8 +1,8 @@
-"""Count BDDC setups and Krylov iterations in a test.
+"""Count BDDC setups, their coarse columns and Krylov iterations in a test.
 
 Usage::
 
-    from preconditioners import count_iterations, count_preconditioners
+    from preconditioners import coarse_columns, count_iterations, count_preconditioners
 
     builds = count_preconditioners(monkeypatch)
     iterations = count_iterations(monkeypatch)
@@ -13,6 +13,7 @@ Usage::
 
 import ngsolve as ngs
 
+from gfem._linalg import bddc
 from gfem._linalg.bddc import BddcHandle
 
 
@@ -39,4 +40,20 @@ def count_iterations(monkeypatch) -> list[int]:
         calls.append(self.iterations[-1])
 
     monkeypatch.setattr(BddcHandle, "_finish", spy)
+    return calls
+
+
+def coarse_columns(monkeypatch) -> list[int]:
+    """Spy on BDDC setups: the columns each one is expected to serve.
+
+    One entry per coarse factorization chosen (`bddc._coarse_inverse`).
+    """
+    calls = []
+    choose = bddc._coarse_inverse
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs["columns"])
+        return choose(*args, **kwargs)
+
+    monkeypatch.setattr(bddc, "_coarse_inverse", spy)
     return calls

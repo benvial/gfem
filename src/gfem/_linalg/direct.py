@@ -74,6 +74,11 @@ class DirectHandle(NgsHandle):
     sparse Cholesky, or a wrapper without the private attributes this reads,
     runs NGSolve's ``Update()``. The gather index is built at the first
     refactorization, so a handle factored once never builds it.
+
+    A PARDISO handle refactorizes and solves on the thread count it was
+    factored with, whatever TaskManager the caller is in: a solve outside the
+    TaskManager it was factored in stays parallel, and one factored outside
+    any TaskManager stays on one thread (`gfem._linalg.pardiso`).
     """
 
     kind = "direct"
@@ -195,7 +200,12 @@ class DirectHandle(NgsHandle):
         )
         return cls(assembled, None, "hermitian", is_complex=False)
 
-    def refactorize(self, operator: Operator) -> None:
+    def refactorize(
+        self,
+        operator: Operator,
+        *,
+        solves: int | None = None,  # noqa: ARG002
+    ) -> None:
         """Refactorize on ``operator``'s values (see `gfem._linalg.Refactorable`).
 
         An operator whose piece sum shares this handle's pieces is summed
@@ -208,6 +218,8 @@ class DirectHandle(NgsHandle):
         without the gather index, ``Update()``. The first refactorization
         builds the index, before the values change. A changed pattern is
         planned anew.
+
+        ``solves`` is ignored: only BDDC's coarse choice reads it.
 
         Raises:
             RuntimeError: The handle was freed.

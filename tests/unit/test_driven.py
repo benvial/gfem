@@ -13,12 +13,13 @@ import math
 import warnings
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 import scipy.constants as const
 import structured_meshes as sm
 from petsc_recipe import SOLVER_OPTIONS
-from preconditioners import count_preconditioners
+from preconditioners import coarse_columns, count_preconditioners
 
 import gfem
 from gfem._engine import driven, terms, workers
@@ -419,6 +420,49 @@ def test_a_bddc_adaptive_sweep_sets_bddc_up_at_every_sample(fine_line, monkeypat
     out = _bddc_forward(fine_line, problem)
     np.testing.assert_allclose(out["s"], direct, rtol=0, atol=1e-4)
     assert len(builds) == len(out["iterations"]) > 1
+
+
+@pytest.mark.parametrize(("frequency", "expected"), [((3e9, 3.5e9, 4e9), 6), (F, 2)])
+def test_a_uniform_bddc_sweep_sets_its_coarse_problem_up_for_every_frequency(
+    line, monkeypatch, frequency, expected
+):
+    # the reused preconditioner serves 2 ports at each frequency
+    columns = coarse_columns(monkeypatch)
+    _s(line, gfem.Driven(frequency=frequency), linear_solver="bddc_gmres")
+    assert columns == [expected]
+
+
+def test_an_adaptive_bddc_sweep_sets_its_coarse_problem_up_for_one_sample(
+    line, monkeypatch
+):
+    # each sample sets BDDC up afresh for its own 2 ports
+    problem = gfem.Driven(frequency=np.linspace(1e9, 20e9, 20), sweep="adaptive")
+    columns = coarse_columns(monkeypatch)
+    out = _bddc_forward(line, problem)
+    assert columns == [2] * len(out["iterations"])
+    assert len(columns) > 1
+
+
+def test_a_bddc_adjoint_sets_its_coarse_problem_up_for_one_solve(line, monkeypatch):
+    # both ports excited over 2 frequencies; the kept fields' cotangents take
+    # one adjoint solve per frequency, on its own handle of width 2
+    frequency = (3e9, 3.5e9)
+    problem = gfem.Driven(frequency=frequency, keep_fields=True)
+    options = gfem.SolverOptions(linear_solver="bddc_gmres")
+
+    def objective(eps):
+        model = line.with_material("dielectric", gfem.MaterialField(eps_r=eps))
+        result = gfem.solve(model, problem, options=options)
+        return sum(
+            jnp.sum(jnp.abs(result.e_field(f, excite=p).coefficients) ** 2)
+            for f in frequency
+            for p in ("p1", "p2")
+        )
+
+    eps = jnp.full(len(line.mesh.tetrahedra), EPS)
+    columns = coarse_columns(monkeypatch)
+    jax.grad(objective)(eps)
+    assert columns == [4, 2, 2]  # the forward sweep's, then the adjoint's
 
 
 def test_excite_selects_the_columns_of_s(line):

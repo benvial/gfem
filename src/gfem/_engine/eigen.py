@@ -20,6 +20,7 @@ import scipy.constants as const
 import scipy.sparse as sp
 
 from gfem._eigen.operator import EigenOperator, NonPolynomial, split
+from gfem._eigen.seed import MIN_SUBSPACE
 from gfem._engine import quadrature, terms
 from gfem._engine.cache import discretization
 from gfem._engine.coefficients import coefficient, element_tensors
@@ -67,8 +68,12 @@ def eigen_operator(
     def operator(k: complex) -> Operator:
         return Operator(op.form(k * const.c / scale), space.FreeDofs())
 
-    def prepare_shift(t: Operator) -> Handle:
-        """Prepare ``t``: ``T(k)`` at one shift (`operator`)."""
+    def prepare_shift(t: Operator, solves: int = MIN_SUBSPACE) -> Handle:
+        """Prepare ``t``: ``T(k)`` at one shift (`operator`), for ``solves``.
+
+        The seed solve applies it `MIN_SUBSPACE` times or more; a refinement
+        reshift `gfem._eigen.operator.RESHIFT_SOLVES` times.
+        """
         return prepare(
             t,
             symmetry="complex_symmetric",
@@ -77,6 +82,7 @@ def eigen_operator(
             threads=threads,
             tolerance=tolerance,
             width=1,
+            solves=solves,
             petsc_options=petsc_options,
         )
 

@@ -32,11 +32,13 @@ from eigen_cases import (
     line_roots,
     terminated_line,
 )
-from preconditioners import count_preconditioners
+from preconditioners import coarse_columns, count_preconditioners
 from scipy.optimize import brentq
 
 import gfem
 from gfem._eigen import rule as eigen_rule
+from gfem._eigen.operator import RESHIFT_SOLVES
+from gfem._eigen.seed import MIN_SUBSPACE
 from gfem._engine import eigen as engine_eigen
 from gfem._engine.driven import driven_operator
 from gfem._engine.eigen import projector
@@ -288,6 +290,54 @@ def test_a_bddc_reshift_sets_the_preconditioner_up_at_the_new_shift(mesh, monkey
     assert len(builds) == 2
     np.testing.assert_allclose(result.omega, fresh.omega, rtol=1e-12)
     np.testing.assert_allclose(result.q, fresh.q, rtol=1e-10)
+
+
+def test_a_bddc_shift_sets_its_coarse_problem_up_for_the_seed_solve(mesh, monkeypatch):
+    # ARPACK's seed solve applies T(sigma)^-1 at least MIN_SUBSPACE times
+    model = terminated_line(mesh, 1000.0)
+    options = gfem.SolverOptions(linear_solver="bddc_gmres")
+    columns = coarse_columns(monkeypatch)
+    gfem.solve(model, gfem.Eigenmode(target=8e9), options=options)
+    assert columns == [MIN_SUBSPACE]
+
+
+def test_a_bddc_reshift_sets_its_coarse_problem_up_for_the_refinement(
+    mesh, monkeypatch
+):
+    # the second mode is refined at its own shift, which serves a few solves
+    model = terminated_line(mesh, 1000.0)
+    options = gfem.SolverOptions(linear_solver="bddc_gmres")
+    columns = coarse_columns(monkeypatch)
+    gfem.solve(model, gfem.Eigenmode(target=8e9, n_modes=2), options=options)
+    assert columns == [MIN_SUBSPACE, RESHIFT_SOLVES]
+
+
+def test_a_retry_after_a_reshift_seeds_at_the_target(mesh, monkeypatch):
+    # too few modes after refinement reshifted: the wider seed solve runs
+    # at the target again, on a coarse problem counted for the seed
+    model = terminated_line(mesh, 1000.0)
+    options = gfem.SolverOptions(linear_solver="bddc_gmres")
+    rule = eigen_rule.EigenmodeRule
+    shifts, select, shift_invert = [], rule._select, rule._shift_invert
+
+    def seed(self, op, *args, **kwargs):
+        shifts.append(op.shift)
+        return shift_invert(self, op, *args, **kwargs)
+
+    def too_few(self, *args, **kwargs):
+        accepted, failed, guard = select(self, *args, **kwargs)
+        if len(shifts) == 1:  # the first seed solve's modes: one short
+            return accepted[:-1], [], None
+        return accepted, failed, guard
+
+    monkeypatch.setattr(rule, "_shift_invert", seed)
+    monkeypatch.setattr(rule, "_select", too_few)
+    columns = coarse_columns(monkeypatch)
+    gfem.solve(model, gfem.Eigenmode(target=8e9, n_modes=2), options=options)
+    target = 2 * math.pi * 8e9 * 1e-3 / const.c  # k0 per mm
+    assert shifts[0] == pytest.approx(target, rel=1e-12)
+    assert shifts == [shifts[0], shifts[0]]
+    assert columns == [MIN_SUBSPACE, RESHIFT_SOLVES, MIN_SUBSPACE, RESHIFT_SOLVES]
 
 
 @pytest.mark.parametrize(

@@ -206,13 +206,20 @@ class CudssHandle(NgsHandle):
         lower = sp.csr_matrix((values, indices, indptr), shape=(len(indptr) - 1,) * 2)
         return lower, gather
 
-    def refactorize(self, operator: Operator) -> None:
+    def refactorize(
+        self,
+        operator: Operator,
+        *,
+        solves: int | None = None,  # noqa: ARG002
+    ) -> None:
         """Assemble ``operator`` and refactorize (see `gfem._linalg.Refactorable`).
 
         On the same pattern, gathers the new values into the triangle and
         factorizes on the existing plan, in the memory mode of the first
         plan. A changed pattern is planned again (hybrid memory stays on if
         it was).
+
+        ``solves`` is ignored: only BDDC's coarse choice reads it.
         """
         solver = self._solver
         matrix = self._matrix
