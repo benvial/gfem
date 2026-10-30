@@ -40,6 +40,15 @@ threads on large problems. Results change only to the solver's precision.
   threads stop waiting for work as soon as the call returns and free the
   cores for the rest of the solve. The setting covers gfem's calls only and is restored after
   each, so a `KMP_BLOCKTIME` you set applies everywhere but inside them.
+- **A direct factorization keeps solving on its own thread count.** With the
+  `mkl` extra, a direct solver's factorization reused outside the
+  TaskManager it was made in, or under a different thread count, keeps
+  solving on the threads it was factored with instead of falling back to one
+  thread. MKL PARDISO used to run every later solve on that factorization
+  sequentially, about 5 times slower on a 10-million-unknown problem. This
+  can happen when a later gradient reuses a cached adjoint factorization
+  under `threads=None` after another solve changed the thread count. The
+  results do not change.
 - **Single-frequency direct solves do less work before factorizing.** When
   every unknown of the system is free, `linear_solver="direct"` hands the
   assembled matrix to the factorization without copying it first. The index
