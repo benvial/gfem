@@ -154,7 +154,7 @@ class NonPolynomial:
         )
 
 
-class Prepare(Protocol):
+class ShiftPreparer(Protocol):
     """Prepares a `gfem._linalg` handle of ``T(k)`` at one shift.
 
     ``solves`` is the solve calls the handle is expected to serve; it
@@ -189,7 +189,7 @@ class EigenOperator:
 
     shift: complex
     operator: Callable[[complex], Operator]
-    prepare: Prepare
+    prepare: ShiftPreparer
     damping: LinearMap | None
     mass: LinearMap
     free: np.ndarray
