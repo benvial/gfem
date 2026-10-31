@@ -71,7 +71,7 @@ from gfem._engine.eigen import (
 from gfem._engine.fields import fe_space
 from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair, ShapeTerm
-from gfem._linalg import KINDS
+from gfem._linalg import Kind, ResolvedLinearSolver
 from gfem._sign import largest_entry
 from gfem.conventions import MODE_ENERGY
 from gfem.errors import DegenerateModeError, EigenmodeConvergenceError
@@ -85,7 +85,7 @@ __all__ = ["DEFAULT_SOLVER", "EigenmodeRule"]
 
 #: The linear solver for ``linear_solver="auto"``: shift-invert wants exact
 #: inner solves.
-DEFAULT_SOLVER = "direct"
+DEFAULT_SOLVER: Kind = "direct"
 #: Inner solves of an iterative backend run this much tighter than the
 #: eigen tolerance.
 _INNER = 1e-2
@@ -157,15 +157,10 @@ class EigenmodeRule:
             raise TypeError(f"Expected gfem.Eigenmode, got {problem!r}.")
         self.problem = problem
         self.options = options
-        kind = options.linear_solver
-        self.kind = DEFAULT_SOLVER if kind == "auto" else kind
-        if self.kind not in KINDS:  # pragma: no cover - SolverOptions validates
-            raise NotImplementedError(
-                f"linear_solver={kind!r} is not available for eigenmode problems."
-            )
         # before any assembly
-        if self.kind == "petsc":
-            _petsc.require_petsc("linear_solver")
+        self.linear = ResolvedLinearSolver.resolve(
+            options, default=DEFAULT_SOLVER, problem="eigenmode"
+        )
         if options.eigen_solver == "slepc":
             _petsc.require_slepc("eigen_solver")
         _check_supported(model)
@@ -292,13 +287,10 @@ class EigenmodeRule:
         return eigen_operator(
             op,
             sigma,
-            kind=self.kind,
-            device=opts.device,
-            threads=opts.threads,
+            linear=self.linear,
             tolerance=min(
                 opts.tolerance, max(_INNER * opts.eigen_tolerance, _INNER_FLOOR)
             ),
-            petsc_options=opts.petsc_options,
         )
 
     def _entry(

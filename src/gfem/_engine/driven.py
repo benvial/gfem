@@ -57,7 +57,6 @@ import dataclasses
 import functools
 import math
 import warnings
-from collections.abc import Mapping
 from typing import Any, NoReturn, Self
 
 import jax
@@ -66,7 +65,6 @@ import ngsolve as ngs
 import numpy as np
 import scipy.constants
 
-from gfem import _petsc
 from gfem._adjoint import adjoint_tolerance
 from gfem._boundaries import (
     LumpedPort,
@@ -83,11 +81,11 @@ from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair, ShapeTerm, is_sheet
 from gfem._engine.wave_ports import WavePortCoupling, wave_port_couplings
 from gfem._linalg import (
-    KINDS,
     Handle,
+    Kind,
     Operator,
+    ResolvedLinearSolver,
     low_rank_update,
-    prepare,
     refactorize_or_prepare,
 )
 from gfem._linalg.pieces import AssembledPieces, PieceSum
@@ -99,7 +97,7 @@ from gfem.errors import (
 )
 from gfem.mesh import Mesh, _shortest_edges
 from gfem.model import Model
-from gfem.options import PetscOptions, PetscValue, SolverOptions
+from gfem.options import SolverOptions
 from gfem.problems import Driven
 from gfem.results import (
     DrivenResult,
@@ -123,7 +121,7 @@ __all__ = [
 ]
 
 #: The linear solver for ``linear_solver="auto"``: GMRES + BDDC.
-DEFAULT_SOLVER = "bddc_gmres"
+DEFAULT_SOLVER: Kind = "bddc_gmres"
 
 #: k0 * h_min below which a driven solve warns (gfem.LowFrequencyWarning).
 LOW_FREQUENCY_FLOOR = 1e-6
@@ -275,16 +273,10 @@ class DrivenRule:
             raise TypeError(f"Expected gfem.Driven, got {problem!r}.")
         self.problem = problem
         self.options = options
-        kind = options.linear_solver
-        self.kind = DEFAULT_SOLVER if kind == "auto" else kind
-        if self.kind not in KINDS:
-            raise NotImplementedError(
-                f"linear_solver={kind!r} is not available for driven problems in "
-                "this version of gfem; use one of "
-                f"{', '.join(repr(k) for k in KINDS)}."
-            )
-        if self.kind == "petsc":  # before any assembly, and before any worker
-            _petsc.require_petsc("linear_solver")
+        # before any assembly, and before any worker
+        self.linear = ResolvedLinearSolver.resolve(
+            options, default=DEFAULT_SOLVER, problem="driven"
+        )
         _check_supported(model)
         if not model.ports:
             raise ValueError(
@@ -415,13 +407,7 @@ class DrivenRule:
             s = np.zeros((len(frequencies), len(self.port_names), width), complex)
             previous = None
             with ports.sweep(
-                kind=self.kind,
-                device=self.options.device,
-                threads=self.options.threads,
-                tolerance=self.options.tolerance,
-                width=width,
-                solves=len(frequencies),
-                petsc_options=self.options.petsc_options,
+                linear=self.linear, width=width, solves=len(frequencies)
             ) as handles:
                 for n, f in enumerate(frequencies):
                     omega = 2 * math.pi * f
@@ -719,14 +705,10 @@ class DrivenRule:
             ports = self._ports(model)
             samples = self.problem.samples
             with ports.sweep(
-                kind=self.kind,
-                device=options.device,
-                threads=options.threads,
-                tolerance=options.tolerance,
+                linear=self.linear,
                 width=len(self.excite),
                 # samples lie far apart: a reused BDDC would mostly hit its cap
                 reuse_preconditioner=False,
-                petsc_options=options.petsc_options,
             ) as handles:
 
                 def solve(
@@ -1003,12 +985,9 @@ class DrivenRule:
                     handle = handles.get(
                         n,
                         omega,
-                        kind=self.kind,
-                        device=self.options.device,
-                        threads=self.options.threads,
+                        linear=self.linear,
                         tolerance=adjoint_tolerance(self.options),
                         width=width,
-                        petsc_options=self.options.petsc_options,
                     )
                     try:
                         adjoint += handle.solve(
@@ -1555,55 +1534,45 @@ class _Ports:
         self,
         omega: float,
         *,
-        kind: str,
-        device: str,
-        tolerance: float,
+        linear: ResolvedLinearSolver,
         width: int,
-        threads: int | None = None,
-        petsc_options: Mapping[str, PetscValue] | PetscOptions = (),
+        tolerance: float | None = None,
     ) -> Handle:
-        """A handle of the system operator ``A(ω) + W(ω)`` (see `_Ports`)."""
-        handle = prepare(
+        """A handle of the system operator ``A(ω) + W(ω)`` (see `_Ports`).
+
+        ``tolerance`` overrides the linear solver's (adjoint solves).
+        """
+        handle = linear.prepare(
             self.operator_at(omega),
             symmetry="complex_symmetric",
-            kind=kind,
-            device=device,
-            tolerance=tolerance,
             width=width,
-            threads=threads,
-            petsc_options=petsc_options,
+            tolerance=tolerance,
         )
         return self.system_handle(handle, omega, borrow=False)
 
     def sweep(
         self,
         *,
-        kind: str,
-        device: str,
-        tolerance: float,
+        linear: ResolvedLinearSolver,
         width: int,
-        threads: int | None = None,
+        tolerance: float | None = None,
         reuse_preconditioner: bool = True,
         solves: int = 1,
-        petsc_options: Mapping[str, PetscValue] | PetscOptions = (),
     ) -> _SweepHandle:
         """One base handle for a sweep's frequencies (see `_SweepHandle`).
 
         ``reuse_preconditioner=False`` sets an iterative backend's
         preconditioner up at every frequency, and ``solves`` (a uniform
         sweep's frequencies) is the solve calls the base is expected to serve
-        (`gfem._linalg.prepare`).
+        (`gfem._linalg.ResolvedLinearSolver.prepare`).
         """
         return _SweepHandle(
             self,
-            kind=kind,
-            device=device,
-            tolerance=tolerance,
+            linear=linear,
             width=width,
-            threads=threads,
+            tolerance=tolerance,
             reuse_preconditioner=reuse_preconditioner,
             solves=solves,
-            petsc_options=petsc_options,
         )
 
     def functional(self, omega: float) -> np.ndarray:
@@ -1702,9 +1671,12 @@ class _SweepHandle:
     raises.
     """
 
-    def __init__(self, ports: _Ports, **options: Any) -> None:
-        """Hold ``ports`` and the `gfem._linalg.prepare` options of the base."""
+    def __init__(
+        self, ports: _Ports, *, linear: ResolvedLinearSolver, **options: Any
+    ) -> None:
+        """Hold ``ports``, the linear solver and the per-call options of the base."""
         self._ports = ports
+        self._linear = linear
         self._options = options
         self._base: Handle | None = None
 
@@ -1716,7 +1688,9 @@ class _SweepHandle:
 
     def _prepare(self, operator: Operator) -> Handle:
         """A new base handle of ``operator``."""
-        return prepare(operator, symmetry="complex_symmetric", **self._options)
+        return self._linear.prepare(
+            operator, symmetry="complex_symmetric", **self._options
+        )
 
     def solve(
         self, omega: float, rhs: np.ndarray, *, x0: np.ndarray | None = None
@@ -1768,12 +1742,9 @@ class _Handles:
         n: int,
         omega: float,
         *,
-        kind: str,
-        device: str,
-        tolerance: float,
+        linear: ResolvedLinearSolver,
         width: int,
-        threads: int | None = None,
-        petsc_options: Mapping[str, PetscValue] | PetscOptions = (),
+        tolerance: float | None = None,
     ) -> Handle:
         """The handle of frequency ``n`` at ``ω`` (the options as `_Ports.prepare`).
 
@@ -1782,26 +1753,15 @@ class _Handles:
         ports = self.ports
         if ports is None:  # pragma: no cover - the backward sets the ports
             raise RuntimeError("The adjoint handles have no port terms.")
-        if device != "cpu":
+        if linear.device != "cpu":
             if self._sweep is None:
                 self._sweep = ports.sweep(
-                    kind=kind,
-                    device=device,
-                    tolerance=tolerance,
-                    width=width,
-                    threads=threads,
-                    petsc_options=petsc_options,
+                    linear=linear, width=width, tolerance=tolerance
                 )
             return self._sweep.at(omega)
         if n not in self._handles:
             self._handles[n] = ports.prepare(
-                omega,
-                kind=kind,
-                device=device,
-                tolerance=tolerance,
-                width=width,
-                threads=threads,
-                petsc_options=petsc_options,
+                omega, linear=linear, width=width, tolerance=tolerance
             )
         return self._handles[n]
 

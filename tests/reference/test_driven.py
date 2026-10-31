@@ -36,7 +36,7 @@ import gfem
 from gfem._engine import terms
 from gfem._engine.driven import DrivenRule
 from gfem._engine.runtime import task_manager
-from gfem._linalg import Operator, prepare
+from gfem._linalg import Operator
 
 TOLERANCE = 1e-5
 #: Palace output frequencies (GHz) checked: rows of port-S.csv near 10, 50 and
@@ -151,7 +151,7 @@ def test_driven_parity_s_matches_palace(reference, name, ndof, max_iterations):
     options = gfem.SolverOptions(threads=THREADS)
     problem = gfem.Driven(frequency=frequency)
     rule = DrivenRule(model, problem, options)
-    assert rule.kind == "bddc_gmres"
+    assert rule.linear.kind == "bddc_gmres"
     assert rule.operator(model).space.ndof == ndof
     start = time.perf_counter()
     outputs, _ = rule.forward(model, keep=False)
@@ -255,11 +255,9 @@ def test_driven_per_sample_time_against_palace(reference, name):
         voltage = np.stack([v for _, v in vectors], axis=1)
         omega = 2 * math.pi * f
         start = time.perf_counter()
-        handle = prepare(
+        handle = rule.linear.prepare(
             Operator(op.form(omega), op.space.FreeDofs()),
             symmetry="complex_symmetric",
-            kind=rule.kind,
-            tolerance=options.tolerance,
             width=2,
         )
         x = handle.solve(1j * op.wavenumber(omega) * excite)
@@ -472,9 +470,7 @@ def test_wave_port_low_frequency_backward_errors(reference):
         for k, f in enumerate(frequency):
             omega = 2 * math.pi * f
             b = ports.system.rhs(omega)
-            handle = ports.prepare(
-                omega, kind="direct", device="cpu", tolerance=1e-6, width=b.shape[1]
-            )
+            handle = ports.prepare(omega, linear=rule.linear, width=b.shape[1])
             x = handle.solve(b)
             handle.free()
             u, c = ports.update(omega)

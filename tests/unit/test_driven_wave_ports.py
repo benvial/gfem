@@ -18,7 +18,6 @@ import structured_meshes as sm
 from solver_misses import cannot_converge_at
 
 import gfem
-from gfem._engine import driven
 from gfem._linalg import prepare
 from gfem._linalg.direct import DirectHandle
 
@@ -186,7 +185,7 @@ def test_a_direct_sweep_plans_once_and_matches_fresh_handles(
         calls.append(1)
         return prepare(*args, **kwargs)
 
-    monkeypatch.setattr(driven, "prepare", spy)
+    monkeypatch.setattr("gfem._linalg.prepare", spy)
     s = np.asarray(gfem.solve(model, problem, options=options).s.values)
     assert len(calls) == 1
     # a handle that cannot refactorize is prepared afresh at each frequency
