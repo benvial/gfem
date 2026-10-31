@@ -35,14 +35,15 @@ so ``vmap`` runs one solve per batch member. Errors raised on the host
 during the backward reach the user as ``jax.errors.JaxRuntimeError`` with
 the message kept.
 
-A rule provides: ``form`` (its operator family in the property-to-form-term
-table), ``differentiable_outputs``, ``output_specs(model)`` (name ->
-``jax.ShapeDtypeStruct``), ``role(kind)`` (``"read"`` or ``"unread"``),
-``forward(model, *, keep)``, ``backward(model, entry, cotangents)``,
-``options`` and ``problem``, optionally ``unsupported_input(kind)``
-(a reason, or ``None``) for read inputs the rule itself cannot
-differentiate, and, for node-coordinate gradients, ``shape_terms(model)``
-(its operator as a list of `gfem._engine.sensitivity.ShapeTerm`). Host
+A rule provides: ``form`` (its operator family, a key of
+`gfem._engine.sensitivity.PROPERTIES`), ``differentiable_outputs``,
+``output_specs(model)`` (name -> ``jax.ShapeDtypeStruct``), ``role(kind)``
+(``"read"`` or ``"unread"``), ``forward(model, *, keep)``,
+``backward(model, entry, cotangents)``, ``options`` and ``problem``,
+optionally ``unsupported_input(kind)`` (a reason, or ``None``) for read
+inputs the rule itself cannot differentiate, and ``terms(model, *, nodes)``
+(its operator as a list of `gfem._engine.sensitivity.Term`, which the
+kernel's passes read; ``nodes`` when the node coordinates are wanted). Host
 calls get the model and a shallow copy of the rule whose ``problem`` holds
 the call's concrete values, so a rule reads problem values from
 ``self.problem`` and never sees a tracer there.
@@ -299,8 +300,8 @@ def _host_backward(
                 pairs,
                 {kinds[i] for i in wanted},
                 form=rule.form,
-                shape=functools.partial(rule.shape_terms, model)
-                if hasattr(rule, "shape_terms")
+                terms=(lambda nodes: rule.terms(model, nodes=nodes))
+                if hasattr(rule, "terms")
                 else None,
             )
     finally:

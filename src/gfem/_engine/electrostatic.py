@@ -36,7 +36,7 @@ from gfem._engine.domain import boundary_region, domain_key, em_region, h1_space
 from gfem._engine.fields import fe_space
 from gfem._engine.mesh import EngineMesh
 from gfem._engine.runtime import task_manager
-from gfem._engine.sensitivity import FieldPair, ShapeTerm
+from gfem._engine.sensitivity import Derivative, FieldPair, Term
 from gfem._field import FieldMap
 from gfem._linalg import Handle, Kind, Operator, ResolvedLinearSolver
 from gfem.mesh import Mesh
@@ -60,7 +60,7 @@ class ElectrostaticRule:
     """
 
     physics = "em"
-    #: The operator family in the property-to-form-term table.
+    #: The operator family (a key of `sensitivity.PROPERTIES`).
     form = "electrostatic"
     #: Material properties the electrostatic forms read.
     reads = frozenset({"eps_r"})
@@ -286,20 +286,22 @@ class ElectrostaticRule:
             )
         ]
 
-    def shape_terms(self, model: Model) -> list[ShapeTerm]:
-        """The operator ``int Re(eps_r) grad u . grad v`` as a shape term.
+    def terms(self, model: Model, *, nodes: bool) -> list[Term]:  # noqa: ARG002
+        """The operator ``int Re(eps_r) grad u . grad v`` as a sensitivity term.
 
-        The pairs' weight ``eps0`` and the length power 1 make it SI, as for
-        the permittivity. The terminal liftings are DOF values (1 on a
-        terminal's DOFs, 0 elsewhere), so they do not move with the nodes.
+        The pairs' weight ``eps0`` and the length power 1 make it SI. Its
+        coefficient reads ``r = Re(eps_r)``, so ``dc/dr = 1``. The terminal
+        liftings are DOF values (1 on a terminal's DOFs, 0 elsewhere), so
+        they do not move with the nodes.
         """
         _, built = self._space(model)
         return [
-            ShapeTerm(
+            Term(
                 "grad_grad",
                 "gradient",
                 coefficient=permittivity(model, built),
                 length_power=1,
+                derivatives={"eps_r": Derivative(1.0, holomorphic=False)},
             )
         ]
 

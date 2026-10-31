@@ -60,7 +60,7 @@ from gfem._engine.domain import em_region
 from gfem._engine.driven import (
     DrivenOperator,
     driven_operator,
-    operator_shape_terms,
+    operator_terms,
 )
 from gfem._engine.eigen import (
     DivFreeProjector,
@@ -70,7 +70,7 @@ from gfem._engine.eigen import (
 )
 from gfem._engine.fields import fe_space
 from gfem._engine.runtime import task_manager
-from gfem._engine.sensitivity import FieldPair, ShapeTerm
+from gfem._engine.sensitivity import FieldPair, Term
 from gfem._linalg import Kind, ResolvedLinearSolver
 from gfem._sign import largest_entry
 from gfem.conventions import MODE_ENERGY
@@ -135,7 +135,7 @@ class EigenmodeRule:
     """Host-side forward of an `Eigenmode` problem on a `Model`."""
 
     physics = "em"
-    #: The operator family in the property-to-form-term table.
+    #: The operator family (a key of `sensitivity.PROPERTIES`).
     form = "eigenmode"
     #: Material properties the eigenmode forms read.
     reads = frozenset({"eps_r", "mu_r", "tan_delta", "conductivity"})
@@ -599,7 +599,7 @@ class EigenmodeRule:
         """The model's driven operator (the pieces of ``T(k)``) at its nodes.
 
         The last model's operator is kept, so that a backward pass and its
-        shape terms build it once.
+        terms build it once.
         """
         last = getattr(self, "_last_driven", None)
         if last is not None and last[0] is model:
@@ -608,18 +608,20 @@ class EigenmodeRule:
         self._last_driven = (model, op)
         return op
 
-    def shape_terms(self, model: Model) -> list[ShapeTerm]:
-        """The pieces of ``T(k)`` as node-coordinate (shape) terms.
+    def terms(self, model: Model, *, nodes: bool) -> list[Term]:
+        """The pieces of ``T(k)`` as sensitivity terms.
 
-        The driven operator's (`gfem._engine.driven.operator_shape_terms`):
-        a mode's ``dk/dX = -x^T (dT/dX) x / x^T T'(k) x`` contracts the same
-        pieces, weighted with their θ at the mode, as the material terms.
-        Port pieces are left out: shape gradients hold every port surface.
+        The driven operator's (`gfem._engine.driven.operator_terms`): a
+        mode's ``dk/dp = -x^T (dT/dp) x / x^T T'(k) x`` contracts the same
+        pieces, weighted with their θ at the mode, for materials, fills and
+        node coordinates. Port pieces are left out: shape gradients hold
+        every port surface.
 
         Raises:
-            PortGeometryError: A node of a port surface has moved.
+            PortGeometryError: ``nodes`` and a node of a port surface has
+                moved.
         """
-        return operator_shape_terms(model, self.driven(model))
+        return operator_terms(model, self.driven(model), nodes=nodes)
 
     def _degenerate_message(
         self,
