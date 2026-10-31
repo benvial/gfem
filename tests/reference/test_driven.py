@@ -468,7 +468,7 @@ def test_wave_port_low_frequency_backward_errors(reference):
         free = np.array(list(op.space.FreeDofs()), dtype=bool)
         for k, f in enumerate(frequency):
             omega = 2 * math.pi * f
-            b = ports.system.rhs(omega)
+            b = ports.rhs(omega)
             with system.sweep() as sweep:
                 x, _ = sweep.solve(omega, b)
             u, c = system.corrections(omega)

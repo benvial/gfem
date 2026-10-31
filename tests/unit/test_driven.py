@@ -809,8 +809,7 @@ def test_a_forward_holds_its_assembled_pieces_with_its_handles(
     monkeypatch.setattr(rule, "_ports", spy)
     _, entry = rule.forward(line, keep=keep)
     ((system, ports),) = built
-    affine = ports.system
-    vectors = sum(t.vectors.nbytes for t in (*affine.excitation, *affine.outputs))
+    vectors = sum(t.vectors.nbytes for t in (*ports.excitation, *ports.outputs))
     assert ports.nbytes == vectors
     form = system.operator.form(1.0)
     form.Assemble()
