@@ -361,6 +361,23 @@ def test_a_wide_bddc_sweep_rebuilds_its_reused_preconditioner(line, monkeypatch)
     np.testing.assert_allclose(s, direct, rtol=0, atol=1e-5)
 
 
+def test_a_reused_bddc_preconditioner_solves_as_accurately_as_fresh_setups(
+    line, monkeypatch
+):
+    # GMRES stops at the tolerance of |P b|; a P set up at another frequency
+    # measures the error less well, so a reused solve must stop tighter
+    problem = gfem.Driven(frequency=np.linspace(1e9, 29e9, 8))
+    direct = np.asarray(_s(line, problem).s.values)
+    builds = count_preconditioners(monkeypatch)
+    reused = np.asarray(_s(line, problem, linear_solver="bddc_gmres").s.values)
+    assert len(builds) < 8
+    monkeypatch.delattr(BddcHandle, "refactorize")
+    fresh = np.asarray(_s(line, problem, linear_solver="bddc_gmres").s.values)
+    error = np.abs(reused - direct).max(axis=(1, 2))
+    error_fresh = np.abs(fresh - direct).max(axis=(1, 2))
+    assert error.max() <= 2 * error_fresh.max(), (error, error_fresh)
+
+
 def test_a_reused_solve_at_its_cap_rebuilds_and_converges(line, monkeypatch):
     # 1.5 GHz sets the reference; 30 GHz would take ~90 iterations per port
     problem = gfem.Driven(frequency=(1e9, 1.5e9, 30e9))
