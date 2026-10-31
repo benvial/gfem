@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol, cast
 
 import ngsolve as ngs
 import numpy as np
@@ -24,6 +24,7 @@ from gfem._linalg import Symmetry
 from gfem._linalg.base import PlannedHandle, equals_its_transpose, host_bytes
 from gfem._linalg.pardiso import (  # noqa: F401 (the first two re-exported)
     PARDISO_FLAGS,
+    PardisoFactors,
     pardiso_available,
     pardiso_inverse,
 )
@@ -50,6 +51,44 @@ def _real_sparse_matrix() -> Any:
     raise RuntimeError("ngsolve.la has no real SparseMatrix with CreateFromCOO")
 
 
+class Factors(Protocol):
+    """A direct handle's inverse, and how it factorizes new values on its plan."""
+
+    #: The inverse a solve applies.
+    inverse: Any
+
+    def new_values(
+        self, matrix: ngs.BaseMatrix, write: Callable[[ngs.BaseMatrix], None]
+    ) -> None:
+        """``write(matrix)``, then factorize its new values on the plan."""
+        ...
+
+    @property
+    def nbytes(self) -> int:
+        """Host memory of the factors and whatever else this holds, in bytes."""
+        ...
+
+
+class UpdateFactors:
+    """An inverse NGSolve refactorizes itself (``Update()``): sparse Cholesky."""
+
+    def __init__(self, inverse: ngs.BaseMatrix) -> None:
+        """Hold ``inverse``."""
+        self.inverse = inverse
+
+    def new_values(
+        self, matrix: ngs.BaseMatrix, write: Callable[[ngs.BaseMatrix], None]
+    ) -> None:
+        """``write(matrix)``, then ``Update()`` the inverse."""
+        write(matrix)
+        self.inverse.Update()
+
+    @property
+    def nbytes(self) -> int:
+        """Host memory NGSolve reports for the factors, in bytes."""
+        return host_bytes(self.inverse)
+
+
 class DirectHandle(PlannedHandle):
     """One LDL^T factorization, reused for every right-hand side.
 
@@ -66,8 +105,9 @@ class DirectHandle(PlannedHandle):
     `refactorize` factorizes another operator's values in place: a
     `gfem._linalg.Refactorable` handle. PARDISO gathers them straight into
     its wrapper's buffer and runs its numeric factorization (phase 22);
-    sparse Cholesky, or a wrapper without the private attributes this reads,
-    runs NGSolve's ``Update()``. The gather index is built at the first
+    sparse Cholesky, or a wrapper without the private attributes PARDISO's
+    `Factors` adapter (`gfem._linalg.pardiso.PardisoFactors`) reads, runs
+    NGSolve's ``Update()``. The gather index is built at the first
     refactorization, so a handle factored once never builds it.
 
     A PARDISO handle refactorizes and solves on the thread count it was
@@ -90,75 +130,29 @@ class DirectHandle(PlannedHandle):
         """Factorize an assembled matrix (see `prepare` and `factorize`)."""
         self._admit(symmetry, is_complex=is_complex)
         super().__init__(matrix, freedofs, symmetry, is_complex=is_complex)
-        self._solver = self._factor(matrix, freedofs, symmetry, is_complex=is_complex)
-        #: Built at the first `refactorize` (`_gather_built`); ``None`` once
-        #: built refactorizes by ``Update()``.
-        self._gather: np.ndarray | None = None
-        self._gather_built = False
+        self._factors: Factors | None = self._factor(matrix, freedofs)
+        self._solver = self._factors.inverse
 
-    @staticmethod
-    def _factor(
-        matrix: ngs.BaseMatrix,
-        freedofs: ngs.BitArray | None,
-        symmetry: Symmetry,
-        *,
-        is_complex: bool,
-    ):
+    def _factor(self, matrix: ngs.BaseMatrix, freedofs: ngs.BitArray | None) -> Factors:
         free = matrix.height if freedofs is None else freedofs.NumSet()
         # gfem's registered PARDISO type, which applies `PARDISO_FLAGS` and
         # runs its calls (phases 12, 22 and 33) at OpenMP block time 0; never
         # on an empty matrix, which PARDISO refuses
-        pardiso = pardiso_inverse(symmetry, is_complex=is_complex) if free > 0 else None
+        pardiso = (
+            pardiso_inverse(self.symmetry, is_complex=self._complex)
+            if free > 0
+            else None
+        )
         inverse = pardiso or INVERSE
         if freedofs is None or free == matrix.height:
             # every DOF free: NGSolve factors the matrix itself instead of
             # projecting it on the free DOFs first
-            return matrix.Inverse(inverse=inverse)
-        return matrix.Inverse(freedofs, inverse=inverse)
-
-    def _ensure_gather(self, matrix, solver) -> None:
-        """Build the gather index if not yet built; under the lock.
-
-        Call it before ``matrix`` takes new values: the wrapper's buffer
-        then holds the factored matrix's free upper triangle, which the index
-        is checked against.
-        """
-        if not self._gather_built:
-            self._gather = self._gather_index(matrix, solver)
-            self._gather_built = True
-
-    def _gather_index(self, matrix, solver) -> np.ndarray | None:
-        """Where PARDISO's buffer reads the factored matrix's values, or ``None``.
-
-        NGSolve's wrapper factors the free-row, free-column upper triangle in
-        CSR order (its ``get_csr``): these are that triangle's positions in
-        the matrix's value vector. Checked once against the wrapper's buffer
-        of the factored values; ``None`` (refactorize by ``Update()``) on a
-        mismatch, for a solver without the wrapper's ``_data_np`` and
-        ``_call_pardiso``, or when reading the matrix or the wrapper fails:
-        it never raises.
-        """
-        try:
-            return self._checked_gather_index(matrix, solver)
-        except Exception:  # noqa: BLE001 - any failure falls back to Update()
-            return None
-
-    def _checked_gather_index(self, matrix, solver) -> np.ndarray | None:
-        buffer = getattr(solver, "_data_np", None)
-        if not isinstance(buffer, np.ndarray) or not hasattr(solver, "_call_pardiso"):
-            return None
-        data, cols, rowptr = matrix.CSR()
-        cols = np.asarray(cols).astype(np.int64)
-        rowptr = np.asarray(rowptr).astype(np.int64)
-        rows = np.repeat(np.arange(matrix.height), np.diff(rowptr))
-        free = self._free
-        index = np.flatnonzero(free[rows] & free[cols] & (cols >= rows))
-        index = index.astype(np.int32 if len(cols) < 2**31 else np.int64)
-        if index.size != buffer.size or not np.array_equal(
-            np.asarray(data)[index], buffer
-        ):
-            return None
-        return index
+            solver = matrix.Inverse(inverse=inverse)
+        else:
+            solver = matrix.Inverse(freedofs, inverse=inverse)
+        if pardiso is None:
+            return UpdateFactors(solver)
+        return PardisoFactors(solver, self._free)
 
     @classmethod
     def from_scipy(cls, matrix: sp.sparray | sp.spmatrix) -> DirectHandle:
@@ -177,35 +171,18 @@ class DirectHandle(PlannedHandle):
         return cls(assembled, None, "hermitian", is_complex=False)
 
     def _new_values(self, write: Callable[[ngs.BaseMatrix], None]) -> None:
-        """Write the held matrix and factorize it on the plan; under the lock.
-
-        The first call builds the gather index, before the values change.
-        """
-        matrix, solver = self._live(), self._solver
-        self._ensure_gather(matrix, solver)
-        write(matrix)
-        self._refactor_values(matrix, solver)
+        """Write the held matrix and factorize it on the plan; under the lock."""
+        matrix = self._live()
+        # a live handle holds its factors (`_release` drops them)
+        cast("Factors", self._factors).new_values(matrix, write)
 
     def _new_plan(self, matrix: ngs.BaseMatrix, freedofs: ngs.BitArray | None) -> None:
         """Factorize ``matrix`` anew and hold it; under the lock.
 
         Factors before it holds anything: a failure leaves the handle as it was.
         """
-        solver = self._factor(matrix, freedofs, self.symmetry, is_complex=self._complex)
-        self._matrix, self._solver = matrix, solver
-        self._gather, self._gather_built = None, False
-
-    def _refactor_values(self, matrix, solver) -> None:
-        """Factorize ``matrix``'s new values on ``solver``'s plan; under the lock."""
-        if self._gather is None:
-            solver.Update()
-            return
-        # the index is in range (checked when built); "clip" writes straight
-        # into the buffer, "raise" through a temporary copy
-        buffer = solver._data_np  # noqa: SLF001
-        values = np.asarray(matrix.CSR()[0])
-        np.take(values, self._gather, out=buffer, mode="clip")
-        solver._call_pardiso(22)  # noqa: SLF001
+        factors = self._factor(matrix, freedofs)
+        self._matrix, self._solver, self._factors = matrix, factors.inverse, factors
 
     @classmethod
     def _admit(cls, symmetry: Symmetry, *, is_complex: bool) -> None:
@@ -221,22 +198,16 @@ class DirectHandle(PlannedHandle):
 
     @property
     def nbytes(self) -> int:
-        """Host memory of the matrix, the factors and the gather index, in bytes.
+        """Host memory of the matrix and the factors, in bytes.
 
-        The gather index counts once built (at the first `refactorize`).
+        PARDISO's factors count the gather index once built (at the first
+        `refactorize`).
         """
-        if self._solver is None or self._matrix is None:
+        if self._factors is None or self._matrix is None:
             return 0
-        factors = host_bytes(self._solver)
-        params = getattr(self._solver, "_params", None)
-        if not factors and params is not None:
-            # NGSolve's PARDISO wrapper reports no memory: take PARDISO's own
-            # permanent (iparm[15]) and factor (iparm[16]) memory, in KiB
-            factors = 1024 * (int(params[15]) + int(params[16]))
-        gather = 0 if self._gather is None else self._gather.nbytes
-        return host_bytes(self._matrix) + factors + gather
+        return host_bytes(self._matrix) + self._factors.nbytes
 
     def _release(self) -> None:
-        """Drop the gather index; under the lock."""
-        self._gather = None
+        """Drop the factors; under the lock."""
+        self._factors = None
         self._pattern = None

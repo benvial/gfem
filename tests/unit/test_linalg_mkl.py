@@ -355,7 +355,7 @@ def test_a_gather_index_gfem_cannot_build_leaves_refactorization_to_update(
 
     def failing_csr(self):
         # only the gather index's read fails: the pattern check reads the CSR too
-        if sys._getframe(1).f_globals.get("__name__") != direct.__name__:
+        if sys._getframe(1).f_globals.get("__name__") != pardiso.__name__:
             return csr(self)
         if failure == "a matrix without CSR":
             raise AttributeError("CSR")
@@ -367,7 +367,15 @@ def test_a_gather_index_gfem_cannot_build_leaves_refactorization_to_update(
                 raise RuntimeError("no buffer")
             return super().__getattribute__(name)
 
+    factors = []
+
+    def counted_factor(self):
+        factors.append(self)
+        factor(self)
+
     ngs.la.RegisterInverseType("gfem_failing_buffer_pardiso", FailingBuffer)
+    factor = mkl_pardiso.MKLPardiso.Factor
+    monkeypatch.setattr(mkl_pardiso.MKLPardiso, "Factor", counted_factor)
     if failure == "a failing wrapper buffer":
         monkeypatch.setattr(
             direct, "pardiso_inverse", lambda *_, **__: "gfem_failing_buffer_pardiso"
@@ -379,10 +387,12 @@ def test_a_gather_index_gfem_cannot_build_leaves_refactorization_to_update(
         symmetry="complex_symmetric",
         kind="direct",
     )
-    assert isinstance(handle._inverse, mkl_pardiso.MKLPardiso)
+    inverse = handle._inverse
+    assert isinstance(inverse, mkl_pardiso.MKLPardiso)
+    factors.clear()
     op, space = _laplace(built, complex_valued=True, shift=3 + 1j)
     handle.refactorize(op)
-    assert handle._gather is None
+    assert factors == [inverse]  # Update(): the wrapper's own Factor
     monkeypatch.undo()
     fresh = prepare(
         _laplace(built, complex_valued=True, shift=3 + 1j)[0],
@@ -399,12 +409,10 @@ def test_a_gather_index_gfem_cannot_build_leaves_refactorization_to_update(
 def test_pardiso_memory_counts_the_gather_index(built):
     op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
     handle = prepare(op, symmetry="complex_symmetric", kind="direct")
-    assert not isinstance(handle._gather, np.ndarray)  # one frequency: no index
-    held = handle.nbytes
+    held = handle.nbytes  # one frequency: no index
     handle.refactorize(_laplace(built, complex_valued=True, shift=3 + 1j)[0])
-    index = handle._gather
-    assert isinstance(index, np.ndarray)
-    assert handle.nbytes - held == index.nbytes > 0
+    index = handle._inverse._data_np.size * np.dtype(np.int32).itemsize
+    assert handle.nbytes - held == index > 0
 
 
 @needs_mkl
@@ -436,7 +444,7 @@ def test_pardiso_factors_an_all_free_operator_without_projecting_it(built, monke
     assert np.linalg.norm(X - ref) / np.linalg.norm(ref) < 1e-12
 
     builds = []
-    gather_index = direct.DirectHandle._gather_index
+    gather_index = pardiso.PardisoFactors._gather_index
 
     def counted(self, *args):
         builds.append(self)
@@ -445,15 +453,14 @@ def test_pardiso_factors_an_all_free_operator_without_projecting_it(built, monke
     def no_extraction(self):  # noqa: ARG001
         raise AssertionError("the wrapper extracted the upper triangle again")
 
-    monkeypatch.setattr(direct.DirectHandle, "_gather_index", counted)
+    monkeypatch.setattr(pardiso.PardisoFactors, "_gather_index", counted)
     monkeypatch.setattr(type(inverse), "get_csr", no_extraction)
     for shift in (3 + 1j, 2 - 1j):
         handle.refactorize(
             _laplace(built, complex_valued=True, shift=shift, dirichlet="")[0]
         )
     monkeypatch.undo()
-    assert builds == [handle]
-    assert isinstance(handle._gather, np.ndarray)
+    assert len(builds) == 1
     assert handle._inverse is inverse
     fresh = prepare(
         _laplace(built, complex_valued=True, shift=2 - 1j, dirichlet="")[0],
@@ -709,7 +716,6 @@ def test_a_two_frequency_refactorization_gathers_and_runs_at_block_time_0(
     calls = _wrap_pardiso_calls(monkeypatch, openmp.kmp_get_blocktime)
     op, space = _laplace(built, complex_valued=True, shift=3 + 1j)
     pardiso_handle.refactorize(op)
-    assert isinstance(pardiso_handle._gather, np.ndarray)  # the gather path
     X = pardiso_handle.solve(np.ones(space.ndof, complex))
     assert calls == [(22, 0), (33, 0)]
     assert openmp.block_time == 123
