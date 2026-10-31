@@ -5,11 +5,13 @@ At each frequency the operator ``A(ω) = Σ θ_k(ω) A_k`` (see
 port's right-hand side is solved in one handle call: GMRES + BDDC by
 default, each port starting from its solution at the previous frequency,
 or one LDL^T factorization (``direct``: MKL PARDISO with the ``mkl`` extra,
-NGSolve sparse Cholesky otherwise). A sweep keeps one base handle
-(`_SweepHandle`): a direct solver plans at the first frequency and
-refactorizes at the others, and sums each frequency's matrix from the
-pieces ``A_k`` assembled once per forward (the piece sum, kept with the
-port terms `_Ports` for the backward pass) instead of assembling it.
+NGSolve sparse Cholesky otherwise). The system operator
+(`gfem._engine.system_operator.SystemOperator`) answers the forward and
+adjoint solves. A sweep keeps one base handle: a direct solver plans at the
+first frequency and refactorizes at the others, and sums each frequency's
+matrix from the pieces ``A_k`` assembled once per forward (the piece sum,
+kept with the system operator for the backward pass) instead of assembling
+it.
 With ``SolverOptions.frequency_workers`` above 1, a uniform sweep splits
 into contiguous blocks of frequencies, each swept the same way in a
 frequency worker (`gfem._engine.workers`), joined in frequency order; the
@@ -57,7 +59,7 @@ import dataclasses
 import functools
 import math
 import warnings
-from typing import Any, NoReturn, Self
+from typing import Any, NoReturn
 
 import jax
 import jax.numpy as jnp
@@ -79,16 +81,9 @@ from gfem._engine.fields import fe_space
 from gfem._engine.mesh import EngineMesh
 from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair, ShapeTerm, is_sheet
+from gfem._engine.system_operator import SystemOperator
 from gfem._engine.wave_ports import WavePortCoupling, wave_port_couplings
-from gfem._linalg import (
-    Handle,
-    Kind,
-    Operator,
-    ResolvedLinearSolver,
-    low_rank_update,
-    refactorize_or_prepare,
-)
-from gfem._linalg.pieces import AssembledPieces, PieceSum
+from gfem._linalg import Kind, ResolvedLinearSolver
 from gfem._sweep.adaptive import AffineSystem, AffineTerm, adaptive_sweep
 from gfem.errors import (
     LinearSolverConvergenceError,
@@ -403,16 +398,14 @@ class DrivenRule:
         miss: LinearSolverConvergenceError | None = None
         n_solved = len(frequencies)
         with task_manager(self.options.threads):
-            ports = self._ports(model)
+            system, ports = self._ports(model)
             s = np.zeros((len(frequencies), len(self.port_names), width), complex)
             previous = None
-            with ports.sweep(
-                linear=self.linear, width=width, solves=len(frequencies)
-            ) as handles:
+            with system.sweep(solves=len(frequencies)) as sweep:
                 for n, f in enumerate(frequencies):
                     omega = 2 * math.pi * f
                     try:
-                        x, its = handles.solve(
+                        x, its = sweep.solve(
                             omega, ports.system.rhs(omega), x0=previous
                         )
                     except LinearSolverConvergenceError as err:
@@ -430,7 +423,7 @@ class DrivenRule:
                     )
         # no backward pass will prepare from the pieces
         if not keep or miss is not None:
-            ports.release()
+            system.free()
         outputs = {
             "s": ports.scattering(s)[:n_solved],
             "z_ref": ports.z_ref[:n_solved],
@@ -451,7 +444,7 @@ class DrivenRule:
         if keep:
             entry = Entry(
                 physics=self.physics,
-                handle=_Handles(ports),
+                handle=_Kept(system, ports),
                 fields={"solution": np.concatenate(solutions, axis=1)},
             )
         return outputs, entry
@@ -521,7 +514,7 @@ class DrivenRule:
             solution = np.concatenate([r["solution"] for r in results], axis=1)
             entry = Entry(
                 physics=self.physics,
-                handle=_Handles(None),
+                handle=None,
                 fields={"solution": solution},
             )
         return outputs, entry
@@ -577,12 +570,13 @@ class DrivenRule:
             return None
         return self._uniform_result(partial.outputs, partial.solved)
 
-    def _ports(self, model: Model) -> _Ports:
-        """Every port's terms (see `_Ports`).
+    def _ports(self, model: Model) -> tuple[SystemOperator, _Ports]:
+        """The system operator and every port's terms (see `_Ports`).
 
-        The operator with its wave-port pieces, and the excitations and S
-        functionals as affine terms. Runs each wave port's port mode sweep
-        over the output grid.
+        Both from one set of wave port couplings: the system operator adds
+        their Robin pieces and modal corrections, and the port terms hold the
+        excitations and S functionals as affine terms. Runs each wave port's
+        port mode sweep over the output grid.
         """
         op = self.operator(model)
         names = self.port_names
@@ -596,10 +590,14 @@ class DrivenRule:
             frequency=self.problem.frequency,
             tolerance=self.options.port_mode_tolerance,
         )
-        if couplings:
-            op = dataclasses.replace(
-                op, pieces=[*op.pieces, *(c.piece for c in couplings)]
-            )
+        system_operator = SystemOperator(
+            op,
+            couplings,
+            self.linear,
+            width=width,
+            adjoint_tolerance=adjoint_tolerance(self.options),
+        )
+        op = system_operator.operator
         excitation: list[AffineTerm] = []
         outputs: list[AffineTerm] = []
         lumped = [names.index(data.port.name) for data in op.ports]
@@ -657,7 +655,7 @@ class DrivenRule:
                 AffineTerm(c.vectors, c.correction_coefficients) for c in couplings
             ],
         )
-        return _Ports(op, system, couplings, columns, z_ref)
+        return system_operator, _Ports(system, couplings, columns, z_ref)
 
     def _port_outputs(self, waves: list[WavePortCoupling]) -> dict[str, object]:
         """The wave ports' modes over the grid, ``(n_freq, n_wave_ports)`` each.
@@ -702,30 +700,26 @@ class DrivenRule:
         extent = np.ptp(np.asarray(model.mesh.nodes), axis=0).max()
         z_scale = float(extent) / scipy.constants.c
         with task_manager(options.threads):
-            ports = self._ports(model)
+            system, ports = self._ports(model)
             samples = self.problem.samples
-            with ports.sweep(
-                linear=self.linear,
-                width=len(self.excite),
-                # samples lie far apart: a reused BDDC would mostly hit its cap
-                reuse_preconditioner=False,
-            ) as handles:
+            # samples lie far apart: a reused BDDC would mostly hit its cap
+            with system.sweep(reuse_preconditioner=False) as system_sweep:
 
                 def solve(
                     omega: float, rhs: np.ndarray, x0: np.ndarray | None
                 ) -> np.ndarray:
                     try:
-                        x, its = handles.solve(omega, rhs, x0=x0)
+                        x, its = system_sweep.solve(omega, rhs, x0=x0)
                     except LinearSolverConvergenceError as err:
                         raise _sample_error(frequencies, omega, err) from err
                     iterations.append(its)
                     return x
 
-                system = dataclasses.replace(
+                affine = dataclasses.replace(
                     ports.system, solve=solve, adjoint_loads=ports.adjoint_loads
                 )
                 sweep = adaptive_sweep(
-                    system,
+                    affine,
                     2 * np.pi * np.asarray(frequencies),
                     tolerance=options.adaptive_tolerance,
                     max_samples=options.adaptive_max_samples,
@@ -735,7 +729,7 @@ class DrivenRule:
                     else [frequencies.index(f) for f in samples],
                     z_scale=z_scale,
                 )
-        ports.release()  # the backward pass solves the reduced model only
+        system.free()  # the backward pass solves the reduced model only
         outputs: dict[str, object] = {
             "s": ports.scattering(sweep.outputs),
             "z_ref": ports.z_ref,
@@ -773,7 +767,7 @@ class DrivenRule:
                             sum(
                                 np.asarray(t.coefficients(w)) @ r
                                 for r, t in zip(
-                                    reduced.outputs, system.outputs, strict=True
+                                    reduced.outputs, affine.outputs, strict=True
                                 )
                             )
                             for w in omegas
@@ -945,14 +939,12 @@ class DrivenRule:
         width = len(self.excite)
         ct_s = cotangents.get("s")
         ct_e = cotangents.get("e_field")
-        if not isinstance(entry.handle, _Handles):
-            entry.handle = _Handles()
-        handles = entry.handle
         pairs = []
         with task_manager(self.options.threads):
-            ports = handles.ports or self._ports(model)
-            handles.ports = ports
-            op = ports.operator
+            if not isinstance(entry.handle, _Kept):  # frequency workers keep none
+                entry.handle = _Kept(*self._ports(model))
+            system, ports = entry.handle.system, entry.handle.ports
+            op = system.operator
             domain = em_region(model, op.built)
             deembedding = ports.deembedding()
             for n, f in enumerate(self.problem.frequency):
@@ -982,17 +974,8 @@ class DrivenRule:
                     k = self.kept.index(n)
                     load += np.asarray(ct_e)[:, k * width : (k + 1) * width]
                 if load.any():
-                    handle = handles.get(
-                        n,
-                        omega,
-                        linear=self.linear,
-                        tolerance=adjoint_tolerance(self.options),
-                        width=width,
-                    )
                     try:
-                        adjoint += handle.solve(
-                            load, tolerance=adjoint_tolerance(self.options)
-                        )
+                        adjoint += system.solve_adjoint(n, omega, load)
                     except LinearSolverConvergenceError as err:
                         raise _adjoint_error(f, err) from err
                 adjoint[:, undefined] = np.nan
@@ -1461,16 +1444,9 @@ def _fold(functional: np.ndarray, ct: np.ndarray) -> np.ndarray:
 
 @dataclasses.dataclass(eq=False)
 class _Ports:
-    """Every port's terms in one driven solve.
-
-    The system operator is ``A(ω) + W(ω)``: the pieces (wave-port Robin
-    terms included) and the wave ports' rank-two modal corrections ``W``
-    (`gfem._engine.wave_ports`), which are never assembled: `prepare` gives
-    a handle of ``A + W`` (Woodbury), for forward and adjoint solves alike
-    (``A + W`` is complex symmetric). ``W`` depends on the port modes only.
+    """Every port's terms in one driven solve, beside its system operator.
 
     Attributes:
-        operator: The driven operator, wave-port Robin pieces included.
         system: Excitations (one column per excited port) and S functionals
             (one row per port) as affine terms, ``W`` as low-rank terms
             (``corrections``); ``solve`` is a placeholder.
@@ -1479,101 +1455,10 @@ class _Ports:
         z_ref: ``(n_freq, n_ports)`` reference impedances, ohm.
     """
 
-    operator: DrivenOperator
     system: AffineSystem
     waves: list[WavePortCoupling]
     columns: list[int]
     z_ref: np.ndarray
-    #: The operator's pieces, assembled at the first direct prepare (the
-    #: piece sum); a backward pass reuses them, `release` drops them.
-    pieces: AssembledPieces = dataclasses.field(init=False)
-
-    def __post_init__(self) -> None:
-        self.pieces = AssembledPieces(
-            self.operator.space, [piece.integrand for piece in self.operator.pieces]
-        )
-
-    def update(self, omega: float) -> tuple[np.ndarray, np.ndarray]:
-        """``W(ω) = U C Uᵀ``: ``U`` ``(ndof, 2 n_wave)``, ``C`` block diagonal.
-
-        Two columns per wave port, the mode's n x H with and without ``grad
-        E_n`` (see `WavePortCoupling.correction`).
-        """
-        columns, diagonal = [], []
-        for c in self.waves:
-            p, d = c.correction(omega)
-            columns.append(c.vectors @ p)
-            diagonal.append(d)
-        return np.concatenate(columns, axis=1), np.diag(np.concatenate(diagonal))
-
-    def operator_at(self, omega: float) -> Operator:
-        """``A(ω)``, the operator without the modal corrections, to prepare.
-
-        Its form, and its piece sum over `pieces` for the ``direct`` and
-        ``petsc`` linear solvers.
-        """
-        op = self.operator
-        weights = tuple(complex(piece.theta(omega)) for piece in op.pieces)
-        return Operator(
-            op.form(omega),
-            op.space.FreeDofs(),
-            piece_sum=PieceSum(self.pieces, weights),
-        )
-
-    def system_handle(self, base: Handle, omega: float, *, borrow: bool) -> Handle:
-        """A handle of ``A(ω) + W(ω)`` from a handle ``base`` of ``A(ω)``.
-
-        ``base`` itself without wave ports; otherwise a Woodbury update that
-        owns ``base`` or ``borrow``s it.
-        """
-        if not self.waves:
-            return base
-        return low_rank_update(base, *self.update(omega), borrow=borrow)
-
-    def prepare(
-        self,
-        omega: float,
-        *,
-        linear: ResolvedLinearSolver,
-        width: int,
-        tolerance: float | None = None,
-    ) -> Handle:
-        """A handle of the system operator ``A(ω) + W(ω)`` (see `_Ports`).
-
-        ``tolerance`` overrides the linear solver's (adjoint solves).
-        """
-        handle = linear.prepare(
-            self.operator_at(omega),
-            symmetry="complex_symmetric",
-            width=width,
-            tolerance=tolerance,
-        )
-        return self.system_handle(handle, omega, borrow=False)
-
-    def sweep(
-        self,
-        *,
-        linear: ResolvedLinearSolver,
-        width: int,
-        tolerance: float | None = None,
-        reuse_preconditioner: bool = True,
-        solves: int = 1,
-    ) -> _SweepHandle:
-        """One base handle for a sweep's frequencies (see `_SweepHandle`).
-
-        ``reuse_preconditioner=False`` sets an iterative backend's
-        preconditioner up at every frequency, and ``solves`` (a uniform
-        sweep's frequencies) is the solve calls the base is expected to serve
-        (`gfem._linalg.ResolvedLinearSolver.prepare`).
-        """
-        return _SweepHandle(
-            self,
-            linear=linear,
-            width=width,
-            tolerance=tolerance,
-            reuse_preconditioner=reuse_preconditioner,
-            solves=solves,
-        )
 
     def functional(self, omega: float) -> np.ndarray:
         """``(ndof, n_ports)``: port i's outgoing wave is ``functional[:, i] @ x``.
@@ -1632,15 +1517,35 @@ class _Ports:
 
     @property
     def nbytes(self) -> int:
-        """Host memory held by the full-length port vectors and the pieces, in bytes."""
-        terms_ = [*self.system.excitation, *self.system.outputs]
-        terms_ += list(self.system.corrections)
-        held = sum(int(t.vectors.nbytes) for t in terms_)
-        return held + self.pieces.nbytes
+        """Host memory held by the excitation and output vectors, in bytes.
 
-    def release(self) -> None:
-        """Drop the assembled pieces (a later direct prepare assembles them again)."""
-        self.pieces.free()
+        The system operator counts ``W``'s (`SystemOperator.nbytes`).
+        """
+        terms_ = [*self.system.excitation, *self.system.outputs]
+        return sum(int(t.vectors.nbytes) for t in terms_)
+
+
+@dataclasses.dataclass(eq=False)
+class _Kept:
+    """A forward's system operator and port terms, kept for its backward pass.
+
+    The cache entry's ``handle`` (`gfem._engine.cache.Entry`): a backward
+    pass reuses the adjoint handles and the pieces, and runs no port mode
+    sweep again.
+    """
+
+    system: SystemOperator
+    ports: _Ports
+
+    @property
+    def nbytes(self) -> int:
+        """Host memory held, in bytes."""
+        return self.system.nbytes + self.ports.nbytes
+
+    def free(self) -> None:
+        """Release the system operator's handles and pieces, and drop both."""
+        self.system.free()
+        del self.system, self.ports
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1654,132 +1559,6 @@ class _Partial:
     #: The linear solver's message where the (first) linear solve did not
     #: converge.
     reason: str
-
-
-class _SweepHandle:
-    """One base handle of ``A(ω)`` for a whole sweep: one solver plan.
-
-    `at` gives a handle of the system operator ``A(ω) + W(ω)`` at each
-    frequency. The first call prepares the base handle; later ones
-    refactorize it at the new ω when it can, or else free it and prepare a
-    new one (`gfem._linalg.refactorize_or_prepare`). An iterative base keeps
-    its preconditioner across frequencies (preconditioner reuse) unless
-    prepared with ``reuse_preconditioner=False``, as the adaptive sweep's
-    is. Wave ports wrap the base per frequency in a borrowing Woodbury
-    update. A handle from `at` is valid until the next call. `free` (or
-    leaving the ``with`` block) releases the base, also when the sweep
-    raises.
-    """
-
-    def __init__(
-        self, ports: _Ports, *, linear: ResolvedLinearSolver, **options: Any
-    ) -> None:
-        """Hold ``ports``, the linear solver and the per-call options of the base."""
-        self._ports = ports
-        self._linear = linear
-        self._options = options
-        self._base: Handle | None = None
-
-    def at(self, omega: float) -> Handle:
-        """A handle of ``A(ω) + W(ω)``, borrowing the sweep's base handle."""
-        operator = self._ports.operator_at(omega)
-        self._base = refactorize_or_prepare(self._base, operator, self._prepare)
-        return self._ports.system_handle(self._base, omega, borrow=True)
-
-    def _prepare(self, operator: Operator) -> Handle:
-        """A new base handle of ``operator``."""
-        return self._linear.prepare(
-            operator, symmetry="complex_symmetric", **self._options
-        )
-
-    def solve(
-        self, omega: float, rhs: np.ndarray, *, x0: np.ndarray | None = None
-    ) -> tuple[np.ndarray, tuple[int, ...]]:
-        """Solve at ``ω``: the solution and the Krylov iterations per column."""
-        return self.at(omega).solve_counted(rhs, x0=x0)
-
-    @property
-    def nbytes(self) -> int:
-        """Host memory held by the base handle, in bytes."""
-        return 0 if self._base is None else int(self._base.nbytes)
-
-    def free(self) -> None:
-        """Release the base handle."""
-        if self._base is not None:
-            self._base.free()
-        self._base = None
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(self, *exc: object) -> None:
-        self.free()
-
-
-class _Handles:
-    """Prepared system operators for adjoint solves, by frequency index.
-
-    On the CPU, one handle per frequency, kept for later backward passes.
-    On a GPU, one sweep-scoped base handle (`_SweepHandle`) refactorized at
-    each frequency, so device memory holds one factorization whatever the
-    number of frequencies; a later backward pass refactorizes again.
-
-    Also keeps the solve's port terms (`_Ports`), so a backward pass does
-    not re-run the wave ports' port mode sweeps.
-    """
-
-    def __init__(self, ports: _Ports | None = None) -> None:
-        self.ports = ports
-        self._handles: dict[int, Handle] = {}
-        self._sweep: _SweepHandle | None = None
-
-    def get(
-        self,
-        n: int,
-        omega: float,
-        *,
-        linear: ResolvedLinearSolver,
-        width: int,
-        tolerance: float | None = None,
-    ) -> Handle:
-        """The handle of frequency ``n`` at ``ω`` (the options as `_Ports.prepare`).
-
-        On a GPU it is valid until the next call.
-        """
-        ports = self.ports
-        if ports is None:  # pragma: no cover - the backward sets the ports
-            raise RuntimeError("The adjoint handles have no port terms.")
-        if linear.device != "cpu":
-            if self._sweep is None:
-                self._sweep = ports.sweep(
-                    linear=linear, width=width, tolerance=tolerance
-                )
-            return self._sweep.at(omega)
-        if n not in self._handles:
-            self._handles[n] = ports.prepare(
-                omega, linear=linear, width=width, tolerance=tolerance
-            )
-        return self._handles[n]
-
-    @property
-    def nbytes(self) -> int:
-        """Host memory held, in bytes."""
-        held = sum(int(h.nbytes) for h in self._handles.values())
-        if self._sweep is not None:
-            held += self._sweep.nbytes
-        return held + (self.ports.nbytes if self.ports is not None else 0)
-
-    def free(self) -> None:
-        """Release every handle and the port terms."""
-        for handle in self._handles.values():
-            handle.free()
-        self._handles = {}
-        if self._sweep is not None:
-            self._sweep.free()
-        self._sweep = None
-        if self.ports is not None:
-            self.ports.release()
-        self.ports = None
 
 
 def _resistance(port: LumpedPort | WavePort) -> float:
