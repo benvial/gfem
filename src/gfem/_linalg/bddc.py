@@ -13,13 +13,16 @@ GMRES (`gfem._linalg.gmres`), which orthogonalizes its Krylov basis by CGS2
 on gfem's threads.
 
 Across a sweep the handle keeps its preconditioner (`BddcHandle.refactorize`)
-once a solve on it measured a reference iteration count, caps every warm
-solve on the reused preconditioner from that count, and sets it up again
-when GMRES iterations grow past one setup's worth. A handle prepared without
+once a solve on it measured a reference iteration count, solves on the reused
+preconditioner to a tolerance `REUSED_TOLERANCE` times tighter, caps every
+warm solve there from that count, and sets it up again when GMRES iterations
+grow past one setup's worth. A handle prepared without
 reuse sets BDDC up at each `BddcHandle.refactorize`.
 """
 
 from __future__ import annotations
+
+import math
 
 import ngsolve as ngs
 import numpy as np
@@ -35,6 +38,13 @@ from gfem.errors import LinearSolverConvergenceError
 #: of a solve: on the driven references (order 2) one setup took as long as
 #: about 30 GMRES iterations of one right-hand side.
 SETUP_ITERATIONS = 30
+#: Factor on the tolerance of a solve on a reused preconditioner. GMRES stops
+#: at ``tolerance * |P b|``, and a preconditioner set up at another frequency
+#: measures the error less well: on the driven references (r8_abc1, r4_abc1,
+#: r8_wp; 1e-6) reused solves ended 10-20x less accurate in S than fresh ones
+#: (up to 1.1e-5 against 3e-7 to 6e-7). One more decade gave fresh accuracy
+#: for about 10 more iterations per column.
+REUSED_TOLERANCE = 0.1
 #: Threads from which a setup serving many columns factors its coarse problem
 #: with sparse Cholesky: at 16 threads PARDISO's one-column solve broke even
 #: with sparse Cholesky's after 154-365 applies of one factorization on the
@@ -107,6 +117,20 @@ def _set_up(
 def _slack(columns: int) -> int:
     """Extra iterations per column a reused preconditioner may cost: ``Δ``."""
     return max(1, round(SETUP_ITERATIONS / columns))
+
+
+def _reused_reference(n_ref: int, measured: float, tolerance: float) -> int:
+    """``n_ref``, measured at ``measured``, scaled to a reused solve's tolerance.
+
+    GMRES gains about the same digits per iteration, so ``n_ref`` iterations
+    to ``measured`` are ``n_ref * log(REUSED_TOLERANCE * tolerance) /
+    log(measured)`` to the tighter tolerance of a reused solve at
+    ``tolerance``.
+    """
+    if not 0 < measured < 1:
+        return n_ref
+    scale = math.log(REUSED_TOLERANCE * tolerance) / math.log(measured)
+    return math.ceil(n_ref * max(scale, 1.0))
 
 
 class BddcHandle(NgsHandle):
@@ -232,14 +256,17 @@ class BddcHandle(NgsHandle):
         *,
         maxiter: int,
         reference: float | None = None,
+        tolerance: float | None = None,
     ):
         """GMRES of ``matrix`` on ``pre``, to ``tolerance`` times ``reference``.
 
-        ``reference=None`` stops relative to the first residual instead.
+        ``reference=None`` stops relative to the first residual instead;
+        ``tolerance`` defaults to the handle's.
         """
+        tolerance = self.tolerance if tolerance is None else tolerance
         if reference is None:
-            return Gmres(matrix, pre.mat, tol=self.tolerance, maxiter=maxiter)
-        return Gmres(matrix, pre.mat, atol=self.tolerance * reference, maxiter=maxiter)
+            return Gmres(matrix, pre.mat, tol=tolerance, maxiter=maxiter)
+        return Gmres(matrix, pre.mat, atol=tolerance * reference, maxiter=maxiter)
 
     def refactorize(self, operator: Operator, *, solves: int | None = None) -> None:
         """Assemble ``operator`` and solve it on the held preconditioner.
@@ -253,8 +280,9 @@ class BddcHandle(NgsHandle):
         preconditioner never changes it. BDDC is set up again here instead
         when the handle does not reuse, when ``n_ref`` is unset, or when a
         warm solve on the reused preconditioner, at the prepared tolerance,
-        went past ``n_ref + Δ`` iterations per column, with ``Δ``
-        `SETUP_ITERATIONS` shared by the solve's columns. So every warm
+        went past ``n_ref + Δ`` iterations per column (``n_ref`` scaled to
+        the reused solve's tighter tolerance, `_reused_reference`), with
+        ``Δ`` `SETUP_ITERATIONS` shared by the solve's columns. So every warm
         solve on a reused preconditioner is capped (see `_warm`). A reused
         preconditioner serves warm GMRES solves only; a solve without an
         initial guess sets it up again first. The rule counts iterations,
@@ -279,18 +307,22 @@ class BddcHandle(NgsHandle):
             self._solver = self._krylov(form.mat, pre)
             self._reused = True
 
-    def _converged(self, solver, reference: float | None) -> bool:
+    def _converged(
+        self, solver, reference: float | None, tolerance: float | None = None
+    ) -> bool:
         """Whether ``solver``'s last residual estimate is at the tolerance.
 
         ``reference`` is the residual the tolerance is relative to; ``None``
-        is the first residual of the iteration. A stop at ``maxiter`` or
-        before it (a breakdown) above the tolerance is not converged.
+        is the first residual of the iteration. ``tolerance`` defaults to the
+        handle's. A stop at ``maxiter`` or before it (a breakdown) above the
+        tolerance is not converged.
         """
         residuals = solver.residuals
         if not residuals:
             return True
         start = residuals[0] if reference is None else reference
-        return residuals[-1] <= self.tolerance * start
+        tolerance = self.tolerance if tolerance is None else tolerance
+        return residuals[-1] <= tolerance * start
 
     def _finish(
         self,
@@ -360,7 +392,7 @@ class BddcHandle(NgsHandle):
                 solver.tol = self.tolerance = tolerance  # ty: ignore[invalid-assignment]
             try:
                 if x0 is not None and self.symmetry != "hermitian":
-                    return self._warm(B, x0, measure=measure)
+                    return self._warm(B, x0, measure=measure, prepared=prepared)
                 before = len(self.iterations)
                 out = self._map(solver, B, after=self._finish)
                 # a cold solve runs on a fresh preconditioner
@@ -378,7 +410,9 @@ class BddcHandle(NgsHandle):
         if measure and iterations and self._reference_iterations is None:
             self._reference_iterations = max(iterations)
 
-    def _warm(self, B: np.ndarray, x0: np.ndarray, *, measure: bool) -> np.ndarray:
+    def _warm(
+        self, B: np.ndarray, x0: np.ndarray, *, measure: bool, prepared: float
+    ) -> np.ndarray:
         """GMRES from the initial guess ``x0``, to ``tolerance * |P b|``.
 
         The stopping residual is relative to the preconditioned right-hand
@@ -386,7 +420,11 @@ class BddcHandle(NgsHandle):
         A guess whose residual exceeds ``|P b|`` (worse than zero) is
         dropped.
 
-        On a reused preconditioner (see `refactorize`) each column stops at
+        On a reused preconditioner (see `refactorize`) the tolerance is
+        `REUSED_TOLERANCE` times tighter, since a preconditioner set up at
+        another matrix measures the error less well, and ``n_ref`` (measured
+        at the ``prepared`` tolerance) is scaled to it (`_reused_reference`).
+        Each column there stops at
         ``min(maxiter, n_ref + 2Δ)`` iterations; a column that stops there
         unconverged sets BDDC up again at this matrix and goes on from where
         it stopped. A breakdown above the tolerance on the reused
@@ -407,14 +445,20 @@ class BddcHandle(NgsHandle):
         stale: list[int] = []  # per column, on the reused preconditioner
         fresh: list[int] = []  # per column, after a setup at this matrix
         with self._lock:
-            # refactorize reuses a preconditioner only with n_ref set
-            n_ref = self._reference_iterations or 0
+            # refactorize reuses a preconditioner only with n_ref set, and a
+            # reused one solves to a tighter tolerance, in more iterations
+            tight = REUSED_TOLERANCE * self.tolerance
+            n_ref = _reused_reference(
+                self._reference_iterations or 0, prepared, self.tolerance
+            )
             for j in range(cols.shape[1]):
                 matrix, pre, form = self._held()
                 on_reused = self._reused
                 cap = self.maxiter
+                tolerance = self.tolerance
                 if on_reused:
                     cap = min(cap, n_ref + 2 * slack)
+                    tolerance = tight
                 b.FV().NumPy()[:] = cols[:, j]
                 r.data = pre.mat * b
                 reference = ngs.Norm(r)
@@ -424,10 +468,12 @@ class BddcHandle(NgsHandle):
                 b_res.data = pre.mat * r
                 if ngs.Norm(b_res) >= reference:
                     x[:] = 0
-                solver = self._gmres(matrix, pre, maxiter=cap, reference=reference)
+                solver = self._gmres(
+                    matrix, pre, maxiter=cap, reference=reference, tolerance=tolerance
+                )
                 solver.Solve(rhs=b, sol=x, initialize=False)
                 spent = 0
-                if on_reused and not self._converged(solver, reference):
+                if on_reused and not self._converged(solver, reference, tolerance):
                     # set up at this matrix, and go on from the partial iterate
                     spent = int(solver.iterations)
                     self._build(form)
