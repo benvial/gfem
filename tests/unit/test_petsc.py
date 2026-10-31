@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import types
+import typing
 from pathlib import Path
 
 import numpy as np
@@ -20,7 +21,7 @@ import structured_meshes as sm
 import gfem
 from gfem import _linalg, _petsc
 from gfem._eigen import rule as eigen_rule
-from gfem._engine import driven, eigen, electrostatic, quadrature, workers
+from gfem._engine import driven, quadrature, workers
 from gfem._engine.mesh import to_ngsolve
 
 F1 = 7.49e9  # the line's first half-wave resonance, Hz
@@ -197,14 +198,61 @@ def _spy(monkeypatch, owner, name, calls):
 @pytest.mark.parametrize("problem", PROBLEMS)
 def test_the_solver_is_checked_before_any_assembly(plate, line, problem, monkeypatch):
     calls = []
-    for module in (_linalg, driven, electrostatic, eigen):
-        _spy(monkeypatch, module, "prepare", calls)
+    _spy(monkeypatch, _linalg, "prepare", calls)
     _spy(monkeypatch, driven.DrivenRule, "_ports", calls)
     model, p = _case(problem, plate, line)
     options = gfem.SolverOptions(order=1, linear_solver="petsc")
     with pytest.raises(gfem.SolverUnavailableError):
         gfem.solve(model, p, options=options)
     assert calls == []
+
+
+@pytest.mark.parametrize("kind", ["direct", "bddc_gmres", "petsc"])
+def test_a_resolved_linear_solver_keeps_an_explicit_kind(stack, kind):
+    stack(petsc=fake("petsc4py"))
+    options = gfem.SolverOptions(linear_solver=kind)
+    linear = _linalg.ResolvedLinearSolver.resolve(
+        options, default="direct", problem="driven"
+    )
+    assert linear.kind == kind
+
+
+@pytest.mark.parametrize("default", ["direct", "bddc_gmres"])
+def test_a_resolved_linear_solver_maps_auto_to_the_default(default):
+    options = gfem.SolverOptions(tolerance=1e-7, threads=2)
+    linear = _linalg.ResolvedLinearSolver.resolve(
+        options, default=default, problem="driven"
+    )
+    assert linear == _linalg.ResolvedLinearSolver(
+        kind=default, device="cpu", threads=2, tolerance=1e-7, petsc_options=()
+    )
+
+
+def test_a_resolved_linear_solver_keeps_only_the_linear_petsc_options(stack):
+    stack(petsc=fake("petsc4py"))
+    options = gfem.SolverOptions(
+        linear_solver="petsc",
+        eigen_solver="slepc",
+        petsc_options={"eps_type": "arnoldi", "ksp_type": "gmres", "pc_type": "ilu"},
+    )
+    linear = _linalg.ResolvedLinearSolver.resolve(
+        options, default="direct", problem="eigenmode"
+    )
+    assert linear.petsc_options == (("ksp_type", "gmres"), ("pc_type", "ilu"))
+
+
+@pytest.mark.usefixtures("stack")
+def test_resolving_petsc_without_petsc4py_raises():
+    options = gfem.SolverOptions(linear_solver="petsc")
+    with pytest.raises(gfem.SolverUnavailableError, match="linear_solver='petsc'"):
+        _linalg.ResolvedLinearSolver.resolve(
+            options, default="direct", problem="driven"
+        )
+
+
+def test_the_linear_solvers_are_the_options_but_auto():
+    linear_solvers = set(typing.get_args(gfem.options.LinearSolver))
+    assert set(_linalg.KINDS) == linear_solvers - {"auto"}
 
 
 @pytest.mark.usefixtures("stack")
