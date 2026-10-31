@@ -100,7 +100,7 @@ def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -
         outputs, _ = rule.forward(model, keep=False)
     except LinearSolverConvergenceError as err:
         if partial_result is not None:
-            err.result = partial_result()
+            err.result = partial_result(err)
         raise
     return rule.result(outputs)
 

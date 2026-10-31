@@ -449,7 +449,7 @@ def test_a_sweep_that_cannot_converge_at_its_first_frequency_has_no_partial_resu
 
 
 @pytest.mark.parametrize("keeps", [True, False])
-def test_a_rule_holds_a_missed_sweeps_outputs_only_until_they_are_read(
+def test_an_error_holds_a_missed_sweeps_outputs_only_until_they_are_read(
     line, monkeypatch, keeps
 ):
     # the JAX path never asks for them: nothing outlives the error there
@@ -459,15 +459,15 @@ def test_a_rule_holds_a_missed_sweeps_outputs_only_until_they_are_read(
     )
     rule.keeps_partial = keeps
     cannot_converge_at(monkeypatch, (f[1],))
-    with pytest.raises(gfem.LinearSolverConvergenceError):
+    with pytest.raises(gfem.LinearSolverConvergenceError) as caught:
         rule.forward(line, keep=False)
-    partial = rule.partial_result()
+    partial = rule.partial_result(caught.value)
     if keeps:
         assert partial is not None
         assert partial.s.frequency == f[:1]
     else:
         assert partial is None
-    assert rule.partial_result() is None  # read once
+    assert rule.partial_result(caught.value) is None  # read once
 
 
 def _bddc_forward(model, problem):
