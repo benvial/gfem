@@ -8,7 +8,7 @@ import structured_meshes as sm
 import gfem
 from gfem._engine.domain import em_region
 from gfem._engine.electrostatic import ElectrostaticRule
-from gfem._engine.sensitivity import FieldPair, sensitivity, unsupported
+from gfem._engine.sensitivity import PROPERTIES, FieldPair, sensitivity, unsupported
 
 KIND = ("material", "oxide", "eps_r")
 
@@ -33,41 +33,56 @@ def solved(tmp_path_factory):
     space, built = rule._space(model)
     # phi^T K phi in m (K assembled in file units, um)
     energy = outputs["capacitance"][0, 0] / scipy.constants.epsilon_0
-    yield model, entry, space, em_region(model, built), eps, energy
+    yield model, entry, space, em_region(model, built), eps, energy, rule
     entry.free()
 
 
 def _pair(solved, left, right, weight=1.0):
-    _, _, space, domain, _, _ = solved
+    _, _, space, domain, _, _, _ = solved
     return FieldPair(space, left, right, {"grad_grad": weight}, 2, domain)
+
+
+def _grads(solved, pairs):
+    model, rule = solved[0], solved[-1]
+    return sensitivity(
+        model,
+        pairs,
+        {KIND},
+        form="electrostatic",
+        terms=lambda nodes: rule.terms(model, nodes=nodes),
+    )
 
 
 def test_element_contractions_weighted_by_eps_rebuild_the_energy(solved):
     # phi^T K phi = sum_e eps_e int_e |grad phi|^2 (oxide only: nitride is 0)
-    model, entry, _, _, eps, energy = solved
+    _, entry, _, _, eps, energy, _ = solved
     phi = entry.fields["potential"][:, 0]
-    grads = sensitivity(model, [_pair(solved, phi, phi)], {KIND}, form="electrostatic")
+    grads = _grads(solved, [_pair(solved, phi, phi)])
     assert grads[KIND].shape == eps.shape
     assert float(grads[KIND] @ eps) == pytest.approx(energy, rel=1e-12)
 
 
 def test_pairs_are_bilinear_in_complex_columns_on_a_real_space(solved):
-    model, entry, _, _, _, _ = solved
+    _, entry, _, _, _, _, _ = solved
     phi = entry.fields["potential"][:, 0]
     rng = np.random.default_rng(0)
     other = rng.standard_normal(phi.shape)
     left = phi + 2j * other
     right = 3 * phi - 1j * other
-    got = sensitivity(model, [_pair(solved, left, right)], {KIND}, form="electrostatic")
+    got = _grads(solved, [_pair(solved, left, right)])
 
     def real(a, b):
-        return sensitivity(model, [_pair(solved, a, b)], {KIND}, form="electrostatic")[
-            KIND
-        ]
+        return _grads(solved, [_pair(solved, a, b)])[KIND]
 
     # electrostatics reads Re(eps_r): the cotangent is the real part
     expected = 3 * real(phi, phi) + 2 * real(other, other)
     np.testing.assert_allclose(got[KIND], expected, rtol=1e-12, atol=0)
+
+
+def test_electrostatic_term_derivatives_are_the_differentiable_properties(solved):
+    model, rule = solved[0], solved[-1]
+    (term,) = rule.terms(model, nodes=False)
+    assert set(term.derivatives) == PROPERTIES["electrostatic"] == {"eps_r"}
 
 
 def test_unsupported_inputs_are_named():

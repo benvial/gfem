@@ -24,7 +24,7 @@ with k0 = ω scale / c, the wavenumber per file unit, and the pieces
   ∫ E_t · v_t times eta0 / R_s, mu0 scale / L_s, C_s / (eps0 scale), its R,
   L and C per square. A `gfem.SheetField` on a conductor or an impedance
   boundary multiplies its pieces' coefficients face by face by the fill
-  (`sheet_fill`, `sheet_factors`): the design enters the form, never θ.
+  (`sheet_fill`, `Piece.sheet`): the design enters the form, never θ.
 
 - a wave port, θ = i beta(ω) per file unit (the real part of its mode's
   propagation constant, tabulated on the output grid by the port mode
@@ -42,6 +42,11 @@ pole at ω = 0) are not (``"nonpolynomial"``). A nonpolynomial piece also
 supplies dθ/dω, and both are analytic in ω, so they hold at the complex
 frequencies of an eigenmode problem (an eigenmode seed linearizes θ
 around its shift with both).
+
+Each piece also carries what the sensitivity kernel differentiates
+(`gfem._engine.sensitivity`): the derivative of its coefficient by each
+material property it reads, written next to the coefficient, and for a
+sheet boundary's piece its coefficient per unit fill.
 """
 
 from __future__ import annotations
@@ -49,7 +54,7 @@ from __future__ import annotations
 import cmath
 import dataclasses
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
 import ngsolve as ngs
@@ -67,6 +72,7 @@ from gfem._engine.coefficients import (
 )
 from gfem._engine.domain import boundary_region
 from gfem._engine.mesh import EngineMesh
+from gfem._engine.sensitivity import Derivative
 from gfem._sheet import check_fill
 from gfem.conventions import EXTERIOR_THICKNESS_FACTOR
 from gfem.errors import PortGeometryError
@@ -84,7 +90,6 @@ __all__ = [
     "lumped_ports",
     "pieces",
     "port_vectors",
-    "sheet_factors",
     "sheet_fill",
     "surface_impedance",
     "surface_impedance_slope",
@@ -158,6 +163,16 @@ class Piece:
             2 in ω) or ``"nonpolynomial"``.
         d_theta: dθ/dω of a nonpolynomial piece (``None`` for a polynomial
             one).
+        derivatives: The derivative of ``coefficient`` by each material
+            property it reads (`gfem._engine.sensitivity.Derivative`, per
+            tetrahedron, evaluated by a backward pass only).
+        owner: For a face piece whose coefficient is read from the
+            tetrahedron behind each face (absorbing), that tetrahedron per
+            gfem triangle, -1 off the piece's faces.
+        sheet: For a piece of a sheet boundary (`Conductor` or `Impedance`
+            on an interior surface), ``(index, c)``: the boundary's index in
+            ``model.boundaries`` and the coefficient per unit fill (1 for a
+            conductor, the R, L or C weight for an impedance).
 
     Raises:
         ValueError: ``theta`` does not give one scalar: the term is not
@@ -173,6 +188,11 @@ class Piece:
     region: Any = None
     frequency_class: Literal["polynomial", "nonpolynomial"] = "polynomial"
     d_theta: Callable[[complex], complex] | None = None
+    derivatives: Mapping[str, Derivative] = dataclasses.field(
+        default_factory=dict, compare=False
+    )
+    owner: np.ndarray | None = dataclasses.field(default=None, compare=False)
+    sheet: tuple[int, float] | None = None
 
     def __post_init__(self) -> None:
         """Check that θ is a scalar function of ω."""
@@ -408,6 +428,8 @@ def pieces(
     dx = quadrature.dx(order, definedonelements=tets)
     active = model._domain.active  # noqa: SLF001
 
+    # each piece carries its coefficient and, next to it, the coefficient's
+    # derivatives by material property (lazy: a backward pass reads them)
     eps = lossy_eps(model)
     nu = coefficient(built, _inverse(element_tensors(model, "mu_r")))
     eps_cf = coefficient(built, eps)
@@ -418,6 +440,11 @@ def pieces(
             lambda u, v: (nu * ngs.curl(u)) * ngs.curl(v) * dx,
             kind="curl",
             coefficient=nu,
+            derivatives={
+                "mu_r": Derivative(
+                    lambda: -(element_values(model, "mu_r") ** -2.0), holomorphic=True
+                )
+            },
         ),
         Piece(
             "mass",
@@ -425,10 +452,18 @@ def pieces(
             lambda u, v: (eps_cf * u) * v * dx,
             kind="value",
             coefficient=eps_cf,
+            derivatives={
+                "eps_r": Derivative(lambda: _loss(model), holomorphic=True),
+                "tan_delta": Derivative(
+                    lambda: -1j * element_values(model, "eps_r"), holomorphic=False
+                ),
+            },
         ),
     ]
     sigma = np.where(active, element_values(model, "conductivity").real, 0.0)
     if sigma.any():
+        # eta0 sigma scale (real sigma); its derivative eta0 leaves out the
+        # length scale
         sigma_cf = coefficient(built, ETA0 * scale * sigma)
         out.append(
             Piece(
@@ -437,13 +472,17 @@ def pieces(
                 lambda u, v: sigma_cf * u * v * dx,
                 kind="value",
                 coefficient=sigma_cf,
+                derivatives={
+                    "conductivity": Derivative(ETA0, holomorphic=False, length_power=1)
+                },
             )
         )
 
     absorbing = [b for b in model.boundaries if isinstance(b, Absorbing)]
     if absorbing:
-        admittance, curl = _absorbing_coefficients(model, eps)
-        form = _tangential(built, tuple(b.surface for b in absorbing), order, tris)
+        surfaces, owner = absorbing_faces(model, order=1)
+        admittance, curl = _absorbing_coefficients(model, eps, owner)
+        form = _tangential(built, surfaces, order, tris)
         y_cf = surface_p0(built, admittance)
         out.append(
             Piece(
@@ -453,6 +492,8 @@ def pieces(
                 kind="trace",
                 coefficient=y_cf,
                 region=form.region,
+                derivatives=_absorbing_derivatives(model, order=1),
+                owner=_owned(model, surfaces, owner, faces),
             )
         )
         second = tuple(b.surface for b in absorbing if b.order == 2)
@@ -472,14 +513,16 @@ def pieces(
                     region=region,
                     frequency_class="nonpolynomial",
                     d_theta=lambda w: -1 / (2j * k(w) * w),
+                    derivatives=_absorbing_derivatives(model, order=2),
+                    owner=_owned(model, second, owner, faces),
                 )
             )
 
-    for b in model.boundaries:
+    for index, b in enumerate(model.boundaries):
         if isinstance(b, Conductor):
-            out.extend(_conductor(model, built, order, b, tris))
+            out.extend(_conductor(model, built, order, b, tris, index=index))
         elif isinstance(b, Impedance):
-            out.extend(_impedance(model, built, order, b, tris))
+            out.extend(_impedance(model, built, order, b, tris, index=index))
 
     for data in ports:
         out.extend(_port(built, order, data, tris))
@@ -487,15 +530,12 @@ def pieces(
 
 
 def _absorbing_coefficients(
-    model: Model, eps: np.ndarray
+    model: Model, eps: np.ndarray, owner: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
     """Per-triangle coefficients of the absorbing terms.
 
-    From the real parts of the solve-domain element behind each triangle
-    (tensors through their mean diagonal): ``sqrt(eps_r / mu_r)`` for the
-    first-order term and ``1 / (mu_r sqrt(eps_r mu_r))`` for the
-    second-order one (mu_r^-1 times 1 / sqrt(eps_r mu_r), the 1/k of the
-    adjacent material relative to k0).
+    `_absorbing` of the real parts of the solve-domain element behind each
+    triangle (``owner``; tensors through their mean diagonal).
     """
     mu = element_tensors(model, "mu_r")
     if eps.ndim == 3:
@@ -503,12 +543,77 @@ def _absorbing_coefficients(
     if mu.ndim == 3:
         mu = np.trace(mu, axis1=1, axis2=2) / 3
     eps, mu = np.real(eps), np.real(mu)
-    values = np.stack([np.sqrt(eps / mu), 1 / (mu * np.sqrt(eps * mu))], axis=1)
-    owner = face_owner(model)
+    values = np.stack([_absorbing(eps, mu, 1), _absorbing(eps, mu, 2)], axis=1)
     out = np.zeros((len(owner), 2))
     ok = owner >= 0
     out[ok] = values[owner[ok]]
     return out[:, 0], out[:, 1]
+
+
+# The absorbing coefficients of the real e and m of the adjacent material,
+# and their derivatives: first order c1 = sqrt(e / m), second order
+# c2 = 1 / (m sqrt(e m)) (mu_r^-1 times 1 / sqrt(e m), the 1/k of the
+# adjacent material relative to k0).
+def _absorbing(e: np.ndarray, m: np.ndarray, order: int) -> np.ndarray:
+    return np.sqrt(e / m) if order == 1 else 1 / (m * np.sqrt(e * m))
+
+
+def _absorbing_by_e(e: np.ndarray, m: np.ndarray, order: int) -> np.ndarray:
+    return 0.5 / np.sqrt(e * m) if order == 1 else -0.5 * (e * m) ** -1.5
+
+
+def _absorbing_by_m(e: np.ndarray, m: np.ndarray, order: int) -> np.ndarray:
+    if order == 1:
+        return -0.5 * np.sqrt(e) * m**-1.5
+    return -1.5 * e**-0.5 * m**-2.5
+
+
+def _loss(model: Model) -> np.ndarray:
+    """``1 - i tan_delta`` per tetrahedron: the mass coefficient per unit eps_r."""
+    return 1.0 - 1j * np.real(element_values(model, "tan_delta"))
+
+
+def _absorbing_derivatives(model: Model, order: int) -> dict[str, Derivative]:
+    """The derivatives of the absorbing coefficient of ``order`` per tetrahedron.
+
+    Of the real ``e = Re(eps_r (1 - i tan_delta))`` and ``m = Re(mu_r)`` of
+    the isotropic element values (design inputs are isotropic
+    `MaterialField` leaves): ``de/deps_r`` is 1 along ``Re(chain eps_r)``
+    with ``chain = 1 - i tan_delta``, and ``de/dtan_delta = Im(eps_r)``.
+    """
+
+    def em() -> tuple[np.ndarray, np.ndarray]:
+        e = np.real(element_values(model, "eps_r") * _loss(model))
+        return e, np.real(element_values(model, "mu_r"))
+
+    def by_e() -> np.ndarray:
+        return _absorbing_by_e(*em(), order)
+
+    def by_m() -> np.ndarray:
+        return _absorbing_by_m(*em(), order)
+
+    return {
+        "eps_r": Derivative(by_e, holomorphic=False, chain=lambda: _loss(model)),
+        "tan_delta": Derivative(
+            lambda: by_e() * np.imag(element_values(model, "eps_r")),
+            holomorphic=False,
+        ),
+        "mu_r": Derivative(by_m, holomorphic=False),
+    }
+
+
+def _owned(
+    model: Model,
+    surfaces: tuple[str, ...],
+    owner: np.ndarray,
+    faces: np.ndarray | None,
+) -> np.ndarray:
+    """``owner`` on the triangles of ``surfaces`` (and of ``faces``), -1 elsewhere."""
+    mesh = model.mesh
+    on = np.isin(mesh.triangle_tags, [mesh.region(s).tag for s in surfaces])
+    if faces is not None:
+        on &= np.asarray(faces)
+    return np.where(on, owner, -1)
 
 
 def face_owner(model: Model) -> np.ndarray:
@@ -543,9 +648,20 @@ def absorbing_faces(model: Model, order: int = 1) -> tuple[tuple[str, ...], np.n
 
 
 def _conductor(
-    model: Model, built: EngineMesh, order: int, b: Conductor, faces: Any = None
+    model: Model,
+    built: EngineMesh,
+    order: int,
+    b: Conductor,
+    faces: Any = None,
+    *,
+    index: int,
 ) -> list[Piece]:
-    """One piece per thickness: a face on the mesh boundary counts it twice."""
+    """One piece per thickness: a face on the mesh boundary counts it twice.
+
+    The interior piece is ``model.boundaries[index]``'s sheet piece, with
+    coefficient 1 per unit fill; a sheet is interior, so the one-sided
+    piece has none.
+    """
     mesh = model.mesh
     sigma, scale = b.conductivity, built.scale
     form = _tangential(built, (b.surface,), order, faces)
@@ -587,13 +703,18 @@ def _conductor(
                 region=form.region,
                 frequency_class="nonpolynomial",
                 d_theta=d_theta,
+                sheet=(index, 1.0) if factor == 1.0 else None,
             )
         )
     return out
 
 
 def _rlc(
-    label: str, scale: float, sheets: list, kind: Literal["trace", "port"]
+    label: str,
+    scale: float,
+    sheets: list,
+    kind: Literal["trace", "port"],
+    index: int | None = None,
 ) -> list[Piece]:
     """Pieces of per-square R, L and C in parallel on surfaces.
 
@@ -601,12 +722,13 @@ def _rlc(
     optionally a face-wise fill coefficient last: the admittance i k0 eta0
     / R_s + mu0 scale / L_s - k0^2 C_s / (eps0 scale) in the equation's
     units (times the fill), one piece per kind. A ``"trace"`` piece has one
-    sheet.
+    sheet, that of ``model.boundaries[index]``: its R, L or C weight is its
+    coefficient per unit fill.
     """
     weights: dict[str, list] = {"R": [], "L": [], "C": []}
     for form, rs, ls, cs, *fill in sheets:
         for element, c in _rlc_weights(rs, ls, cs, scale).items():
-            weights[element].append((form, c * fill[0] if fill else c))
+            weights[element].append((form, c, c * fill[0] if fill else c))
     thetas = {
         "R": lambda w: 1j * wavenumber(w, scale),
         "L": _constant,
@@ -617,13 +739,17 @@ def _rlc(
         if items:
 
             def integrand(u, v, items=items):
-                return sum(form(u, v, c) for form, c in items)
+                return sum(form(u, v, c) for form, _, c in items)
 
             name = f"{label} {element}"
             extra: dict[str, Any] = {}
             if kind == "trace":
-                ((form, c),) = items
-                extra = {"coefficient": c, "region": form.region}
+                ((form, factor, c),) = items
+                extra = {
+                    "coefficient": c,
+                    "region": form.region,
+                    "sheet": None if index is None else (index, factor),
+                }
             out.append(Piece(name, thetas[element], integrand, kind=kind, **extra))
     return out
 
@@ -640,22 +766,6 @@ def _rlc_weights(
     if cs is not None:
         out["C"] = cs / (const.epsilon_0 * scale)
     return out
-
-
-def sheet_factors(boundary: Conductor | Impedance, scale: float) -> dict[str, float]:
-    """``dc / dfill`` of each piece of a sheet boundary, by piece name.
-
-    A sheet field multiplies the coefficient of every piece of its boundary
-    by the fill, face by face (the piece of an interior `Conductor` reads
-    coefficient 1, an `Impedance`'s its R, L or C weight).
-    """
-    if isinstance(boundary, Conductor):
-        return {f"conductor {boundary.surface}": 1.0}
-    label = f"impedance {boundary.surface}"
-    weights = _rlc_weights(
-        boundary.resistance, boundary.inductance, boundary.capacitance, scale
-    )
-    return {f"{label} {element}": c for element, c in weights.items()}
 
 
 def sheet_fill(model: Model, boundary: Conductor | Impedance) -> np.ndarray | None:
@@ -685,14 +795,20 @@ def _port(
 
 
 def _impedance(
-    model: Model, built: EngineMesh, order: int, b: Impedance, faces: Any = None
+    model: Model,
+    built: EngineMesh,
+    order: int,
+    b: Impedance,
+    faces: Any = None,
+    *,
+    index: int,
 ) -> list[Piece]:
     form = _tangential(built, (b.surface,), order, faces)
     sheet: tuple = (form, b.resistance, b.inductance, b.capacitance)
     fill = sheet_fill(model, b)
     if fill is not None:
         sheet = (*sheet, surface_p0(built, fill))
-    return _rlc(f"impedance {b.surface}", built.scale, [sheet], "trace")
+    return _rlc(f"impedance {b.surface}", built.scale, [sheet], "trace", index)
 
 
 def wave_port_piece(

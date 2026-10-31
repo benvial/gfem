@@ -1,10 +1,14 @@
-"""Node-coordinate (shape) terms of the engine sensitivity kernel.
+"""The driven pieces' terms in the engine sensitivity kernel.
 
-Volume terms use hand-written transport tensors: checked against NGSolve's
-``DiffShape`` on real fields, where ``DiffShape`` is correct. Surface terms
-use ``DiffShape`` on a real Lagrangian of Re/Im-split fields. The whole
-kernel is checked against finite differences of the assembled driven
-pieces on complex fields.
+Node coordinates (shape gradients): volume terms use hand-written transport
+tensors, checked against NGSolve's ``DiffShape`` on real fields, where
+``DiffShape`` is correct. Surface terms use ``DiffShape`` on a real
+Lagrangian of Re/Im-split fields. The whole kernel is checked against
+finite differences of the assembled driven pieces on complex fields.
+
+Materials and sheet fills: each piece's derivative by each property it
+reads, and each sheet piece's coefficient per unit fill, against finite
+differences of that piece alone, with no solve.
 """
 
 import jax
@@ -15,11 +19,12 @@ import structured_meshes as sm
 from finite_differences import derivative
 
 import gfem
+from gfem._eigen.rule import EigenmodeRule
 from gfem._engine import quadrature
 from gfem._engine.cache import discretization
 from gfem._engine.domain import em_region, h1_space, hcurl_space
-from gfem._engine.driven import DrivenRule, driven_operator
-from gfem._engine.sensitivity import FieldPair, ShapeTerm, sensitivity
+from gfem._engine.driven import DrivenRule, driven_operator, operator_terms
+from gfem._engine.sensitivity import PROPERTIES, FieldPair, Term, sensitivity
 
 NODES = ("nodes",)
 ORDER = 2
@@ -127,9 +132,9 @@ def test_transport_tensors_match_diffshape_on_real_fields(line, kind, coefficien
     left = rng.standard_normal((space.ndof, 2))
     right = rng.standard_normal((space.ndof, 2))
     theta = 0.7
-    term = ShapeTerm("t", kind, coefficient=coef)
+    term = Term("t", kind, coefficient=coef)
     pair = FieldPair(space, left, right, {"t": theta}, ORDER, domain)
-    got = sensitivity(model, [pair], {NODES}, form="driven", shape=lambda: [term])
+    got = sensitivity(model, [pair], {NODES}, form="driven", terms=lambda _: [term])
     # DiffShape's reference: the same Lagrangian with the fields transported
     gfs = [[ngs.GridFunction(space) for _ in range(2)] for _ in range(2)]
     for k in range(2):
@@ -162,7 +167,7 @@ def _shape_terms(model):
     rule = DrivenRule(
         model, gfem.Driven(frequency=20e9), gfem.SolverOptions(order=ORDER)
     )
-    return rule.shape_terms(model)
+    return rule.terms(model, nodes=True)
 
 
 def test_driven_shape_terms_cover_every_piece_but_the_ports(line):
@@ -199,7 +204,7 @@ def test_driven_node_gradient_matches_fd_on_complex_fields(line, piece):
     pair = FieldPair(
         op.space, left, right, {piece: thetas[piece]}, ORDER, em_region(line, op.built)
     )
-    got = sensitivity(line, [pair], {NODES}, form="driven", shape=lambda: shape_terms)
+    got = sensitivity(line, [pair], {NODES}, form="driven", terms=lambda _: shape_terms)
     nodes = np.asarray(line.mesh.nodes)
     direction = rng.standard_normal(nodes.shape)
     # the operator's lumped ports need tangent directions: hold their nodes
@@ -231,10 +236,10 @@ def test_surface_transport_matches_diffshape_on_real_folded_fields(line, piece):
     rule = DrivenRule(
         line, gfem.Driven(frequency=20e9), gfem.SolverOptions(order=ORDER)
     )
-    (term,) = [t for t in rule.shape_terms(line) if t.name == piece]
+    (term,) = [t for t in rule.terms(line, nodes=True) if t.name == piece]
     op = rule.operator(line)
     (source,) = [p for p in op.pieces if p.name == piece]
-    generic = ShapeTerm(
+    generic = Term(
         piece, "surface", integrand=source.integrand, space=rule.real_space(line)
     )
     rng = np.random.default_rng(4)
@@ -245,8 +250,148 @@ def test_surface_transport_matches_diffshape_on_real_folded_fields(line, piece):
     pair = FieldPair(
         op.space, left, right, {piece: theta}, ORDER, em_region(line, op.built)
     )
-    got = sensitivity(line, [pair], {NODES}, form="driven", shape=lambda: [term])
-    ref = sensitivity(line, [pair], {NODES}, form="driven", shape=lambda: [generic])
+    got = sensitivity(line, [pair], {NODES}, form="driven", terms=lambda _: [term])
+    ref = sensitivity(line, [pair], {NODES}, form="driven", terms=lambda _: [generic])
     scale = np.abs(ref[NODES]).max()
     assert scale > 0
     np.testing.assert_allclose(got[NODES], ref[NODES], rtol=0, atol=1e-12 * scale)
+
+
+# --- materials and sheet fills, piece by piece ------------------------------------
+
+OMEGA = 2 * np.pi * 20e9
+
+
+def _lower(line):
+    """Lossy, magnetic, conducting values of ``lower``, with a loss tangent."""
+    n = len(line.mesh.elements("lower"))
+    ramp = np.linspace(1.0, 1.5, n)
+    return {
+        "eps_r": 3.9 * (1 - 0.02j) * ramp,
+        "mu_r": 1.2 * ramp,
+        "conductivity": 0.5 * ramp,
+        "tan_delta": 0.01 * ramp,
+    }
+
+
+def _with_lower(line, values):
+    return line.with_material("lower", gfem.MaterialField(**values))
+
+
+def _piece_pair(model, op, piece, seed):
+    """Random complex columns weighted with ``piece``'s θ alone."""
+    rng = np.random.default_rng(seed)
+    ndof = op.space.ndof
+    left = rng.standard_normal((ndof, 2)) + 1j * rng.standard_normal((ndof, 2))
+    right = rng.standard_normal((ndof, 2)) + 1j * rng.standard_normal((ndof, 2))
+    (source,) = [p for p in op.pieces if p.name == piece]
+    theta = complex(source.theta(OMEGA))
+    pair = FieldPair(
+        op.space, left, right, {piece: theta}, ORDER, em_region(model, op.built)
+    )
+    return pair, rng
+
+
+def _terms(model, op):
+    return lambda nodes: operator_terms(model, op, nodes=nodes)
+
+
+@pytest.mark.parametrize(
+    ("piece", "prop"),
+    [
+        ("mass", "eps_r"),
+        ("mass", "tan_delta"),
+        ("curl_curl", "mu_r"),
+        ("conductivity", "conductivity"),
+        ("absorbing", "eps_r"),
+        ("absorbing", "tan_delta"),
+        ("absorbing", "mu_r"),
+        ("absorbing order 2", "eps_r"),
+        ("absorbing order 2", "tan_delta"),
+        ("absorbing order 2", "mu_r"),
+    ],
+)
+def test_piece_material_derivative_matches_fd(line, piece, prop):
+    # d/dp Re(theta left^T A_piece(p) right) along a direction of the
+    # MaterialField values; the upper Material is per-axis, so its values
+    # are tensors (the derivatives read the isotropic MaterialField values)
+    values = _lower(line)
+    model = _with_lower(line, values)
+    op = driven_operator(model, ORDER)
+    pair, rng = _piece_pair(model, op, piece, seed=8)
+    kind = ("material", "lower", prop)
+    got = sensitivity(model, [pair], {kind}, form="driven", terms=_terms(model, op))
+    p = values[prop]
+    direction = rng.standard_normal(p.shape)
+    if np.iscomplexobj(p):  # along both axes: the chain of a complex eps_r
+        direction = direction + 1j * rng.standard_normal(p.shape)
+    direction /= np.linalg.norm(direction)
+
+    def value(x):
+        moved = _with_lower(line, {**values, prop: x})
+        return _pieces_value(moved, pair.left, pair.right, OMEGA, {piece})
+
+    fd = derivative(value, p, direction, 1e-3 * np.abs(p).max())
+    ad = float(np.real(np.sum(got[kind] * direction)))
+    assert ad != 0
+    assert ad == pytest.approx(fd, rel=1e-6)
+
+
+SHEET = "lower__upper"
+
+
+def _sheet_model(line, piece, fill):
+    """``line`` with a filled sheet on the interior surface, the last boundary."""
+    sheet = gfem.SheetField(fill)
+    if piece.startswith("conductor"):
+        boundary = gfem.Conductor(SHEET, conductivity=5e7, thickness=1e-6, fill=sheet)
+    else:
+        boundary = gfem.Impedance(
+            SHEET, resistance=300.0, inductance=1e-9, capacitance=1e-15, fill=sheet
+        )
+    others = [b for b in line.boundaries if b.surface != SHEET]
+    return line.replace(boundaries=[*others, boundary])
+
+
+@pytest.mark.parametrize(
+    "piece",
+    [
+        f"conductor {SHEET}",
+        f"impedance {SHEET} R",
+        f"impedance {SHEET} L",
+        f"impedance {SHEET} C",
+    ],
+)
+def test_sheet_piece_fill_derivative_matches_fd(line, piece):
+    n = len(line.mesh.elements(SHEET))
+    fill = np.random.default_rng(9).uniform(0.5, 1.5, n)
+    model = _sheet_model(line, piece, fill)
+    op = driven_operator(model, ORDER)
+    pair, rng = _piece_pair(model, op, piece, seed=10)
+    kind = ("boundary", len(model.boundaries) - 1, "fill", "fill")
+    got = sensitivity(model, [pair], {kind}, form="driven", terms=_terms(model, op))
+    direction = rng.standard_normal(n)
+    direction /= np.linalg.norm(direction)
+
+    def value(x):
+        moved = _sheet_model(line, piece, x)
+        return _pieces_value(moved, pair.left, pair.right, OMEGA, {piece})
+
+    fd = derivative(value, fill, direction, 1e-3)
+    ad = float(np.real(np.sum(got[kind] * direction)))
+    assert ad != 0
+    assert ad == pytest.approx(fd, rel=1e-6)
+
+
+def test_terms_derivatives_are_the_differentiable_properties(line):
+    # every piece of the driven operator is on line: the terms' derivatives
+    # cover what `unsupported` lets through, and no more
+    options = gfem.SolverOptions(order=ORDER)
+    rules = [
+        DrivenRule(line, gfem.Driven(frequency=20e9), options),
+        EigenmodeRule(line, gfem.Eigenmode(target=20e9), options),
+    ]
+    for rule in rules:
+        terms = rule.terms(line, nodes=False)
+        properties = {prop for t in terms for prop in t.derivatives}
+        assert properties == PROPERTIES[rule.form], rule.form

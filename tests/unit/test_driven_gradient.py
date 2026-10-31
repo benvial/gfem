@@ -17,7 +17,7 @@ from finite_differences import assert_gradient_matches, unit_directions
 from solver_misses import adjoint_cannot_converge_at, cannot_converge_at
 
 import gfem
-from gfem._engine import driven, sensitivity, terms
+from gfem._engine import driven, terms
 
 F = (21e9,)
 
@@ -200,10 +200,8 @@ def test_a_gradient_whose_adjoint_solve_does_not_converge_raises(line, monkeypat
 
 
 def test_pair_weights_are_the_thetas_of_the_operator_pieces(line):
-    op = driven.driven_operator(
-        line.with_material("dielectric", gfem.Material(eps_r=2.0, conductivity=1.0)),
-        order=1,
-    )
+    model = line.with_material("dielectric", gfem.Material(eps_r=2.0, conductivity=1.0))
+    op = driven.driven_operator(model, order=1)
     omega = 2 * math.pi * 13e9
     weights = op.weights(omega)
     thetas = {p.name: complex(p.theta(omega)) for p in op.pieces}
@@ -216,7 +214,8 @@ def test_pair_weights_are_the_thetas_of_the_operator_pieces(line):
         "absorbing": 1j * k0,
         "absorbing order 2": 1 / (2j * k0),
     }
-    assert set(expected) <= set(sensitivity.TERMS)
+    differentiated = driven.operator_terms(model, op, nodes=False)
+    assert set(expected) <= {t.name for t in differentiated if t.derivatives}
     for name, theta in expected.items():
         assert weights[name] == pytest.approx(theta, rel=1e-15)
     assert set(weights) == {n for n in thetas if not n.startswith("port ")}

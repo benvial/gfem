@@ -86,7 +86,7 @@ def test_shape_kernel_costs_a_tenth_of_a_forward_solve_per_pair(r8):
                 pairs,
                 {("nodes",)},
                 form=rule.form,
-                shape=lambda: rule.shape_terms(r8),
+                terms=lambda nodes: rule.terms(r8, nodes=nodes),
             )[("nodes",)]
 
     kernel()  # warm

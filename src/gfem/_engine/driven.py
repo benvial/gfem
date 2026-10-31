@@ -81,7 +81,7 @@ from gfem._engine.fields import fe_space
 from gfem._engine.mesh import EngineMesh
 from gfem._engine.port_network import PortNetwork, resistance, split_cotangent
 from gfem._engine.runtime import task_manager
-from gfem._engine.sensitivity import FieldPair, ShapeTerm, is_sheet
+from gfem._engine.sensitivity import FieldPair, Term, is_sheet
 from gfem._engine.sweep_outputs import SweepOutputs
 from gfem._engine.system_operator import SystemOperator
 from gfem._engine.wave_ports import wave_port_couplings
@@ -112,7 +112,7 @@ __all__ = [
     "DrivenRule",
     "check_ports_held",
     "driven_operator",
-    "operator_shape_terms",
+    "operator_terms",
     "real_space",
 ]
 
@@ -158,9 +158,8 @@ class DrivenOperator:
 
         The `FieldPair.weights` of a backward pass, driven (real ω) or
         eigenmode (the complex eigenvalue's ω). The sensitivity kernel looks
-        them up by name: the material terms and sheet factors are named
-        after the pieces, and so are the shape terms
-        (`operator_shape_terms`, which leaves the ports' pieces out too).
+        them up by name: its terms are the pieces, under their names
+        (`operator_terms`, which leaves the ports' pieces out too).
         The ports' pieces are design-independent (a port's R, L, C, its
         surface and a wave port's mode are fixed), so no pair carries them.
         """
@@ -234,7 +233,7 @@ class DrivenRule:
     """
 
     physics = "em"
-    #: The operator family in the property-to-form-term table.
+    #: The operator family (a key of `sensitivity.PROPERTIES`).
     form = "driven"
     #: Material properties the driven forms read.
     reads = frozenset({"eps_r", "mu_r", "tan_delta", "conductivity"})
@@ -327,7 +326,7 @@ class DrivenRule:
         """The model's driven operator at its current node positions.
 
         The last model's operator is kept, so that a backward pass and its
-        shape terms build it once.
+        terms build it once.
         """
         last = getattr(self, "_last_operator", None)
         if last is not None and last[0] is model:
@@ -730,15 +729,16 @@ class DrivenRule:
             return "read" if kind[2] in self.reads else "unread"
         return "read"
 
-    def shape_terms(self, model: Model) -> list[ShapeTerm]:
-        """The operator's pieces as node-coordinate (shape) terms.
+    def terms(self, model: Model, *, nodes: bool) -> list[Term]:
+        """The operator's pieces as sensitivity terms.
 
-        See `operator_shape_terms`.
+        See `operator_terms`.
 
         Raises:
-            PortGeometryError: A node of a port surface has moved.
+            PortGeometryError: ``nodes`` and a node of a port surface has
+                moved.
         """
-        return operator_shape_terms(model, self.operator(model))
+        return operator_terms(model, self.operator(model), nodes=nodes)
 
     def real_space(self, model: Model) -> ngs.FESpace:
         """A real H(curl) space with the solve's DOF numbering (for ``DiffShape``)."""
@@ -1044,34 +1044,51 @@ class DrivenRule:
         )
 
 
-def operator_shape_terms(model: Model, op: DrivenOperator) -> list[ShapeTerm]:
-    """The pieces of ``model``'s driven operator as node-coordinate (shape) terms.
+def operator_terms(model: Model, op: DrivenOperator, *, nodes: bool) -> list[Term]:
+    """The pieces of ``model``'s driven operator as sensitivity terms.
 
     Every piece but the ports': a port's terms, excitation and voltage
-    read only its own surface, which shape gradients hold in place. The
+    read only its own surface and fixed values, which no gradient moves
+    (shape gradients hold port surfaces in place). Each term carries its
+    piece's material derivatives, face owners and sheet factor. The
     eigenmode rule's operator is the same pieces, so it shares these.
 
+    Args:
+        model: The model ``op`` was built on.
+        op: Its driven operator.
+        nodes: Whether the node pass reads the terms: the ports' nodes must
+            then be held (a material or fill gradient checks no port
+            geometry).
+
     Raises:
-        PortGeometryError: A node of a port surface has moved.
+        PortGeometryError: ``nodes`` and a node of a port surface has moved.
     """
-    check_ports_held(model)
+    if nodes:
+        check_ports_held(model)
     out = []
     for piece in op.pieces:
         if piece.kind == "port":
             continue
+        common: dict[str, Any] = {
+            "derivatives": piece.derivatives,
+            "owner": piece.owner,
+            "sheet": piece.sheet,
+        }
         if piece.kind == "surface":
-            term = ShapeTerm(
+            term = Term(
                 piece.name,
                 "surface",
                 integrand=piece.integrand,
                 space=real_space(model, op),
+                **common,
             )
         else:
-            term = ShapeTerm(
+            term = Term(
                 piece.name,
                 piece.kind,
                 coefficient=piece.coefficient,
                 region=piece.region,
+                **common,
             )
         out.append(term)
     return out

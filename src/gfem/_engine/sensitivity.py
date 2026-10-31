@@ -8,10 +8,11 @@ where ``a_t`` is one affine form term of the operator (``grad u . grad v``,
 the driven curl-curl, mass and absorbing terms), ``theta_t`` its scalar
 weight in this problem (a physical constant, a frequency factor) and
 ``c_t`` its coefficient per element (a function of the material values).
-The kernel never sees the problem type: it reads which coefficient each
-property feeds from `FORM_TERMS`, the property-to-form-term table, and
-integrates every term it needs once over all pairs, on the pinned
-quadrature rule, in one element-wise (P0) pass.
+The kernel never sees the problem type: the rule gives it the operator's
+terms (`Term`), each carrying ``dc_t / dp`` for the properties its
+coefficient reads (`Derivative`), and it integrates every term a wanted
+property needs once over all pairs, on the pinned quadrature rule, in one
+element-wise (P0) pass.
 
 A **face term** (an absorbing boundary, whose coefficient is read from the
 tetrahedron behind each face) is integrated per triangle in a face-wise
@@ -19,8 +20,8 @@ tetrahedron behind each face) is integrated per triangle in a face-wise
 tetrahedron, so its coefficient rows read like a volume term's.
 
 **Node coordinates** (shape gradients) are a third pass over the same
-pairs, against the rule's `ShapeTerm` list, the operator's pieces with
-their coefficients. Under a node displacement ``W`` (a real P1 vector
+pairs, against the same terms, the operator's pieces with their
+coefficients. Under a node displacement ``W`` (a real P1 vector
 field, one test function per node and axis) a volume term changes by
 ``int T(u, v) : grad W``, with hand-written **transport tensors** ``T`` on
 the complex fields themselves (gradients and H(curl) values transform
@@ -54,10 +55,12 @@ theta_p c_p B_f`` with ``B_f`` the face's tangential trace form. Its
 **face pass** integrates ``sum_p theta_p c_p left_t . right_t`` per
 triangle of the surface (surface P0, the pinned rule) and returns one value
 per face, with no owner tetrahedron: the fill is a property of the face.
+Each sheet piece's term carries its ``c_p`` (`Term.sheet`).
 
-Adding a problem type means adding table rows (and, for a new operator
-term, an entry of `TERMS`), not a code path. A later pass plugs in beside
-these: load pairs ``int lambda psi`` for problem-leaf sources.
+Adding a problem type means giving its rule a ``terms`` hook (its operator
+as `Term` values, with their derivatives) and a row of `PROPERTIES`, not a
+code path. A later pass plugs in beside these: load pairs ``int lambda psi``
+for problem-leaf sources.
 
 Design inputs are named by kind tuples, the same ones `gfem._adjoint` uses:
 ``("material", region, property)`` is a `MaterialField` leaf,
@@ -75,52 +78,110 @@ import ngsolve as ngs
 import numpy as np
 
 from gfem._boundaries import Conductor, Impedance
-from gfem._engine import quadrature, terms
+from gfem._engine import quadrature
 from gfem._engine.cache import discretization
-from gfem._engine.coefficients import element_values
 from gfem._engine.domain import boundary_region
 from gfem.model import Model
 
 __all__ = [
-    "FORM_TERMS",
+    "INTEGRANDS",
+    "PROPERTIES",
     "SHAPE_FORMS",
     "SHEET_FORMS",
-    "TERMS",
-    "Coefficient",
+    "Derivative",
     "FieldPair",
-    "ShapeTerm",
     "Term",
     "is_sheet",
     "sensitivity",
     "unsupported",
 ]
 
-Values = Callable[[str], np.ndarray]
-Faces = Callable[[Model], tuple[tuple[str, ...], np.ndarray]]
-
 
 @dataclasses.dataclass(frozen=True)
-class Term:
-    """One affine form term ``a_t(u, v)`` of an operator.
+class Derivative:
+    """``dc_t / dp``: how one material property enters one term's coefficient.
 
     Attributes:
-        integrand: The integrand, bilinear in two NGSolve fields, without the
-            coefficient (``lambda u, v: grad(u) * grad(v)``).
-        length_power: The power of the mesh length unit in SI: the integral
-            on a mesh in file units times ``scale ** length_power`` is the
-            SI value (1 for ``grad . grad`` in 3D, 3 for a mass term). The
-            driven terms are in the driven equation's own units (file
-            units, see `gfem._engine.terms`): 0, or 1 where the coefficient
-            carries the length scale.
-        faces: For a face term, ``faces(model) -> (surfaces, owner)``: the
-            surfaces it is integrated on and, per gfem triangle, the
-            tetrahedron whose values its coefficient reads (-1 for none).
-            ``None`` for a volume term.
+        values: ``dc_t / dp`` per tetrahedron (gfem order), or a constant;
+            or a function of no arguments that returns it, called by the
+            material pass only (the pieces are built on every forward, their
+            derivatives are read by a backward pass only).
+        holomorphic: Whether ``c_t`` is holomorphic in a complex property
+            value. If not, it is a function of one real quantity ``r`` (the
+            electrostatic permittivity reads ``r = Re(eps_r)``), and
+            ``values`` is ``dc_t / dr``.
+        chain: For a non-holomorphic ``c_t``, ``r = Re(chain * p)`` for a
+            complex value ``p`` (``None``: ``chain = 1``), as a function of
+            no arguments. The cotangent is then ``chain * Re(sum ct *
+            dy/dr)``, which is JAX's convention (``dJ/dRe(p) - i
+            dJ/dIm(p)``); real when ``chain`` is 1.
+        length_power: The power of the mesh length unit that ``values``
+            leaves out of the coefficient: the term's integrals are scaled by
+            ``scale ** (term.length_power + length_power)``. 1 for the
+            driven conductivity, whose coefficient ``eta0 sigma scale`` reads
+            ``eta0`` per unit ``sigma``.
     """
 
-    integrand: Callable[[ngs.CoefficientFunction, ngs.CoefficientFunction], ngs.CF]
-    length_power: int
-    faces: Faces | None = None
+    values: Callable[[], np.ndarray | float | complex] | float | complex
+    holomorphic: bool
+    chain: Callable[[], np.ndarray] | None = None
+    length_power: int = 0
+
+    def value(self) -> np.ndarray | float | complex:
+        """``dc_t / dp`` (`values`, evaluated if it is a function)."""
+        return self.values() if callable(self.values) else self.values
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class Term:
+    """One affine form term ``a_t(u, v)`` of an operator, as the passes read it.
+
+    Attributes:
+        name: The term's key in the pairs' `FieldPair.weights`.
+        kind: ``"gradient"`` (``int (C grad u) . grad v``, H1), ``"value"``
+            (``int (C u) . v``, H(curl)), ``"curl"`` (``int (C curl u) .
+            curl v``), ``"trace"`` (``int c u_t . v_t`` on a surface),
+            ``"curl trace"`` (``int c (n . curl u)(n . curl v)``), or
+            ``"surface"`` (any other surface form, differentiated by
+            ``DiffShape``). The material pass integrates the kind's bare
+            integrand (`INTEGRANDS`).
+        coefficient: For a volume kind, ``C``: an element-wise constant
+            NGSolve coefficient, scalar or 3 x 3, real or complex, the same
+            the forward form reads; for a trace kind, the face-wise
+            constant scalar ``c``.
+        region: For a trace kind, the boundary region it is integrated on.
+        integrand: For ``"surface"``: ``(u, v) -> integrals`` of the form
+            with its coefficient and pinned quadrature (real coefficients),
+            for real fields ``u`` and ``v``.
+        space: For ``"surface"``: a real space with the pairs' DOF numbering.
+        length_power: The power of the mesh length unit in the term: the
+            integral on the mesh in file units times ``scale **
+            length_power`` is the term in the units the pairs' weights
+            expect (1 for ``grad . grad`` in 3D, in SI; the driven terms are
+            in the driven equation's own units, file units, see
+            `gfem._engine.terms`: 0).
+        owner: For a face term whose coefficient is read from the
+            tetrahedron behind each face (an absorbing boundary), that
+            tetrahedron per gfem triangle, -1 off the term's surfaces: the
+            material pass adds each face's integral to it. ``None`` for a
+            volume term.
+        derivatives: ``dc_t / dp`` by material property, for the properties
+            the coefficient reads.
+        sheet: For a piece of a sheet boundary, ``(index, c)``: the
+            boundary's index in ``model.boundaries`` and the piece's
+            coefficient per unit fill. ``None`` otherwise.
+    """
+
+    name: str
+    kind: Literal["gradient", "value", "curl", "trace", "curl trace", "surface"]
+    coefficient: Any = None
+    region: Any = None
+    integrand: Callable[[Any, Any], Any] | None = None
+    space: ngs.FESpace | None = None
+    length_power: int = 0
+    owner: np.ndarray | None = None
+    derivatives: Mapping[str, Derivative] = dataclasses.field(default_factory=dict)
+    sheet: tuple[int, float] | None = None
 
 
 def _dot(u: ngs.CoefficientFunction, v: ngs.CoefficientFunction) -> ngs.CF:
@@ -132,127 +193,33 @@ def _tangential(u: Any, v: Any) -> Any:
     return u.Trace() * v.Trace()
 
 
-def _second_order_faces(model: Model) -> tuple[tuple[str, ...], np.ndarray]:
-    return terms.absorbing_faces(model, order=2)
-
-
-TERMS: dict[str, Term] = {
-    "grad_grad": Term(lambda u, v: ngs.grad(u) * ngs.grad(v), length_power=1),
-    # the driven pieces of `gfem._engine.terms`
-    "curl_curl": Term(lambda u, v: ngs.curl(u) * ngs.curl(v), length_power=0),
-    "mass": Term(_dot, length_power=0),
-    "conductivity": Term(_dot, length_power=1),  # coefficient eta0 sigma scale
-    "absorbing": Term(_tangential, length_power=0, faces=terms.absorbing_faces),
-    "absorbing order 2": Term(
-        lambda u, v: ngs.curl(u).Trace() * ngs.curl(v).Trace(),
-        length_power=0,
-        faces=_second_order_faces,
-    ),
+#: The bare integrand (no coefficient) of each kind of `Term`, bilinear in
+#: two NGSolve fields: what the material pass integrates.
+INTEGRANDS: dict[str, Callable[[Any, Any], Any]] = {
+    "gradient": lambda u, v: ngs.grad(u) * ngs.grad(v),
+    "curl": lambda u, v: ngs.curl(u) * ngs.curl(v),
+    "value": _dot,
+    "trace": _tangential,
+    "curl trace": lambda u, v: ngs.curl(u).Trace() * ngs.curl(v).Trace(),
 }
 
-
-@dataclasses.dataclass(frozen=True)
-class Coefficient:
-    """How one material property enters one form term's coefficient.
-
-    Attributes:
-        term: The form term (a key of `TERMS`).
-        derivative: ``dc_t / dp`` per element (or a constant), given the
-            element values of every property (``values("eps_r")``).
-        holomorphic: Whether ``c_t`` is holomorphic in a complex property
-            value. If not, it is a function of one real quantity ``r`` (the
-            electrostatic permittivity reads ``r = Re(eps_r)``), and
-            ``derivative`` is ``dc_t / dr``.
-        chain: For a non-holomorphic ``c_t``, ``r = Re(chain * p)`` for a
-            complex value ``p`` (``None``: ``chain = 1``). The cotangent is
-            then ``chain * Re(sum ct * dy/dr)``, which is JAX's convention
-            (``dJ/dRe(p) - i dJ/dIm(p)``); real when ``chain`` is 1.
-    """
-
-    term: str
-    derivative: Callable[[Values], np.ndarray | float | complex]
-    holomorphic: bool
-    chain: Callable[[Values], np.ndarray] | None = None
-
-
-def _loss(values: Values) -> np.ndarray:
-    """``1 - i tan_delta``: the driven mass coefficient per unit ``eps_r``."""
-    return 1.0 - 1j * np.real(values("tan_delta"))
-
-
-def _boundary_eps(values: Values) -> np.ndarray:
-    """What the absorbing terms read: ``Re(eps_r (1 - i tan_delta))``."""
-    return np.real(values("eps_r") * _loss(values))
-
-
-def _boundary_mu(values: Values) -> np.ndarray:
-    return np.real(values("mu_r"))
-
-
-# The absorbing coefficients of the real e and m above: first order
-# c1 = sqrt(e / m), second order c2 = 1 / (m sqrt(e m)).
-def _d_c1_d_eps(v: Values) -> np.ndarray:
-    return 0.5 / np.sqrt(_boundary_eps(v) * _boundary_mu(v))
-
-
-def _d_c2_d_eps(v: Values) -> np.ndarray:
-    return -0.5 * (_boundary_eps(v) * _boundary_mu(v)) ** -1.5
-
-
-def _d_c1_d_mu(v: Values) -> np.ndarray:
-    return -0.5 * np.sqrt(_boundary_eps(v)) * _boundary_mu(v) ** -1.5
-
-
-def _d_c2_d_mu(v: Values) -> np.ndarray:
-    return -1.5 * _boundary_eps(v) ** -0.5 * _boundary_mu(v) ** -2.5
-
-
-#: The property-to-form-term table: ``(form, property) -> coefficients``.
-#: A ``(form, property)`` pair absent here is read by no term the kernel
-#: can differentiate.
-#: Rows read isotropic element values: design inputs are `MaterialField`
-#: leaves, which are isotropic. A `Material` with per-axis eps_r / tan_delta
-#: is a constant (its tensor enters the forward pieces only), and the values
-#: its elements show here (means) are never differentiated.
-FORM_TERMS: dict[tuple[str, str], tuple[Coefficient, ...]] = {
+#: The material properties each operator family differentiates: the
+#: properties its terms carry `Term.derivatives` for. Static, so that
+#: `unsupported` answers before any operator exists (at trace time).
+#: Design inputs are `MaterialField` leaves, which are isotropic: the
+#: derivatives read isotropic element values. A `Material` with per-axis
+#: eps_r / tan_delta is a constant (its tensor enters the forward pieces
+#: only), and the values its elements show there (means) are never
+#: differentiated.
+PROPERTIES: dict[str, frozenset[str]] = {
     # a(u, v) = eps0 int Re(eps_r) grad u . grad v
-    ("electrostatic", "eps_r"): (
-        Coefficient("grad_grad", lambda _: 1.0, holomorphic=False),
-    ),
+    "electrostatic": frozenset({"eps_r"}),
     # driven: mass eps_r (1 - i tan_delta), curl-curl 1 / mu_r, conductivity
     # eta0 sigma scale (real sigma), absorbing c1 and c2 of the real e and m
-    ("driven", "eps_r"): (
-        Coefficient("mass", _loss, holomorphic=True),
-        Coefficient("absorbing", _d_c1_d_eps, holomorphic=False, chain=_loss),
-        Coefficient("absorbing order 2", _d_c2_d_eps, holomorphic=False, chain=_loss),
-    ),
-    ("driven", "tan_delta"): (
-        Coefficient("mass", lambda v: -1j * v("eps_r"), holomorphic=False),
-        Coefficient(
-            "absorbing",
-            lambda v: _d_c1_d_eps(v) * np.imag(v("eps_r")),
-            holomorphic=False,
-        ),
-        Coefficient(
-            "absorbing order 2",
-            lambda v: _d_c2_d_eps(v) * np.imag(v("eps_r")),
-            holomorphic=False,
-        ),
-    ),
-    ("driven", "mu_r"): (
-        Coefficient("curl_curl", lambda v: -(v("mu_r") ** -2.0), holomorphic=True),
-        Coefficient("absorbing", _d_c1_d_mu, holomorphic=False),
-        Coefficient("absorbing order 2", _d_c2_d_mu, holomorphic=False),
-    ),
-    ("driven", "conductivity"): (
-        Coefficient("conductivity", lambda _: terms.ETA0, holomorphic=False),
-    ),
-}
-# eigenmode: the driven pieces (`gfem._eigen.operator`), weighted at the
-# complex eigenvalue
-FORM_TERMS |= {
-    ("eigenmode", prop): FORM_TERMS[("driven", prop)]
-    for prop in ("eps_r", "tan_delta", "mu_r", "conductivity")
+    "driven": frozenset({"eps_r", "tan_delta", "mu_r", "conductivity"}),
+    # the driven pieces (`gfem._eigen.operator`), weighted at the complex
+    # eigenvalue
+    "eigenmode": frozenset({"eps_r", "tan_delta", "mu_r", "conductivity"}),
 }
 
 
@@ -281,42 +248,7 @@ class FieldPair:
     domain: ngs.Region
 
 
-@dataclasses.dataclass(frozen=True, eq=False)
-class ShapeTerm:
-    """One operator term ``a_t(u, v)`` as the node-coordinate pass reads it.
-
-    Attributes:
-        name: The term's key in the pairs' `FieldPair.weights`.
-        kind: ``"gradient"`` (``int (C grad u) . grad v``, H1), ``"value"``
-            (``int (C u) . v``, H(curl)), ``"curl"`` (``int (C curl u) .
-            curl v``), ``"trace"`` (``int c u_t . v_t`` on a surface),
-            ``"curl trace"`` (``int c (n . curl u)(n . curl v)``), or
-            ``"surface"`` (any other surface form, differentiated by
-            ``DiffShape``).
-        coefficient: For a volume kind, ``C``: an element-wise constant
-            NGSolve coefficient, scalar or 3 x 3, real or complex, the same
-            the forward form reads; for a trace kind, the face-wise
-            constant scalar ``c``.
-        region: For a trace kind, the boundary region it is integrated on.
-        integrand: For ``"surface"``: ``(u, v) -> integrals`` of the form
-            with its coefficient and pinned quadrature (real coefficients),
-            for real fields ``u`` and ``v``.
-        space: For ``"surface"``: a real space with the pairs' DOF numbering.
-        length_power: The integral on the mesh in file units times
-            ``scale ** length_power`` is the term in the units the pairs'
-            weights expect (as `Term.length_power`).
-    """
-
-    name: str
-    kind: Literal["gradient", "value", "curl", "trace", "curl trace", "surface"]
-    coefficient: Any = None
-    region: Any = None
-    integrand: Callable[[Any, Any], Any] | None = None
-    space: ngs.FESpace | None = None
-    length_power: int = 0
-
-
-#: Operator families whose rules provide `ShapeTerm` lists (``shape_terms``).
+#: Operator families whose rules' terms the node pass reads.
 SHAPE_FORMS = frozenset({"electrostatic", "driven", "eigenmode"})
 #: Operator families whose pairs carry the sheet pieces' weights (by name).
 SHEET_FORMS = frozenset({"driven", "eigenmode"})
@@ -336,7 +268,7 @@ def unsupported(form: str, kind: tuple) -> str | None:
             else f"the {form} forms of this version do not read sheet fields"
         )
     if kind[0] == "material":
-        if (form, kind[2]) in FORM_TERMS:
+        if kind[2] in PROPERTIES.get(form, frozenset()):
             return None
         return f"the {form} forms of this version do not differentiate {kind[2]}"
     if kind[0] == "nodes":
@@ -372,10 +304,12 @@ def _parts(space: ngs.FESpace, vectors: np.ndarray) -> list[tuple[complex, list]
     ]
 
 
-def _pair_integrand(term: Term, pair: FieldPair) -> ngs.CoefficientFunction:
-    """``sum_k a_t(left_k, right_k)`` as one coefficient function (bilinear)."""
+def _pair_integrand(
+    integrand: Callable[[Any, Any], Any], pair: FieldPair
+) -> ngs.CoefficientFunction:
+    """``sum_k a(left_k, right_k)`` as one coefficient function (bilinear)."""
     parts = [
-        (a * b) * term.integrand(u, v)
+        (a * b) * integrand(u, v)
         for a, lefts in _parts(pair.space, pair.left)
         for b, rights in _parts(pair.space, pair.right)
         for u, v in zip(lefts, rights, strict=True)
@@ -383,71 +317,75 @@ def _pair_integrand(term: Term, pair: FieldPair) -> ngs.CoefficientFunction:
     return sum(parts[1:], parts[0])
 
 
-def _element_pass(model: Model, pairs: list[FieldPair], term: str) -> np.ndarray:
-    """``sum_pairs theta_t sum_k a_t,e(left_k, right_k)`` per gfem tetrahedron (SI).
+def _element_pass(
+    model: Model, pairs: list[FieldPair], term: Term, length_power: int
+) -> np.ndarray:
+    """``sum_pairs theta_t sum_k a_t,e(left_k, right_k)`` per gfem tetrahedron.
 
-    A face term's integrals per triangle are summed into each triangle's
-    owning tetrahedron.
+    Times ``scale ** length_power``. A face term's integrals per triangle
+    are summed into each triangle's owning tetrahedron (`Term.owner`).
     """
     built = discretization(model.mesh).built
-    definition = TERMS[term]
-    pairs = [p for p in pairs if term in p.weights]
+    integrand = INTEGRANDS[term.kind]
+    name = term.name
+    pairs = [p for p in pairs if name in p.weights]
     is_complex = any(
         np.iscomplexobj(p.left)
         or np.iscomplexobj(p.right)
-        or np.iscomplexobj(p.weights[term])
+        or np.iscomplexobj(p.weights[name])
         for p in pairs
     )
     out = np.zeros(len(model.mesh.tetrahedra), dtype=complex if is_complex else float)
     if not pairs:
         return out
-    if definition.faces is None:
+    owner = term.owner
+    if owner is None:
         p0 = ngs.L2(built.mesh, order=0, complex=is_complex)
         q = p0.TestFunction()
         form = ngs.LinearForm(p0)
         for pair in pairs:
             dx = quadrature.dx(pair.order, definedon=pair.domain)
-            form += pair.weights[term] * _pair_integrand(definition, pair) * q * dx
+            form += pair.weights[name] * _pair_integrand(integrand, pair) * q * dx
         form.Assemble()
         out[built.tetrahedron_order] = form.vec.FV().NumPy()
-        return out * built.scale**definition.length_power
-    surfaces, owner = definition.faces(model)
-    if not surfaces:
-        return out
-    region = boundary_region(built, surfaces)
+        return out * built.scale**length_power
     p0 = ngs.SurfaceL2(built.mesh, order=0, complex=is_complex)
     q = p0.TestFunction()
     form = ngs.LinearForm(p0)
     for pair in pairs:
-        ds = quadrature.ds(pair.order, definedon=region)
-        form += pair.weights[term] * _pair_integrand(definition, pair) * q * ds
+        ds = quadrature.ds(pair.order, definedon=term.region)
+        form += pair.weights[name] * _pair_integrand(integrand, pair) * q * ds
     form.Assemble()
     per_face = np.zeros(len(owner), dtype=out.dtype)
     per_face[built.triangle_order] = form.vec.FV().NumPy()
-    mesh = model.mesh
-    tags = [mesh.region(s).tag for s in surfaces]
-    on = np.isin(mesh.triangle_tags, tags) & (owner >= 0)
+    on = owner >= 0
     np.add.at(out, owner[on], per_face[on])
-    return out * built.scale**definition.length_power
+    return out * built.scale**length_power
 
 
-def _sheet_pass(model: Model, pairs: list[FieldPair], index: int) -> np.ndarray:
+def _sheet_pass(
+    model: Model, pairs: list[FieldPair], index: int, terms: Sequence[Term]
+) -> np.ndarray:
     """``sum_pairs sum_p theta_p c_p int_f left_t . right_t`` per face of a sheet.
 
-    ``p`` runs over the pieces of ``model.boundaries[index]``, ``c_p`` their
-    coefficient per unit fill (`gfem._engine.terms.sheet_factors`). The
-    terms are in the driven equation's units (length power 0).
+    ``p`` runs over the terms of ``model.boundaries[index]``'s pieces, in
+    their order, ``c_p`` their coefficient per unit fill (`Term.sheet`).
+    The terms are in the driven equation's units (length power 0).
     """
     boundary = model.boundaries[index]
     if not isinstance(boundary, (Conductor, Impedance)):  # pragma: no cover
         msg = f"model.boundaries[{index}] carries no sheet field."
         raise TypeError(msg)
     built = discretization(model.mesh).built
-    factors = terms.sheet_factors(boundary, built.scale)
+    factors = [
+        (t.name, t.sheet[1])
+        for t in terms
+        if t.sheet is not None and t.sheet[0] == index
+    ]
     faces = model.mesh.elements(boundary.surface)
     weighted = []
     for pair in pairs:
-        weight = sum(pair.weights.get(name, 0.0) * c for name, c in factors.items())
+        weight = sum(pair.weights.get(name, 0.0) * c for name, c in factors)
         if weight != 0:
             weighted.append((complex(weight), pair))
     if not weighted:
@@ -456,17 +394,16 @@ def _sheet_pass(model: Model, pairs: list[FieldPair], index: int) -> np.ndarray:
     p0 = ngs.SurfaceL2(built.mesh, order=0, complex=True)
     q = p0.TestFunction()
     form = ngs.LinearForm(p0)
-    trace = Term(_tangential, length_power=0)
     for weight, pair in weighted:
         ds = quadrature.ds(pair.order, definedon=region)
-        form += weight * _pair_integrand(trace, pair) * q * ds
+        form += weight * _pair_integrand(_tangential, pair) * q * ds
     form.Assemble()
     per_face = np.zeros(len(model.mesh.triangles), dtype=complex)
     per_face[built.triangle_order] = form.vec.FV().NumPy()
     return per_face[faces]
 
 
-def _transport(term: ShapeTerm, u: Any, v: Any) -> Any:
+def _transport(term: Term, u: Any, v: Any) -> Any:
     """The transport tensor of ``term`` for fields ``u``, ``v`` (module doc)."""
     c = term.coefficient
     tensor = len(c.dims) == 2
@@ -492,7 +429,7 @@ def _transport(term: ShapeTerm, u: Any, v: Any) -> Any:
 
 
 def _volume_shape(
-    terms: Sequence[tuple[ShapeTerm, complex]], pair: FieldPair, gw: Any
+    terms: Sequence[tuple[Term, complex]], pair: FieldPair, gw: Any
 ) -> Any:
     """``int Re(sum_t theta_t sum_k T_t(left_k, right_k)) : grad W``, one pair.
 
@@ -521,9 +458,7 @@ def _volume_shape(
     return out
 
 
-def _trace_shape(
-    terms: Sequence[tuple[ShapeTerm, complex]], pair: FieldPair, w: Any
-) -> Any:
+def _trace_shape(terms: Sequence[tuple[Term, complex]], pair: FieldPair, w: Any) -> Any:
     """The surface transport of the trace terms, on the pair's fields as they are.
 
     With ``Gs`` the surface gradient of the displacement (``grad W`` times
@@ -575,7 +510,7 @@ def _real_parts(space: ngs.FESpace, vectors: np.ndarray) -> list[tuple[float, li
 
 
 def _surface_shape(
-    terms: Sequence[tuple[ShapeTerm, complex]], pair: FieldPair, w: Any
+    terms: Sequence[tuple[Term, complex]], pair: FieldPair, w: Any
 ) -> Any:
     """``DiffShape`` of ``Re(sum_t theta_t sum_k a_t(left_k, right_k))``.
 
@@ -605,7 +540,7 @@ def _surface_shape(
 
 
 def _node_pass(
-    model: Model, pairs: list[FieldPair], shape_terms: Sequence[ShapeTerm]
+    model: Model, pairs: list[FieldPair], terms: Sequence[Term]
 ) -> np.ndarray:
     """``sum_pairs sum_t theta_t d a_t(left, right) / dX``, (n_nodes, 3), per m."""
     built = discretization(model.mesh).built
@@ -617,7 +552,7 @@ def _node_pass(
     empty = True
     for pair in pairs:
         volume, traces, surface = [], [], []
-        for term in shape_terms:
+        for term in terms:
             theta = pair.weights.get(term.name)
             if theta is None or theta == 0:
                 continue
@@ -650,7 +585,7 @@ def sensitivity(
     wants: set[Hashable],
     *,
     form: str,
-    shape: Callable[[], Sequence[ShapeTerm]] | None = None,
+    terms: Callable[[bool], Sequence[Term]] | None = None,
 ) -> dict[Hashable, np.ndarray]:
     """The cotangent of every wanted design input, from the rule's pairs.
 
@@ -659,15 +594,16 @@ def sensitivity(
         pairs: The rule's field pairs, cotangents folded in.
         wants: Input kinds, ``("material", region, property)``,
             ``("boundary", index, "fill", "fill")`` or ``("nodes",)``.
-        form: The operator family, the first key of `FORM_TERMS`.
-        shape: Returns the operator's `ShapeTerm` list; called only when the
-            node coordinates are wanted.
+        form: The operator family, a key of `PROPERTIES`.
+        terms: ``terms(nodes)`` returns the operator's `Term` list, called
+            once when anything is wanted; ``nodes`` is whether the node
+            coordinates are.
 
     Returns:
         Per wanted material kind, one value per tetrahedron of the region
         (mesh order): the real cotangent, or for a complex dependence the
         complex one (``sum ct * dy/dp`` when holomorphic, see
-        `Coefficient`). Per sheet fill, one complex value per face of
+        `Derivative`). Per sheet fill, one complex value per face of
         the surface (``mesh.elements(surface)`` order), ``sum ct * dy/dfill``.
         For ``("nodes",)``, ``(n_nodes, 3)``, real, per metre.
 
@@ -680,45 +616,43 @@ def sensitivity(
         if reason is not None:
             raise NotImplementedError(reason)
     out: dict[Hashable, np.ndarray] = {}
+    if not wants:
+        return out
+    if terms is None:  # pragma: no cover - rule bug
+        msg = f"The {form} rule gives no terms."
+        raise NotImplementedError(msg)
+    operator = terms(("nodes",) in wants)
     for kind in wants:
         if is_sheet(kind):  # ty: ignore[invalid-argument-type]
-            out[kind] = _sheet_pass(model, pairs, kind[1])  # ty: ignore[not-subscriptable]
+            out[kind] = _sheet_pass(model, pairs, kind[1], operator)  # ty: ignore[not-subscriptable]
     if ("nodes",) in wants:
-        if shape is None:  # pragma: no cover - rule bug
-            msg = f"The {form} rule gives no shape terms."
-            raise NotImplementedError(msg)
-        out["nodes",] = _node_pass(model, pairs, shape())
+        out["nodes",] = _node_pass(model, pairs, operator)
     materials = {k for k in wants if k[0] == "material"}  # ty: ignore[not-subscriptable]
     if materials:
-        out |= _material_sensitivity(model, pairs, materials, form)
+        out |= _material_sensitivity(model, pairs, materials, operator)
     return out
 
 
 def _material_sensitivity(
-    model: Model, pairs: list[FieldPair], wants: set[Hashable], form: str
+    model: Model, pairs: list[FieldPair], wants: set[Hashable], terms: Sequence[Term]
 ) -> dict[Hashable, np.ndarray]:
-    """The material part of `sensitivity`."""
-    integrals: dict[str, np.ndarray] = {}
-    cache: dict[str, np.ndarray] = {}
-
-    def values(name: str) -> np.ndarray:
-        if name not in cache:
-            cache[name] = element_values(model, name)
-        return cache[name]
-
+    """The material part of `sensitivity`: each property's terms, in their order."""
+    integrals: dict[tuple[str, int], np.ndarray] = {}
     per_property: dict[str, np.ndarray] = {}
     for prop in sorted({k[2] for k in wants}):  # ty: ignore[not-subscriptable]
-        total: np.ndarray | float = 0.0
-        for coefficient in FORM_TERMS[(form, prop)]:
-            if coefficient.term not in integrals:
-                integrals[coefficient.term] = _element_pass(
-                    model, pairs, coefficient.term
-                )
-            part = coefficient.derivative(values) * integrals[coefficient.term]
-            if not coefficient.holomorphic:
+        total: np.ndarray = np.zeros(len(model.mesh.tetrahedra))
+        for term in terms:
+            derivative = term.derivatives.get(prop)
+            if derivative is None:
+                continue
+            key = (term.name, term.length_power + derivative.length_power)
+            if key not in integrals:
+                integrals[key] = _element_pass(model, pairs, term, key[1])
+            part = derivative.value() * integrals[key]
+            if not derivative.holomorphic:
                 part = np.real(part)
-                if coefficient.chain is not None:
-                    part = coefficient.chain(values) * part
+                if derivative.chain is not None:
+                    part = derivative.chain() * part
             total = total + part
         per_property[prop] = np.asarray(total)
     return {
