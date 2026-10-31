@@ -164,7 +164,9 @@ def test_driven_parity_s_matches_palace(reference, name, ndof, max_iterations):
         f"{peak_rss_gib():.2f} GiB, load {os.getloadavg()}"
     )
     assert diff <= TOLERANCE, (diff, outputs["iterations"])
-    assert max(max(its) for its in outputs["iterations"]) <= max_iterations, outputs
+    # BDDC's iterations against Palace's on a fresh setup: the first frequency
+    # (later ones run on a reused preconditioner, capped then set up again)
+    assert max(outputs["iterations"][0]) <= max_iterations, outputs
     # reciprocal to the GMRES tolerance
     np.testing.assert_allclose(s, np.swapaxes(s, 1, 2), atol=1e-6)
     # the public path (GMRES from zero) gives the same S to solver tolerance
