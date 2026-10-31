@@ -26,10 +26,9 @@ import gfem
 from gfem._engine import driven, terms, workers
 from gfem._engine.driven import DrivenRule
 from gfem._linalg import bddc, pardiso, prepare
-from gfem._linalg.base import same_pattern
+from gfem._linalg.base import PlannedHandle, same_pattern
 from gfem._linalg.bddc import BddcHandle
 from gfem._linalg.direct import DirectHandle
-from gfem._linalg.petsc import PetscHandle
 
 L, W, H = 10.0, 2.0, 1.0  # mm
 EPS = 4.0
@@ -290,23 +289,20 @@ def _count_prepares(monkeypatch) -> list[int]:
     return calls
 
 
-EXACT = [
-    ("direct", DirectHandle),
-    pytest.param("petsc", PetscHandle, marks=pytest.mark.petsc),
-]
+EXACT = ["direct", pytest.param("petsc", marks=pytest.mark.petsc)]
 
 
-@pytest.mark.parametrize(("linear_solver", "handle"), EXACT)
+@pytest.mark.parametrize("linear_solver", EXACT)
 @pytest.mark.parametrize("sweep", ["uniform", "adaptive"])
 def test_an_exact_sweep_plans_once_and_matches_fresh_handles(
-    line, monkeypatch, sweep, linear_solver, handle
+    line, monkeypatch, sweep, linear_solver
 ):
     problem = gfem.Driven(frequency=(3e9, 4e9, 5e9, 6e9), sweep=sweep)
     calls = _count_prepares(monkeypatch)
     s = np.asarray(_s(line, problem, linear_solver=linear_solver).s.values)
     assert len(calls) == 1
     # a handle that cannot refactorize is prepared afresh at each frequency
-    monkeypatch.delattr(handle, "refactorize")
+    monkeypatch.delattr(PlannedHandle, "refactorize")
     calls.clear()
     result = _s(line, problem, linear_solver=linear_solver)
     solved = 4 if sweep == "uniform" else len(result.sweep.sampled_frequencies)

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
+from typing import Any, ClassVar, Self
 
 import ngsolve as ngs
 import numpy as np
@@ -95,9 +97,11 @@ class NgsHandle:
     """A handle on an assembled NGSolve matrix with free DOFs.
 
     Subclasses set ``self._solver`` (an NGSolve operator applying the
-    inverse on the free DOFs) and implement `nbytes`. Calls are serialized
-    by a lock: NGSolve inverses keep work buffers, and JAX may call a host
-    callback from several threads.
+    inverse on the free DOFs), implement `nbytes`, and tear their backend
+    down in `_release`. Calls are serialized by a lock: NGSolve inverses
+    keep work buffers, and JAX may call a host callback from several
+    threads. `free` takes it too, so it waits for a running solve or
+    refactorization.
     """
 
     kind: str
@@ -116,7 +120,7 @@ class NgsHandle:
         self._matrix: ngs.BaseMatrix | None = matrix
         self._free = free_mask(freedofs, self.ndof)
         self._complex = is_complex
-        self._solver = None
+        self._solver: Any = None
         self._lock = threading.RLock()
 
     def _columns(self, B: np.ndarray) -> tuple[np.ndarray, bool]:
@@ -247,7 +251,134 @@ class NgsHandle:
             raise RuntimeError("This solver handle was freed.")
         return self._map(self._matrix, X)
 
+    def _live(self) -> ngs.BaseMatrix:
+        """The held matrix; call under the lock.
+
+        Raises:
+            RuntimeError: The handle was freed.
+        """
+        if self._solver is None or self._matrix is None:
+            raise RuntimeError("This solver handle was freed.")
+        return self._matrix
+
     def free(self) -> None:
-        """Drop the backend and the matrix."""
-        self._solver = None
-        self._matrix = None
+        """Release the backend and drop the matrix.
+
+        Waits for a running solve or refactorization.
+        """
+        with self._lock:
+            self._release()
+            self._solver = None
+            self._matrix = None
+
+    def _release(self) -> None:
+        """Hook for subclasses: tear the backend down; under the lock."""
+
+
+class PlannedHandle(NgsHandle):
+    """A handle that factorizes on a solver plan, and refactorizes on it.
+
+    The refactorization flow of the direct, PETSc and cuDSS backends: a
+    `gfem._linalg.Refactorable` handle. Each backend is an adapter that
+    supplies its refusal (`_admit`), "factorize new values on the current
+    plan" (`_new_values`), "build a new plan" (`_new_plan`) and its
+    teardown (`_release`); every step but `_admit` runs under the lock, on
+    a live handle.
+
+    A backend that ``sums_pieces`` sums an operator's piece sum
+    (``Operator.piece_sum``) instead of assembling its form: into a new
+    matrix at creation, into the held matrix at `refactorize` when the
+    piece sum shares the held matrix's pieces. Otherwise it assembles the
+    form, and never reads the piece sum.
+    """
+
+    #: The backend sums an operator's piece sum instead of assembling its form.
+    sums_pieces: ClassVar[bool]
+    #: The pattern of the pieces whose sums the held matrix holds, if summed.
+    _pattern: ngs.BaseMatrix | None = None
+
+    @classmethod
+    def from_operator(
+        cls, operator: Operator, symmetry: Symmetry, **options: Any
+    ) -> Self:
+        """Assemble (or sum the piece sum) and set up (see `gfem._linalg.prepare`).
+
+        ``options`` are the backend's own keywords. The backend refuses
+        ``symmetry`` before paying for the assembly.
+        """
+        is_complex = bool(operator.form.space.is_complex)
+        cls._admit(symmetry, is_complex=is_complex)
+        matrix, pattern = cls._assemble(operator)
+        handle = cls(
+            matrix, operator.freedofs, symmetry, is_complex=is_complex, **options
+        )
+        handle._pattern = pattern
+        return handle
+
+    @classmethod
+    def _assemble(
+        cls, operator: Operator
+    ) -> tuple[ngs.BaseMatrix, ngs.BaseMatrix | None]:
+        """A new matrix of ``operator`` and the pattern of its pieces, if summed."""
+        if cls.sums_pieces:
+            return assemble_operator(operator)
+        operator.form.Assemble()
+        return operator.form.mat, None
+
+    def refactorize(
+        self,
+        operator: Operator,
+        *,
+        solves: int | None = None,  # noqa: ARG002
+    ) -> None:
+        """Refactorize on ``operator``'s values (see `gfem._linalg.Refactorable`).
+
+        An operator whose piece sum shares the held matrix's pieces is summed
+        into it in place (`apply` reads it); any other operator is assembled
+        (`_assemble`) into a new matrix. On the held matrix's pattern its
+        values are copied in, and the backend factorizes them on the same
+        solver plan (`_new_values`); a changed pattern is planned anew
+        (`_new_plan`).
+
+        ``solves`` is ignored: only BDDC's coarse choice reads it.
+
+        Raises:
+            RuntimeError: The handle was freed.
+        """
+        piece_sum = operator.piece_sum if self.sums_pieces else None
+        # read outside the lock: the first read assembles the pieces
+        summed = None if piece_sum is None else piece_sum.pattern
+        with self._lock:
+            self._live()
+            if piece_sum is not None and summed is not None and summed is self._pattern:
+                self._new_values(piece_sum.sum_into)
+                return
+        new, pattern = self._assemble(operator)  # assembly needs no lock
+        with self._lock:
+            held = self._live()
+            if same_pattern(held, new):
+                self._pattern = pattern
+
+                def write(matrix: ngs.BaseMatrix) -> None:
+                    matrix.AsVector().data = new.AsVector()
+
+                self._new_values(write)
+                return
+            # a failed plan leaves no pattern to sum into: the next
+            # refactorization assembles
+            self._pattern = None
+            self._new_plan(new, operator.freedofs)
+            self._pattern = pattern
+
+    @classmethod
+    def _admit(cls, symmetry: Symmetry, *, is_complex: bool) -> None:
+        """Raise the backend's refusal of ``symmetry``, if it refuses it."""
+        raise NotImplementedError
+
+    def _new_values(self, write: Callable[[ngs.BaseMatrix], None]) -> None:
+        """``write(held matrix)``, then factorize its values on the current plan."""
+        raise NotImplementedError
+
+    def _new_plan(self, matrix: ngs.BaseMatrix, freedofs: ngs.BitArray | None) -> None:
+        """Plan and factorize ``matrix`` (same free DOFs), and hold it."""
+        raise NotImplementedError

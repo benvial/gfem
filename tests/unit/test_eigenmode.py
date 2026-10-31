@@ -44,9 +44,8 @@ from gfem._engine.driven import driven_operator
 from gfem._engine.eigen import projector
 from gfem._engine.runtime import task_manager
 from gfem._linalg import prepare
+from gfem._linalg.base import PlannedHandle
 from gfem._linalg.bddc import BddcHandle
-from gfem._linalg.direct import DirectHandle
-from gfem._linalg.petsc import PetscHandle
 
 
 @pytest.fixture(scope="module")
@@ -270,15 +269,9 @@ def _count_shift_prepares(monkeypatch) -> list[int]:
 
 
 @pytest.mark.parametrize(
-    ("linear_solver", "handle"),
-    [
-        ("direct", DirectHandle),
-        pytest.param("petsc", PetscHandle, marks=pytest.mark.petsc),
-    ],
+    "linear_solver", ["direct", pytest.param("petsc", marks=pytest.mark.petsc)]
 )
-def test_a_reshift_refactorizes_the_prepared_operator(
-    mesh, monkeypatch, linear_solver, handle
-):
+def test_a_reshift_refactorizes_the_prepared_operator(mesh, monkeypatch, linear_solver):
     # the second mode, far from the target, is refined at its own shift
     model = terminated_line(mesh, 1000.0)
     problem = gfem.Eigenmode(target=8e9, n_modes=2)
@@ -287,7 +280,7 @@ def test_a_reshift_refactorizes_the_prepared_operator(
     result = gfem.solve(model, problem, options=options)
     assert len(calls) == 1
     # a handle that cannot refactorize is prepared afresh at the new shift
-    monkeypatch.delattr(handle, "refactorize")
+    monkeypatch.delattr(PlannedHandle, "refactorize")
     calls.clear()
     fresh = gfem.solve(model, problem, options=options)
     assert len(calls) == 2

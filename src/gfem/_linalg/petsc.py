@@ -23,20 +23,15 @@ the current operator raises `gfem.LinearSolverConvergenceError`.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import ngsolve as ngs
 import numpy as np
 
 from gfem import _petsc
-from gfem._linalg import MAXITER, Operator, Symmetry
-from gfem._linalg.base import (
-    NgsHandle,
-    assemble_operator,
-    equals_its_transpose,
-    host_bytes,
-    same_pattern,
-)
+from gfem._linalg import MAXITER, Symmetry
+from gfem._linalg.base import PlannedHandle, equals_its_transpose, host_bytes
 from gfem.errors import LinearSolverConvergenceError
 
 if TYPE_CHECKING:
@@ -69,7 +64,7 @@ class _Block(NamedTuple):
     values: np.ndarray
 
 
-class PetscHandle(NgsHandle):
+class PetscHandle(PlannedHandle):
     """A PETSc KSP / PC on the free block of the operator.
 
     Accepts ``A^T = A``: a complex symmetric operator, or a real symmetric
@@ -79,6 +74,7 @@ class PetscHandle(NgsHandle):
     """
 
     kind = "petsc"
+    sums_pieces = True
 
     def __init__(
         self,
@@ -100,7 +96,6 @@ class PetscHandle(NgsHandle):
         _refuse(symmetry, is_complex=is_complex, matrix=matrix)
         super().__init__(matrix, freedofs, symmetry, is_complex=is_complex)
         self._lock = _petsc.LOCK  # PETSc's database and registry are global
-        self._pattern: ngs.BaseMatrix | None = None
         #: The KSP and the AIJ (petsc4py objects); ``None`` once freed.
         self._ksp: Any = None
         self._mat: Any = None
@@ -188,103 +183,43 @@ class PetscHandle(NgsHandle):
         return text
 
     @classmethod
-    def from_operator(
-        cls,
-        operator: Operator,
-        symmetry: Symmetry,
-        *,
-        tolerance: float,
-        maxiter: int = MAXITER,
-        options: PetscOptions = (),
-        reuse: bool = True,
-    ) -> PetscHandle:
-        """Assemble (or sum the piece sum) and set up (see `gfem._linalg.prepare`)."""
-        is_complex = bool(operator.form.space.is_complex)
-        _refuse(symmetry, is_complex=is_complex)  # before paying for the assembly
-        matrix, pattern = assemble_operator(operator)
-        handle = cls(
-            matrix,
-            operator.freedofs,
-            symmetry,
-            is_complex=is_complex,
-            tolerance=tolerance,
-            maxiter=maxiter,
-            options=options,
-            reuse=reuse,
-        )
-        handle._pattern = pattern
-        return handle
+    def _admit(cls, symmetry: Symmetry, *, is_complex: bool) -> None:
+        _refuse(symmetry, is_complex=is_complex)
 
-    def refactorize(
-        self,
-        operator: Operator,
-        *,
-        solves: int | None = None,  # noqa: ARG002
-    ) -> None:
-        """Refactorize on ``operator``'s values (see `gfem._linalg.Refactorable`).
+    def _new_values(self, write: Callable[[ngs.BaseMatrix], None]) -> None:
+        """Write the held matrix and set the KSP up on it; under the lock.
 
-        An operator whose piece sum shares this handle's pieces is summed
-        into the held matrix in place (`apply` reads it); any other
-        operator's piece sum is summed, or its form assembled, into a new
-        matrix whose values are copied in. The free block's values are then
-        gathered into the AIJ's arrays and set up again on the same solver
-        plan (a numeric factorization by default). A changed pattern is
-        planned anew: a new AIJ under the same KSP.
-
-        ``solves`` is ignored: only BDDC's coarse choice reads it.
-
-        Raises:
-            RuntimeError: The handle was freed, or PETSc failed (as `prepare`).
+        The free block's values are gathered into the AIJ's arrays and set
+        up again on the same solver plan (a numeric factorization by
+        default).
         """
-        piece_sum = operator.piece_sum
-        # read outside the lock: the first read assembles the pieces
-        summed = None if piece_sum is None else piece_sum.pattern
-        with self._lock:
-            matrix = self._live()
-            pattern = self._pattern
-            if piece_sum is not None and pattern is not None and summed is pattern:
-                piece_sum.sum_into(matrix)
-                self._refactor_values(matrix)
-                return
-        new, pattern = assemble_operator(operator)  # assembly needs no lock
-        with self._lock:
-            matrix = self._live()
-            if same_pattern(matrix, new):
-                self._pattern = pattern
-                matrix.AsVector().data = new.AsVector()
-                self._refactor_values(matrix)
-                return
-            # the new plan is built aside: a failure leaves the handle as it was
-            block, old = self._block(new), self._mat
-            try:
-                self._ksp.setOperators(block.aij)
-            except BaseException:
-                block.aij.destroy()
-                raise
-            self._matrix, self._pattern = new, pattern
-            self._adopt(block)
-            try:
-                self._set_up()  # symbolic and numeric, with the options read
-            finally:
-                old.destroy()  # the KSP let go of it at setOperators
-            self._pc_is_current = not self._reuses
-
-    def _live(self) -> ngs.BaseMatrix:
-        """The held NGSolve matrix; call under the lock.
-
-        Raises:
-            RuntimeError: The handle was freed.
-        """
-        if self._ksp is None or self._matrix is None:
-            raise RuntimeError("This solver handle was freed.")
-        return self._matrix
-
-    def _refactor_values(self, matrix) -> None:
-        """Set the KSP up on ``matrix``'s new values; under the lock."""
+        matrix = self._live()
+        write(matrix)
         self._gather(matrix.CSR()[0], self._index, self._values)
         self._mat.assemble()  # marks the new values: PETSc sets up again
         self._set_up()
         self._pc_is_current = not self._reuses  # a reused preconditioner was kept
+
+    def _new_plan(
+        self,
+        matrix: ngs.BaseMatrix,
+        freedofs: ngs.BitArray | None,  # noqa: ARG002
+    ) -> None:
+        """A new AIJ of ``matrix`` under the same KSP, set up; under the lock."""
+        # the new plan is built aside: a failure leaves the handle as it was
+        block, old = self._block(matrix), self._mat
+        try:
+            self._ksp.setOperators(block.aij)
+        except BaseException:
+            block.aij.destroy()
+            raise
+        self._matrix = matrix
+        self._adopt(block)
+        try:
+            self._set_up()  # symbolic and numeric, with the options read
+        finally:
+            old.destroy()  # the KSP let go of it at setOperators
+        self._pc_is_current = not self._reuses
 
     def _set_up_anew(self) -> None:
         """Set a reused preconditioner up at the current operator; under the lock.
@@ -397,8 +332,7 @@ class PetscHandle(NgsHandle):
         guesses = None if x0 is None else self._columns(x0)[0][free]
         out = np.zeros(cols.shape, dtype=complex)
         with self._lock:
-            if self._ksp is None:
-                raise RuntimeError("This solver handle was freed.")
+            self._live()
             counts: tuple[int, ...] = ()
             if self._direct:
                 out[free] = self._exact(rhs)
@@ -543,19 +477,14 @@ class PetscHandle(NgsHandle):
         entry = np.dtype(PETSc.ScalarType).itemsize + np.dtype(PETSc.IntType).itemsize
         return int(factor.getInfo()["nz_used"]) * entry
 
-    def free(self) -> None:
-        """Destroy the KSP and the AIJ, and drop the matrices.
-
-        Waits for a running solve or refactorization.
-        """
-        with self._lock:
-            # each on its own: a failed set-up may have made the AIJ only
-            for obj in (self._ksp, self._mat):
-                if obj is not None:
-                    obj.destroy()
-            super().free()
-            self._ksp = self._mat = None
-            self._pattern = None
+    def _release(self) -> None:
+        """Destroy the KSP and the AIJ; under the lock."""
+        # each on its own: a failed set-up may have made the AIJ only
+        for obj in (self._ksp, self._mat):
+            if obj is not None:
+                obj.destroy()
+        self._ksp = self._mat = None
+        self._pattern = None
 
 
 def _name(enum, value: int) -> str:

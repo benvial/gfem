@@ -18,7 +18,8 @@ import structured_meshes as sm
 import gfem
 from gfem._engine import quadrature
 from gfem._engine.mesh import to_ngsolve
-from gfem._linalg import Operator, cudss, prepare
+from gfem._linalg import Operator, base, cudss, prepare
+from gfem._linalg.base import PlannedHandle
 from gfem._linalg.cudss import CudssHandle
 
 DATA = Path(__file__).parents[1] / "unit" / "data"
@@ -213,7 +214,7 @@ def test_a_changed_pattern_plans_again(built, plans, monkeypatch):
         kind="direct",
         device="cuda",
     )
-    monkeypatch.setattr(cudss, "same_pattern", lambda *_: False)
+    monkeypatch.setattr(base, "same_pattern", lambda *_: False)
     op, space = _maxwell(built, k=5.0)
     handle.refactorize(op)
     assert len(plans) == 2
@@ -253,7 +254,7 @@ def test_a_gpu_sweep_plans_once_and_matches_per_frequency_handles(
     s = np.asarray(gfem.solve(model, problem, options=options).s.values)
     assert len(plans) == 1
     # a handle that cannot refactorize is planned afresh at each frequency
-    monkeypatch.delattr(CudssHandle, "refactorize")
+    monkeypatch.delattr(PlannedHandle, "refactorize")
     plans.clear()
     result = gfem.solve(model, problem, options=options)
     assert len(plans) > 1

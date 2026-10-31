@@ -277,27 +277,6 @@ def test_a_freed_handle_refuses_to_solve_and_holds_nothing(built):
         handle.refactorize(_laplace(built)[0])
 
 
-@pytest.mark.parametrize("summed", [True, False])
-def test_a_handle_freed_during_refactorization_raises_freed(built, summed):
-    # another thread frees the handle while refactorize reads the piece sum
-    op, _ = _pieces(built, PIECES, (1.0, 2 - 1j, 3j))
-    handle = prepare(op, symmetry="complex_symmetric", kind="petsc")
-
-    class FreedOnRead:
-        def __init__(self, piece_sum):
-            self._piece_sum = piece_sum
-
-        def __getattr__(self, name):
-            handle.free()
-            return getattr(self._piece_sum, name)
-
-    # the handle's pieces are summed into its matrix; others are summed anew
-    other = op if summed else _pieces(built, PIECES, (1.0, 2 - 1j, 3j))[0]
-    piece_sum = FreedOnRead(other.piece_sum)
-    with pytest.raises(RuntimeError, match="This solver handle was freed"):
-        handle.refactorize(dataclasses.replace(op, piece_sum=piece_sum))
-
-
 def test_nbytes_counts_the_mumps_factorization(built):
     # MUMPS reports its memory in millions of bytes: a larger operator
     op, _ = _laplace(built, complex_valued=True, shift=1 - 2j, order=5)
