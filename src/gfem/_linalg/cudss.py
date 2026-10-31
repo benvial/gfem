@@ -303,8 +303,11 @@ class CudssHandle(NgsHandle):
         B: np.ndarray,
         tolerance: float | None,  # noqa: ARG002
         x0: np.ndarray | None = None,  # noqa: ARG002
-    ) -> np.ndarray:
-        """The inverse on the free rows of ``B`` (direct: no ``tolerance``, ``x0``)."""
+    ) -> tuple[np.ndarray, tuple[int, ...]]:
+        """The inverse on the free rows of ``B`` (direct: no ``tolerance``, ``x0``).
+
+        No Krylov iteration: the counts are ``()``.
+        """
         cols, flat = self._columns(B)
         solver = self._solver
         if solver is None:
@@ -322,7 +325,7 @@ class CudssHandle(NgsHandle):
                 out[free, start : start + chunk.shape[1]] = x.reshape(block.shape)[
                     :, : chunk.shape[1]
                 ]
-        return out[:, 0] if flat else out
+        return (out[:, 0] if flat else out), ()
 
     @property
     def nbytes(self) -> int:

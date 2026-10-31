@@ -116,7 +116,7 @@ def test_without_options_petsc_is_an_exact_mumps_cholesky(built):
     A, _ = ksp.getOperators()
     assert A.isSymmetricKnown() == (True, True)
     assert not A.isHermitianKnown()[1]
-    assert handle.iterations == []
+    assert handle.solve_counted(np.ones(handle.ndof, complex))[1] == ()
 
 
 def _gfem_keys():
@@ -343,9 +343,9 @@ def test_a_krylov_solve_stops_at_the_true_relative_residual(built):
     assert ksp.getPCSide() == PETSc.PC.Side.RIGHT
     rng = np.random.default_rng(13)
     B = rng.standard_normal((handle.ndof, 2)) + 0j
-    X = handle.solve(B)
-    assert len(handle.iterations) == 2
-    assert all(n > 1 for n in handle.iterations)
+    X, its = handle.solve_counted(B)
+    assert len(its) == 2
+    assert all(n > 1 for n in its)
     for j in range(2):
         assert _relative_residual(handle, B[:, j], X[:, j]) <= 1e-8
     exact = prepare(
@@ -375,24 +375,21 @@ def test_a_user_norm_type_is_kept(built):
 def test_a_krylov_solve_at_another_tolerance_restores_the_prepared_one(built):
     handle = _krylov(built, tolerance=1e-3)
     b = np.random.default_rng(14).standard_normal(handle.ndof) + 0j
-    handle.solve(b)
-    loose = handle.iterations[-1]
-    x = handle.solve(b, tolerance=1e-10)
-    assert handle.iterations[-1] > loose
+    (loose,) = handle.solve_counted(b)[1]
+    x, (tight,) = handle.solve_counted(b, tolerance=1e-10)
+    assert tight > loose
     assert _relative_residual(handle, b, x) <= 1e-10
-    handle.solve(b)
-    assert handle.iterations[-1] == loose
+    assert handle.solve_counted(b)[1] == (loose,)
 
 
 def test_a_krylov_initial_guess_saves_iterations(built):
     handle = _krylov(built)
     b = np.random.default_rng(15).standard_normal(handle.ndof) + 0j
-    cold = handle.solve(b)
-    warm = handle.solve(b, x0=cold * (1 + 1e-6))
-    assert handle.iterations[1] < handle.iterations[0]
+    cold, cold_its = handle.solve_counted(b)
+    warm, warm_its = handle.solve_counted(b, x0=cold * (1 + 1e-6))
+    assert warm_its[0] < cold_its[0]
     np.testing.assert_allclose(warm, cold, atol=1e-6 * np.abs(cold).max())
-    handle.solve(b)  # no guess: from zero again
-    assert handle.iterations[2] == handle.iterations[0]
+    assert handle.solve_counted(b)[1] == cold_its  # no guess: from zero again
 
 
 def test_a_krylov_solve_that_does_not_converge_raises(built):
@@ -481,9 +478,10 @@ def test_a_reused_preconditioner_is_set_up_again_where_gmres_misses(built):
     setups = _pc_setups()
     handle.refactorize(_far(built))
     before = setups()
-    x = handle.solve(b)  # 5 iterations on the old factors, then on new ones
+    # 5 iterations on the old factors, then on new ones
+    x, (spent,) = handle.solve_counted(b)
     assert setups() - before == 1
-    assert handle.iterations[-1] > 5  # both solves of the column
+    assert spent > 5  # both solves of the column
     assert _relative_residual(handle, b, x) <= 1e-8
     exact = prepare(_far(built), symmetry="complex_symmetric", kind="petsc").solve(b)
     np.testing.assert_allclose(x, exact, atol=1e-6 * np.abs(exact).max())
@@ -491,9 +489,9 @@ def test_a_reused_preconditioner_is_set_up_again_where_gmres_misses(built):
     op, _ = _laplace(built, complex_valued=True, shift=-40.001 + 1j, order=4)
     handle.refactorize(op)
     after = setups()
-    x = handle.solve(b)
+    x, (spent,) = handle.solve_counted(b)
     assert setups() == after
-    assert handle.iterations[-1] <= 5
+    assert spent <= 5
     assert _relative_residual(handle, b, x) <= 1e-8
 
 
@@ -526,9 +524,7 @@ def test_a_miss_after_a_set_up_anew_reports_the_columns_iterations(built):
         gfem.LinearSolverConvergenceError, match="DIVERGED_MAX_IT"
     ) as err:
         handle.solve(b)
-    spent = handle.iterations[-1]
-    assert spent == 6  # both solves of the column
-    assert f"in {spent} iterations" in str(err.value)
+    assert "in 6 iterations" in str(err.value)  # both solves of the column
 
 
 @pytest.mark.parametrize(

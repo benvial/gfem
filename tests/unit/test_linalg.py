@@ -238,9 +238,10 @@ def test_bddc_solves_many_right_hand_sides_to_the_tolerance(built):
     exact = prepare(_laplace(built)[0], symmetry="hermitian", kind="direct").solve(B)
     np.testing.assert_allclose(X, exact, atol=1e-8 * np.abs(exact).max())
     assert _residual(handle, B, X, free) < 1e-8
-    np.testing.assert_allclose(handle.solve(B, transpose=True), X, rtol=1e-12)
+    transposed, its = handle.solve_counted(B, transpose=True)
+    np.testing.assert_allclose(transposed, X, rtol=1e-12)
     assert handle.nbytes > 0
-    assert handle.iterations[-1] < 30
+    assert its[-1] < 30
 
 
 def test_bddc_tolerance_sets_the_residual(built):
@@ -256,10 +257,9 @@ def test_bddc_tolerance_sets_the_residual(built):
         for tol in (1e-2, 1e-12)
     )
     B = rng.standard_normal(loose.ndof)
-    assert sum(loose.iterations) == 0
-    loose.solve(B)
-    tight.solve(B)
-    assert loose.iterations[-1] < tight.iterations[-1]
+    (loose_its,) = loose.solve_counted(B)[1]
+    (tight_its,) = tight.solve_counted(B)[1]
+    assert loose_its < tight_its
 
 
 def test_one_bddc_handle_solves_an_adjoint_at_its_own_tolerance(built):
@@ -269,13 +269,12 @@ def test_one_bddc_handle_solves_an_adjoint_at_its_own_tolerance(built):
     handle = prepare(op, symmetry="hermitian", kind="bddc_gmres", tolerance=1e-2)
     free = np.array(list(space.FreeDofs()))
     B = rng.standard_normal(handle.ndof)
-    handle.solve(B)
-    forward = handle.iterations[-1]
-    X = handle.solve(B, tolerance=1e-12)
-    assert handle.iterations[-1] > forward
+    (forward,) = handle.solve_counted(B)[1]
+    X, (adjoint,) = handle.solve_counted(B, tolerance=1e-12)
+    assert adjoint > forward
     assert _residual(handle, B, X, free) < 1e-8
-    handle.solve(B)  # back to the prepared tolerance
-    assert handle.iterations[-1] == forward
+    # back to the prepared tolerance
+    assert handle.solve_counted(B)[1] == (forward,)
     direct = prepare(_laplace(built, order=4)[0], symmetry="hermitian", kind="direct")
     np.testing.assert_array_equal(direct.solve(B, tolerance=1e-3), direct.solve(B))
 
@@ -305,20 +304,18 @@ def test_gmres_initial_guess_saves_iterations_at_the_same_tolerance(built):
     rng = np.random.default_rng(8)
     B = rng.standard_normal((first.ndof, 2)) + 0j
     previous = first.solve(B)
-    cold = second.solve(B)
-    warm = second.solve(B, x0=previous)
-    assert all(
-        w < c for w, c in zip(second.iterations[2:], second.iterations[:2], strict=True)
-    )
+    cold, cold_its = second.solve_counted(B)
+    warm, warm_its = second.solve_counted(B, x0=previous)
+    assert all(w < c for w, c in zip(warm_its, cold_its, strict=True))
     np.testing.assert_allclose(warm, cold, atol=1e-6 * np.abs(cold).max())
     cold_residual = _residual(second, B[:, 0], cold[:, 0], free)
     assert _residual(second, B[:, 0], warm[:, 0], free) < 10 * cold_residual
     np.testing.assert_array_equal(warm[~free], 0)
     # a guess worse than zero is dropped; the exact solution needs no iteration
-    second.solve(B[:, 0], x0=1e6 * np.ones(second.ndof))
-    assert second.iterations[-1] <= second.iterations[0]
-    second.solve(B[:, 0], x0=warm[:, 0])
-    assert second.iterations[-1] <= 1
+    _, (dropped,) = second.solve_counted(B[:, 0], x0=1e6 * np.ones(second.ndof))
+    assert dropped <= cold_its[0]
+    _, (exact,) = second.solve_counted(B[:, 0], x0=warm[:, 0])
+    assert exact <= 1
 
 
 def test_bddc_refactorization_without_a_guess_solves_like_a_fresh_handle(built):
@@ -334,8 +331,8 @@ def test_bddc_refactorization_without_a_guess_solves_like_a_fresh_handle(built):
     handle.refactorize(operator(-40 + 1j))
     rng = np.random.default_rng(14)
     B = rng.standard_normal((handle.ndof, 2)) + 0j
-    X, ref = handle.solve(B), fresh.solve(B)
-    assert handle.iterations == fresh.iterations
+    (X, its), (ref, ref_its) = handle.solve_counted(B), fresh.solve_counted(B)
+    assert its == ref_its
     np.testing.assert_allclose(X, ref, rtol=0, atol=1e-12 * np.abs(ref).max())
 
 
@@ -356,12 +353,11 @@ def test_bddc_handle_without_reuse_sets_up_at_every_refactorization(built, monke
     B = rng.standard_normal((handle.ndof, 2)) + 0j
     previous = handle.solve(B)
     handle.refactorize(operator(1.1 - 2j))
-    handle.solve(B, x0=previous)
+    _, its = handle.solve_counted(B, x0=previous)
     assert len(builds) == 2
     monkeypatch.undo()
     fresh = prepare(operator(1.1 - 2j), symmetry="complex_symmetric", kind="bddc_gmres")
-    fresh.solve(B, x0=previous)
-    assert handle.iterations[2:] == fresh.iterations
+    assert its == fresh.solve_counted(B, x0=previous)[1]
 
 
 def test_a_bddc_refactorization_may_state_the_solves_its_setup_serves(
@@ -441,11 +437,11 @@ def test_a_bddc_solve_at_another_tolerance_never_sets_the_preconditioner_up_agai
     )
     rng = np.random.default_rng(22)
     B = rng.standard_normal((handle.ndof, 2)) + 0j
-    previous = handle.solve(B)
+    previous, cold = handle.solve_counted(B)
     handle.refactorize(operator(1.1 - 2j))
-    handle.solve(B, x0=previous, tolerance=1e-12)
+    _, adjoint = handle.solve_counted(B, x0=previous, tolerance=1e-12)
     # past n_ref + Δ on the reused preconditioner, under its cap n_ref + 2Δ
-    assert min(handle.iterations[2:]) > max(handle.iterations[:2]) + bddc._slack(2)
+    assert min(adjoint) > max(cold) + bddc._slack(2)
     handle.refactorize(operator(1.2 - 2j))
     handle.solve(B, x0=previous)
     assert len(builds) == 1
@@ -599,11 +595,11 @@ def test_bddc_gmres_does_not_accept_a_breakdown_above_the_tolerance(
     exact = prepare(operator(), symmetry=symmetry, kind="direct").solve(B)
     with monkeypatch.context() as patch:
         iterations = _break_down(patch, krylov, times=1)
-        X = handle.solve(B, x0=x0)
+        X, (spent,) = handle.solve_counted(B, x0=x0)
     np.testing.assert_allclose(X, exact, atol=1e-8 * np.abs(exact).max())
     assert len(iterations) == 2  # the short stop and its restart
     assert iterations[0] == 2
-    assert handle.iterations[-1] == sum(iterations)
+    assert spent == sum(iterations)
     # a restart that stops short too raises
     _break_down(monkeypatch, krylov, times=2)
     with pytest.raises(gfem.LinearSolverConvergenceError, match="converge") as raised:
@@ -651,6 +647,46 @@ def _update(space, rng, p=2):
 
 
 @pytest.mark.parametrize(
+    ("kind", "petsc_options"),
+    [
+        ("direct", ()),
+        ("bddc_gmres", ()),
+        pytest.param(
+            "petsc",
+            (("ksp_type", "gmres"), ("pc_type", "jacobi")),
+            marks=pytest.mark.petsc,
+        ),
+    ],
+)
+def test_a_solve_counts_the_krylov_iterations_of_each_column(
+    built, kind, petsc_options
+):
+    op, space = _laplace(built, complex_valued=True, shift=1 - 2j, order=4)
+    base = prepare(
+        op,
+        symmetry="complex_symmetric",
+        kind=kind,
+        tolerance=1e-10,
+        petsc_options=petsc_options,
+    )
+    rng = np.random.default_rng(23)
+    B = rng.standard_normal((space.ndof, 3)) + 0j
+    X, its = base.solve_counted(B)
+    np.testing.assert_allclose(X, base.solve(B), rtol=1e-12)
+    if kind == "direct":
+        assert its == ()
+    else:
+        assert len(its) == 3
+        assert all(isinstance(n, int) and n > 0 for n in its)
+    # the update's own columns are never counted: the first solve puts B
+    # and U in one base solve, the next ones B alone
+    U, C, _ = _update(space, rng)
+    handle = low_rank_update(base, U, C + C.T)
+    for _ in range(2):
+        assert len(handle.solve_counted(B)[1]) == (0 if kind == "direct" else 3)
+
+
+@pytest.mark.parametrize(
     "kind", ["direct", "bddc_gmres", pytest.param("petsc", marks=pytest.mark.petsc)]
 )
 def test_a_low_rank_update_solves_the_updated_operator(built, kind):
@@ -662,8 +698,6 @@ def test_a_low_rank_update_solves_the_updated_operator(built, kind):
     handle = low_rank_update(base, U, C)
     B = rng.standard_normal((space.ndof, 3)) + 0j
     X = handle.solve(B)
-    # Krylov iterations count the right-hand sides, not the update's columns
-    assert len(handle.iterations) == (3 if kind == "bddc_gmres" else 0)
     A = _dense(base, space.ndof) + U @ C @ U.T
     np.testing.assert_allclose(handle.apply(X), A @ X, atol=1e-10 * np.abs(A @ X).max())
     np.testing.assert_allclose((A @ X)[free], B[free], atol=1e-8 * np.abs(B).max())

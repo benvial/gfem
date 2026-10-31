@@ -262,9 +262,8 @@ def test_driven_per_sample_time_against_palace(reference, name):
             tolerance=options.tolerance,
             width=2,
         )
-        x = handle.solve(1j * op.wavenumber(omega) * excite)
+        x, iterations = handle.solve_counted(1j * op.wavenumber(omega) * excite)
         elapsed = time.perf_counter() - start
-        iterations = list(handle.iterations)
         handle.free()
     per_sample = elapsed / 2
     s = (voltage.T @ x) / math.sqrt(2 * 50.0) - np.eye(2)

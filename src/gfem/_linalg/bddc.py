@@ -124,9 +124,6 @@ class BddcHandle(NgsHandle):
     one setup is expected to serve: ``width * solves`` with reuse, ``width``
     without it; a `refactorize` may state its own ``solves``, which later
     setups count until another `refactorize` states one.
-
-    Attributes:
-        iterations: Krylov iterations of every column solved so far.
     """
 
     kind = "bddc_gmres"
@@ -164,7 +161,6 @@ class BddcHandle(NgsHandle):
         super().__init__(form.mat, operator.freedofs, symmetry, is_complex=is_complex)
         self.tolerance = tolerance
         self.maxiter = maxiter
-        self.iterations: list[int] = []
         self._hold(form, preconditioner)
 
     def _columns_per_setup(self, solves: int) -> int:
@@ -299,8 +295,8 @@ class BddcHandle(NgsHandle):
         x: ngs.BaseVector,
         reference: float | None = None,
         iterations: int = 0,
-    ) -> None:
-        """Finish a column's solve: restart it if needed, record, raise.
+    ) -> int:
+        """Finish a column's solve: restart it if needed, count, raise.
 
         ``solver`` solved ``b`` into ``x``; a restart updates ``x`` in place.
         A Krylov solve that stops before its ``maxiter`` above the tolerance
@@ -309,13 +305,13 @@ class BddcHandle(NgsHandle):
         GMRES returns the right iterate on a lucky breakdown, so it meets the
         tolerance there.) ``reference`` is as for `_converged`;
         ``iterations`` were spent on the column before ``solver`` (a capped
-        solve on a reused preconditioner).
+        solve on a reused preconditioner). Returns the column's iterations,
+        these included.
         """
         spent = iterations + int(solver.iterations)
         residuals = solver.residuals
         if not residuals:
-            self.iterations.append(spent)
-            return
+            return spent
         start = residuals[0] if reference is None else reference
         early = int(solver.iterations) < solver.maxiter
         if early and not self._converged(solver, start):
@@ -325,9 +321,8 @@ class BddcHandle(NgsHandle):
             solver.Solve(rhs=b, sol=x, initialize=False)
             spent += int(solver.iterations)
             early = int(solver.iterations) < solver.maxiter
-        self.iterations.append(spent)
         if self._converged(solver, start):
-            return
+            return spent
         name = "CG" if self.symmetry == "hermitian" else "GMRES"
         reached = f"{solver.residuals[-1] / start:.3e}"
         if early:
@@ -345,7 +340,7 @@ class BddcHandle(NgsHandle):
 
     def _inverse_map(
         self, B: np.ndarray, tolerance: float | None, x0: np.ndarray | None = None
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, tuple[int, ...]]:
         _, _, form = self._held()
         with self._lock:  # reentrant: _map and _warm take it again
             if self._reused and (x0 is None or self.symmetry == "hermitian"):
@@ -361,11 +356,15 @@ class BddcHandle(NgsHandle):
             try:
                 if x0 is not None and self.symmetry != "hermitian":
                     return self._warm(B, x0, measure=measure)
-                before = len(self.iterations)
-                out = self._map(solver, B, after=self._finish)
+                counts: list[int] = []
+                out = self._map(
+                    solver,
+                    B,
+                    after=lambda *column: counts.append(self._finish(*column)),
+                )
                 # a cold solve runs on a fresh preconditioner
-                self._set_reference(self.iterations[before:], measure=measure)
-                return out
+                self._set_reference(counts, measure=measure)
+                return out, tuple(counts)
             finally:
                 solver.tol = self.tolerance = prepared  # ty: ignore[invalid-assignment]
 
@@ -378,7 +377,9 @@ class BddcHandle(NgsHandle):
         if measure and iterations and self._reference_iterations is None:
             self._reference_iterations = max(iterations)
 
-    def _warm(self, B: np.ndarray, x0: np.ndarray, *, measure: bool) -> np.ndarray:
+    def _warm(
+        self, B: np.ndarray, x0: np.ndarray, *, measure: bool
+    ) -> tuple[np.ndarray, tuple[int, ...]]:
         """GMRES from the initial guess ``x0``, to ``tolerance * |P b|``.
 
         The stopping residual is relative to the preconditioned right-hand
@@ -396,7 +397,8 @@ class BddcHandle(NgsHandle):
         solve with ``measure`` true (at the prepared tolerance) counts: the
         iterations spent on a fresh preconditioner set ``n_ref`` when it is
         unset, and those spent on the reused one decide the rebuild rule,
-        when every column stayed on it.
+        when every column stayed on it. Returns the solution and each
+        column's iterations.
         """
         cols, flat = self._columns(B)
         guesses, _ = self._columns(x0)
@@ -406,6 +408,7 @@ class BddcHandle(NgsHandle):
         slack = _slack(cols.shape[1])
         stale: list[int] = []  # per column, on the reused preconditioner
         fresh: list[int] = []  # per column, after a setup at this matrix
+        counts: list[int] = []  # per column, both of these
         with self._lock:
             # refactorize reuses a preconditioner only with n_ref set
             n_ref = self._reference_iterations or 0
@@ -439,8 +442,9 @@ class BddcHandle(NgsHandle):
                     )
                     solver.Solve(rhs=b, sol=x, initialize=False)
                     on_reused = False
-                self._finish(solver, b, x, reference, spent)
-                (stale if on_reused else fresh).append(self.iterations[-1] - spent)
+                total = self._finish(solver, b, x, reference, spent)
+                (stale if on_reused else fresh).append(total - spent)
+                counts.append(total)
                 out[:, j] = x.FV().NumPy()
             # n_ref only from a fresh preconditioner; the rebuild rule, by
             # iteration count, only when the whole solve stayed reused; both
@@ -448,7 +452,7 @@ class BddcHandle(NgsHandle):
             self._set_reference(fresh, measure=measure)
             if measure and self._reused and max(stale) > n_ref + slack:
                 self._rebuild = True
-        return out[:, 0] if flat else out
+        return (out[:, 0] if flat else out), tuple(counts)
 
     @property
     def nbytes(self) -> int:

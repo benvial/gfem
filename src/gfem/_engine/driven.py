@@ -1722,11 +1722,7 @@ class _SweepHandle:
         self, omega: float, rhs: np.ndarray, *, x0: np.ndarray | None = None
     ) -> tuple[np.ndarray, tuple[int, ...]]:
         """Solve at ``ω``: the solution and the Krylov iterations per column."""
-        handle = self.at(omega)
-        before = len(getattr(handle, "iterations", ()))
-        x = handle.solve(rhs, x0=x0)
-        its = list(getattr(handle, "iterations", ()))[before:]
-        return x, tuple(int(i) for i in its)
+        return self.at(omega).solve_counted(rhs, x0=x0)
 
     @property
     def nbytes(self) -> int:
