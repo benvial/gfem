@@ -1277,16 +1277,25 @@ class _Kept:
 
     system: SystemOperator
     ports: PortNetwork
+    _freed: bool = dataclasses.field(default=False, init=False)
 
     @property
     def nbytes(self) -> int:
-        """Host memory held, in bytes."""
+        """Host memory held, in bytes (0 once freed)."""
+        if self._freed:
+            return 0
         return self.system.nbytes + self.ports.nbytes
 
     def free(self) -> None:
-        """Release the system operator's handles and pieces, and drop both."""
+        """Release the system operator's handles and pieces, and drop both.
+
+        A second call does nothing.
+        """
+        if self._freed:
+            return
         self.system.free()
         del self.system, self.ports
+        self._freed = True
 
 
 @dataclasses.dataclass(frozen=True)

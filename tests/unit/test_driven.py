@@ -11,6 +11,7 @@ import cmath
 import dataclasses
 import math
 import warnings
+from types import SimpleNamespace
 
 import jax
 import jax.numpy as jnp
@@ -825,6 +826,17 @@ def test_a_forward_holds_its_assembled_pieces_with_its_handles(
     assert system.nbytes >= 2 * values
     entry.free()
     assert system.nbytes == 0
+
+
+def test_a_kept_forward_is_freed_once_and_then_holds_nothing():
+    freed = []
+    system = SimpleNamespace(nbytes=10, free=lambda: freed.append(True))
+    kept = driven._Kept(system, SimpleNamespace(nbytes=5))
+    assert kept.nbytes == 15
+    kept.free()
+    kept.free()
+    assert freed == [True]
+    assert kept.nbytes == 0
 
 
 # --- what the driven problem refuses ---------------------------------------------
