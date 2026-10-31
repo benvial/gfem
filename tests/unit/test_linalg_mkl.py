@@ -650,7 +650,10 @@ def _record_pardiso_calls(monkeypatch, openmp, failure=None):
     def fake(*args):
         calls.append((args[4][0], None if openmp is None else openmp.block_time))
         if failure is not None:
-            raise failure
+            # a new exception per call: raising ``failure`` itself would tie
+            # its traceback (and the handle in it) to this frame in a cycle,
+            # which the garbage collector frees during a later test
+            raise type(failure)(*failure.args)
 
     monkeypatch.setattr(mkl_pardiso, "_pardiso", fake)
     return calls
