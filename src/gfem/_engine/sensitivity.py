@@ -4,15 +4,16 @@ Every differentiated solve ends here. A rule's backward pass turns the
 output cotangents into **field pairs** ``(left, right)``: the gradient of
 ``sum_k ct_k y_k`` with respect to a design value ``p`` is
 ``sum_pairs sum_t theta_t * sum_e (dc_t / dp)_e * a_t,e(left, right)``,
-where ``a_t`` is one affine form term of the operator (``grad u . grad v``,
-the driven curl-curl, mass and absorbing terms), ``theta_t`` its scalar
-weight in this problem (a physical constant, a frequency factor) and
-``c_t`` its coefficient per element (a function of the material values).
-The kernel never sees the problem type: the rule gives it the operator's
-terms (`Term`), each carrying ``dc_t / dp`` for the properties its
-coefficient reads (`Derivative`), and it integrates every term a wanted
-property needs once over all pairs, on the pinned quadrature rule, in one
-element-wise (P0) pass.
+where ``a_t`` is the bilinear form of one **term** ``t``, the kernel's view
+of one piece of the operator (driven and eigenmode: the curl-curl, mass and
+absorbing pieces) or of the electrostatic form (``grad u . grad v``),
+``theta_t`` its scalar weight in this problem (a physical constant, a
+frequency factor) and ``c_t`` its coefficient per element (a function of
+the material values). The kernel never sees the problem type: the rule
+gives it the operator as terms (`Term`), each carrying ``dc_t / dp`` for
+the properties its coefficient reads (`Derivative`), and it integrates
+every term a wanted property needs once over all pairs, on the pinned
+quadrature rule, in one element-wise (P0) pass.
 
 A **face term** (an absorbing boundary, whose coefficient is read from the
 tetrahedron behind each face) is integrated per triangle in a face-wise
@@ -134,7 +135,11 @@ class Derivative:
 
 @dataclasses.dataclass(frozen=True, eq=False)
 class Term:
-    """One affine form term ``a_t(u, v)`` of an operator, as the passes read it.
+    """The kernel's view of one piece of an operator, or of the electrostatic form.
+
+    A driven or eigenmode piece, or the electrostatic ``grad u . grad v``
+    form, as the passes read it: its bilinear form ``a_t(u, v)``, its
+    coefficient and the coefficient's derivatives.
 
     Attributes:
         name: The term's key in the pairs' `FieldPair.weights`.

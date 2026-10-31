@@ -1,7 +1,7 @@
 """The port network of a driven solve: S forward and S adjoint in one place.
 
-Every port enters S through two affine terms over ω: its incident wave's
-excitation (one right-hand side column per excited port) and its S
+Every port enters S twice, both affine in ω: through its incident wave's
+right-hand side (one column per excited port) and through its S
 functional (one row of S per port: ``1 / sqrt(2 R)`` times the port
 voltage for a lumped port, the projection on the conjugated mode for a
 wave port, `gfem._engine.wave_ports`). A `PortNetwork` holds them with the
@@ -152,8 +152,8 @@ class PortNetwork:
     """Every port's incident wave and S functional in one driven solve.
 
     Attributes:
-        excitation: The right-hand side terms, one column per excited port.
-        outputs: The S functionals' terms, one row per port.
+        excitation: The right-hand sides, one column per excited port.
+        outputs: The S functionals, one row per port.
         waves: The wave ports' couplings.
         columns: The excited ports' indices.
         z_ref: ``(n_freq, n_ports)`` reference impedances, ohm.

@@ -730,7 +730,7 @@ class DrivenRule:
         return "read"
 
     def terms(self, model: Model, *, nodes: bool) -> list[Term]:
-        """The operator's pieces as sensitivity terms.
+        """The operator's pieces as the kernel sees them: one `Term` per piece.
 
         See `operator_terms`.
 
@@ -1045,13 +1045,13 @@ class DrivenRule:
 
 
 def operator_terms(model: Model, op: DrivenOperator, *, nodes: bool) -> list[Term]:
-    """The pieces of ``model``'s driven operator as sensitivity terms.
+    """The pieces of ``model``'s driven operator as the kernel sees them.
 
-    Every piece but the ports': a port's terms, excitation and voltage
-    read only its own surface and fixed values, which no gradient moves
-    (shape gradients hold port surfaces in place). Each term carries its
-    piece's material derivatives, face owners and sheet factor. The
-    eigenmode rule's operator is the same pieces, so it shares these.
+    One `Term` per piece but the ports': a port's pieces, right-hand side
+    and voltage read only its own surface and fixed values, which no
+    gradient moves (shape gradients hold port surfaces in place). Each term
+    carries its piece's material derivatives, face owners and sheet factor.
+    The eigenmode rule's operator is the same pieces, so it shares these.
 
     Args:
         model: The model ``op`` was built on.

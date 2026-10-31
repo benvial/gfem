@@ -609,7 +609,7 @@ class EigenmodeRule:
         return op
 
     def terms(self, model: Model, *, nodes: bool) -> list[Term]:
-        """The pieces of ``T(k)`` as sensitivity terms.
+        """The pieces of ``T(k)`` as the kernel sees them: one `Term` per piece.
 
         The driven operator's (`gfem._engine.driven.operator_terms`): a
         mode's ``dk/dp = -x^T (dT/dp) x / x^T T'(k) x`` contracts the same

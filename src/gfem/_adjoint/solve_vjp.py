@@ -42,8 +42,10 @@ A rule provides: ``form`` (its operator family, a key of
 ``backward(model, entry, cotangents)``, ``options`` and ``problem``,
 optionally ``unsupported_input(kind)`` (a reason, or ``None``) for read
 inputs the rule itself cannot differentiate, and ``terms(model, *, nodes)``
-(its operator as a list of `gfem._engine.sensitivity.Term`, which the
-kernel's passes read; ``nodes`` when the node coordinates are wanted). Host
+(its operator as the kernel sees it, a list of
+`gfem._engine.sensitivity.Term`: one per piece of a driven or eigenmode
+operator, or the electrostatic form; ``nodes`` when the node coordinates
+are wanted). Host
 calls get the model and a shallow copy of the rule whose ``problem`` holds
 the call's concrete values, so a rule reads problem values from
 ``self.problem`` and never sees a tracer there.

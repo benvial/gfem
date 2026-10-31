@@ -287,7 +287,7 @@ class ElectrostaticRule:
         ]
 
     def terms(self, model: Model, *, nodes: bool) -> list[Term]:  # noqa: ARG002
-        """The operator ``int Re(eps_r) grad u . grad v`` as a sensitivity term.
+        """The electrostatic form ``int Re(eps_r) grad u . grad v``, as a `Term`.
 
         The pairs' weight ``eps0`` and the length power 1 make it SI. Its
         coefficient reads ``r = Re(eps_r)``, so ``dc/dr = 1``. The terminal
