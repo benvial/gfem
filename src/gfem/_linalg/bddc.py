@@ -352,7 +352,7 @@ class BddcHandle(NgsHandle):
             measure = tolerance is None or tolerance == prepared
             if tolerance is not None:
                 # NGSolve's Krylov solvers read .tol on every Solve
-                solver.tol = self.tolerance = tolerance  # ty: ignore[invalid-assignment]
+                solver.tol = self.tolerance = tolerance
             try:
                 if x0 is not None and self.symmetry != "hermitian":
                     return self._warm(B, x0, measure=measure)
@@ -366,7 +366,7 @@ class BddcHandle(NgsHandle):
                 self._set_reference(counts, measure=measure)
                 return out, tuple(counts)
             finally:
-                solver.tol = self.tolerance = prepared  # ty: ignore[invalid-assignment]
+                solver.tol = self.tolerance = prepared
 
     def _set_reference(self, iterations: list[int], *, measure: bool) -> None:
         """Set ``n_ref`` to the most ``iterations`` of a column, when unset.
@@ -462,8 +462,7 @@ class BddcHandle(NgsHandle):
             return 0
         return host_bytes(self._matrix) + host_bytes(pre.mat)
 
-    def free(self) -> None:
-        """Drop the Krylov solver, the preconditioner and the matrix."""
-        super().free()
+    def _release(self) -> None:
+        """Drop the preconditioner and the form; under the lock."""
         self._preconditioner = None
         self._form = None

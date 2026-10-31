@@ -8,6 +8,7 @@ import ngsolve as ngs
 import numpy as np
 import pytest
 import structured_meshes as sm
+from locks import Gate
 from preconditioners import coarse_columns, count_preconditioners
 
 import gfem
@@ -158,12 +159,16 @@ def test_a_direct_handle_sums_a_piece_sum_instead_of_assembling(built):
     np.testing.assert_allclose(handle.solve(B), fresh.solve(B), rtol=1e-12)
 
 
+PLANNED = ["direct", pytest.param("petsc", marks=pytest.mark.petsc)]
+
+
+@pytest.mark.parametrize("kind", PLANNED)
 @pytest.mark.parametrize("summed", [True, False])
-def test_a_handle_freed_during_refactorization_raises_freed(built, summed):
+def test_a_handle_freed_during_refactorization_raises_freed(built, kind, summed):
     # another thread frees the handle while refactorize reads the piece sum
     integrands = (*VOLUME, _on("side"))
     op, _ = _pieces(built, integrands, (1.0, 2 - 1j, 3j))
-    handle = prepare(op, symmetry="complex_symmetric", kind="direct")
+    handle = prepare(op, symmetry="complex_symmetric", kind=kind)
 
     class FreedOnRead:
         def __init__(self, piece_sum):
@@ -447,29 +452,14 @@ def test_a_bddc_solve_at_another_tolerance_never_sets_the_preconditioner_up_agai
     assert len(builds) == 1
 
 
-class _Gate:
-    """A reentrant lock that reports a thread waiting for it."""
-
-    def __init__(self):
-        self.lock = threading.RLock()
-        self.waiting = threading.Event()
-
-    def __enter__(self):
-        if not self.lock.acquire(blocking=False):
-            self.waiting.set()
-            self.lock.acquire()
-        return self
-
-    def __exit__(self, *exc):
-        self.lock.release()
-
-
-def test_bddc_refactorization_checks_the_handle_under_its_lock(built):
+@pytest.mark.parametrize("kind", [*PLANNED, "bddc_gmres"])
+def test_a_refactorization_checks_the_handle_under_its_lock(built, kind):
     # a handle freed while a refactorization waits for the lock is not
     # brought back: the refactorization reads the held state under the lock
     op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
-    handle = prepare(op, symmetry="complex_symmetric", kind="bddc_gmres")
-    gate = handle._lock = _Gate()
+    handle = prepare(op, symmetry="complex_symmetric", kind=kind)
+    # PETSc's handle holds the process-wide lock: the gate replaces it here only
+    gate = handle._lock = Gate()
     raised = []
 
     def refactorize():

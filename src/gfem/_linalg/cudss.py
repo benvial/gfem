@@ -21,13 +21,15 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import scipy.sparse as sp
 
-from gfem._linalg import Operator, Symmetry
-from gfem._linalg.base import NgsHandle, host_bytes, same_pattern
+from gfem._linalg import Symmetry
+from gfem._linalg.base import PlannedHandle, host_bytes
 
 _INT32_MAX = np.iinfo(np.int32).max
 
@@ -128,7 +130,7 @@ def lower_pattern(
     return indptr, indices, gather
 
 
-class CudssHandle(NgsHandle):
+class CudssHandle(PlannedHandle):
     """One cuDSS factorization on a GPU, reused for every right-hand side.
 
     ``"complex_symmetric"`` and real ``"hermitian"`` operators are factored
@@ -137,10 +139,15 @@ class CudssHandle(NgsHandle):
     complex128.
 
     `refactorize` factorizes another operator's values on the same plan: a
-    `gfem._linalg.Refactorable` handle.
+    `gfem._linalg.Refactorable` handle. It assembles the operator's form
+    (never its piece sum). On the same pattern it gathers the new values
+    into the triangle and factorizes on the existing plan, in the memory
+    mode of the first plan; a changed pattern is planned again (hybrid
+    memory stays on if it was).
     """
 
     kind = "cudss"
+    sums_pieces = False
 
     def __init__(
         self,
@@ -158,8 +165,7 @@ class CudssHandle(NgsHandle):
         ``threads=1`` keeps cuDSS's host-side planning on one thread; otherwise
         it uses the wheel's threading layer when there is one.
         """
-        if symmetry == "general":
-            self._refuse()
+        self._admit(symmetry, is_complex=is_complex)
         if width < 1:
             raise ValueError(f"width must be at least 1, got {width}.")
         super().__init__(matrix, freedofs, symmetry, is_complex=is_complex)
@@ -171,31 +177,6 @@ class CudssHandle(NgsHandle):
         self.hybrid_memory = False
         self._solver = self._factorize()
 
-    @classmethod
-    def from_operator(
-        cls,
-        operator: Operator,
-        symmetry: Symmetry,
-        *,
-        device_id: int,
-        width: int,
-        threads: int | None = None,
-    ) -> CudssHandle:
-        """Assemble and factorize on the GPU (see `gfem._linalg.prepare`)."""
-        if symmetry == "general":
-            cls._refuse()  # before paying for the assembly
-        form = operator.form
-        form.Assemble()
-        return cls(
-            form.mat,
-            operator.freedofs,
-            symmetry,
-            is_complex=bool(form.space.is_complex),
-            device_id=device_id,
-            width=width,
-            threads=threads,
-        )
-
     def _triangle(self, matrix) -> tuple[sp.csr_matrix, np.ndarray]:
         """The free-DOF lower triangle of ``matrix`` and its gather index."""
         data, cols, rowptr = matrix.CSR()
@@ -206,47 +187,35 @@ class CudssHandle(NgsHandle):
         lower = sp.csr_matrix((values, indices, indptr), shape=(len(indptr) - 1,) * 2)
         return lower, gather
 
-    def refactorize(
-        self,
-        operator: Operator,
-        *,
-        solves: int | None = None,  # noqa: ARG002
-    ) -> None:
-        """Assemble ``operator`` and refactorize (see `gfem._linalg.Refactorable`).
+    @classmethod
+    def _admit(cls, symmetry: Symmetry, *, is_complex: bool) -> None:  # noqa: ARG003
+        if symmetry == "general":
+            raise NotImplementedError(
+                "The GPU solver (cuDSS) handles symmetric and Hermitian operators "
+                "only; a general operator needs device='cpu'."
+            )
 
-        On the same pattern, gathers the new values into the triangle and
-        factorizes on the existing plan, in the memory mode of the first
-        plan. A changed pattern is planned again (hybrid memory stays on if
-        it was).
+    def _new_values(self, write: Callable[[Any], None]) -> None:
+        """Write the held matrix and factorize it on the plan; under the lock."""
+        matrix = self._live()
+        write(matrix)
+        data = np.asarray(matrix.CSR()[0])
+        np.take(data, self._gather, out=self._lower.data)
+        self._solver.reset_operands(a=self._lower)
+        self._solver.factorize()
 
-        ``solves`` is ignored: only BDDC's coarse choice reads it.
+    def _new_plan(self, matrix, freedofs) -> None:  # noqa: ARG002
+        """Plan and factorize ``matrix``'s triangle, and hold it; under the lock.
+
+        The old plan is freed first: the hybrid-memory switch compares the
+        new plan's peak with the GPU memory free.
         """
         solver = self._solver
-        matrix = self._matrix
-        if solver is None or matrix is None:
-            raise RuntimeError("This solver handle was freed.")
-        form = operator.form
-        form.Assemble()
-        with self._lock:
-            if same_pattern(matrix, form.mat):
-                data = np.asarray(form.mat.CSR()[0])
-                np.take(data, self._gather, out=self._lower.data)
-                self._matrix = form.mat
-                solver.reset_operands(a=self._lower)
-                solver.factorize()
-                return
-            self._matrix = form.mat
-            self._lower, self._gather = self._triangle(form.mat)
-            self._solver = None
-            solver.free()
-            self._solver = self._factorize()
-
-    @staticmethod
-    def _refuse() -> None:
-        raise NotImplementedError(
-            "The GPU solver (cuDSS) handles symmetric and Hermitian operators "
-            "only; a general operator needs device='cpu'."
-        )
+        self._matrix = matrix
+        self._lower, self._gather = self._triangle(matrix)
+        self._solver = None
+        solver.free()
+        self._solver = self._factorize()
 
     def _block(self) -> np.ndarray:
         return np.zeros(
@@ -309,13 +278,12 @@ class CudssHandle(NgsHandle):
         No Krylov iteration: the counts are ``()``.
         """
         cols, flat = self._columns(B)
-        solver = self._solver
-        if solver is None:
-            raise RuntimeError("This solver handle was freed.")
         free = self._free
         rhs = cols[free]
         out = np.zeros(cols.shape, dtype=self._dtype)
         with self._lock:
+            self._live()
+            solver = self._solver
             for start in range(0, rhs.shape[1], self.width):
                 chunk = rhs[:, start : start + self.width]
                 block = self._block()
@@ -337,8 +305,7 @@ class CudssHandle(NgsHandle):
         held = 2 * csr + self._gather.nbytes
         return host_bytes(self._matrix) + held + sum(self._estimates)
 
-    def free(self) -> None:
-        """Release the GPU factors and the matrix."""
+    def _release(self) -> None:
+        """Release the GPU factors; under the lock."""
         if self._solver is not None:
             self._solver.free()
-        super().free()

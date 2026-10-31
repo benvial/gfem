@@ -19,7 +19,7 @@ from solver_misses import cannot_converge_at
 
 import gfem
 from gfem._linalg import prepare
-from gfem._linalg.direct import DirectHandle
+from gfem._linalg.base import PlannedHandle
 
 DATA = Path(__file__).parent / "data"
 C0 = 299792458.0
@@ -189,7 +189,7 @@ def test_a_direct_sweep_plans_once_and_matches_fresh_handles(
     s = np.asarray(gfem.solve(model, problem, options=options).s.values)
     assert len(calls) == 1
     # a handle that cannot refactorize is prepared afresh at each frequency
-    monkeypatch.delattr(DirectHandle, "refactorize")
+    monkeypatch.delattr(PlannedHandle, "refactorize")
     calls.clear()
     result = gfem.solve(model, problem, options=options)
     solved = len(F) if sweep == "uniform" else len(result.sweep.sampled_frequencies)
