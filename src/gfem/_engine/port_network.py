@@ -79,6 +79,25 @@ def parallel(functional: np.ndarray, excitation: np.ndarray) -> complex | None:
     return complex(c)
 
 
+def _reciprocal_scale(
+    functional: np.ndarray, i: int, columns: Sequence[int], rhs: np.ndarray
+) -> complex | None:
+    """``c`` if port ``i`` is excited, its S functional ``c`` times its excitation.
+
+    Its adjoint is then ``c`` times its own solution (reciprocity). ``None``
+    for a port that is not excited or not parallel (`parallel`).
+
+    Args:
+        functional: ``(N,)``, port i's S functional.
+        i: The port's index.
+        columns: The excited ports' indices.
+        rhs: ``(N, width)``, the excitations, one column per excited port.
+    """
+    if i not in columns:
+        return None
+    return parallel(functional, rhs[:, columns.index(i)])
+
+
 @dataclasses.dataclass(frozen=True, eq=False)
 class CotangentSplit:
     """An S cotangent at one frequency, split for the adjoint.
@@ -136,12 +155,11 @@ def split_cotangent(
         if not np.isfinite(f_i).all():  # S row of a port without R
             undefined |= ct[i] != 0
             continue
-        if own is not None and i in columns:
+        if own is not None:
             rhs, x = own
-            m = columns.index(i)
-            scale = parallel(f_i, rhs[:, m])
+            scale = _reciprocal_scale(f_i, i, columns, rhs)
             if scale is not None:  # reciprocity: no solve
-                free += np.outer(scale * x[:, m], ct[i])
+                free += np.outer(scale * x[:, columns.index(i)], ct[i])
                 continue
         loads += np.outer(f_i, ct[i])
     return CotangentSplit(free, loads, undefined)
@@ -304,15 +322,16 @@ class PortNetwork:
         frozen-basis S gradient of a lossy wave port is exact at the samples.
         """
         functional = self.functional(omega)
-        rhs = None
+        excited = any(c.index in self.columns for c in self.waves)
+        rhs = self.rhs(omega) if excited else None
         loads = []
         for c in self.waves:
             f = functional[:, c.index]
-            if c.index in self.columns:
-                if rhs is None:
-                    rhs = self.rhs(omega)
-                if parallel(f, rhs[:, self.columns.index(c.index)]) is not None:
-                    continue
+            if (
+                rhs is not None
+                and _reciprocal_scale(f, c.index, self.columns, rhs) is not None
+            ):
+                continue
             loads.append(f)
         if not loads:
             return np.zeros((len(functional), 0), complex)
