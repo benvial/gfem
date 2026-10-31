@@ -25,6 +25,10 @@ MKL solves that handle sequentially for good. The subclass records
 itself, with ``MKL_Set_Num_Threads_Local`` set to that count and the
 TaskManager suspended. Without the wrapper's private symbols or fields, the
 call is NGSolve's, on the caller's count.
+
+`PardisoFactors` refactorizes a direct handle's wrapper on its analysis: it
+gathers the new values straight into the wrapper's buffer and runs phase 22,
+or calls ``Update()`` when it cannot read the wrapper's private fields.
 """
 
 from __future__ import annotations
@@ -34,16 +38,18 @@ import ctypes
 import functools
 import os
 import sys
+from collections.abc import Callable
 from typing import Any, ClassVar
 
 import ngsolve as ngs
+import numpy as np
 
 # ngsolve does not re-export SuspendTaskManager: NGSolve's own MKL PARDISO
 # wrapper (ngsolve.solvers.mkl_pardiso) imports it from pyngcore too
 from pyngcore import SuspendTaskManager
 
 from gfem._linalg import Symmetry
-from gfem._linalg.base import equals_its_transpose
+from gfem._linalg.base import equals_its_transpose, host_bytes
 
 #: gfem's flags for NGSolve's MKL PARDISO wrapper: MKL's OpenMP parallel METIS
 #: ordering (the same nested dissection and fill as serial METIS, with a
@@ -216,6 +222,105 @@ def _call_on_threads(solver: Any, phase: int, threads: int) -> bool:
     if error[0] != 0:
         raise RuntimeError(f"MKL Pardiso error in phase {phase}: {error[0]}")
     return True
+
+
+# --- Refactorizing a handle's wrapper ------------------------------------------------
+
+
+class PardisoFactors:
+    """A PARDISO inverse of a direct handle, refactorized on its own plan.
+
+    New values are gathered straight into the wrapper's buffer, and PARDISO
+    runs its numeric factorization (phase 22) on the analysis it has. The
+    gather index is built at the first refactorization, so an inverse
+    factored once never builds it; a wrapper gfem cannot gather into (one
+    without the private attributes this reads, or another buffer order)
+    refactorizes by NGSolve's ``Update()``. Works on any NGSolve
+    ``MKLPardiso``, not only gfem's registered types.
+
+    Holds no lock: its handle calls it under its own.
+    """
+
+    def __init__(self, inverse: ngs.BaseMatrix, free: np.ndarray) -> None:
+        """Hold ``inverse``, factored on the matrix's ``free`` rows and columns."""
+        #: The inverse a solve applies.
+        self.inverse = inverse
+        self._free = free
+        #: Built at the first `new_values` (`_built`); ``None`` once built
+        #: refactorizes by ``Update()``.
+        self._gather: np.ndarray | None = None
+        self._built = False
+
+    def new_values(
+        self, matrix: ngs.BaseMatrix, write: Callable[[ngs.BaseMatrix], None]
+    ) -> None:
+        """``write(matrix)``, then factorize its new values on the plan.
+
+        The first call builds the gather index, before the values change:
+        the wrapper's buffer then holds the factored matrix's free upper
+        triangle, which the index is checked against.
+        """
+        if not self._built:
+            self._gather = self._gather_index(matrix)
+            self._built = True
+        write(matrix)
+        if self._gather is None:
+            self.inverse.Update()
+            return
+        # the index is in range (checked when built); "clip" writes straight
+        # into the buffer, "raise" through a temporary copy
+        buffer = self.inverse._data_np  # noqa: SLF001
+        values = np.asarray(matrix.CSR()[0])
+        np.take(values, self._gather, out=buffer, mode="clip")
+        self.inverse._call_pardiso(22)  # noqa: SLF001
+
+    @property
+    def nbytes(self) -> int:
+        """Host memory of the factors and the gather index, in bytes.
+
+        The gather index counts once built (at the first `new_values`).
+        """
+        factors = host_bytes(self.inverse)
+        params = getattr(self.inverse, "_params", None)
+        if not factors and params is not None:
+            # NGSolve's PARDISO wrapper reports no memory: take PARDISO's own
+            # permanent (iparm[15]) and factor (iparm[16]) memory, in KiB
+            factors = 1024 * (int(params[15]) + int(params[16]))
+        return factors + (0 if self._gather is None else self._gather.nbytes)
+
+    def _gather_index(self, matrix: ngs.BaseMatrix) -> np.ndarray | None:
+        """Where PARDISO's buffer reads ``matrix``'s values, or ``None``.
+
+        NGSolve's wrapper factors the free-row, free-column upper triangle in
+        CSR order (its ``get_csr``): these are that triangle's positions in
+        the matrix's value vector. Checked once against the wrapper's buffer
+        of the factored values; ``None`` (refactorize by ``Update()``) on a
+        mismatch, for a wrapper without ``_data_np`` and ``_call_pardiso``,
+        or when reading the matrix or the wrapper fails: it never raises.
+        """
+        try:
+            return self._checked_gather_index(matrix)
+        except Exception:  # noqa: BLE001 - any failure falls back to Update()
+            return None
+
+    def _checked_gather_index(self, matrix: ngs.BaseMatrix) -> np.ndarray | None:
+        buffer = getattr(self.inverse, "_data_np", None)
+        if not isinstance(buffer, np.ndarray) or not hasattr(
+            self.inverse, "_call_pardiso"
+        ):
+            return None
+        data, cols, rowptr = matrix.CSR()
+        cols = np.asarray(cols).astype(np.int64)
+        rowptr = np.asarray(rowptr).astype(np.int64)
+        rows = np.repeat(np.arange(matrix.height), np.diff(rowptr))
+        free = self._free
+        index = np.flatnonzero(free[rows] & free[cols] & (cols >= rows))
+        index = index.astype(np.int32 if len(cols) < 2**31 else np.int64)
+        if index.size != buffer.size or not np.array_equal(
+            np.asarray(data)[index], buffer
+        ):
+            return None
+        return index
 
 
 # --- MKL's OpenMP threads ------------------------------------------------------------
