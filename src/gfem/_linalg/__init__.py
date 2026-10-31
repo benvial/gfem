@@ -69,14 +69,14 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, Self, get_args, runtime_checkable
 
 import ngsolve as ngs
 import numpy as np
 
 if TYPE_CHECKING:
     from gfem._linalg.pieces import PieceSum
-    from gfem.options import PetscOptions, PetscValue
+    from gfem.options import PetscOptions, PetscValue, SolverOptions
 
 __all__ = [
     "KINDS",
@@ -84,6 +84,7 @@ __all__ = [
     "Kind",
     "Operator",
     "Refactorable",
+    "ResolvedLinearSolver",
     "Symmetry",
     "factorize",
     "low_rank_update",
@@ -92,8 +93,9 @@ __all__ = [
 ]
 
 Symmetry = Literal["complex_symmetric", "hermitian", "general"]
-Kind = Literal["direct", "bddc_gmres", "cudss", "petsc"]
-KINDS: tuple[str, ...] = ("direct", "bddc_gmres", "petsc")
+#: A linear solver a problem can use (`ResolvedLinearSolver.kind`).
+Kind = Literal["direct", "bddc_gmres", "petsc"]
+KINDS: tuple[Kind, ...] = get_args(Kind)
 #: Most Krylov iterations of an iterative solve (as Palace).
 MAXITER = 400
 
@@ -121,7 +123,11 @@ class Operator:
 
 
 class Handle(Protocol):
-    """A prepared operator: solve many right-hand sides with one setup."""
+    """A prepared operator: solve many right-hand sides with one setup.
+
+    ``kind`` names the backend: a `Kind`, or ``"cudss"`` (the ``direct``
+    linear solver on a GPU).
+    """
 
     kind: str
     symmetry: Symmetry
@@ -256,9 +262,10 @@ def prepare(
         reuse_preconditioner: Iterative backends: keep the preconditioner
             across `refactorize` (preconditioner reuse); False sets it up
             again at every refactorization. Direct backends ignore it.
-        petsc_options: ``SolverOptions.petsc_options``: ``kind="petsc"``
-            reads its linear-solver options (`gfem.options.split_petsc_options`)
-            over gfem's defaults; other linear solvers ignore it.
+        petsc_options: The linear solver's PETSc options (the linear half of
+            ``SolverOptions.petsc_options``, `ResolvedLinearSolver`):
+            ``kind="petsc"`` reads them over gfem's defaults; other linear
+            solvers ignore them.
 
     Raises:
         NotImplementedError: The backend is not available, or the GPU
@@ -289,7 +296,6 @@ def prepare(
         )
     if kind == "petsc":
         from gfem import _petsc
-        from gfem.options import split_petsc_options
 
         _petsc.require_petsc("linear_solver")
         from gfem._linalg.petsc import PetscHandle
@@ -299,7 +305,7 @@ def prepare(
             symmetry,
             tolerance=tolerance,
             maxiter=maxiter,
-            options=split_petsc_options(tuple(dict(petsc_options).items()))[0],
+            options=tuple(dict(petsc_options).items()),
             reuse=reuse_preconditioner,
         )
     if kind == "direct":
@@ -322,6 +328,94 @@ def prepare(
         f"linear_solver={kind!r} is not available in this version of gfem; use "
         f"one of {', '.join(repr(k) for k in KINDS)}."
     )
+
+
+@dataclasses.dataclass(frozen=True)
+class ResolvedLinearSolver:
+    """A problem's linear solver, resolved once from its `gfem.SolverOptions`.
+
+    A rule resolves it at construction, before any assembly, and prepares
+    every operator of its solve with it; callers pass only what changes per
+    call.
+
+    Attributes:
+        kind: The linear solver, never ``"auto"``.
+        device: ``SolverOptions.device``.
+        threads: ``SolverOptions.threads``.
+        tolerance: ``SolverOptions.tolerance``, the prepared default.
+        petsc_options: The linear half of ``SolverOptions.petsc_options``
+            (`gfem.options.split_petsc_options`), split once.
+    """
+
+    kind: Kind
+    device: str
+    threads: int | None
+    tolerance: float
+    petsc_options: PetscOptions
+
+    @classmethod
+    def resolve(cls, options: SolverOptions, *, default: Kind, problem: str) -> Self:
+        """The linear solver of ``options`` for a ``problem`` problem.
+
+        Args:
+            options: The solver options.
+            default: The problem type's linear solver for ``"auto"``.
+            problem: The problem type, for the error message.
+
+        Raises:
+            NotImplementedError: The linear solver is not available.
+            gfem.SolverUnavailableError: ``linear_solver="petsc"`` and PETSc
+                cannot be used.
+        """
+        from gfem.options import split_petsc_options
+
+        name = options.linear_solver
+        kind = default if name == "auto" else name
+        if kind not in KINDS:  # pragma: no cover - SolverOptions validates
+            raise NotImplementedError(
+                f"linear_solver={name!r} is not available for {problem} problems "
+                "in this version of gfem; use one of "
+                f"{', '.join(repr(k) for k in KINDS)}."
+            )
+        if kind == "petsc":  # before any assembly, and before any worker
+            from gfem import _petsc
+
+            _petsc.require_petsc("linear_solver")
+        pairs = tuple(dict(options.petsc_options).items())
+        return cls(
+            kind=kind,
+            device=options.device,
+            threads=options.threads,
+            tolerance=options.tolerance,
+            petsc_options=split_petsc_options(pairs)[0],
+        )
+
+    def prepare(
+        self,
+        operator: Operator,
+        *,
+        symmetry: Symmetry,
+        width: int = 1,
+        solves: int = 1,
+        tolerance: float | None = None,
+        reuse_preconditioner: bool = True,
+    ) -> Handle:
+        """Assemble ``operator`` and set up this linear solver (`prepare`).
+
+        ``tolerance`` overrides the prepared default (adjoint solves).
+        """
+        return prepare(
+            operator,
+            symmetry=symmetry,
+            kind=self.kind,
+            device=self.device,
+            tolerance=self.tolerance if tolerance is None else tolerance,
+            width=width,
+            solves=solves,
+            threads=self.threads,
+            reuse_preconditioner=reuse_preconditioner,
+            petsc_options=self.petsc_options,
+        )
 
 
 def factorize(matrix) -> Handle:

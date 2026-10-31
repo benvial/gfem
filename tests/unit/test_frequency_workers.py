@@ -18,7 +18,7 @@ import structured_meshes as sm
 from solver_misses import cannot_converge_at
 
 import gfem
-from gfem._engine import driven, workers
+from gfem._engine import workers
 from gfem._engine.driven import DrivenRule
 from gfem._linalg import prepare
 
@@ -72,7 +72,7 @@ def _count_prepares(monkeypatch) -> list[int]:
         calls.append(1)
         return prepare(*args, **kwargs)
 
-    monkeypatch.setattr(driven, "prepare", spy)
+    monkeypatch.setattr("gfem._linalg.prepare", spy)
     return calls
 
 

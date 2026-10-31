@@ -145,7 +145,6 @@ def _designs(line, k, seed=0):
 
 
 def test_the_backward_keeps_and_needs_no_full_size_solver(line, monkeypatch):
-    from gfem._engine import driven
     from gfem._engine.cache import ENTRIES
 
     eps = _designs(line, 1)[0]
@@ -164,7 +163,7 @@ def test_the_backward_keeps_and_needs_no_full_size_solver(line, monkeypatch):
     def refuse(*_, **__):
         raise AssertionError("the frozen-basis backward prepared a full solver")
 
-    monkeypatch.setattr(driven, "prepare", refuse)
+    monkeypatch.setattr("gfem._linalg.prepare", refuse)
     grad = pullback(jnp.ones_like(value))[0]
     monkeypatch.undo()
     np.testing.assert_allclose(grad, jax.grad(objective)(eps), rtol=RTOL)

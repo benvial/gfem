@@ -238,7 +238,7 @@ def test_bddc_gmres_is_the_default_and_matches_direct(line):
     problem = gfem.Driven(frequency=[3e9, 4e9])
     direct = np.asarray(_s(line, problem).s.values)
     rule = DrivenRule(line, problem, gfem.SolverOptions())
-    assert rule.kind == "bddc_gmres"
+    assert rule.linear.kind == "bddc_gmres"
     outputs, entry = rule.forward(line, keep=False)
     assert entry is None
     np.testing.assert_allclose(outputs["s"], direct, atol=1e-6)
@@ -286,7 +286,7 @@ def _count_prepares(monkeypatch) -> list[int]:
         calls.append(1)
         return prepare(*args, **kwargs)
 
-    monkeypatch.setattr(driven, "prepare", spy)
+    monkeypatch.setattr("gfem._linalg.prepare", spy)
     return calls
 
 

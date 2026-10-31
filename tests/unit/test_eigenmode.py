@@ -39,7 +39,6 @@ import gfem
 from gfem._eigen import rule as eigen_rule
 from gfem._eigen.operator import RESHIFT_SOLVES
 from gfem._eigen.seed import MIN_SUBSPACE, seed_operator
-from gfem._engine import eigen as engine_eigen
 from gfem._engine import terms
 from gfem._engine.driven import driven_operator
 from gfem._engine.eigen import projector
@@ -266,7 +265,7 @@ def _count_shift_prepares(monkeypatch) -> list[int]:
             calls.append(1)
         return prepare(*args, **kwargs)
 
-    monkeypatch.setattr(engine_eigen, "prepare", spy)
+    monkeypatch.setattr("gfem._linalg.prepare", spy)
     return calls
 
 

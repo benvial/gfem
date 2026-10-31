@@ -12,13 +12,14 @@ a mode per element.
 from __future__ import annotations
 
 import functools
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 
 import ngsolve as ngs
 import numpy as np
 import scipy.constants as const
 import scipy.sparse as sp
 
+from gfem import _linalg
 from gfem._eigen.operator import EigenOperator, NonPolynomial, split
 from gfem._eigen.seed import MIN_SUBSPACE
 from gfem._engine import quadrature, terms
@@ -26,10 +27,9 @@ from gfem._engine.cache import discretization
 from gfem._engine.coefficients import coefficient, element_tensors
 from gfem._engine.domain import domain_key, h1_space, pec_surfaces
 from gfem._engine.driven import DrivenOperator, real_space
-from gfem._linalg import Handle, Operator, prepare
+from gfem._linalg import Handle, Operator, ResolvedLinearSolver
 from gfem._linalg.base import free_mask
 from gfem.model import Model
-from gfem.options import PetscOptions, PetscValue
 
 __all__ = [
     "DivFreeProjector",
@@ -48,17 +48,13 @@ def eigen_operator(
     op: DrivenOperator,
     sigma: float,
     *,
-    kind: str,
-    device: str,
-    threads: int | None,
+    linear: ResolvedLinearSolver,
     tolerance: float,
-    petsc_options: Mapping[str, PetscValue] | PetscOptions = (),
 ) -> EigenOperator:
     """The eigen operator ``T(k)`` of the driven operator, shifted at ``sigma``.
 
-    Nothing is factorized until the handle is first used. ``kind``,
-    ``device``, ``threads``, ``tolerance`` and ``petsc_options`` configure
-    the linear solver of every shift (`gfem._linalg`).
+    Nothing is factorized until the handle is first used. ``linear`` at
+    ``tolerance`` is the linear solver of every shift (`gfem._linalg`).
     """
     space, scale = op.space, op.built.scale
     classes = split(op.pieces, scale, sigma)
@@ -74,16 +70,12 @@ def eigen_operator(
         The seed solve applies it `MIN_SUBSPACE` times or more; a refinement
         reshift `gfem._eigen.operator.RESHIFT_SOLVES` times.
         """
-        return prepare(
+        return linear.prepare(
             t,
             symmetry="complex_symmetric",
-            kind=kind,
-            device=device,
-            threads=threads,
-            tolerance=tolerance,
             width=1,
             solves=solves,
-            petsc_options=petsc_options,
+            tolerance=tolerance,
         )
 
     return EigenOperator(
@@ -248,7 +240,7 @@ class DivFreeProjector:
         laplace = ngs.BilinearForm(h1, symmetric=True)
         laplace += (eps * ngs.grad(phi)) * ngs.grad(psi) * dx
         laplace += (_REGULARIZATION / diameter**2) * phi * psi * dx
-        self._laplace = prepare(
+        self._laplace = _linalg.prepare(
             Operator(laplace, h1.FreeDofs()), symmetry="hermitian", kind="direct"
         )
 

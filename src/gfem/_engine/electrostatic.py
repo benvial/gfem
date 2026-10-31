@@ -27,7 +27,6 @@ import ngsolve as ngs
 import numpy as np
 import scipy.constants
 
-from gfem import _petsc
 from gfem._adjoint import adjoint_tolerance
 from gfem._boundaries import PEC, Conductor, sheet_of
 from gfem._engine import quadrature
@@ -39,7 +38,7 @@ from gfem._engine.mesh import EngineMesh
 from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair, ShapeTerm
 from gfem._field import FieldMap
-from gfem._linalg import KINDS, Handle, Operator, prepare
+from gfem._linalg import Handle, Kind, Operator, ResolvedLinearSolver
 from gfem.mesh import Mesh
 from gfem.model import Model, check_surface
 from gfem.options import SolverOptions
@@ -49,7 +48,7 @@ from gfem.results import ElectrostaticResult, Field
 __all__ = ["ElectrostaticRule"]
 
 #: The linear solver for ``linear_solver="auto"``: CG + BDDC.
-DEFAULT_SOLVER = "bddc_gmres"
+DEFAULT_SOLVER: Kind = "bddc_gmres"
 
 
 class ElectrostaticRule:
@@ -81,16 +80,10 @@ class ElectrostaticRule:
             raise TypeError(f"Expected gfem.Electrostatic, got {problem!r}.")
         self.problem = problem
         self.options = options
-        kind = options.linear_solver
-        self.kind = DEFAULT_SOLVER if kind == "auto" else kind
-        if self.kind not in KINDS:
-            raise NotImplementedError(
-                f"linear_solver={kind!r} is not available for electrostatic "
-                "problems in this version of gfem; use one of "
-                f"{', '.join(repr(k) for k in KINDS)}."
-            )
-        if self.kind == "petsc":  # before any assembly
-            _petsc.require_petsc("linear_solver")
+        # before any assembly
+        self.linear = ResolvedLinearSolver.resolve(
+            options, default=DEFAULT_SOLVER, problem="electrostatic"
+        )
         for b in model.boundaries:
             if sheet_of(b) is not None:
                 raise NotImplementedError(
@@ -181,15 +174,11 @@ class ElectrostaticRule:
         u, v = space.TnT()
         form = ngs.BilinearForm(space, symmetric=True)
         form += eps * ngs.grad(u) * ngs.grad(v) * quadrature.dx(order)
-        return prepare(
+        return self.linear.prepare(
             Operator(form, space.FreeDofs()),
             symmetry="hermitian",
-            kind=self.kind,
-            device=self.options.device,
-            threads=self.options.threads,
-            tolerance=tolerance,
             width=len(self.problem.terminals),
-            petsc_options=self.options.petsc_options,
+            tolerance=tolerance,
         )
 
     def _space(self, model: Model) -> tuple[ngs.FESpace, EngineMesh]:
