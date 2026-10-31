@@ -44,7 +44,7 @@ __all__ = [
     "PARALLEL_RTOL",
     "CotangentSplit",
     "PortNetwork",
-    "parallel",
+    "parallel_scale",
     "resistance",
     "split_cotangent",
 ]
@@ -62,7 +62,7 @@ def resistance(port: LumpedPort | WavePort) -> float:
     return math.nan if r is None else r
 
 
-def parallel(functional: np.ndarray, excitation: np.ndarray) -> complex | None:
+def parallel_scale(functional: np.ndarray, excitation: np.ndarray) -> complex | None:
     """``c`` with ``functional = c excitation`` to `PARALLEL_RTOL`, else ``None``.
 
     True for every lumped port and for a wave port whose mode is real up to
@@ -85,7 +85,7 @@ def _reciprocal_scale(
     """``c`` if port ``i`` is excited, its S functional ``c`` times its excitation.
 
     Its adjoint is then ``c`` times its own solution (reciprocity). ``None``
-    for a port that is not excited or not parallel (`parallel`).
+    for a port that is not excited or not parallel (`parallel_scale`).
 
     Args:
         functional: ``(N,)``, port i's S functional.
@@ -95,7 +95,7 @@ def _reciprocal_scale(
     """
     if i not in columns:
         return None
-    return parallel(functional, rhs[:, columns.index(i)])
+    return parallel_scale(functional, rhs[:, columns.index(i)])
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -131,7 +131,7 @@ def split_cotangent(
     Row i adds ``functional[:, i] ⊗ ct_i`` to the loads, or, with
     reciprocity, ``c x_m ⊗ ct_i`` to the free columns when port i is the
     excited column m and its S functional is ``c`` times its excitation
-    (`parallel`). A row without a cotangent is skipped (even where its
+    (`parallel_scale`). A row without a cotangent is skipped (even where its
     functional is undefined); an undefined row with one marks its nonzero
     columns undefined and adds nothing.
 
@@ -213,17 +213,16 @@ class PortNetwork:
             columns: The excited ports' indices.
             n_freq: The output grid's size.
         """
-        op = operator
         names = model.port_names
         columns = list(columns)
         n_ports, width = len(names), len(columns)
         excitation: list[AffineTerm] = []
         outputs: list[AffineTerm] = []
-        lumped = [names.index(data.port.name) for data in op.ports]
+        lumped = [names.index(data.port.name) for data in operator.ports]
         if lumped:
             vectors = [
-                terms.port_vectors(op.space, op.built, op.order, data)
-                for data in op.ports
+                terms.port_vectors(operator.space, operator.built, operator.order, data)
+                for data in operator.ports
             ]
             r = np.array([resistance(model.ports[i]) for i in lumped])
             fed = [(k, columns.index(i)) for k, i in enumerate(lumped) if i in columns]
@@ -234,7 +233,7 @@ class PortNetwork:
                     select[a, pos] = 1.0
 
                 def lumped_rhs(w: float, select=select) -> np.ndarray:
-                    return 1j * op.wavenumber(w) * select
+                    return 1j * operator.wavenumber(w) * select
 
                 excitation.append(AffineTerm(b, lumped_rhs))
             rows = np.zeros((n_ports, len(lumped)))
@@ -358,5 +357,4 @@ class PortNetwork:
 
         The system operator counts ``W``'s (`SystemOperator.nbytes`).
         """
-        terms_ = [*self.excitation, *self.outputs]
-        return sum(int(t.vectors.nbytes) for t in terms_)
+        return sum(int(t.vectors.nbytes) for t in (*self.excitation, *self.outputs))

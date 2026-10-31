@@ -103,34 +103,34 @@ class Derivative:
     """``dc_t / dp``: how one material property enters one term's coefficient.
 
     Attributes:
-        values: ``dc_t / dp`` per tetrahedron (gfem order), or a constant;
+        declared: ``dc_t / dp`` per tetrahedron (gfem order), or a constant;
             or a function of no arguments that returns it, called by the
             material pass only (the pieces are built on every forward, their
             derivatives are read by a backward pass only).
         holomorphic: Whether ``c_t`` is holomorphic in a complex property
             value. If not, it is a function of one real quantity ``r`` (the
             electrostatic permittivity reads ``r = Re(eps_r)``), and
-            ``values`` is ``dc_t / dr``.
+            ``declared`` is ``dc_t / dr``.
         chain: For a non-holomorphic ``c_t``, ``r = Re(chain * p)`` for a
             complex value ``p`` (``None``: ``chain = 1``), as a function of
             no arguments. The cotangent is then ``chain * Re(sum ct *
             dy/dr)``, which is JAX's convention (``dJ/dRe(p) - i
             dJ/dIm(p)``); real when ``chain`` is 1.
-        length_power: The power of the mesh length unit that ``values``
+        length_power: The power of the mesh length unit that ``declared``
             leaves out of the coefficient: the term's integrals are scaled by
             ``scale ** (term.length_power + length_power)``. 1 for the
             driven conductivity, whose coefficient ``eta0 sigma scale`` reads
             ``eta0`` per unit ``sigma``.
     """
 
-    values: Callable[[], np.ndarray | float | complex] | float | complex
+    declared: Callable[[], np.ndarray | float | complex] | float | complex
     holomorphic: bool
     chain: Callable[[], np.ndarray] | None = None
     length_power: int = 0
 
-    def value(self) -> np.ndarray | float | complex:
-        """``dc_t / dp`` (`values`, evaluated if it is a function)."""
-        return self.values() if callable(self.values) else self.values
+    def evaluated(self) -> np.ndarray | float | complex:
+        """``dc_t / dp`` (`declared`, evaluated if it is a function)."""
+        return self.declared() if callable(self.declared) else self.declared
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -653,7 +653,7 @@ def _material_sensitivity(
             key = (term.name, term.length_power + derivative.length_power)
             if key not in integrals:
                 integrals[key] = _element_pass(model, pairs, term, key[1])
-            part = derivative.value() * integrals[key]
+            part = derivative.evaluated() * integrals[key]
             if not derivative.holomorphic:
                 part = np.real(part)
                 if derivative.chain is not None:
