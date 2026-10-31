@@ -22,7 +22,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Self
 
 import numpy as np
 
@@ -91,16 +91,32 @@ class SystemOperator:
         self._adjoint_sweep: SystemSweep | None = None
 
     def sweep(
-        self, *, solves: int = 1, reuse_preconditioner: bool = True
+        self,
+        *,
+        solves: int = 1,
+        reuse_preconditioner: bool = True,
+        tolerance: float | None = None,
     ) -> SystemSweep:
         """One base handle for a sweep's frequencies (see `SystemSweep`).
 
         ``reuse_preconditioner=False`` sets an iterative backend's
-        preconditioner up at every frequency, and ``solves`` (a uniform
-        sweep's frequencies) is the solve calls the base is expected to serve
+        preconditioner up at every frequency, ``solves`` (a uniform sweep's
+        frequencies) is the solve calls the base is expected to serve and
+        ``tolerance`` overrides the linear solver's (adjoint solves)
         (`gfem._linalg.ResolvedLinearSolver.prepare`).
         """
-        return self._sweep(solves=solves, reuse_preconditioner=reuse_preconditioner)
+        return SystemSweep(
+            self.operator_at,
+            functools.partial(self._system_handle, borrow=True),
+            functools.partial(
+                self._linear.prepare,
+                symmetry="complex_symmetric",
+                width=self._width,
+                solves=solves,
+                tolerance=tolerance,
+                reuse_preconditioner=reuse_preconditioner,
+            ),
+        )
 
     def solve_adjoint(self, n: int, omega: float, loads: np.ndarray) -> np.ndarray:
         """Solve the adjoint loads ``(ndof, q)`` of frequency ``n`` at ``ω``.
@@ -162,19 +178,6 @@ class SystemOperator:
             diagonal.append(d)
         return np.concatenate(columns, axis=1), np.diag(np.concatenate(diagonal))
 
-    def _sweep(self, **options: Any) -> SystemSweep:
-        """A sweep whose base is prepared with ``options`` (`linear.prepare`'s)."""
-        return SystemSweep(
-            self.operator_at,
-            functools.partial(self._system_handle, borrow=True),
-            functools.partial(
-                self._linear.prepare,
-                symmetry="complex_symmetric",
-                width=self._width,
-                **options,
-            ),
-        )
-
     def _system_handle(self, base: Handle, omega: float, *, borrow: bool) -> Handle:
         """A handle of ``A(ω) + W(ω)`` from a handle ``base`` of ``A(ω)``.
 
@@ -193,7 +196,7 @@ class SystemOperator:
         """
         if self._linear.device != "cpu":
             if self._adjoint_sweep is None:
-                self._adjoint_sweep = self._sweep(tolerance=self._adjoint_tolerance)
+                self._adjoint_sweep = self.sweep(tolerance=self._adjoint_tolerance)
             return self._adjoint_sweep.at(omega)
         if n not in self._handles:
             handle = self._linear.prepare(
