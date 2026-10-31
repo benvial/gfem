@@ -74,7 +74,7 @@ from gfem._boundaries import (
     sheet_of,
     surfaces_of,
 )
-from gfem._engine import terms, workers
+from gfem._engine import sweep_outputs, terms, workers
 from gfem._engine.cache import Entry, discretization
 from gfem._engine.domain import domain_key, em_region, hcurl_space, pec_surfaces
 from gfem._engine.fields import fe_space
@@ -82,8 +82,9 @@ from gfem._engine.mesh import EngineMesh
 from gfem._engine.port_network import PortNetwork, resistance, split_cotangent
 from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair, ShapeTerm, is_sheet
+from gfem._engine.sweep_outputs import SweepOutputs
 from gfem._engine.system_operator import SystemOperator
-from gfem._engine.wave_ports import WavePortCoupling, wave_port_couplings
+from gfem._engine.wave_ports import wave_port_couplings
 from gfem._linalg import Kind, ResolvedLinearSolver
 from gfem._sweep.adaptive import AffineSystem, AffineTerm, adaptive_sweep
 from gfem.errors import (
@@ -99,7 +100,6 @@ from gfem.results import (
     DrivenResult,
     Field,
     NetworkParameters,
-    PortModeField,
     PortModeResult,
     ReducedFields,
     SweepInfo,
@@ -238,23 +238,9 @@ class DrivenRule:
     form = "driven"
     #: Material properties the driven forms read.
     reads = frozenset({"eps_r", "mu_r", "tan_delta", "conductivity"})
-    #: Outputs whose cotangents the backward pass handles. ``z_ref`` and the
-    #: wave ports' modes (``port_*``) are constant in every differentiable
-    #: input: a design may not touch a wave port face (`unsupported_input`).
-    #: An adaptive sweep's kept fields differentiate through their reduced
-    #: coordinates; its basis ``e_basis`` is frozen, so not differentiable.
-    differentiable_outputs = frozenset(
-        {
-            "s",
-            "z_ref",
-            "e_field",
-            "e_coordinates",
-            "port_gamma",
-            "port_z_pv",
-            "port_residual",
-            "port_solved",
-        }
-    )
+    #: Outputs whose cotangents the backward pass handles (a design may not
+    #: touch a wave port face: `unsupported_input`).
+    differentiable_outputs = sweep_outputs.DIFFERENTIABLE
 
     def __init__(self, model: Model, problem: Driven, options: SolverOptions) -> None:
         """Check that the problem fits the model (see `gfem.Driven`).
@@ -331,13 +317,10 @@ class DrivenRule:
         self._mesh = model.mesh
         self._excluded = model._domain.excluded  # noqa: SLF001
         #: Whether a uniform sweep whose linear solve does not converge keeps
-        #: what it solved for `partial_result`: set by `gfem.solve`'s eager
-        #: path and by a frequency worker, never under JAX, where no caller
-        #: reads it.
+        #: what it solved on its error, for `partial_result`: set by
+        #: `gfem.solve`'s eager path and by a frequency worker, never under
+        #: JAX, where no caller reads it.
         self.keeps_partial = False
-        #: What the last forward's uniform sweep solved before a linear solve
-        #: did not converge (see `partial_result`); only with `keeps_partial`.
-        self._partial: _Partial | None = None
         _check_low_frequency(model, problem.frequency, stacklevel=3)
 
     def operator(self, model: Model) -> DrivenOperator:
@@ -373,7 +356,7 @@ class DrivenRule:
             linear_solver='petsc' with ksp_type preonly)}``, plus
             ``"e_field"``, ``(ndof, n_kept * n_excited)`` complex, when
             fields are kept (frequency-major), the wave ports' modes (see
-            `_port_outputs`) when there are wave ports, and the cache entry
+            `SweepOutputs`) when there are wave ports, and the cache entry
             (``fields["solution"]``, ``(ndof, n_freq * n_excited)``,
             frequency-major) or ``None``.
 
@@ -382,11 +365,10 @@ class DrivenRule:
                 A uniform sweep stops at that frequency (each frequency
                 worker's block at its own first one), sets the error's
                 ``frequency`` and ``unsolved``, and keeps the outputs at
-                the solved frequencies for `partial_result` (with
-                `keeps_partial`). An adaptive sweep sets ``frequency`` to the
-                sample's.
+                the solved frequencies on the error for `partial_result`
+                (with `keeps_partial`). An adaptive sweep sets ``frequency``
+                to the sample's.
         """
-        self._partial = None
         if self.adaptive:
             return self._forward_adaptive(model, keep=keep)
         frequencies = self.problem.frequency
@@ -420,22 +402,16 @@ class DrivenRule:
         # no backward pass will prepare from the pieces
         if not keep or miss is not None:
             system.free()
-        outputs = {
-            "s": ports.scattering(s)[:n_solved],
-            "z_ref": ports.z_ref[:n_solved],
-            "iterations": iterations,
-            # the port mode fields' coordinates are trimmed in `_port_modes`
-            **{
-                name: value[:n_solved] if isinstance(value, np.ndarray) else value
-                for name, value in self._port_outputs(ports.waves).items()
-            },
-        }
-        if fields:
-            outputs["e_field"] = np.concatenate(fields, axis=1)
+        out = SweepOutputs.uniform(
+            tuple(range(n_solved)),
+            s=ports.scattering(s),
+            z_ref=ports.z_ref,
+            iterations=iterations,
+            e_field=np.concatenate(fields, axis=1) if fields else None,
+            waves=ports.waves,
+        )
         if miss is not None:
-            self._raise_unsolved(
-                outputs, tuple(range(n_solved)), [(n_solved, str(miss))], miss
-            )
+            self._raise_unsolved(out, [(n_solved, str(miss))], miss)
         entry = None
         if keep:
             entry = Entry(
@@ -443,7 +419,7 @@ class DrivenRule:
                 handle=_Kept(system, ports),
                 fields={"solution": np.concatenate(solutions, axis=1)},
             )
-        return outputs, entry
+        return out.outputs(), entry
 
     def _forward_workers(
         self, model: Model, *, keep: bool
@@ -483,62 +459,49 @@ class DrivenRule:
             [_describe(problem.frequency) for problem in problems],
             threads=threads,
         )
-        outputs: dict[str, object] = {
-            "s": np.concatenate([r["s"] for r in results]),
-            "z_ref": np.concatenate([r["z_ref"] for r in results]),
-            "iterations": [its for r in results for its in r["iterations"]],
-        }
-        kept = [r["e_field"] for r in results if "e_field" in r]
-        if kept:
-            outputs["e_field"] = np.concatenate(kept, axis=1)
+        out = SweepOutputs.join(
+            [(block, r[0]) for block, r in zip(indices, results, strict=True)]
+        )
         # each block stopped at its first miss: its solved rows lead it
-        n_solved = [len(r["s"]) for r in results]
         misses = [
-            (int(block[n]), r["miss"]["message"])
-            for block, n, r in zip(indices, n_solved, results, strict=True)
-            if "miss" in r
+            (int(block[len(r[0].rows)]), r[2])
+            for block, r in zip(indices, results, strict=True)
+            if r[2] is not None
         ]
         if misses:
-            solved = tuple(
-                int(i)
-                for block, n in zip(indices, n_solved, strict=True)
-                for i in block[:n]
-            )
-            self._raise_unsolved(outputs, solved, misses)
+            self._raise_unsolved(out, misses)
         entry = None
         if keep:
-            solution = np.concatenate([r["solution"] for r in results], axis=1)
+            solution = np.concatenate([r[1] for r in results], axis=1)
             entry = Entry(
                 physics=self.physics,
                 handle=None,
                 fields={"solution": solution},
             )
-        return outputs, entry
+        return out.outputs(), entry
 
     def _raise_unsolved(
         self,
-        outputs: dict[str, object],
-        solved: tuple[int, ...],
+        outputs: SweepOutputs,
         misses: list[tuple[int, str]],
         cause: BaseException | None = None,
     ) -> NoReturn:
         """Raise a uniform sweep's `LinearSolverConvergenceError`.
 
-        With `keeps_partial`, keeps ``outputs``, the forward outputs at the
-        grid indices ``solved`` only, for `partial_result`.
+        With `keeps_partial`, the error keeps ``outputs`` for
+        `partial_result`.
 
         Args:
-            outputs: The forward outputs over the solved frequencies.
-            solved: Grid indices of the solved frequencies, in order.
+            outputs: The forward outputs at the solved frequencies (its
+                rows).
             misses: ``(grid index, the linear solver's message)`` of each
                 frequency where a block's linear solve did not converge
                 (one per frequency worker that stopped).
             cause: The linear solver's error, when there is one.
         """
         frequencies = self.problem.frequency
+        solved = outputs.rows
         first, reason = min(misses)
-        if self.keeps_partial:
-            self._partial = _Partial(solved, outputs, reason)
         where = "there"
         if len(misses) > 1:
             stops = " and ".join(f"{frequencies[i]:g} Hz" for i, _ in sorted(misses))
@@ -547,24 +510,27 @@ class DrivenRule:
             f"At {frequencies[first]:g} Hz, {reason} The uniform sweep stopped "
             f"{where}, with {len(solved)} of {len(frequencies)} frequencies solved."
         )
-        raise LinearSolverConvergenceError(
+        err = LinearSolverConvergenceError(
             message,
             frequency=frequencies[first],
             unsolved=tuple(f for i, f in enumerate(frequencies) if i not in solved),
-        ) from cause
+        )
+        if self.keeps_partial:
+            vars(err)["_partial"] = _Partial(outputs, reason)
+        raise err from cause
 
-    def partial_result(self) -> DrivenResult | None:
-        """The partial result of the last forward, if its uniform sweep missed.
+    def partial_result(self, err: LinearSolverConvergenceError) -> DrivenResult | None:
+        """The partial result ``err`` carries, if a uniform sweep raised it.
 
         `gfem.solve`'s eager path sets it as the error's ``result``, outside
-        any JAX host callback. ``None`` when the last forward solved every
-        frequency, was adaptive, or solved none. It is read once: the
-        outputs it was built from are dropped.
+        any JAX host callback. ``None`` when the forward was adaptive, solved
+        none, or did not keep it (`keeps_partial`). It is read once: the
+        outputs it was built from are dropped from ``err``.
         """
-        partial, self._partial = self._partial, None
-        if partial is None or not partial.solved:
+        partial = vars(err).pop("_partial", None)
+        if partial is None or not partial.outputs.rows:
             return None
-        return self._uniform_result(partial.outputs, partial.solved)
+        return self._uniform_result(partial.outputs)
 
     def _ports(self, model: Model) -> tuple[SystemOperator, PortNetwork]:
         """The system operator and the port network of one driven solve.
@@ -600,23 +566,6 @@ class DrivenRule:
             n_freq=len(self.problem.frequency),
         )
         return system, ports
-
-    def _port_outputs(self, waves: list[WavePortCoupling]) -> dict[str, object]:
-        """The wave ports' modes over the grid, ``(n_freq, n_wave_ports)`` each.
-
-        ``"port_gamma"`` (1/m), ``"port_z_pv"`` (ohm), ``"port_residual"``,
-        ``"port_solved"``, and the host-only ``"port_sweeps"`` (the
-        `gfem._sweep.port_mode.PortModeSweep` of each, for kept mode fields).
-        """
-        if not waves:
-            return {}
-        return {
-            "port_gamma": np.stack([c.sweep.gamma for c in waves], axis=1),
-            "port_z_pv": np.stack([c.sweep.z_pv for c in waves], axis=1),
-            "port_residual": np.stack([c.sweep.residual for c in waves], axis=1),
-            "port_solved": np.stack([c.sweep.solved for c in waves], axis=1),
-            "port_sweeps": [c.sweep for c in waves],
-        }
 
     def _forward_adaptive(
         self, model: Model, *, keep: bool
@@ -683,18 +632,7 @@ class DrivenRule:
                     z_scale=z_scale,
                 )
         system.free()  # the backward pass solves the reduced model only
-        outputs: dict[str, object] = {
-            "s": ports.scattering(sweep.outputs),
-            "z_ref": ports.z_ref,
-            "iterations": iterations,
-            "sweep": {
-                "samples": sweep.samples,
-                "errors": sweep.errors,
-                "converged": sweep.converged,
-                "basis_size": sweep.model.size,
-            },
-            **self._port_outputs(ports.waves),
-        }
+        kept_fields = None
         size = sweep.model.size
         if self.kept:
             coordinates = sweep.coordinates[list(self.kept)]  # (n_kept, n, n_exc)
@@ -704,8 +642,20 @@ class DrivenRule:
             basis[:, :size] = sweep.basis
             padded = np.zeros((len(coordinates), width), complex)
             padded[:, :size] = coordinates
-            outputs["e_basis"] = basis
-            outputs["e_coordinates"] = padded
+            kept_fields = (basis, padded)
+        out = SweepOutputs.adaptive(
+            s=ports.scattering(sweep.outputs),
+            z_ref=ports.z_ref,
+            iterations=iterations,
+            sweep={
+                "samples": sweep.samples,
+                "errors": sweep.errors,
+                "converged": sweep.converged,
+                "basis_size": sweep.model.size,
+            },
+            reduced=kept_fields,
+            waves=ports.waves,
+        )
         entry = None
         if keep:
             omegas = 2 * np.pi * np.asarray(frequencies)
@@ -722,7 +672,7 @@ class DrivenRule:
                     "coordinates": sweep.coordinates,
                 },
             )
-        return outputs, entry
+        return out.outputs(), entry
 
     def _padded_size(self) -> int:
         """Most basis vectors frozen samples give.
@@ -743,25 +693,14 @@ class DrivenRule:
                 "transformation and pass Driven(..., samples="
                 "result.sweep.sampled_frequencies), or use sweep='uniform'."
             )
-        n_f, n_p = len(self.problem.frequency), len(model.ports)
-        n_exc = len(self.excite)
-        specs = {
-            "s": jax.ShapeDtypeStruct((n_f, n_p, n_exc), jnp.complex128),
-            "z_ref": jax.ShapeDtypeStruct((n_f, n_p), jnp.float64),
-        }
-        n_w = len(self.wave_ports)
-        if n_w:
-            if self.kept:
-                raise NotImplementedError(
-                    "Driven(keep_fields=...) with wave ports cannot run under "
-                    "jax.jit, jax.grad or jax.vmap in this version of gfem (the "
-                    "port mode fields' size is known only after the solve). Keep "
-                    "no fields, or call gfem.solve outside the transformation."
-                )
-            specs["port_gamma"] = jax.ShapeDtypeStruct((n_f, n_w), jnp.complex128)
-            specs["port_z_pv"] = jax.ShapeDtypeStruct((n_f, n_w), jnp.float64)
-            specs["port_residual"] = jax.ShapeDtypeStruct((n_f, n_w), jnp.float64)
-            specs["port_solved"] = jax.ShapeDtypeStruct((n_f, n_w), jnp.bool_)
+        if self.wave_ports and self.kept:
+            raise NotImplementedError(
+                "Driven(keep_fields=...) with wave ports cannot run under "
+                "jax.jit, jax.grad or jax.vmap in this version of gfem (the "
+                "port mode fields' size is known only after the solve). Keep "
+                "no fields, or call gfem.solve outside the transformation."
+            )
+        ndof = None
         if self.kept:
             mesh = model.mesh
             still = Mesh(mesh.imported_nodes, mesh._topology)  # noqa: SLF001
@@ -769,18 +708,16 @@ class DrivenRule:
                 _, space, _ = fe_space(
                     still, self.regions, self._excluded, "hcurl", self.options.order
                 )
-            n_fields = len(self.kept) * n_exc
-            if self.adaptive:
-                n = self._padded_size()
-                specs["e_basis"] = jax.ShapeDtypeStruct((space.ndof, n), jnp.float64)
-                specs["e_coordinates"] = jax.ShapeDtypeStruct(
-                    (n_fields, n), jnp.complex128
-                )
-            else:
-                specs["e_field"] = jax.ShapeDtypeStruct(
-                    (space.ndof, n_fields), jnp.complex128
-                )
-        return specs
+            ndof = space.ndof
+        return SweepOutputs.specs(
+            n_freq=len(self.problem.frequency),
+            n_ports=len(model.ports),
+            n_excited=len(self.excite),
+            n_wave=len(self.wave_ports),
+            ndof=ndof,
+            n_fields=len(self.kept) * len(self.excite),
+            reduced=self._padded_size() if self.adaptive else None,
+        )
 
     def role(self, kind: tuple) -> str:
         """``"read"`` if the driven solve depends on input ``kind``.
@@ -987,100 +924,85 @@ class DrivenRule:
         """The public result from the forward outputs."""
         frequencies = self.problem.frequency
         kept = [(frequencies[n], port) for n in self.kept for port in self.excite]
+        out = SweepOutputs.read(outputs)
         if self.adaptive:
-            return self._adaptive_result(outputs, kept)
-        return self._uniform_result(outputs)
+            return self._adaptive_result(out, kept)
+        return self._uniform_result(out)
 
-    def _uniform_result(
-        self, outputs: dict, solved: tuple[int, ...] | None = None
-    ) -> DrivenResult:
-        """`result` of a uniform sweep over the grid indices ``solved``.
-
-        ``outputs`` holds the solved frequencies' rows only; ``solved=None``
-        is every frequency.
-        """
+    def _uniform_result(self, out: SweepOutputs) -> DrivenResult:
+        """`result` of a uniform sweep over the grid indices ``out.rows``."""
         grid = self.problem.frequency
-        frequencies = grid if solved is None else tuple(grid[i] for i in solved)
+        frequencies = tuple(grid[i] for i in out.rows)
         kept = [
-            (grid[n], port)
-            for n in self.kept
-            if solved is None or n in solved
-            for port in self.excite
+            (grid[n], port) for n in self.kept if n in out.rows for port in self.excite
         ]
-        e_fields = [
-            Field(
-                coefficients=outputs["e_field"][:, k],
-                mesh=self._mesh,
-                quantity="E",
-                unit="V/m",
-                space="hcurl",
-                order=self.options.order,
-                support=self.regions,
-                omega=jnp.asarray(2 * math.pi * f),
-                _excluded=self._excluded,
-            )
-            for k, (f, _) in enumerate(kept)
-        ]
+        coefficients = out.e_field
+        e_fields = []
+        if coefficients is not None:  # every kept frequency's fields are there
+            e_fields = [
+                Field(
+                    coefficients=coefficients[:, k],
+                    mesh=self._mesh,
+                    quantity="E",
+                    unit="V/m",
+                    space="hcurl",
+                    order=self.options.order,
+                    support=self.regions,
+                    omega=jnp.asarray(2 * math.pi * f),
+                    _excluded=self._excluded,
+                )
+                for k, (f, _) in enumerate(kept)
+            ]
         return DrivenResult(
             s=NetworkParameters(
-                values=jnp.asarray(outputs["s"]),
-                z_ref=jnp.asarray(outputs["z_ref"]),
+                values=jnp.asarray(out.s),
+                z_ref=jnp.asarray(out.z_ref),
                 frequency=frequencies,
                 ports=self.port_names,
                 excited=tuple(self.excite),
             ),
             e_fields=tuple(e_fields),
             kept=tuple(kept),
-            port_modes=self._port_modes(outputs, solved),
+            port_modes=self._port_modes(out),
             offsets=self.offsets,
         )
 
-    def _port_modes(
-        self, outputs: dict, solved: tuple[int, ...] | None = None
-    ) -> dict[str, PortModeResult]:
-        """The wave ports' `PortModeResult` from the forward outputs.
-
-        ``solved``: the grid indices the outputs' rows are at (``None``:
-        every frequency).
-        """
-        if not self.wave_ports:
+    def _port_modes(self, out: SweepOutputs) -> dict[str, PortModeResult]:
+        """The wave ports' `PortModeResult` at the grid indices ``out.rows``."""
+        ports = out.ports
+        if not self.wave_ports or ports is None:
             return {}
-        sweeps = outputs.get("port_sweeps")
         grid = self.problem.frequency
-        rows = list(range(len(grid)) if solved is None else solved)
-        frequency = jnp.asarray([grid[i] for i in rows])
-        out = {}
+        frequency = jnp.asarray([grid[i] for i in out.rows])
+        modes = {}
         for k, name in enumerate(self.wave_ports):
-            field = None
-            if self.kept and sweeps is not None:
-                sweep = sweeps[k]
-                # `forward` trims the other port outputs to the solved rows
-                coords = sweep.coords if solved is None else sweep.coords[rows]
-                field = PortModeField(sweep.space, sweep.basis, coords)
-            out[name] = PortModeResult(
+            modes[name] = PortModeResult(
                 port=name,
                 mode=self.modes[name],
                 frequency=frequency,
-                gamma=jnp.asarray(outputs["port_gamma"][:, k]),
-                Z_PV=jnp.asarray(outputs["port_z_pv"][:, k]),
-                residual=jnp.asarray(outputs["port_residual"][:, k]),
-                solved=jnp.asarray(outputs["port_solved"][:, k]),
-                e_field=field,
+                gamma=jnp.asarray(ports.gamma[:, k]),
+                Z_PV=jnp.asarray(ports.z_pv[:, k]),
+                residual=jnp.asarray(ports.residual[:, k]),
+                solved=jnp.asarray(ports.solved[:, k]),
+                e_field=ports.field(k) if self.kept else None,
             )
-        return out
+        return modes
 
     def _adaptive_result(
-        self, outputs: dict, kept: list[tuple[float, str]]
+        self, out: SweepOutputs, kept: list[tuple[float, str]]
     ) -> DrivenResult:
         """`result` of an adaptive sweep: basis-backed fields, `SweepInfo`."""
         frequencies = self.problem.frequency
         # Under a JAX transformation only the frozen sample set is known.
-        info: dict[str, Any] = outputs.get("sweep") or {
-            "samples": [frequencies.index(f) for f in self.problem.samples or ()],
-            "errors": None,
-            "converged": None,
-            "basis_size": None,
-        }
+        info = out.sweep
+        if not info:
+            frozen: dict[str, Any] = {
+                "samples": [frequencies.index(f) for f in self.problem.samples or ()],
+                "errors": None,
+                "converged": None,
+                "basis_size": None,
+            }
+            info = frozen
         sampled = set(info["samples"])
         sweep = SweepInfo(
             kind="adaptive",
@@ -1092,10 +1014,11 @@ class DrivenRule:
             basis_size=info["basis_size"],
         )
         e_fields: ReducedFields | tuple = ()
-        if kept:
+        if kept and out.reduced is not None:
+            basis, coordinates = out.reduced
             e_fields = ReducedFields(
-                basis=outputs["e_basis"],
-                coordinates=outputs["e_coordinates"],
+                basis=basis,
+                coordinates=coordinates,
                 omega=jnp.asarray([2 * math.pi * f for f, _ in kept]),
                 mesh=self._mesh,
                 quantity="E",
@@ -1107,8 +1030,8 @@ class DrivenRule:
             )
         return DrivenResult(
             s=NetworkParameters(
-                values=jnp.asarray(outputs["s"]),
-                z_ref=jnp.asarray(outputs["z_ref"]),
+                values=jnp.asarray(out.s),
+                z_ref=jnp.asarray(out.z_ref),
                 frequency=frequencies,
                 ports=self.port_names,
                 excited=tuple(self.excite),
@@ -1116,7 +1039,7 @@ class DrivenRule:
             e_fields=e_fields,
             kept=tuple(kept),
             sweep=sweep,
-            port_modes=self._port_modes(outputs),
+            port_modes=self._port_modes(out),
             offsets=self.offsets,
         )
 
@@ -1239,14 +1162,15 @@ def _check_low_frequency(
 
 def _solve_block(
     aux: Any, children: Any, problem: Driven, options: SolverOptions, keep: bool
-) -> dict[str, Any]:
-    """A frequency worker's `DrivenRule.forward` of its block, as arrays.
+) -> tuple[SweepOutputs, np.ndarray | None, str | None]:
+    """A frequency worker's `DrivenRule.forward` of its block.
 
     ``aux`` and ``children`` are the model's parts (`gfem._engine.workers`).
-    A block whose linear solve does not converge at some frequency stops
-    there and returns the rows it solved, plus ``"miss"``: ``{"message":
-    the linear solver's message}``, plain data that pickles (the parent
-    raises once for every block).
+    Returns the block's outputs (rows: indices into the block), its
+    solutions (``keep``; else ``None``) and ``None``. A block whose linear
+    solve does not converge at some frequency stops there and returns the
+    rows it solved, no solutions, and the linear solver's message, plain
+    data that pickles (the parent raises once for every block).
     """
     model = workers.model_from_parts(aux, children)
     with warnings.catch_warnings():
@@ -1254,23 +1178,18 @@ def _solve_block(
         warnings.simplefilter("ignore", LowFrequencyWarning)
         rule = DrivenRule(model, problem, options)
     rule.keeps_partial = True
-    names = ("s", "z_ref", "iterations", "e_field")
     try:
         outputs, entry = rule.forward(model, keep=keep)
-    except LinearSolverConvergenceError:
-        partial = rule._partial  # noqa: SLF001
+    except LinearSolverConvergenceError as err:
+        partial = vars(err).get("_partial")
         if partial is None:  # pragma: no cover - a uniform sweep always sets it
             raise
-        block = {
-            name: partial.outputs[name] for name in names if name in partial.outputs
-        }
-        block["miss"] = {"message": partial.reason}
-        return block
-    block = {name: outputs[name] for name in names if name in outputs}
+        return partial.outputs, None, partial.reason
+    solution = None
     if entry is not None:
-        block["solution"] = entry.fields["solution"]
+        solution = entry.fields["solution"]
         entry.free()
-    return block
+    return SweepOutputs.read(outputs), solution, None
 
 
 def _sample_error(
@@ -1355,12 +1274,13 @@ class _Kept:
 
 @dataclasses.dataclass(frozen=True)
 class _Partial:
-    """What a uniform sweep solved before a linear solve did not converge."""
+    """What a uniform sweep solved before a linear solve did not converge.
 
-    #: Grid indices of the solved frequencies, in order.
-    solved: tuple[int, ...]
-    #: The forward outputs at the solved frequencies only.
-    outputs: dict[str, object]
+    Carried by its error as ``_partial`` (`DrivenRule.partial_result`).
+    """
+
+    #: The forward outputs at the solved frequencies (its rows) only.
+    outputs: SweepOutputs
     #: The linear solver's message where the (first) linear solve did not
     #: converge.
     reason: str
