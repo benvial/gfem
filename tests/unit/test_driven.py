@@ -25,6 +25,7 @@ from solver_misses import cannot_converge_at
 import gfem
 from gfem._engine import driven, terms, workers
 from gfem._engine.driven import DrivenRule
+from gfem._engine.system_operator import SystemOperator
 from gfem._linalg import bddc, pardiso, prepare
 from gfem._linalg.base import PlannedHandle, same_pattern
 from gfem._linalg.bddc import BddcHandle
@@ -710,8 +711,8 @@ def test_a_direct_handle_sums_the_pieces_into_the_assembled_operator(tmp_path):
     frequencies = (4e9, 5e9)
     options = gfem.SolverOptions(linear_solver="direct")
     rule = DrivenRule(model, gfem.Driven(frequencies), options)
-    ports = rule._ports(model)
-    names = {p.name for p in ports.operator.pieces}
+    system, _ = rule._ports(model)
+    names = {p.name for p in system.operator.pieces}
     assert {
         "conductivity",
         "absorbing",
@@ -724,14 +725,14 @@ def test_a_direct_handle_sums_the_pieces_into_the_assembled_operator(tmp_path):
     handle = None
     for f in frequencies:
         omega = 2 * math.pi * f
-        operator = ports.operator_at(omega)
+        operator = system.operator_at(omega)
         if handle is None:
             handle = DirectHandle.from_operator(operator, "complex_symmetric")
         else:
             handle.refactorize(operator)
         with pytest.raises(Exception, match="assemble"):  # the form is not assembled
             _ = operator.form.mat
-        form = ports.operator.form(omega)
+        form = system.operator.form(omega)
         form.Assemble()
         assert same_pattern(handle._matrix, form.mat)
         summed = handle._matrix.AsVector().FV().NumPy()
@@ -779,12 +780,12 @@ def test_a_direct_sweep_by_piece_sums_matches_assembled_operators(
 ):
     problem = gfem.Driven(frequency=(3e9, 4e9, 5e9, 6e9), sweep=sweep)
     summed = np.asarray(_s(line, problem, linear_solver=linear_solver).s.values)
-    operator_at = driven._Ports.operator_at
+    operator_at = SystemOperator.operator_at
 
-    def assembled(ports, omega):  # the operator without its piece sum
-        return dataclasses.replace(operator_at(ports, omega), piece_sum=None)
+    def assembled(system, omega):  # the operator without its piece sum
+        return dataclasses.replace(operator_at(system, omega), piece_sum=None)
 
-    monkeypatch.setattr(driven._Ports, "operator_at", assembled)
+    monkeypatch.setattr(SystemOperator, "operator_at", assembled)
     s = np.asarray(_s(line, problem, linear_solver=linear_solver).s.values)
     np.testing.assert_allclose(summed, s, rtol=0, atol=1e-12)
 
@@ -807,22 +808,24 @@ def test_a_forward_holds_its_assembled_pieces_with_its_handles(
 
     monkeypatch.setattr(rule, "_ports", spy)
     _, entry = rule.forward(line, keep=keep)
-    (ports,) = built
-    system = ports.system
-    vectors = sum(t.vectors.nbytes for t in (*system.excitation, *system.outputs))
-    form = ports.operator.form(1.0)
+    ((system, ports),) = built
+    affine = ports.system
+    vectors = sum(t.vectors.nbytes for t in (*affine.excitation, *affine.outputs))
+    assert ports.nbytes == vectors
+    form = system.operator.form(1.0)
     form.Assemble()
+    if keep:
+        assert entry.handle.nbytes == system.nbytes + ports.nbytes
     if not (kind in ("direct", "petsc") and keep):
         # BDDC assembles forms; a forward that keeps nothing drops its pieces
-        assert entry is None or entry.handle.nbytes == vectors
-        assert ports.nbytes == vectors
+        # (no wave port on the line: no W vectors)
+        assert system.nbytes == 0
         return
     # at least the values of the curl-curl and mass pieces
     values = form.mat.AsVector().FV().NumPy().nbytes
-    assert ports.nbytes >= vectors + 2 * values
-    assert entry.handle.nbytes == ports.nbytes
+    assert system.nbytes >= 2 * values
     entry.free()
-    assert ports.nbytes == vectors
+    assert system.nbytes == 0
 
 
 # --- what the driven problem refuses ---------------------------------------------
