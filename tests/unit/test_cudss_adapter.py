@@ -6,6 +6,7 @@ solves with SciPy, so these tests run without a GPU. tests/cuda runs the
 same handle on a real device.
 """
 
+import threading
 import types
 
 import ngsolve as ngs
@@ -14,12 +15,13 @@ import pytest
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 import structured_meshes as sm
+from locks import Gate
 
 import gfem
 from gfem import _cuda
 from gfem._engine import quadrature
 from gfem._engine.mesh import to_ngsolve
-from gfem._linalg import Operator, cudss, prepare
+from gfem._linalg import Operator, base, cudss, prepare
 
 GIB = 2**30
 
@@ -56,11 +58,16 @@ class FakeDirectSolver:
             mirror = mirror.conj()
         self._lu = spla.splu((self.a + mirror).tocsc(), permc_spec="MMD_AT_PLUS_A")
 
-    def reset_operands(self, *, b):
-        if b.shape != self.b.shape or b.dtype != self.b.dtype:
-            raise TypeError("The shape of 'b' doesn't match the original one.")
-        assert b.flags.f_contiguous
-        self.b = b
+    def reset_operands(self, *, a=None, b=None):
+        if a is not None:
+            assert a.shape == self.a.shape
+            assert a.dtype == self.a.dtype
+            self.a = a
+        if b is not None:
+            if b.shape != self.b.shape or b.dtype != self.b.dtype:
+                raise TypeError("The shape of 'b' doesn't match the original one.")
+            assert b.flags.f_contiguous
+            self.b = b
 
     def solve(self):
         self.solves += 1
@@ -276,6 +283,94 @@ def test_nbytes_counts_device_memory_and_free_releases_it(built):
     assert handle.nbytes == 0
     with pytest.raises(RuntimeError, match="freed"):
         handle.solve(np.ones(handle.ndof))
+
+
+@pytest.mark.usefixtures("gpu")
+@pytest.mark.parametrize("changed", [False, True])
+def test_a_refactorization_solves_like_a_fresh_handle(built, monkeypatch, changed):
+    # one space keeps its pattern, so a changed one is simulated
+    handle = prepare(
+        _symmetric(built)[0], symmetry="complex_symmetric", kind="direct", device="cuda"
+    )
+    if changed:
+        monkeypatch.setattr(base, "same_pattern", lambda *_: False)
+    op, space = _symmetric(built, shift=3 + 1j)
+    handle.refactorize(op)
+    assert len(FakeDirectSolver.instances) == (2 if changed else 1)
+    assert FakeDirectSolver.instances[0].freed == changed
+    fresh = prepare(
+        _symmetric(built, shift=3 + 1j)[0],
+        symmetry="complex_symmetric",
+        kind="direct",
+        device="cuda",
+    )
+    B = _rhs(space.ndof, 2, seed=4)
+    np.testing.assert_allclose(handle.solve(B), fresh.solve(B), rtol=1e-12)
+    np.testing.assert_array_equal(
+        handle.apply(np.eye(space.ndof)), fresh.apply(np.eye(space.ndof))
+    )
+
+
+@pytest.mark.usefixtures("gpu")
+def test_a_handle_freed_while_a_refactorization_waits_stays_freed(built, monkeypatch):
+    # a changed pattern would plan again on a handle freed under it
+    handle = prepare(
+        _symmetric(built)[0], symmetry="complex_symmetric", kind="direct", device="cuda"
+    )
+    monkeypatch.setattr(base, "same_pattern", lambda *_: False)
+    gate = handle._lock = Gate()
+    raised = []
+
+    def refactorize():
+        try:
+            handle.refactorize(_symmetric(built, shift=2j)[0])
+        except RuntimeError as err:
+            raised.append(err)
+
+    with gate:
+        worker = threading.Thread(target=refactorize)
+        worker.start()
+        assert gate.waiting.wait(timeout=30)
+        handle.free()
+    worker.join(timeout=30)
+    assert [str(err) for err in raised] == ["This solver handle was freed."]
+    assert handle.nbytes == 0
+    (solver,) = FakeDirectSolver.instances  # none planned after the free
+    assert solver.freed
+
+
+@pytest.mark.usefixtures("gpu")
+def test_free_waits_for_a_running_solve(built):
+    op, space = _symmetric(built)
+    handle = prepare(op, symmetry="complex_symmetric", kind="direct", device="cuda")
+    (solver,) = FakeDirectSolver.instances
+    solving, finish = threading.Event(), threading.Event()
+    solve = solver.solve
+
+    def held_solve():
+        solving.set()
+        assert finish.wait(timeout=30)
+        return solve()
+
+    solver.solve = held_solve
+    gate = handle._lock = Gate()
+    B = _rhs(space.ndof, 1)
+    expected = _reference(handle, B, np.array(list(space.FreeDofs())))
+    solved = []
+    worker = threading.Thread(target=lambda: solved.append(handle.solve(B)))
+    worker.start()
+    assert solving.wait(timeout=30)
+    freer = threading.Thread(target=handle.free)
+    freer.start()
+    assert gate.waiting.wait(timeout=30)  # free waits for the lock
+    assert not solver.freed
+    finish.set()
+    worker.join(timeout=30)
+    freer.join(timeout=30)
+    (X,) = solved  # solved on the factors free released after it
+    np.testing.assert_allclose(X, expected, rtol=1e-10)
+    assert solver.freed
+    assert handle.nbytes == 0
 
 
 @pytest.mark.usefixtures("gpu")
