@@ -33,13 +33,14 @@ def count_preconditioners(monkeypatch) -> list[int]:
 def count_iterations(monkeypatch) -> list[int]:
     """Spy on BDDC Krylov solves: one entry per converged right-hand side."""
     calls = []
-    finish = BddcHandle._finish
+    solve_counted = BddcHandle.solve_counted
 
     def spy(self, *args, **kwargs):
-        finish(self, *args, **kwargs)
-        calls.append(self.iterations[-1])
+        X, its = solve_counted(self, *args, **kwargs)
+        calls.extend(its)
+        return X, its
 
-    monkeypatch.setattr(BddcHandle, "_finish", spy)
+    monkeypatch.setattr(BddcHandle, "solve_counted", spy)
     return calls
 
 

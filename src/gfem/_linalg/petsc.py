@@ -74,11 +74,8 @@ class PetscHandle(NgsHandle):
 
     Accepts ``A^T = A``: a complex symmetric operator, or a real symmetric
     one (``"hermitian"`` on a real space), solved in complex arithmetic.
-
-    Attributes:
-        iterations: Krylov iterations of every column solved so far (empty
-            for ``ksp_type preonly``); a column solved again on a
-            preconditioner set up anew counts both solves.
+    A column solved again on a preconditioner set up anew counts the
+    iterations of both solves (none for ``ksp_type preonly``).
     """
 
     kind = "petsc"
@@ -103,7 +100,6 @@ class PetscHandle(NgsHandle):
         _refuse(symmetry, is_complex=is_complex, matrix=matrix)
         super().__init__(matrix, freedofs, symmetry, is_complex=is_complex)
         self._lock = _petsc.LOCK  # PETSc's database and registry are global
-        self.iterations: list[int] = []
         self._pattern: ngs.BaseMatrix | None = None
         #: The KSP and the AIJ (petsc4py objects); ``None`` once freed.
         self._ksp: Any = None
@@ -387,12 +383,13 @@ class PetscHandle(NgsHandle):
 
     def _inverse_map(
         self, B: np.ndarray, tolerance: float | None, x0: np.ndarray | None = None
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, tuple[int, ...]]:
         """``A_ff^{-1} B_f`` on the free rows, zero on the fixed ones.
 
         ``preonly`` solves every column at once and ignores ``tolerance``
         and ``x0``; a Krylov method solves column by column, from ``x0``
         when given, to ``tolerance`` (the prepared one when ``None``).
+        Returns the iterations of each column too, ``()`` for ``preonly``.
         """
         cols, flat = self._columns(B)
         free = self._free
@@ -402,12 +399,14 @@ class PetscHandle(NgsHandle):
         with self._lock:
             if self._ksp is None:
                 raise RuntimeError("This solver handle was freed.")
+            counts: tuple[int, ...] = ()
             if self._direct:
                 out[free] = self._exact(rhs)
             else:
-                out[free] = self._krylov(rhs, tolerance, guesses)
+                solved, counts = self._krylov(rhs, tolerance, guesses)
+                out[free] = solved
         result = out if self._complex else out.real
-        return result[:, 0] if flat else result
+        return (result[:, 0] if flat else result), counts
 
     def _exact(self, rhs: np.ndarray) -> np.ndarray:
         """``preonly``: one solve, or one block solve (``KSPMatSolve``)."""
@@ -444,8 +443,8 @@ class PetscHandle(NgsHandle):
 
     def _krylov(
         self, rhs: np.ndarray, tolerance: float | None, guesses: np.ndarray | None
-    ) -> np.ndarray:
-        """A Krylov solve per column, recording its iterations.
+    ) -> tuple[np.ndarray, tuple[int, ...]]:
+        """A Krylov solve per column; the solutions and each column's iterations.
 
         A column that does not converge on a reused preconditioner set up at
         an earlier operator is solved again, from its partial iterate, once
@@ -457,6 +456,7 @@ class PetscHandle(NgsHandle):
         if tolerance is not None:
             ksp.setTolerances(rtol=tolerance, atol=atol, divtol=divtol, max_it=max_it)
         X = np.zeros_like(rhs)
+        counts: list[int] = []
         x, b = self._mat.createVecs()
         try:
             for j in range(rhs.shape[1]):
@@ -473,15 +473,15 @@ class PetscHandle(NgsHandle):
                     else:
                         ksp.setInitialGuessNonzero(True)
                     spent += self._solve(b, x)
-                self.iterations.append(spent)
                 if ksp.getConvergedReason() < 0:
                     raise self._not_converged(b.norm(), spent)
+                counts.append(spent)
                 X[:, j] = x.array
         finally:
             x.destroy()
             b.destroy()
             ksp.setTolerances(*prepared)
-        return X
+        return X, tuple(counts)
 
     def _solve(self, b, x) -> int:
         """``KSPSolve`` of ``b`` into ``x``; its iterations."""
@@ -496,7 +496,7 @@ class PetscHandle(NgsHandle):
         """The error of a column that did not converge in ``spent`` iterations.
 
         ``spent`` counts every solve of the column (stale and fresh
-        preconditioner), as `iterations` records it.
+        preconditioner).
         """
         PETSc = _petsc.require_petsc()
         ksp = self._ksp

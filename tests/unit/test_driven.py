@@ -257,7 +257,7 @@ def test_bddc_tolerance_is_the_preconditioned_residual(line, monkeypatch):
     solve = BddcHandle._inverse_map
 
     def spy(self, B, tol, x0=None):
-        X = solve(self, B, tol, x0)
+        X, its = solve(self, B, tol, x0)
         matrix, pre = self._matrix, self._preconditioner.mat
         b, x, r, pr, pb = (matrix.CreateColVector() for _ in range(5))
         for j in range(B.shape[1]):
@@ -267,7 +267,7 @@ def test_bddc_tolerance_is_the_preconditioned_residual(line, monkeypatch):
             pr.data = pre * r
             pb.data = pre * b
             residuals.append(ngs.Norm(pr) / ngs.Norm(pb))
-        return X
+        return X, its
 
     monkeypatch.setattr(BddcHandle, "_inverse_map", spy)
     problem = gfem.Driven(frequency=1e9)

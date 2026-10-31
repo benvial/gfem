@@ -156,13 +156,14 @@ class NgsHandle:
         B: np.ndarray,
         tolerance: float | None,  # noqa: ARG002
         x0: np.ndarray | None = None,  # noqa: ARG002
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, tuple[int, ...]]:
         """Hook for subclasses: the inverse on the free rows of ``B``.
 
         ``x0`` (same shape as ``B``, zero on fixed rows) is an initial guess.
-        Direct backends ignore ``tolerance`` and ``x0``.
+        Direct backends ignore ``tolerance`` and ``x0``. Returns the Krylov
+        iterations of each column too, ``()`` for a direct solve.
         """
-        return self._map(self._solver, B)
+        return self._map(self._solver, B), ()
 
     def solve(
         self,
@@ -172,6 +173,17 @@ class NgsHandle:
         tolerance: float | None = None,
         x0: np.ndarray | None = None,
     ) -> np.ndarray:
+        """``X`` alone: ``solve_counted(B, ...)[0]``."""
+        return self.solve_counted(B, transpose=transpose, tolerance=tolerance, x0=x0)[0]
+
+    def solve_counted(
+        self,
+        B: np.ndarray,
+        *,
+        transpose: bool = False,
+        tolerance: float | None = None,
+        x0: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, tuple[int, ...]]:
         """``A_ff X_f = B_f`` on the free DOFs; ``X`` is zero on fixed DOFs.
 
         ``transpose`` solves ``A^T X = B``: the same solve for a real or
@@ -181,6 +193,10 @@ class NgsHandle:
         preconditioner); ``None`` is the prepared tolerance. ``x0``, the
         shape of ``B``, is an initial guess for iterative backends; its fixed
         rows are not read. Direct backends ignore both.
+
+        Returns ``X`` and the Krylov iterations of each column of ``B`` (see
+        `gfem._linalg.Handle.solve_counted`); a real handle solves a complex
+        ``B`` as two real solves, and a column counts both.
 
         Raises:
             RuntimeError: The handle was freed.
@@ -196,8 +212,9 @@ class NgsHandle:
                 "operator."
             )
         if conjugate:
-            guess = None if x0 is None else np.conj(x0)
-            return np.conj(self.solve(np.conj(B), tolerance=tolerance, x0=guess))
+            # the conjugate system, solved in this call: its counts unchanged
+            B = np.conj(B)
+            x0 = None if x0 is None else np.conj(x0)
         free = self._free if B.ndim == 1 else self._free[:, None]
         B = np.where(free, B, 0)
         if x0 is not None:
@@ -211,12 +228,14 @@ class NgsHandle:
         if not self._complex and np.iscomplexobj(B):
             re = None if x0 is None else x0.real
             im = None if x0 is None else x0.imag
-            return self._inverse_map(B.real, tolerance, re) + 1j * self._inverse_map(
-                B.imag, tolerance, im
-            )
+            X_re, its_re = self._inverse_map(B.real, tolerance, re)
+            X_im, its_im = self._inverse_map(B.imag, tolerance, im)
+            its = tuple(a + b for a, b in zip(its_re, its_im, strict=True))
+            return X_re + 1j * X_im, its
         if x0 is not None and not self._complex:
             x0 = x0.real
-        return self._inverse_map(B, tolerance, x0)
+        X, its = self._inverse_map(B, tolerance, x0)
+        return (np.conj(X), its) if conjugate else (X, its)
 
     def apply(self, X: np.ndarray) -> np.ndarray:
         """``A X`` with the full assembled matrix.

@@ -4,7 +4,9 @@
 and sets up a backend (a factorization, a preconditioner) into a `Handle`.
 ``Handle.solve(B)`` solves for one or many right-hand sides, as often as
 needed: terminal solves, port solves and adjoint solves reuse the same
-factors. ``Handle.free()`` releases the backend's memory.
+factors. ``Handle.solve_counted(B)`` also returns the Krylov iterations of
+each column of ``B`` in this call. ``Handle.free()`` releases the backend's
+memory.
 
 A handle may also refactorize (`Refactorable`): ``handle.refactorize(operator)``
 assembles another operator with the same sparsity pattern (the next
@@ -138,6 +140,29 @@ class Handle(Protocol):
         """Host memory held by the matrix and the backend, in bytes."""
         ...
 
+    def solve_counted(
+        self,
+        B: np.ndarray,
+        *,
+        transpose: bool = False,
+        tolerance: float | None = None,
+        x0: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, tuple[int, ...]]:
+        """Solve ``A X = B`` on the free DOFs; ``B`` is ``(ndof,)`` or ``(ndof, k)``.
+
+        ``tolerance`` overrides the prepared relative residual of iterative
+        backends for this solve (adjoint solves); ``x0`` (the shape of ``B``)
+        is an initial guess for iterative backends. Direct backends ignore
+        both.
+
+        Returns ``X`` and the Krylov iterations of each column of ``B``, in
+        order: every iteration the column cost in this call (restarts and
+        solves again on a preconditioner set up anew included). ``()`` for a
+        solve with no Krylov iteration (direct, cudss, PETSc ``preonly``). A
+        solve that raises returns no count; its error message holds it.
+        """
+        ...
+
     def solve(
         self,
         B: np.ndarray,
@@ -146,13 +171,7 @@ class Handle(Protocol):
         tolerance: float | None = None,
         x0: np.ndarray | None = None,
     ) -> np.ndarray:
-        """Solve ``A X = B`` on the free DOFs; ``B`` is ``(ndof,)`` or ``(ndof, k)``.
-
-        ``tolerance`` overrides the prepared relative residual of iterative
-        backends for this solve (adjoint solves); ``x0`` (the shape of ``B``)
-        is an initial guess for iterative backends. Direct backends ignore
-        both.
-        """
+        """``X`` alone: ``solve_counted(B, ...)[0]``."""
         ...
 
     def apply(self, X: np.ndarray) -> np.ndarray:

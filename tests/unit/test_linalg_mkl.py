@@ -500,7 +500,7 @@ def _bddc_solve(built, complex_valued, symmetry):
     B = rng.standard_normal(space.ndof)
     if complex_valued:
         B = B + 1j * rng.standard_normal(space.ndof)
-    return handle, handle.solve(B)
+    return (handle, *handle.solve_counted(B))
 
 
 @needs_mkl
@@ -523,7 +523,7 @@ def test_bddc_coarse_problem_is_factored_by_gfem_flagged_pardiso(  # noqa: PLR09
     symmetric,
     matrix_type,
 ):
-    handle, X = _bddc_solve(built, complex_valued, symmetry)
+    handle, X, its = _bddc_solve(built, complex_valued, symmetry)
     inverse = handle._preconditioner.flags.ToDict()["inverse"]
     assert inverse.startswith("gfem_")  # never NGSolve's own "pardiso"
     assert len(coarse_wrappers) == 1
@@ -536,11 +536,11 @@ def test_bddc_coarse_problem_is_factored_by_gfem_flagged_pardiso(  # noqa: PLR09
     assert wrapper["matrix_type"] == matrix_type
     # the same iterations and solution as a sparse Cholesky coarse problem
     monkeypatch.setattr(pardiso, "pardiso_available", lambda: False)
-    ref_handle, ref = _bddc_solve(built, complex_valued, symmetry)
+    ref_handle, ref, ref_its = _bddc_solve(built, complex_valued, symmetry)
     assert ref_handle._preconditioner.flags.ToDict()["inverse"] == "sparsecholesky"
     assert len(coarse_wrappers) == 1
-    assert handle.iterations == ref_handle.iterations
-    assert handle.iterations[-1] > 1  # order 4: the coarse problem is not all of A
+    assert its == ref_its
+    assert its[-1] > 1  # order 4: the coarse problem is not all of A
     assert np.linalg.norm(X - ref) <= 1e-10 * np.linalg.norm(ref)
 
 

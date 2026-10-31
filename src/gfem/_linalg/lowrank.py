@@ -69,16 +69,6 @@ class LowRankUpdate:
         self._base: Handle | None = handle
         self._owner = not borrow
         self._z: dict[tuple[bool, float | None], np.ndarray] = {}
-        self._iterations: list[int] = []
-
-    @property
-    def iterations(self) -> list[int]:
-        """Krylov iterations of every right-hand side solved so far.
-
-        The update's own columns are not counted; empty for direct
-        backends.
-        """
-        return list(self._iterations)
 
     @property
     def nbytes(self) -> int:
@@ -96,10 +86,22 @@ class LowRankUpdate:
         tolerance: float | None = None,
         x0: np.ndarray | None = None,
     ) -> np.ndarray:
+        """``X`` alone: ``solve_counted(B, ...)[0]``."""
+        return self.solve_counted(B, transpose=transpose, tolerance=tolerance, x0=x0)[0]
+
+    def solve_counted(
+        self,
+        B: np.ndarray,
+        *,
+        transpose: bool = False,
+        tolerance: float | None = None,
+        x0: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, tuple[int, ...]]:
         """Solve ``(A + U C Uᵀ) X = B`` (``transpose``: ``(Aᵀ + U Cᵀ Uᵀ) X = B``).
 
-        As `gfem._linalg.Handle.solve`; ``x0`` is an initial guess of ``X``
-        and goes to the base solve of ``Y``.
+        As `gfem._linalg.Handle.solve_counted`; ``x0`` is an initial guess of
+        ``X`` and goes to the base solve of ``Y``. The counts are those of
+        the columns of ``B``, never of the update's own columns.
         """
         base = self._base
         if base is None:
@@ -111,23 +113,24 @@ class LowRankUpdate:
         k = columns.shape[1]
         U = self.vectors
         key = (transpose, tolerance)
-        before = len(getattr(base, "iterations", ()))
         if key in self._z:
             Z = self._z[key]
-            Y = base.solve(columns, transpose=transpose, tolerance=tolerance, x0=guess)
+            Y, its = base.solve_counted(
+                columns, transpose=transpose, tolerance=tolerance, x0=guess
+            )
         else:
             both = np.concatenate([columns, U], axis=1)
             if guess is not None:
                 guess = np.concatenate([guess, np.zeros(U.shape, guess.dtype)], axis=1)
-            out = base.solve(both, transpose=transpose, tolerance=tolerance, x0=guess)
+            out, its = base.solve_counted(
+                both, transpose=transpose, tolerance=tolerance, x0=guess
+            )
             Y, Z = out[:, :k], out[:, k:]
             self._z[key] = Z
-        its = list(getattr(base, "iterations", ()))[before:]
-        self._iterations.extend(its[:k])
         C = self.coefficients.T if transpose else self.coefficients
         small = np.eye(C.shape[0]) + C @ (U.T @ Z)
         X = Y - Z @ np.linalg.solve(small, C @ (U.T @ Y))
-        return X[:, 0] if flat else X
+        return (X[:, 0] if flat else X), its[:k]
 
     def apply(self, X: np.ndarray) -> np.ndarray:
         """``(A + U C Uᵀ) X`` with the base handle's full matrix."""
