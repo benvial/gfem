@@ -370,6 +370,15 @@ class PlannedHandle(NgsHandle):
             self._new_plan(new, operator.freedofs)
             self._pattern = pattern
 
+    def free(self) -> None:
+        """Release the backend, drop the matrix and the pieces' pattern.
+
+        Waits for a running solve or refactorization.
+        """
+        with self._lock:
+            super().free()
+            self._pattern = None
+
     @classmethod
     def _admit(cls, symmetry: Symmetry, *, is_complex: bool) -> None:
         """Raise the backend's refusal of ``symmetry``, if it refuses it."""

@@ -127,8 +127,11 @@ class DirectHandle(PlannedHandle):
         *,
         is_complex: bool,
     ) -> None:
-        """Factorize an assembled matrix (see `prepare` and `factorize`)."""
-        self._admit(symmetry, is_complex=is_complex)
+        """Factorize an assembled matrix (see `prepare` and `factorize`).
+
+        ``symmetry`` is refused before (`from_operator`; `from_scipy`'s real
+        symmetric matrix always passes).
+        """
         super().__init__(matrix, freedofs, symmetry, is_complex=is_complex)
         self._factors: Factors | None = self._factor(matrix, freedofs)
         self._solver = self._factors.inverse
@@ -210,4 +213,3 @@ class DirectHandle(PlannedHandle):
     def _release(self) -> None:
         """Drop the factors; under the lock."""
         self._factors = None
-        self._pattern = None

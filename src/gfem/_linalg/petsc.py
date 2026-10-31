@@ -91,9 +91,10 @@ class PetscHandle(PlannedHandle):
         """Set the KSP / PC up on an assembled matrix (see `prepare`).
 
         ``options`` are the user's, read over gfem's defaults; ``reuse=False``
-        sets the preconditioner up again at every `refactorize`.
+        sets the preconditioner up again at every `refactorize`. ``symmetry``
+        is refused before (`from_operator`).
         """
-        _refuse(symmetry, is_complex=is_complex, matrix=matrix)
+        _refuse_storage(matrix)
         super().__init__(matrix, freedofs, symmetry, is_complex=is_complex)
         self._lock = _petsc.LOCK  # PETSc's database and registry are global
         #: The KSP and the AIJ (petsc4py objects); ``None`` once freed.
@@ -484,7 +485,6 @@ class PetscHandle(PlannedHandle):
             if obj is not None:
                 obj.destroy()
         self._ksp = self._mat = None
-        self._pattern = None
 
 
 def _name(enum, value: int) -> str:
@@ -493,20 +493,23 @@ def _name(enum, value: int) -> str:
     return names.get(int(value), str(value))
 
 
-def _refuse(symmetry: Symmetry, *, is_complex: bool, matrix=None) -> None:
-    """Raise unless the handle can take the operator (before any PETSc call).
+def _refuse(symmetry: Symmetry, *, is_complex: bool) -> None:
+    """Raise unless the handle can take ``symmetry`` (before the assembly).
 
-    It needs ``A^T = A`` (the matrix is flagged symmetric for MUMPS LDL^T)
-    and, when given, ``matrix`` as NGSolve's full sparse matrix: its free
-    block becomes the AIJ as it is, never mirrored from a triangle.
+    It needs ``A^T = A`` (the matrix is flagged symmetric for MUMPS LDL^T).
     """
     if not equals_its_transpose(symmetry, is_complex=is_complex):
         raise ValueError(
             "linear_solver='petsc' needs A^T = A: a real symmetric or complex "
             f"symmetric operator, not {symmetry!r}."
         )
-    if matrix is None:
-        return
+
+
+def _refuse_storage(matrix: Any) -> None:
+    """Raise unless ``matrix`` is NGSolve's full sparse matrix (before any PETSc call).
+
+    Its free block becomes the AIJ as it is, never mirrored from a triangle.
+    """
     if "SparseMatrixSymmetric" in type(matrix).__name__:
         raise ValueError(
             "linear_solver='petsc' needs the full sparse matrix; got NGSolve "

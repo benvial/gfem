@@ -163,9 +163,9 @@ class CudssHandle(PlannedHandle):
         """Factorize an assembled NGSolve matrix on GPU ``device_id``.
 
         ``threads=1`` keeps cuDSS's host-side planning on one thread; otherwise
-        it uses the wheel's threading layer when there is one.
+        it uses the wheel's threading layer when there is one. ``symmetry``
+        is refused before (`from_operator`).
         """
-        self._admit(symmetry, is_complex=is_complex)
         if width < 1:
             raise ValueError(f"width must be at least 1, got {width}.")
         super().__init__(matrix, freedofs, symmetry, is_complex=is_complex)
