@@ -30,7 +30,7 @@ def _complex(rng, *shape):
     return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
 
 
-def _fold(functional, ct):
+def _adaptive_fold(functional, ct):
     """The adaptive backward's fold before the port network (the oracle)."""
     out = np.zeros((functional.shape[0], ct.shape[1]), complex)
     for i in np.flatnonzero((ct != 0).any(axis=1)):
@@ -124,7 +124,7 @@ def test_without_reciprocity_the_split_is_the_adaptive_fold():
     ct[1, 2] = 0.0
     d = np.exp(1j * np.array([0.2, 0.0, -0.4, 0.9]))
     columns = [0, 2, 3]
-    oracle = _fold(functional, ct * d[:, None] * d[columns][None, :])
+    oracle = _adaptive_fold(functional, ct * d[:, None] * d[columns][None, :])
     split = split_cotangent(ct, d, columns, functional)
     np.testing.assert_array_equal(split.undefined, np.isnan(oracle).any(axis=0))
     defined = ~split.undefined
