@@ -8,6 +8,8 @@ to the 3D discretization error.
 import dataclasses
 import itertools
 import math
+import re
+import warnings
 from pathlib import Path
 
 import jax
@@ -668,3 +670,140 @@ def test_a_lone_hybrid_port_correction_is_the_closed_form(hybrid_couplings):
     w = u @ (c @ (u.T @ x))
     # measured 1.7e-15
     assert np.linalg.norm(w - closed) <= 1e-14 * np.linalg.norm(closed)
+
+
+# --- warnings: skipped port modes and cross-projections -----------------------
+
+PORT_MODE_WARNINGS = (gfem.SkippedPortModeWarning, gfem.PortModeProjectionWarning)
+
+
+def _silent(model, problem, options):
+    """Solve with both port mode warnings turned into errors."""
+    with warnings.catch_warnings():
+        for category in PORT_MODE_WARNINGS:
+            warnings.simplefilter("error", category)
+        return gfem.solve(model, problem, options=options)
+
+
+def plate_modes(mesh, modes):
+    """The parallel plate with a wave port per mode on each end, no paths."""
+    return gfem.Model(
+        mesh,
+        materials={"fill": gfem.Material(eps_r=EPS)},
+        boundaries=[gfem.PEC("plates")],
+        ports=[
+            gfem.WavePort(f"p{end}_m{mode}", f"port{end}", mode)
+            for end in (1, 2)
+            for mode in modes
+        ],
+    )
+
+
+def test_a_lone_higher_mode_warns_that_the_modes_below_it_are_skipped(plate_mesh):
+    with pytest.warns(gfem.SkippedPortModeWarning) as record:
+        result = gfem.solve(
+            plate_modes(plate_mesh, (2,)), gfem.Driven(F2), options=OPTIONS
+        )
+    messages = [str(w.message) for w in record]
+    assert len(messages) == 2  # once per surface
+    for end, message in zip((1, 2), messages, strict=True):
+        assert f"'p{end}_m2'" in message
+        assert f"'port{end}'" in message
+        assert "skips mode 1," in message
+        assert "partly reflected" in message
+    # a warning, not an error: the lone mode 2 is solved
+    gamma = np.asarray(result.port_modes["p1_m2"].gamma)
+    np.testing.assert_allclose(gamma, 1j * np.array([beta2(f) for f in F2]), rtol=3e-6)
+
+
+def test_a_gap_between_requested_modes_warns_skipped_port_mode(plate_mesh):
+    # modes 1, 2 and 3 propagate at 4 THz; 1 and 3 are requested
+    with pytest.warns(gfem.SkippedPortModeWarning) as record:
+        gfem.solve(
+            plate_modes(plate_mesh, (1, 3)), gfem.Driven(4.0e12), options=OPTIONS
+        )
+    message = str(record[0].message)
+    assert len(record) == 2  # once per surface
+    for name in ("'port1'", "'p1_m1'", "'p1_m3'", "skips mode 2,"):
+        assert name in message
+
+
+def test_a_lone_first_mode_never_warns_though_mode_2_propagates(plate_mesh):
+    # mode 2 propagates at 2.0 and 2.5 THz
+    _silent(line(plate_mesh), gfem.Driven(F), OPTIONS)
+
+
+def test_a_lossless_shared_port_surface_warns_nothing(plate_mesh, hybrid_guide):
+    _silent(shared_line(plate_mesh), gfem.Driven(F2), SHARED_OPTIONS)
+    options = gfem.SolverOptions(order=3, linear_solver="direct")
+    _silent(shared_hybrid(hybrid_guide), gfem.Driven(HYBRID_SHARED_F), options)
+
+
+def test_a_lossy_shared_port_surface_warns_its_cross_projection(hybrid_guide):
+    model = shared_hybrid(hybrid_guide)
+    lossy = gfem.Material(eps_r=6.0, tan_delta=0.05)
+    model = model.replace(materials={**model.materials, "block": lossy})
+    options = gfem.SolverOptions(order=3, linear_solver="direct")
+    with pytest.warns(gfem.PortModeProjectionWarning) as record:
+        gfem.solve(model, gfem.Driven(HYBRID_SHARED_F), options=options)
+    (message,) = [str(w.message) for w in record]
+    value = float(re.search(r"cross-projection of ([0-9.e+-]+)", message).group(1))
+    print(f"cross-projection {value:.3g}: {message}")
+    assert value > 1e-2
+    assert "'port1'" in message or "'port2'" in message
+    assert "GHz" in message
+    assert "biorthogonal" in message
+
+
+# --- a mirror half model: ranks count the modes the symmetry plane admits -------
+
+
+@pytest.fixture(scope="module")
+def half_plate(tmp_path_factory):
+    # x in [0, W/2] with a PEC mirror at x = W/2: the plate's TEM mode is
+    # gone, so mode 1 of the half model is cos(pi x / W), the full plate's
+    # mode 2
+    w, d, length = W / 2 * 1e6, D * 1e6, L * 1e6  # um
+    eps = 1e-9
+
+    def surface(c):
+        x, y, z = c
+        if abs(y) < eps or abs(y - d) < eps:
+            return "plates"
+        if abs(x - w) < eps:
+            return "mirror"
+        if abs(z) < eps:
+            return "port1"
+        if abs(z - length) < eps:
+            return "port2"
+        return ""
+
+    cells = (4, 2, 4)
+    edges = tuple(
+        np.linspace(0, n, k + 1) for n, k in zip((w, d, length), cells, strict=True)
+    )
+    path = tmp_path_factory.mktemp("half") / "half_plate.msh"
+    sm.write_msh22(path, sm.structured(edges, lambda _: "fill", surface))
+    return gfem.Model(
+        gfem.Mesh.from_gmsh(path, length_unit="um"),
+        materials={"fill": gfem.Material(eps_r=EPS)},
+        boundaries=[gfem.PEC("plates"), gfem.PEC("mirror")],
+        ports=[gfem.WavePort("p1", "port1"), gfem.WavePort("p2", "port2")],
+    )
+
+
+def test_a_half_model_s_mode_1_is_the_first_mode_its_plane_admits(half_plate):
+    # a lone mode=1: the full plate's mode 2 is the half model's first
+    result = _silent(half_plate, gfem.Driven(F2), SHARED_OPTIONS)
+    expected = np.array([beta2(f) for f in F2])
+    gamma = np.asarray(result.port_modes["p1"].gamma)
+    print(
+        f"half plate: gamma rel. error {np.abs(gamma / (1j * expected) - 1).max():.3g}"
+    )
+    np.testing.assert_allclose(gamma, 1j * expected, rtol=1e-4)
+    s21 = np.asarray(result.s.values)[:, 1, 0]
+    # no voltage path: the mode's sign is a mesh-dependent rule
+    transmitted = np.exp(-1j * expected * L)
+    error = np.minimum(np.abs(s21 - transmitted), np.abs(s21 + transmitted))
+    print(f"half plate: |S21 - exp(-i beta2 L)| = {error.max():.3g}")
+    assert error.max() < 1e-3

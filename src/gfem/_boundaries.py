@@ -349,11 +349,17 @@ class LumpedPort:
 class WavePort:
     """A wave port on an exterior surface, fed by its port mode.
 
+    Several wave ports on one surface each request a different mode (a
+    shared port surface). A propagating mode no port on the surface requests
+    is partly reflected, not converted.
+
     Attributes:
         name: The port's name; ports index S-parameters by name, in the
             order of the model's ``ports``.
         surface: The port's surface region.
-        mode: Which port mode excites the port, 1 = the first.
+        mode: Which port mode excites the port: its rank at the lowest
+            frequency among the modes the model admits (a symmetry plane
+            halves them), 1 = the most confined.
         offset: De-embedding distance in m, >= 0.
         voltage_path: Points (m) of a path across the port; it fixes the
             mode's polarity and defines a voltage, hence a reference

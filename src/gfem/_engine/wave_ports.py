@@ -212,6 +212,24 @@ class PortSurfaceCoupling:
         d[n:, n:] = -np.linalg.inv(g)
         return p, d
 
+    def cross_projection(self) -> np.ndarray:
+        """``(n_freq, n, n)``: ``|Q_lk| / sqrt(|Q_ll| |Q_kk|)`` over the grid.
+
+        ``Q_lk`` is port ``k``'s conjugated S functional applied to port
+        ``l``'s mode, ``c_t,lᵀ conj(reaction)ᵀ conj(phi_k)`` (the mode basis
+        is real), so the ratio does not depend on the modes' scales. Off
+        the diagonal it is zero up to the modes' residuals on a lossless
+        port line, and of the order of the loss otherwise.
+        """
+        m = self.reaction.shape[1]
+        tangential = np.stack([c.sweep.coords[:, :m] for c in self.ports], axis=1)
+        phi = np.stack([c.phi for c in self.ports], axis=1)
+        q = np.einsum(
+            "fli,ji,fkj->flk", tangential, np.conj(self.reaction), np.conj(phi)
+        )
+        d = np.sqrt(np.abs(np.einsum("fkk->fk", q)))
+        return np.abs(q) / (d[:, :, None] * d[:, None, :])
+
     def correction_coefficients(self, omega: float) -> np.ndarray:
         """``C(ω)`` ``(2 m, 2 m)`` with ``W = vectors C vectorsᵀ`` (rank ``2 n``).
 

@@ -84,13 +84,15 @@ from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair, Term, is_sheet
 from gfem._engine.sweep_outputs import SweepOutputs
 from gfem._engine.system_operator import SystemOperator
-from gfem._engine.wave_ports import wave_port_couplings
+from gfem._engine.wave_ports import PortSurfaceCoupling, wave_port_couplings
 from gfem._linalg import Kind, ResolvedLinearSolver
 from gfem._sweep.adaptive import AffineSystem, AffineTerm, adaptive_sweep
 from gfem.errors import (
     LinearSolverConvergenceError,
     LowFrequencyWarning,
     PortGeometryError,
+    PortModeProjectionWarning,
+    SkippedPortModeWarning,
 )
 from gfem.mesh import Mesh, _shortest_edges
 from gfem.model import Model
@@ -108,6 +110,7 @@ from gfem.results import (
 __all__ = [
     "DEFAULT_SOLVER",
     "LOW_FREQUENCY_FLOOR",
+    "PORT_MODE_PROJECTION_FLOOR",
     "DrivenOperator",
     "DrivenRule",
     "check_ports_held",
@@ -121,6 +124,10 @@ DEFAULT_SOLVER: Kind = "bddc_gmres"
 
 #: k0 * h_min below which a driven solve warns (gfem.LowFrequencyWarning).
 LOW_FREQUENCY_FLOOR = 1e-6
+#: The normalized cross-projection between two wave ports of one surface
+#: above which a driven solve warns (gfem.PortModeProjectionWarning): the
+#: default S error target, ``SolverOptions.adaptive_tolerance``.
+PORT_MODE_PROJECTION_FLOOR = 1e-3
 #: k0 * h_min below which MKL PARDISO becomes unreliable (with iparm(10) =
 #: 16; MUMPS and NGSolve's sparse Cholesky hold to 1e-8, the lowest point
 #: measured), named in the low-frequency warning.
@@ -321,6 +328,7 @@ class DrivenRule:
         #: JAX, where no caller reads it.
         self.keeps_partial = False
         _check_low_frequency(model, problem.frequency, stacklevel=3)
+        _check_skipped_port_modes(model, stacklevel=3)
 
     def operator(self, model: Model) -> DrivenOperator:
         """The model's driven operator at its current node positions.
@@ -531,13 +539,16 @@ class DrivenRule:
             return None
         return self._uniform_result(partial.outputs)
 
-    def _ports(self, model: Model) -> tuple[SystemOperator, PortNetwork]:
+    def _ports(
+        self, model: Model, *, warn: bool = True
+    ) -> tuple[SystemOperator, PortNetwork]:
         """The system operator and the port network of one driven solve.
 
         Both from one set of wave port couplings: the system operator adds
         their Robin pieces and modal corrections, and the port network holds
         the excitations and S functionals. Runs each wave port surface's
-        port mode sweep over the output grid.
+        port mode sweep over the output grid and, with ``warn`` (a forward
+        pass), warns about cross-projections on shared port surfaces.
         """
         op = self.operator(model)
         names = self.port_names
@@ -550,6 +561,8 @@ class DrivenRule:
             frequency=self.problem.frequency,
             tolerance=self.options.port_mode_tolerance,
         )
+        if warn:
+            _check_port_mode_projection(couplings, stacklevel=4)
         system = SystemOperator(
             op,
             couplings,
@@ -824,7 +837,7 @@ class DrivenRule:
         pairs = []
         with task_manager(self.options.threads):
             if not isinstance(entry.handle, _Kept):  # frequency workers keep none
-                entry.handle = _Kept(*self._ports(model))
+                entry.handle = _Kept(*self._ports(model, warn=False))
             system, ports = entry.handle.system, entry.handle.ports
             op = system.operator
             domain = em_region(model, op.built)
@@ -1180,6 +1193,88 @@ def _check_low_frequency(
     warnings.warn(msg, LowFrequencyWarning, stacklevel=stacklevel + 1)
 
 
+def _modes(ranks: list[int]) -> str:
+    """``"mode 2"`` or ``"modes 1 and 2"``."""
+    if len(ranks) == 1:
+        return f"mode {ranks[0]}"
+    return f"modes {', '.join(map(str, ranks[:-1]))} and {ranks[-1]}"
+
+
+def _check_skipped_port_modes(model: Model, *, stacklevel: int) -> None:
+    """Warn once per wave port surface that skips a mode below its highest.
+
+    A rank below the surface's highest requested ``mode`` propagates
+    wherever that mode does (the port mode sweep raises otherwise), so the
+    check needs no numerics. Ranks count the modes the surface's port mode
+    problem admits: on a symmetry plane, those of the plane's parity.
+
+    Args:
+        model: The model and its wave ports.
+        stacklevel: Passed on to `warnings.warn`, counted from the caller.
+    """
+    surfaces: dict[str, list[WavePort]] = {}
+    for port in model.ports:
+        if isinstance(port, WavePort):
+            surfaces.setdefault(port.surface, []).append(port)
+    for surface, ports in surfaces.items():
+        requested = {p.mode for p in ports}
+        skipped = [k for k in range(1, max(requested)) if k not in requested]
+        if not skipped:
+            continue
+        kind = "WavePort" if len(ports) == 1 else "WavePorts"
+        names = ", ".join(f"{p.name!r} (mode {p.mode})" for p in ports)
+        msg = (
+            f"{kind} {names} on surface {surface!r}: the surface skips "
+            f"{_modes(skipped)}, which no wave port on it requests. A skipped "
+            "port mode propagates wherever the highest requested mode does, and "
+            "it is partly reflected at the port instead of absorbed, so S misses "
+            "the power the device sends into it. Add a WavePort on surface "
+            f"{surface!r} for each skipped mode, or filter this warning if the "
+            "reflection is acceptable."
+        )
+        warnings.warn(msg, SkippedPortModeWarning, stacklevel=stacklevel + 1)
+
+
+def _check_port_mode_projection(
+    surfaces: list[PortSurfaceCoupling], *, stacklevel: int
+) -> None:
+    """Warn once per shared port surface whose modes project on each other.
+
+    The largest normalized cross-projection (`PortSurfaceCoupling.
+    cross_projection`) over the output grid and the surface's pairs of
+    ports is compared with `PORT_MODE_PROJECTION_FLOOR`. A lone wave port
+    is never checked.
+
+    Args:
+        surfaces: The wave port surfaces' couplings.
+        stacklevel: Passed on to `warnings.warn`, counted from the caller.
+    """
+    for surface in surfaces:
+        n = len(surface.ports)
+        if n < 2:
+            continue
+        q = surface.cross_projection()
+        q[:, np.arange(n), np.arange(n)] = 0.0
+        k, mode, port = np.unravel_index(int(np.argmax(q)), q.shape)
+        value = float(q[k, mode, port])
+        if not value > PORT_MODE_PROJECTION_FLOOR:
+            continue
+        a, b = surface.ports[mode].port, surface.ports[port].port
+        f = surface.lead.omegas[k] / (2 * math.pi)
+        msg = (
+            f"WavePorts {a.name!r} and {b.name!r} on surface {a.surface!r}: the S "
+            f"functional of {b.name!r} reads the mode of {a.name!r} with a "
+            f"cross-projection of {value:.3g} at {f / 1e9:.6g} GHz (above "
+            f"{PORT_MODE_PROJECTION_FLOOR:g}), so the S entries between these "
+            "ports carry an error of that order. The conjugated S functional "
+            "separates the modes of a lossless port line only; the biorthogonal "
+            "functional that would remove the error is not implemented in this "
+            "version of gfem. Make the port line lossless near the port, or "
+            "filter this warning if the error is acceptable."
+        )
+        warnings.warn(msg, PortModeProjectionWarning, stacklevel=stacklevel + 1)
+
+
 def _solve_block(
     aux: Any, children: Any, problem: Driven, options: SolverOptions, keep: bool
 ) -> tuple[SweepOutputs, np.ndarray | None, str | None]:
@@ -1195,16 +1290,21 @@ def _solve_block(
     model = workers.model_from_parts(aux, children)
     with warnings.catch_warnings():
         # the parent's rule already warned for the whole sweep
-        warnings.simplefilter("ignore", LowFrequencyWarning)
+        for category in (
+            LowFrequencyWarning,
+            SkippedPortModeWarning,
+            PortModeProjectionWarning,
+        ):
+            warnings.simplefilter("ignore", category)
         rule = DrivenRule(model, problem, options)
-    rule.keeps_partial = True
-    try:
-        outputs, entry = rule.forward(model, keep=keep)
-    except LinearSolverConvergenceError as err:
-        partial = vars(err).get("_partial")
-        if partial is None:  # pragma: no cover - a uniform sweep always sets it
-            raise
-        return partial.outputs, None, partial.reason
+        rule.keeps_partial = True
+        try:
+            outputs, entry = rule.forward(model, keep=keep)
+        except LinearSolverConvergenceError as err:
+            partial = vars(err).get("_partial")
+            if partial is None:  # pragma: no cover - a uniform sweep always sets it
+                raise
+            return partial.outputs, None, partial.reason
     solution = None
     if entry is not None:
         solution = entry.fields["solution"]
