@@ -4,7 +4,8 @@
 pieces, and ``W(ω) = U C Uᵀ`` the wave ports' rank-two modal corrections
 (`gfem._engine.wave_ports`), never assembled: a handle of ``A + W`` is a
 Woodbury update of a handle of ``A`` (`gfem._linalg.low_rank_update`), for
-forward and adjoint solves alike (``A + W`` is complex symmetric). The
+forward and adjoint solves alike (``A + W`` is complex symmetric without a
+Bloch wave vector; with one, the operator's symmetry is ``"general"``). The
 ``direct`` and ``petsc`` linear solvers sum ``A(ω)`` from the pieces ``A_k``
 assembled once (the piece sum, `gfem._linalg.pieces`), kept until `free`.
 
@@ -85,7 +86,9 @@ class SystemOperator:
         # assembled at the first direct prepare (the piece sum); a backward
         # pass reuses them, `free` drops them
         self._pieces = AssembledPieces(
-            operator.space, [piece.integrand for piece in operator.pieces]
+            operator.space,
+            [piece.integrand for piece in operator.pieces],
+            symmetric=operator.symmetric,
         )
         self._handles: dict[int, Handle] = {}
         self._adjoint_sweep: SystemSweep | None = None
@@ -110,7 +113,7 @@ class SystemOperator:
             functools.partial(self._system_handle, borrow=True),
             functools.partial(
                 self._linear.prepare,
-                symmetry="complex_symmetric",
+                symmetry=self.operator.symmetry,
                 width=self._width,
                 solves=solves,
                 tolerance=tolerance,
@@ -201,7 +204,7 @@ class SystemOperator:
         if n not in self._handles:
             handle = self._linear.prepare(
                 self.operator_at(omega),
-                symmetry="complex_symmetric",
+                symmetry=self.operator.symmetry,
                 width=self._width,
                 tolerance=self._adjoint_tolerance,
             )

@@ -7,6 +7,8 @@ NGSolve's default: gfem's flagged MKL PARDISO with the ``mkl`` extra (see
 `gfem._linalg.pardiso`), ``sparsecholesky`` without it, or when a setup is
 expected to serve enough right-hand-side columns for its threads: 16 or more
 on 16 threads or more, 6 or more on 56 threads or more (`_coarse_inverse`).
+A general operator (a Bloch phase, A^T != A) is never given sparse Cholesky:
+its coarse problem is factored by PARDISO LU, or UMFPACK without MKL.
 The Krylov method follows the operator: NGSolve's conjugate gradients for a
 Hermitian (real symmetric positive definite) operator, otherwise gfem's
 GMRES (`gfem._linalg.gmres`), which orthogonalizes its Krylov basis by CGS2
@@ -28,8 +30,13 @@ import ngsolve as ngs
 import numpy as np
 
 from gfem._linalg import Operator, Symmetry
-from gfem._linalg.base import NgsHandle, host_bytes, same_free_dofs
-from gfem._linalg.direct import INVERSE
+from gfem._linalg.base import (
+    NgsHandle,
+    equals_its_transpose,
+    host_bytes,
+    same_free_dofs,
+)
+from gfem._linalg.direct import GENERAL_INVERSE, INVERSE
 from gfem._linalg.gmres import Gmres
 from gfem._linalg.pardiso import pardiso_inverse
 from gfem.errors import LinearSolverConvergenceError
@@ -86,7 +93,13 @@ def _coarse_inverse(
     ``"hermitian"`` on a real space; a complex Hermitian one is not), sparse
     Cholesky without it. The rule counts columns, never times, so a run's
     choice repeats exactly.
+
+    An operator without ``A^T = A`` (a Bloch phase) skips the rule: sparse
+    Cholesky would factor it as ``L D L^T``, silently wrong, so its coarse
+    problem is PARDISO's LU, or UMFPACK (`GENERAL_INVERSE`) without MKL.
     """
+    if not equals_its_transpose(symmetry, is_complex=is_complex):
+        return pardiso_inverse(symmetry, is_complex=is_complex) or GENERAL_INVERSE
     if (threads >= SPARSE_COARSE_THREADS and columns >= SPARSE_COARSE_COLUMNS) or (
         threads >= SPARSE_COARSE_WIDE_THREADS and columns >= SPARSE_COARSE_WIDE_COLUMNS
     ):

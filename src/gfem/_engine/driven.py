@@ -15,9 +15,12 @@ it.
 With ``SolverOptions.frequency_workers`` above 1, a uniform sweep splits
 into contiguous blocks of frequencies, each swept the same way in a
 frequency worker (`gfem._engine.workers`), joined in frequency order; the
-backward pass stays in this process. ``A`` is complex
-symmetric (A^T = A), and a port's excitation vector is proportional to its
-voltage functional, so S is symmetric to solver precision.
+backward pass stays in this process. Without a Bloch wave vector ``A``
+is complex symmetric (A^T = A), and a port's excitation vector is
+proportional to its voltage functional, so S is symmetric to solver
+precision. With one (``Driven.wave_vector``) the operator is general:
+A(k)^T = A(-k), so S(k)^T = S(-k), and the direct solver factors it by LU
+(MKL PARDISO, or NGSolve's UMFPACK without the ``mkl`` extra).
 
 S is read from the port voltages: with the excited port fed 1 W incident
 power (incident voltage sqrt(2 R)), ``S_ij = V_i / sqrt(2 R_i) - δ_ij``,
@@ -86,7 +89,7 @@ from gfem._engine.sensitivity import FieldPair, Term, is_sheet
 from gfem._engine.sweep_outputs import SweepOutputs
 from gfem._engine.system_operator import SystemOperator
 from gfem._engine.wave_ports import wave_port_couplings
-from gfem._linalg import Kind, ResolvedLinearSolver
+from gfem._linalg import Kind, ResolvedLinearSolver, Symmetry
 from gfem._periodic import bloch_phases, check_wave_vector
 from gfem._sweep.adaptive import AffineSystem, AffineTerm, adaptive_sweep
 from gfem.errors import (
@@ -143,6 +146,9 @@ class DrivenOperator:
             coefficients x to the unpaired space's, e = P x, where results
             keep their fields (`expansion`); ``None`` without pairs, where
             the two spaces are one.
+        symmetry: ``"general"`` on a Bloch-phased space (A^T != A),
+            ``"complex_symmetric"`` otherwise: declared by the problem's
+            wave vector, never read from its value.
     """
 
     built: EngineMesh
@@ -151,6 +157,7 @@ class DrivenOperator:
     ports: tuple[terms.LumpedPortData, ...]
     order: int
     expansion: scipy.sparse.csr_matrix | None = None
+    symmetry: Symmetry = "complex_symmetric"
 
     def expand(self, x: np.ndarray) -> np.ndarray:
         """``P x``: solve-space coefficients ``(ndof, ...)`` on the unpaired space."""
@@ -159,10 +166,15 @@ class DrivenOperator:
     def form(self, omega: float) -> ngs.BilinearForm:
         """``Σ θ_k(ω) a_k``, not assembled (a backend assembles it)."""
         u, v = self.space.TnT()
-        form = ngs.BilinearForm(self.space, symmetric=True)
+        form = ngs.BilinearForm(self.space, symmetric=self.symmetric)
         for piece in self.pieces:
             form += complex(piece.theta(omega)) * piece.integrand(u, v)
         return form
+
+    @property
+    def symmetric(self) -> bool:
+        """Whether A^T = A (no Bloch phase): the forms' ``symmetric`` flag."""
+        return self.symmetry != "general"
 
     def weights(self, omega: complex) -> dict[str, complex]:
         """θ(ω) of each piece but the ports', by piece name (`gfem._engine.terms`).
@@ -187,7 +199,9 @@ class DrivenOperator:
         u, v = self.space.TnT()
         forms = []
         for piece in self.pieces:
-            form = ngs.BilinearForm(self.space, symmetric=True, nonassemble=True)
+            form = ngs.BilinearForm(
+                self.space, symmetric=self.symmetric, nonassemble=True
+            )
             form += piece.integrand(u, v)
             forms.append(form)
         return forms
@@ -225,7 +239,8 @@ def driven_operator(
     (boolean masks, ``None`` for all; see `terms.pieces`); the space is the
     unrestricted one. A model with `gfem.Periodic` pairs solves on the
     periodic space, Bloch-phased by ``wave_vector`` (rad/m; ``None``: plain
-    periodicity), with its `expansion`.
+    periodicity), with its `expansion`; a wave vector makes the operator
+    ``"general"`` (`DrivenOperator.symmetry`).
     """
     periodic = model._periodic  # noqa: SLF001
     disc = discretization(model.mesh, periodic)
@@ -258,7 +273,8 @@ def driven_operator(
         space = disc.space(key, lambda: hcurl_space(model, built, order, dirichlet=pec))
     ports = terms.lumped_ports(model, built.scale)
     pieces = terms.pieces(model, built, order, ports, elements=elements, faces=faces)
-    return DrivenOperator(built, space, pieces, ports, order, expansion)
+    symmetry: Symmetry = "complex_symmetric" if wave_vector is None else "general"
+    return DrivenOperator(built, space, pieces, ports, order, expansion, symmetry)
 
 
 #: Entries of the expansion P below this are the round-off of NGSolve's
@@ -319,6 +335,8 @@ class DrivenRule:
             raise TypeError(f"Expected gfem.Driven, got {problem!r}.")
         self.problem = problem
         self.options = options
+        if problem.wave_vector is not None:
+            _check_bloch(problem, options)
         # before any assembly, and before any worker
         self.linear = ResolvedLinearSolver.resolve(
             options, default=DEFAULT_SOLVER, problem="driven"
@@ -1429,6 +1447,32 @@ def _port_regions(model: Model) -> dict[str, tuple[str, ...]]:
         tags = np.unique(mesh.tetrahedron_tags[tets[active[tets]]])
         out[port.name] = tuple(names[int(t)] for t in tags)
     return out
+
+
+def _check_bloch(problem: Driven, options: SolverOptions) -> None:
+    """Raise for what a Bloch driven solve cannot use (before any assembly).
+
+    A Bloch phase makes the operator general (A^T != A): the GPU solver and
+    PETSc factor A^T = A only, and the adaptive sweep's reduced model is a
+    symmetric projection.
+    """
+    if problem.sweep == "adaptive":
+        raise NotImplementedError(
+            "Driven.wave_vector sets a Bloch phase, which the adaptive sweep cannot "
+            "solve in this version of gfem: use sweep='uniform'."
+        )
+    if options.device != "cpu":
+        raise NotImplementedError(
+            "Driven.wave_vector sets a Bloch phase, so the driven operator is not "
+            f"symmetric, and the GPU solver (device={options.device!r}, cuDSS) "
+            "factors symmetric operators only: use device='cpu'."
+        )
+    if options.linear_solver == "petsc":
+        raise ValueError(
+            "Driven.wave_vector sets a Bloch phase, so the driven operator is not "
+            "symmetric, and linear_solver='petsc' factors symmetric operators only: "
+            "use linear_solver='direct' or 'bddc_gmres'."
+        )
 
 
 def _check_supported(model: Model) -> None:

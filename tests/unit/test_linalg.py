@@ -206,15 +206,43 @@ def test_wrong_shape_raises(built):
         handle.solve(np.ones(handle.ndof + 1))
 
 
-@pytest.mark.parametrize(
-    ("complex_valued", "symmetry"), [(False, "general"), (True, "hermitian")]
-)
-def test_direct_refuses_operators_cholesky_cannot_factor(
-    built, complex_valued, symmetry
-):
-    op, _ = _laplace(built, complex_valued=complex_valued)
+def test_direct_refuses_a_complex_hermitian_operator(built):
+    op, _ = _laplace(built, complex_valued=True)
     with pytest.raises(ValueError, match="A\\^T = A"):
-        prepare(op, symmetry=symmetry, kind="direct")
+        prepare(op, symmetry="hermitian", kind="direct")
+
+
+def _advection(built, shift=1 - 2j):
+    """A complex operator with A^T != A: a Laplacian with a drift term."""
+    space = ngs.H1(built.mesh, order=2, dirichlet="bottom|top", complex=True)
+    u, v = space.TnT()
+    drift = ngs.InnerProduct(ngs.CF((3.0, 1.0, 0.0)), ngs.grad(u)) * v
+    form = ngs.BilinearForm(space, symmetric=False)
+    form += (ngs.grad(u) * ngs.grad(v) + shift * u * v + drift) * quadrature.dx(2)
+    return Operator(form, space.FreeDofs()), space
+
+
+@pytest.mark.parametrize("mkl", [True, False], ids=["pardiso", "umfpack"])
+def test_direct_factors_a_general_operator_by_lu(built, monkeypatch, mkl):
+    if mkl and not pardiso.pardiso_available():
+        pytest.skip("needs the mkl extra")
+    if not mkl:
+        monkeypatch.setattr(pardiso, "pardiso_available", lambda: False)
+    op, space = _advection(built)
+    handle = prepare(op, symmetry="general", kind="direct")
+    free = np.array(list(space.FreeDofs()))
+    A = _dense(handle, space.ndof)
+    assert np.abs(A - A.T).max() > 0.1 * np.abs(A).max()
+    rng = np.random.default_rng(3)
+    B = rng.standard_normal((space.ndof, 2)) + 1j * rng.standard_normal((space.ndof, 2))
+    X = handle.solve(B)
+    np.testing.assert_allclose((A @ X)[free], B[free], atol=1e-10 * np.abs(B).max())
+    # a sweep's next frequency: refactorized on the same plan
+    other, _ = _advection(built, shift=2 - 1j)
+    handle.refactorize(other)
+    A = _dense(handle, space.ndof)
+    X = handle.solve(B)
+    np.testing.assert_allclose((A @ X)[free], B[free], atol=1e-10 * np.abs(B).max())
 
 
 def test_unknown_backends_raise(built):
@@ -229,6 +257,28 @@ def test_unknown_backends_raise(built):
 
 def _residual(handle, B, X, free):
     return np.abs((handle.apply(X) - B)[free]).max() / np.abs(B[free]).max()
+
+
+@pytest.mark.parametrize("mkl", [True, False], ids=["pardiso", "umfpack"])
+def test_bddc_factors_a_general_coarse_problem_by_lu(built, monkeypatch, mkl):
+    # never sparse Cholesky, whatever the columns and threads
+    if mkl and not pardiso.pardiso_available():
+        pytest.skip("needs the mkl extra")
+    if not mkl:
+        monkeypatch.setattr(pardiso, "pardiso_available", lambda: False)
+    expected = "gfem_pardiso_general" if mkl else "umfpack"
+    for threads, columns in [(1, 1), (16, 16), (112, 6)]:
+        chosen = bddc._coarse_inverse(
+            "general", is_complex=True, threads=threads, columns=columns
+        )
+        assert chosen == expected
+    op, space = _advection(built)
+    handle = prepare(op, symmetry="general", kind="bddc_gmres", tolerance=1e-10)
+    assert handle._preconditioner.flags.ToDict()["inverse"] == expected
+    free = np.array(list(space.FreeDofs()))
+    B = np.random.default_rng(4).standard_normal(space.ndof) + 0j
+    X = handle.solve(B)
+    assert _residual(handle, B, X, free) < 1e-8
 
 
 def test_bddc_solves_many_right_hand_sides_to_the_tolerance(built):
