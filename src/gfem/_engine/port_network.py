@@ -33,7 +33,7 @@ import numpy as np
 
 from gfem._boundaries import LumpedPort, WavePort
 from gfem._engine import terms
-from gfem._engine.wave_ports import WavePortCoupling
+from gfem._engine.wave_ports import PortSurfaceCoupling, WavePortCoupling
 from gfem._sweep.adaptive import AffineTerm
 from gfem.model import Model
 
@@ -172,7 +172,7 @@ class PortNetwork:
     Attributes:
         excitation: The right-hand sides, one column per excited port.
         outputs: The S functionals, one row per port.
-        waves: The wave ports' couplings.
+        waves: The wave ports' couplings, in model port order.
         columns: The excited ports' indices.
         z_ref: ``(n_freq, n_ports)`` reference impedances, ohm.
         deembedding: ``(n_freq, n_ports)``: S_ij is scaled by ``d_i d_j``
@@ -199,7 +199,7 @@ class PortNetwork:
         cls,
         model: Model,
         operator: DrivenOperator,
-        waves: Sequence[WavePortCoupling],
+        surfaces: Sequence[PortSurfaceCoupling],
         *,
         columns: Sequence[int],
         n_freq: int,
@@ -209,7 +209,9 @@ class PortNetwork:
         Args:
             model: The model.
             operator: The driven operator (lumped ports and space).
-            waves: The wave ports' couplings.
+            surfaces: The wave port surfaces' couplings: one excitation
+                term (if any of its ports is excited) and one output term
+                each.
             columns: The excited ports' indices.
             n_freq: The output grid's size.
         """
@@ -240,30 +242,35 @@ class PortNetwork:
             rows[lumped, range(len(lumped))] = 1.0 / np.sqrt(2 * r)
             voltage = np.stack([v[1] for v in vectors], axis=1)
             outputs.append(AffineTerm(voltage, lambda _, rows=rows: rows))
-        for c in waves:
-            m2 = c.vectors.shape[1]
-            if c.index in columns:
-                pos = columns.index(c.index)
+        for surface in surfaces:
+            m2 = surface.vectors.shape[1]
+            fed = [
+                (c, columns.index(c.index)) for c in surface.ports if c.index in columns
+            ]
+            if fed:
 
-                def wave_rhs(w: float, c=c, pos=pos, m2=m2) -> np.ndarray:
+                def wave_rhs(w: float, fed=fed, m2=m2) -> np.ndarray:
                     out = np.zeros((m2, width), complex)
-                    out[:, pos] = c.excitation(w)
+                    for c, pos in fed:
+                        out[:, pos] = c.excitation(w)
                     return out
 
-                excitation.append(AffineTerm(c.vectors, wave_rhs))
+                excitation.append(AffineTerm(surface.vectors, wave_rhs))
 
-            def wave_row(w: float, c=c, m2=m2) -> np.ndarray:
+            def wave_rows(w: float, ports=surface.ports, m2=m2) -> np.ndarray:
                 out = np.zeros((n_ports, m2), complex)
-                out[c.index] = c.functional(w)
+                for c in ports:
+                    out[c.index] = c.functional(w)
                 return out
 
-            outputs.append(AffineTerm(np.conj(c.vectors), wave_row))
+            outputs.append(AffineTerm(np.conj(surface.vectors), wave_rows))
+        waves = sorted((c for s in surfaces for c in s.ports), key=lambda c: c.index)
         z_ref = np.zeros((n_freq, n_ports))
         for i in lumped:
             z_ref[:, i] = resistance(model.ports[i])
         for c in waves:
             z_ref[:, c.index] = c.z_ref
-        return cls(excitation, outputs, list(waves), columns, z_ref)
+        return cls(excitation, outputs, waves, columns, z_ref)
 
     def rhs(self, omega: float) -> np.ndarray:
         """The right-hand sides at ω, ``(N, width)``."""

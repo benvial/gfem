@@ -536,8 +536,8 @@ class DrivenRule:
 
         Both from one set of wave port couplings: the system operator adds
         their Robin pieces and modal corrections, and the port network holds
-        the excitations and S functionals. Runs each wave port's port mode
-        sweep over the output grid.
+        the excitations and S functionals. Runs each wave port surface's
+        port mode sweep over the output grid.
         """
         op = self.operator(model)
         names = self.port_names
@@ -615,7 +615,7 @@ class DrivenRule:
                     solve=solve,
                     corrections=[
                         AffineTerm(c.vectors, c.correction_coefficients)
-                        for c in ports.waves
+                        for c in system.surfaces
                     ],
                     adjoint_loads=ports.adjoint_loads,
                 )

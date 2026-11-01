@@ -32,6 +32,10 @@ c(omega)``, the excitation and the functional are fixed vectors (one per
 basis column, assembled on the 2D port once) times tabulated scalars, and
 ``W(omega) = vectors C(omega) vectorsᵀ`` with a tabulated ``(2 m, 2 m)``
 coefficient of rank two, which is what the adaptive sweep needs.
+
+The wave ports of one surface share its Robin term, its vectors and its
+modal correction (`PortSurfaceCoupling`); the excitation and the S
+functional are each port's own (`WavePortCoupling`).
 """
 
 from __future__ import annotations
@@ -52,27 +56,36 @@ from gfem._port_section import PortSection, port_section
 from gfem._sweep.port_mode import PortModeSweep, port_mode_sweep
 from gfem.model import Model
 
-__all__ = ["WavePortCoupling", "trace_dofs", "wave_port_couplings"]
+__all__ = [
+    "PortSurfaceCoupling",
+    "WavePortCoupling",
+    "trace_dofs",
+    "wave_port_couplings",
+]
+
+
+def _at(omegas: np.ndarray, omega: float) -> int:
+    """The index of ``omega`` on the output grid ``omegas``."""
+    k = int(np.argmin(np.abs(omegas - omega)))
+    if abs(omegas[k] - omega) > 1e-12 * abs(omega):  # pragma: no cover
+        raise ValueError(f"No port mode at {omega / (2 * math.pi):g} Hz.")
+    return k
 
 
 @dataclasses.dataclass(eq=False)
 class WavePortCoupling:
     """One wave port's terms in the driven problem, over the output grid.
 
+    Its surface's `PortSurfaceCoupling` holds the terms the wave ports of
+    one surface share.
+
     Attributes:
         index: The port's position in the model's ports.
         port: The wave port.
         sweep: Its port mode sweep over the output frequencies.
-        piece: Its Robin term (θ tabulated on the grid).
-        vectors: ``(ndof, 2 m)``: per mode basis column, the 3D vector of
-            ``∫ mu_r^-1 (column) · v_t`` (tangential columns) or ``∫
-            mu_r^-1 grad(column) · v_t`` (normal columns).
-            Zero on the 3D space's fixed DOFs.
-        phi: ``(n_freq, 2 m)``: the mode's n x H on those columns, ``gamma
-            c_t`` and ``c_n`` (gamma per file unit): ``h = vectors @ phi``.
-        reaction: ``(2 m, m)``: the port-face products of the columns of
-            ``vectors`` with the mode basis's tangential columns, so ``hᵀ e
-            = phi @ reaction @ c_t``.
+        phi: ``(n_freq, 2 m)``: the mode's n x H on the columns of its
+            surface's ``vectors``, ``gamma c_t`` and ``c_n`` (gamma per file
+            unit): ``h = vectors @ phi``.
         norm: ``(n_freq,)``: the real factor that rescales the sweep's 1 W
             mode to Palace's power normalization (1 for a lossless mode).
         omegas: ``(n_freq,)`` the output grid, rad/s.
@@ -82,54 +95,21 @@ class WavePortCoupling:
     index: int
     port: WavePort
     sweep: PortModeSweep
-    piece: terms.Piece
-    vectors: np.ndarray
     phi: np.ndarray
-    reaction: np.ndarray
     norm: np.ndarray
     omegas: np.ndarray
     scale: float
 
-    def _at(self, omega: float) -> int:
-        k = int(np.argmin(np.abs(self.omegas - omega)))
-        if abs(self.omegas[k] - omega) > 1e-12 * abs(omega):  # pragma: no cover
-            raise ValueError(f"No port mode at {omega / (2 * math.pi):g} Hz.")
-        return k
-
     def excitation(self, omega: float) -> np.ndarray:
         """``(2 m,)``: the incident wave's right-hand side is ``vectors @ this``."""
-        k = self._at(omega)
+        k = _at(self.omegas, omega)
         return 2.0 * self.scale * self.norm[k] * self.phi[k]
 
     def functional(self, omega: float) -> np.ndarray:
         """``(2 m,)``: the port's S row is ``this @ (conj(vectors).T @ x)``."""
-        k = self._at(omega)
+        k = _at(self.omegas, omega)
         mu0 = scipy.constants.mu_0
         return 0.5j / (omega * mu0) * self.norm[k] * np.conj(self.phi[k])
-
-    def correction(self, omega: float) -> tuple[np.ndarray, np.ndarray]:
-        """The modal correction at ω as ``W = vectors P diag(d) Pᵀ vectorsᵀ``.
-
-        Returns:
-            ``P`` ``(2 m, 2)``, the n x H of the mode with and without
-            ``grad E_n`` (columns), and ``d`` ``(2,)``, ``(1 / R, -1 / R_s)``
-            with the unconjugated reactions ``R = hᵀ e``. ``d`` is zero
-            (no correction, as Palace) when a reaction vanishes.
-        """
-        k = self._at(omega)
-        m = self.reaction.shape[1]
-        full = self.phi[k]
-        scalar = np.concatenate([full[:m], np.zeros(m, full.dtype)])
-        p = np.stack([full, scalar], axis=1)
-        reactions = p.T @ (self.reaction @ self.sweep.coords[k, :m])
-        if not np.all(np.abs(reactions) > 0):  # pragma: no cover - Palace skips
-            return p, np.zeros(2, complex)
-        return p, np.array([1.0, -1.0]) / reactions
-
-    def correction_coefficients(self, omega: float) -> np.ndarray:
-        """``C(ω)`` ``(2 m, 2 m)`` with ``W = vectors C vectorsᵀ`` (rank two)."""
-        p, d = self.correction(omega)
-        return (p * d) @ p.T
 
     @property
     def z_ref(self) -> np.ndarray:
@@ -138,7 +118,79 @@ class WavePortCoupling:
 
     def deembedding(self, omega: float) -> complex:
         """``exp(gamma offset)``: S moves its reference plane into the domain."""
-        return complex(np.exp(self.sweep.gamma[self._at(omega)] * self.port.offset))
+        k = _at(self.omegas, omega)
+        return complex(np.exp(self.sweep.gamma[k] * self.port.offset))
+
+
+@dataclasses.dataclass(eq=False)
+class PortSurfaceCoupling:
+    """The terms the wave ports of one surface share, over the output grid.
+
+    Attributes:
+        piece: The surface's Robin term (θ tabulated on the grid), with
+            ``beta`` of the wave port with the smallest ``mode``.
+        vectors: ``(ndof, 2 m)``: per mode basis column, the 3D vector of
+            ``∫ mu_r^-1 (column) · v_t`` (tangential columns) or ``∫
+            mu_r^-1 grad(column) · v_t`` (normal columns).
+            Zero on the 3D space's fixed DOFs.
+        reaction: ``(2 m, m)``: the port-face products of the columns of
+            ``vectors`` with the mode basis's tangential columns, so ``hᵀ e
+            = phi @ reaction @ c_t``.
+        ports: The surface's wave ports, in model port order; the first
+            with the smallest ``mode`` is the lead.
+    """
+
+    piece: terms.Piece
+    vectors: np.ndarray
+    reaction: np.ndarray
+    ports: tuple[WavePortCoupling, ...]
+
+    @property
+    def lead(self) -> WavePortCoupling:
+        """The wave port with the smallest ``mode``: its gamma is ``gamma_0``."""
+        return min(self.ports, key=lambda c: c.port.mode)
+
+    def correction(self, omega: float) -> tuple[np.ndarray, np.ndarray]:
+        """The modal correction at ω as ``W = vectors P D Pᵀ vectorsᵀ``.
+
+        With ``n`` wave ports, the modes' n x H ``Φ`` and tangential
+        coordinates ``C_t``, ``R = Φᵀ reaction C_t`` and ``G = C_tᵀ
+        reaction[:m] C_t``.
+
+        Returns:
+            ``P`` ``(2 m, 2 n)``, ``[Φ, gamma_0 [C_t; 0]]`` (for one port
+            the n x H of its mode with and without ``grad E_n``), and ``D``
+            ``(2 n, 2 n)``, ``blockdiag(R_sym⁻¹, -(gamma_0 G)⁻¹)`` with
+            ``R_sym = (R + Rᵀ) / 2`` (for one port ``diag(1 / R, -1 /
+            R_s)``, the unconjugated reactions). ``D`` is zero (no
+            correction, as Palace) when a block is singular.
+        """
+        lead = self.lead
+        k = _at(lead.omegas, omega)
+        m, n = self.reaction.shape[1], len(self.ports)
+        gamma0 = lead.sweep.gamma[k] * lead.scale
+        full = np.stack([c.phi[k] for c in self.ports], axis=1)
+        tangential = np.stack([c.sweep.coords[k, :m] for c in self.ports], axis=1)
+        scalar = np.concatenate([gamma0 * tangential, np.zeros_like(tangential)])
+        p = np.concatenate([full, scalar], axis=1)
+        reactions = p.T @ (self.reaction @ tangential)
+        r = reactions[:n]
+        blocks = ((r + r.T) / 2, reactions[n:])
+        d = np.zeros((2 * n, 2 * n), complex)
+        if not all(np.abs(np.linalg.det(b)) > 0 for b in blocks):  # pragma: no cover
+            return p, d  # Palace skips
+        d[:n, :n] = np.linalg.inv(blocks[0])
+        d[n:, n:] = -np.linalg.inv(blocks[1])
+        return p, d
+
+    def correction_coefficients(self, omega: float) -> np.ndarray:
+        """``C(ω)`` ``(2 m, 2 m)`` with ``W = vectors C vectorsᵀ`` (rank ``2 n``).
+
+        ``C`` is complex symmetric: the adjoint reuses the forward operator
+        untransposed.
+        """
+        p, d = self.correction(omega)
+        return (p @ d) @ p.T
 
 
 def wave_port_couplings(
@@ -149,8 +201,8 @@ def wave_port_couplings(
     order: int,
     frequency: tuple[float, ...],
     tolerance: float,
-) -> list[WavePortCoupling]:
-    """Run each wave port's port mode sweep and build its driven terms.
+) -> list[PortSurfaceCoupling]:
+    """Run each wave port surface's port mode sweep and build its driven terms.
 
     Args:
         model: The model.
@@ -159,60 +211,74 @@ def wave_port_couplings(
         order: The element order (the port mode problem uses the same).
         frequency: The output grid, Hz.
         tolerance: ``SolverOptions.port_mode_tolerance``.
+
+    Returns:
+        One coupling per surface with wave ports, in the order of each
+        surface's first wave port.
     """
     omegas = 2 * np.pi * np.asarray(frequency, float)
-    out = []
+    surfaces: dict[str, list[tuple[int, WavePort]]] = {}
     for index, port in enumerate(model.ports):
-        if not isinstance(port, WavePort):
-            continue
-        section = port_section(model, port)
+        if isinstance(port, WavePort):
+            surfaces.setdefault(port.surface, []).append((index, port))
+    out = []
+    for group in surfaces.values():
+        if len(group) > 1:  # pragma: no cover - the model rejects it
+            names = ", ".join(repr(p.name) for _, p in group)
+            raise NotImplementedError(f"WavePorts {names} share one surface.")
+        lead = min((p for _, p in group), key=lambda p: p.mode)
+        section = port_section(model, lead)
         modes = PortModeSpace(section, order)
-        [sweep] = port_mode_sweep(
-            modes, frequency, [port.mode], tolerance=tolerance, ports=[port]
+        sweeps = port_mode_sweep(
+            modes,
+            frequency,
+            [p.mode for _, p in group],
+            tolerance=tolerance,
+            ports=[p for _, p in group],
         )
         idx3, idx2 = trace_dofs(model, section, modes, built, space)
         free = free_mask(space.FreeDofs(), space.ndof)
         idx3, idx2 = idx3[free[idx3]], idx2[free[idx3]]
         g_form, t_form = modes.coupling_forms
-        w = sweep.basis[modes.free]
+        basis = sweeps[0].basis
+        w = basis[modes.free]
         m = w.shape[1] // 2
         r = np.concatenate([t_form @ w[:, :m], g_form @ w[:, m:]], axis=1)
         vectors = np.zeros((space.ndof, 2 * m), r.dtype)
         vectors[idx3] = r[idx2]
         # hᵀ e on the port face, as Palace (the mode vanishes on fixed DOFs)
-        reaction = r.T @ sweep.basis[: modes.n_t, :m]
+        reaction = r.T @ basis[: modes.n_t, :m]
         scale = section.scale
-        beta = sweep.gamma.imag * scale
-        coords = sweep.coords
-        gamma = sweep.gamma * scale
-        phi = np.concatenate([gamma[:, None] * coords[:, :m], coords[:, m:]], 1)
-        # Palace's normalization: |(i / (omega mu0)) int E_t . conj(h)| = 2
-        q = sweep.basis[: modes.n_t, :m].T @ np.conj(r)
-        proj = np.einsum("fi,ij,fj->f", coords[:, :m], q, np.conj(phi))
-        power = np.abs(scale * proj / (omegas * scipy.constants.mu_0))
-        norm = np.sqrt(2.0 / power)
+        q = basis[: modes.n_t, :m].T @ np.conj(r)
+        ports = []
+        for (index, port), sweep in zip(group, sweeps, strict=True):
+            coords = sweep.coords
+            gamma = sweep.gamma * scale
+            phi = np.concatenate([gamma[:, None] * coords[:, :m], coords[:, m:]], 1)
+            # Palace's normalization: |(i / (omega mu0)) int E_t . conj(h)| = 2
+            proj = np.einsum("fi,ij,fj->f", coords[:, :m], q, np.conj(phi))
+            power = np.abs(scale * proj / (omegas * scipy.constants.mu_0))
+            ports.append(
+                WavePortCoupling(
+                    index=index,
+                    port=port,
+                    sweep=sweep,
+                    phi=phi,
+                    norm=np.sqrt(2.0 / power),
+                    omegas=omegas,
+                    scale=scale,
+                )
+            )
+        beta = next(c for c in ports if c.port is lead).sweep.gamma.imag * scale
         piece = terms.wave_port_piece(
             model,
             built,
             order,
-            port=port.name,
-            surface=port.surface,
+            port=lead.name,
+            surface=lead.surface,
             theta=terms.Tabulated(omegas, 1j * beta),
         )
-        out.append(
-            WavePortCoupling(
-                index=index,
-                port=port,
-                sweep=sweep,
-                piece=piece,
-                vectors=vectors,
-                phi=phi,
-                reaction=reaction,
-                norm=norm,
-                omegas=omegas,
-                scale=scale,
-            )
-        )
+        out.append(PortSurfaceCoupling(piece, vectors, reaction, tuple(ports)))
     return out
 
 
