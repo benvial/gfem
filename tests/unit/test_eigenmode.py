@@ -37,7 +37,7 @@ from scipy.optimize import brentq
 
 import gfem
 from gfem._eigen import rule as eigen_rule
-from gfem._eigen.operator import RESHIFT_SOLVES
+from gfem._eigen.operator import RESHIFT_SOLVES, EigenOperator
 from gfem._eigen.seed import MIN_SUBSPACE, seed_operator
 from gfem._engine import terms
 from gfem._engine.driven import driven_operator
@@ -309,6 +309,27 @@ def test_a_pair_with_its_weight_on_the_fixed_dofs_is_not_converged(mesh, monkeyp
     monkeypatch.setattr(rule, "_select", refine_a_stray_pair)
     gfem.solve(terminated_line(mesh, 1000.0), gfem.Eigenmode(target=8e9))
     assert not refined[0].converged
+
+
+def test_far_seeds_of_a_polynomial_operator_are_refined_at_their_own_ritz_value(
+    mesh, monkeypatch
+):
+    # root 3's seed (backward error 2.6e-6) used to be refined on mode 2's
+    # shift, where it wandered through stall reshifts off any root before
+    # landing where round-off took it; a polynomial operator's Ritz values
+    # are its own, so each far seed is refactorized at its own one
+    model = terminated_line(mesh, 1000.0)
+    roots = line_roots(1000.0, range(1, 4))
+    reshift, shifts = EigenOperator.reshift, []
+
+    def spy(self, k, **kwargs):
+        shifts.append(k * const.c / self.scale)
+        return reshift(self, k, **kwargs)
+
+    monkeypatch.setattr(EigenOperator, "reshift", spy)
+    result = gfem.solve(model, gfem.Eigenmode(target=8e9, n_modes=3))
+    np.testing.assert_allclose(result.omega, roots, rtol=3e-4)
+    np.testing.assert_allclose(shifts, roots[1:], rtol=3e-4)
 
 
 def _count_shift_prepares(monkeypatch) -> list[int]:
