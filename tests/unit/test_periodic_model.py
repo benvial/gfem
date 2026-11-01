@@ -353,3 +353,46 @@ def test_the_pairs_survive_flattening(c2_mesh):
     leaves, tree = jax.tree_util.tree_flatten(model)
     back = jax.tree_util.tree_unflatten(tree, leaves)
     assert back.periodic_translations == model.periodic_translations
+
+
+# --- the Bloch wave vector on problems -------------------------------------------------
+
+PROBLEMS = {
+    "Driven": lambda **kw: gfem.Driven(5e9, **kw),
+    "Eigenmode": lambda **kw: gfem.Eigenmode(5e9, **kw),
+}
+
+
+@pytest.mark.parametrize("problem", list(PROBLEMS))
+def test_wave_vector_is_three_floats_in_rad_per_metre(problem):
+    build = PROBLEMS[problem]
+    assert build().wave_vector is None
+    k = build(wave_vector=[1, -2.5, np.float32(3)]).wave_vector
+    assert k == (1.0, -2.5, 3.0)
+    assert all(type(v) is float for v in k)
+    assert build(wave_vector=jnp.zeros(3)).wave_vector == (0.0, 0.0, 0.0)
+
+
+@pytest.mark.parametrize("problem", list(PROBLEMS))
+@pytest.mark.parametrize("value", [(1.0, 2.0), (1.0, np.nan, 0.0), "x", 5.0])
+def test_wave_vector_must_be_a_finite_three_vector(problem, value):
+    with pytest.raises(ValueError, match=r"wave_vector must be a 3-vector in rad/m"):
+        PROBLEMS[problem](wave_vector=value)
+
+
+@pytest.mark.parametrize("problem", list(PROBLEMS))
+@pytest.mark.parametrize("transform", [jax.jit, jax.grad])
+def test_a_traced_wave_vector_is_not_differentiable(problem, transform):
+    def objective(k):
+        PROBLEMS[problem](wave_vector=(k, 0.0, 0.0))
+        return k
+
+    with pytest.raises(
+        gfem.NonDifferentiableError, match=f"{problem}.wave_vector must be fixed"
+    ):
+        transform(objective)(1.0)
+
+
+def test_the_bloch_phase_convention_is_stated():
+    assert gfem.conventions.BLOCH_PHASE == "E(r + a) = exp(-i k·a) E(r)"
+    assert "BLOCH_PHASE" in gfem.conventions.__all__

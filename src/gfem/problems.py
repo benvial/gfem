@@ -31,6 +31,23 @@ def _surfaces(value: Any, what: str) -> tuple[str, ...]:
     )
 
 
+def _wave_vector(value: Any, owner: str) -> tuple[float, float, float] | None:
+    """``None``, or a Bloch wave vector as three finite floats (rad/m)."""
+    if value is None:
+        return None
+    check_fixed(value, f"{owner}.wave_vector must be fixed numbers")
+    try:
+        k = np.asarray(value, dtype=float)
+    except (TypeError, ValueError):
+        k = np.empty(0)
+    if k.shape != (3,) or not np.isfinite(k).all():
+        raise ValueError(
+            f"{owner}.wave_vector must be a 3-vector in rad/m (kx, ky, kz), or "
+            f"None for plain periodicity; got {value!r}."
+        )
+    return (float(k[0]), float(k[1]), float(k[2]))
+
+
 @dataclasses.dataclass(frozen=True, init=False)
 class Electrostatic:
     """The Maxwell capacitance matrix between named terminals.
@@ -316,6 +333,13 @@ class Driven:
             ``True`` all, or a frequency or list of frequencies of
             ``frequency``. A field is a complex vector per DOF (16 bytes per
             DOF; 160 MB at 10M DOFs), so keep only what you use.
+        wave_vector: The Bloch wave vector k = (kx, ky, kz), rad/m
+            (Cartesian), of a model with `gfem.Periodic` pairs: across each
+            pair, E(r + a) = exp(-i k·a) E(r), with a the pair's translation
+            (`gfem.conventions`, Bloch periodicity). The same k at every
+            frequency. ``None``: plain periodicity, the fields equal on both
+            surfaces of every pair. Any vector, (0, 0, 0) included, declares
+            a Bloch solve.
 
     Raises:
         TypeError: ``excite`` is not port names, or ``keep_fields`` is not a
@@ -323,10 +347,10 @@ class Driven:
         ValueError: A frequency is not finite and positive, ``excite`` is
             empty or repeats a port, ``sweep`` is unknown, ``samples`` is
             given without ``sweep="adaptive"``, is empty or repeats a
-            frequency, or a ``samples`` or ``keep_fields`` frequency is not one
-            of ``frequency``.
-        NonDifferentiableError: ``frequency``, ``samples`` or
-            ``keep_fields`` is traced by JAX.
+            frequency, a ``samples`` or ``keep_fields`` frequency is not one
+            of ``frequency``, or ``wave_vector`` is not a finite 3-vector.
+        NonDifferentiableError: ``frequency``, ``samples``,
+            ``keep_fields`` or ``wave_vector`` is traced by JAX.
 
     Example:
         ``gfem.Driven(frequency=np.linspace(1e9, 100e9, 100))`` solves all
@@ -341,6 +365,7 @@ class Driven:
     sweep: Sweep
     keep_fields: bool | tuple[float, ...]
     samples: tuple[float, ...] | None = None
+    wave_vector: tuple[float, float, float] | None = None
     _rule: ClassVar[str] = "gfem._engine.driven:DrivenRule"
 
     def __init__(
@@ -351,6 +376,7 @@ class Driven:
         sweep: Sweep = "uniform",
         samples: Sequence[float] | None = None,
         keep_fields: bool | float | Sequence[float] = False,
+        wave_vector: Sequence[float] | None = None,
     ) -> None:
         """Validate and normalize (see the class docstring)."""
         if sweep not in _SWEEPS:
@@ -363,6 +389,7 @@ class Driven:
         object.__setattr__(self, "sweep", sweep)
         object.__setattr__(self, "keep_fields", _kept(keep_fields, frequencies))
         object.__setattr__(self, "samples", _samples(samples, sweep, frequencies))
+        object.__setattr__(self, "wave_vector", _wave_vector(wave_vector, "Driven"))
 
     @property
     def kept_frequencies(self) -> tuple[float, ...]:
@@ -468,11 +495,20 @@ class Eigenmode:
     Args:
         target: The frequency to search around, Hz.
         n_modes: How many modes.
+        wave_vector: The Bloch wave vector k = (kx, ky, kz), rad/m
+            (Cartesian), of a model with `gfem.Periodic` pairs: across each
+            pair, E(r + a) = exp(-i k·a) E(r), with a the pair's translation
+            (`gfem.conventions`, Bloch periodicity). A band diagram is one
+            problem per k on the same model. ``None``: plain periodicity,
+            the fields equal on both surfaces of every pair. Any vector,
+            (0, 0, 0) included, declares a Bloch solve.
 
     Raises:
-        ValueError: ``target`` is not a finite positive number, or
-            ``n_modes`` is not an integer >= 1.
-        NonDifferentiableError: ``target`` is traced by JAX.
+        ValueError: ``target`` is not a finite positive number,
+            ``n_modes`` is not an integer >= 1, or ``wave_vector`` is not a
+            finite 3-vector.
+        NonDifferentiableError: ``target`` or ``wave_vector`` is traced by
+            JAX.
 
     `gfem.solve` raises `gfem.EigenmodeConvergenceError` when fewer than
     ``n_modes`` modes converge (never a partial result), and
@@ -486,9 +522,16 @@ class Eigenmode:
 
     target: float
     n_modes: int
+    wave_vector: tuple[float, float, float] | None = None
     _rule: ClassVar[str] = "gfem._eigen.rule:EigenmodeRule"
 
-    def __init__(self, target: float, *, n_modes: int = 1) -> None:
+    def __init__(
+        self,
+        target: float,
+        *,
+        n_modes: int = 1,
+        wave_vector: Sequence[float] | None = None,
+    ) -> None:
         """Validate and normalize (see the class docstring)."""
         check_fixed(target, "Eigenmode.target must be a fixed number")
         try:
@@ -509,6 +552,7 @@ class Eigenmode:
             )
         object.__setattr__(self, "target", value)
         object.__setattr__(self, "n_modes", int(n_modes))
+        object.__setattr__(self, "wave_vector", _wave_vector(wave_vector, "Eigenmode"))
 
 
 jax.tree_util.register_static(Eigenmode)

@@ -128,11 +128,26 @@ and positive, which makes a lossless mode's field real; the remaining sign
 puts the largest coefficient's real part positive (among coefficients equal
 to the largest within a relative 1e-12, the lowest index). Participation ratios
 and coupling Q are ratios to ``E_elec`` and do not depend on this scale.
+
+Bloch periodicity
+-----------------
+A `gfem.Periodic` pair relates two surfaces by the translation a, from its
+first surface to its second (`Model.periodic_translations`, m). With a Bloch
+wave vector k (rad/m, ``wave_vector=`` on `gfem.Driven` and
+`gfem.Eigenmode`), the fields obey `BLOCH_PHASE`::
+
+    E(r + a) = exp(-i k·a) E(r)
+
+so, under e^{+iωt}, the phase of a Bloch wave travels along +k (as Palace's
+``FloquetWaveVector``). Without a wave vector the fields are equal on both
+surfaces (plain periodicity). Swapping a pair's surfaces flips a and gives
+the same field.
 """
 
 from __future__ import annotations
 
 __all__ = [
+    "BLOCH_PHASE",
     "EXTERIOR_THICKNESS_FACTOR",
     "INCIDENT_POWER",
     "INTERIOR_SHEET_ADMITTANCE",
@@ -159,3 +174,6 @@ INTERIOR_SHEET_ADMITTANCE = 0.5
 EXTERIOR_THICKNESS_FACTOR = 2.0
 #: Electric energy of every eigenmode field (see Eigenmodes), J.
 MODE_ENERGY = 1.0
+#: The Bloch phase across a periodic pair of translation a (see Bloch
+#: periodicity).
+BLOCH_PHASE = "E(r + a) = exp(-i k·a) E(r)"
