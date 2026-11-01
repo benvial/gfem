@@ -31,8 +31,9 @@ FREQUENCY = 20e9
 OPTIONS = gfem.SolverOptions(order=2, linear_solver="direct")
 #: The Bloch wave vector, rad/m.
 K = (0.3 * math.pi / (AX * MM), 0.2 * math.pi / (AY * MM), 0.0)
-#: Relative error of the power identity (ticket 06).
-POWER_RTOL = 1e-12
+#: Error of the power identity, W, for 1 W incident (ticket 06; measured
+#: 6e-14 plain and 1.4e-13 Bloch).
+POWER_TOL = 1e-12
 
 # A Bloch driven solve is right once ticket 03 declares the operator general.
 BLOCH = pytest.param(
@@ -115,7 +116,7 @@ def test_power_flow_on_a_periodic_cell_is_the_absorbed_power(cell, wave_vector):
 
     # the bottom layer's top face crosses both pairs' surfaces
     crossing = float(gfem.power_flow(e, "core", model=cell))
-    assert crossing == pytest.approx(absorbed, rel=POWER_RTOL)
+    assert crossing == pytest.approx(absorbed, rel=0, abs=POWER_TOL)
 
     # the strip under x > SLAB[1] left out: the side touches x_min, not x_max
     def touching(c):
@@ -123,11 +124,11 @@ def test_power_flow_on_a_periodic_cell_is_the_absorbed_power(cell, wave_vector):
         return ((x > SLAB[0]) & (x < SLAB[1])) | ((z < BOTTOM) & (x < SLAB[1]))
 
     assert float(gfem.power_flow(e, touching, model=cell)) == pytest.approx(
-        absorbed, rel=POWER_RTOL
+        absorbed, rel=0, abs=POWER_TOL
     )
     # the complement takes the same power in
     back = float(gfem.power_flow(e, "lossy", model=cell))
-    assert back == pytest.approx(-absorbed, rel=POWER_RTOL)
+    assert back == pytest.approx(-absorbed, rel=0, abs=POWER_TOL)
 
 
 def test_interface_participation_refuses_a_paired_surface(cell):
