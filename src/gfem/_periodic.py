@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 import weakref
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.spatial import KDTree
@@ -19,10 +20,16 @@ from gfem._domain import EMDomain
 from gfem._pytree import readonly
 from gfem.mesh import Mesh, _shortest_edges, _Topology
 
+if TYPE_CHECKING:
+    from gfem.model import Model
+
 #: Node match tolerance, relative to the shortest edge near the pair.
 REL_TOL = 1e-6
 #: Largest angle (rad) between the planes of two paired planar surfaces.
 ANGLE_TOL = 1e-6
+#: Largest component of a wave vector off the span of the translations,
+#: relative to its length.
+SPAN_RTOL = 1e-9
 
 _SETPERIODIC = (
     "Mesh the pair as periodic (gmsh: `gmsh.model.mesh.setPeriodic(2, "
@@ -277,3 +284,55 @@ def check_nodes(nodes: np.ndarray, pairings: Iterable[Pairing]) -> None:
                 "displacement: build the shape with gfem.boundary_morph on this "
                 "periodic model, which ties them."
             )
+
+
+def bloch_phases(
+    model: Model, wave_vector: Iterable[float] | None
+) -> tuple[complex, ...] | None:
+    """NGSolve's phase of each periodic pair, in ``boundaries`` order.
+
+    ``exp(-i k·a_j)`` for the wave vector k (rad/m) and pair j's translation
+    a_j (m), the factor from a pair's first surface to its second
+    (`gfem.conventions.BLOCH_PHASE`); ``None`` without a wave vector (plain
+    periodicity).
+    """
+    if wave_vector is None:
+        return None
+    k = np.asarray(tuple(wave_vector), dtype=float)
+    return tuple(
+        complex(np.exp(-1j * float(k @ np.asarray(a))))
+        for a in model.periodic_translations
+    )
+
+
+def check_wave_vector(
+    model: Model, wave_vector: tuple[float, float, float] | None, owner: str
+) -> None:
+    """A wave vector needs a periodic pair, and must lie in their translations' span.
+
+    Raises:
+        ValueError: ``wave_vector`` is set on a model without a
+            `gfem.Periodic` pair, or has a component that no pair's phase
+            reads (it would be ignored).
+    """
+    if wave_vector is None:
+        return
+    translations = np.asarray(model.periodic_translations, dtype=float)
+    if not len(translations):
+        raise ValueError(
+            f"{owner}.wave_vector sets a Bloch phase, but the model has no "
+            "gfem.Periodic pair. Pair the cell's opposite surfaces with "
+            "gfem.Periodic, or leave wave_vector=None."
+        )
+    k = np.asarray(wave_vector, dtype=float)
+    basis, _ = np.linalg.qr(translations.T)
+    projected = basis @ (basis.T @ k)
+    off = float(np.linalg.norm(k - projected))
+    if off > SPAN_RTOL * float(np.linalg.norm(k)):
+        raise ValueError(
+            f"{owner}.wave_vector {_vec(k)} rad/m has a component of "
+            f"{off:.6g} rad/m outside the span of the periodic translations "
+            f"{', '.join(_vec(a) for a in translations)} m, which no pair's phase "
+            "reads, so it would be ignored. Give the wave vector in that span, "
+            f"e.g. {_vec(projected)} rad/m."
+        )
