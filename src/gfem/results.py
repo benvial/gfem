@@ -954,7 +954,9 @@ class EigenmodeResult:
             a transmon. Its sign is that of ``Re V``: the field's phase
             makes a lossless mode real, so the sign is the junction's
             polarity along its port direction (not ``Re I``, which is zero
-            for a real field).
+            for a real field). Under a Bloch wave vector the sign is
+            relative to the mode's phase convention (its largest
+            coefficient real).
         bulk_participation: Electric energy participation of each volume
             region of the solve domain, by region name: the fraction of the
             mode's electric energy ``E`` stored in it. Times the region's
