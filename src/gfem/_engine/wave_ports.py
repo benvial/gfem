@@ -54,6 +54,7 @@ from gfem._engine.port_mode import PortModeSpace
 from gfem._linalg.base import free_mask
 from gfem._port_section import PortSection, port_section
 from gfem._sweep.port_mode import PortModeSweep, port_mode_sweep
+from gfem.errors import PortModeError
 from gfem.model import Model
 
 __all__ = [
@@ -145,10 +146,44 @@ class PortSurfaceCoupling:
     reaction: np.ndarray
     ports: tuple[WavePortCoupling, ...]
 
+    def __post_init__(self) -> None:
+        for k in range(len(self.lead.omegas)):
+            _, r_sym, g = self._blocks(k)
+            for name, block in (("reaction", r_sym), ("Gram", g)):
+                if _singular(block):
+                    raise self._singular_error(name, k)
+
     @property
     def lead(self) -> WavePortCoupling:
         """The wave port with the smallest ``mode``: its gamma is ``gamma_0``."""
         return min(self.ports, key=lambda c: c.port.mode)
+
+    def _blocks(self, k: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """``P``, ``R_sym`` and ``gamma_0 G`` at output frequency ``k``."""
+        lead = self.lead
+        m, n = self.reaction.shape[1], len(self.ports)
+        gamma0 = lead.sweep.gamma[k] * lead.scale
+        full = np.stack([c.phi[k] for c in self.ports], axis=1)
+        tangential = np.stack([c.sweep.coords[k, :m] for c in self.ports], axis=1)
+        scalar = np.concatenate([gamma0 * tangential, np.zeros_like(tangential)])
+        p = np.concatenate([full, scalar], axis=1)
+        reactions = p.T @ (self.reaction @ tangential)
+        r = reactions[:n]
+        # R_sym, not R: it keeps D, hence C, complex symmetric
+        return p, (r + r.T) / 2, reactions[n:]
+
+    def _singular_error(self, name: str, k: int) -> PortModeError:
+        lead = self.lead
+        names = ", ".join(repr(c.port.name) for c in self.ports)
+        kind = "WavePort" if len(self.ports) == 1 else "WavePorts"
+        f = lead.omegas[k] / (2 * math.pi)
+        return PortModeError(
+            f"{kind} {names} on surface {lead.port.surface!r}: the modal "
+            f"correction's {name} matrix is singular at {f / 1e9:.6g} GHz (the "
+            "port mode's products with its own trace on the port face vanish), so "
+            "the port cannot impose its mode. Check the port's cross-section and "
+            "mesh, or use a LumpedPort."
+        )
 
     def correction(self, omega: float) -> tuple[np.ndarray, np.ndarray]:
         """The modal correction at ω as ``W = vectors P D Pᵀ vectorsᵀ``.
@@ -162,25 +197,14 @@ class PortSurfaceCoupling:
             the n x H of its mode with and without ``grad E_n``), and ``D``
             ``(2 n, 2 n)``, ``blockdiag(R_sym⁻¹, -(gamma_0 G)⁻¹)`` with
             ``R_sym = (R + Rᵀ) / 2`` (for one port ``diag(1 / R, -1 /
-            R_s)``, the unconjugated reactions). ``D`` is zero (no
-            correction, as Palace) when a block is singular.
+            R_s)``, the unconjugated reactions). Both blocks are regular:
+            the coupling raises `PortModeError` when built otherwise.
         """
-        lead = self.lead
-        k = _at(lead.omegas, omega)
-        m, n = self.reaction.shape[1], len(self.ports)
-        gamma0 = lead.sweep.gamma[k] * lead.scale
-        full = np.stack([c.phi[k] for c in self.ports], axis=1)
-        tangential = np.stack([c.sweep.coords[k, :m] for c in self.ports], axis=1)
-        scalar = np.concatenate([gamma0 * tangential, np.zeros_like(tangential)])
-        p = np.concatenate([full, scalar], axis=1)
-        reactions = p.T @ (self.reaction @ tangential)
-        r = reactions[:n]
-        blocks = ((r + r.T) / 2, reactions[n:])
+        p, r_sym, g = self._blocks(_at(self.lead.omegas, omega))
+        n = len(self.ports)
         d = np.zeros((2 * n, 2 * n), complex)
-        if not all(np.abs(np.linalg.det(b)) > 0 for b in blocks):  # pragma: no cover
-            return p, d  # Palace skips
-        d[:n, :n] = np.linalg.inv(blocks[0])
-        d[n:, n:] = -np.linalg.inv(blocks[1])
+        d[:n, :n] = np.linalg.inv(r_sym)
+        d[n:, n:] = -np.linalg.inv(g)
         return p, d
 
     def correction_coefficients(self, omega: float) -> np.ndarray:
@@ -191,6 +215,14 @@ class PortSurfaceCoupling:
         """
         p, d = self.correction(omega)
         return (p @ d) @ p.T
+
+
+def _singular(a: np.ndarray) -> bool:
+    """Non-finite, ``sigma_max = 0`` or ``sigma_min <= 1e-12 sigma_max``."""
+    if not np.all(np.isfinite(a)):
+        return True
+    sigma = np.linalg.svd(a, compute_uv=False)
+    return bool(sigma[0] == 0 or sigma[-1] <= 1e-12 * sigma[0])
 
 
 def wave_port_couplings(
