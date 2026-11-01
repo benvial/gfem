@@ -327,8 +327,9 @@ class PortModeResult:
             problem. It exceeds ``SolverOptions.port_mode_tolerance`` only at
             the formulation's low-frequency accuracy floor, where it is at
             most 10x that of an exact solve.
-        solved: ``(n_freq,)`` bool, True where the mode is an exact port mode
-            solve; elsewhere it comes from the reduced port mode model.
+        solved: ``(n_freq,)`` bool, True where the port's cross-section was
+            solved exactly (shared by the wave ports of a shared port
+            surface); elsewhere it comes from the reduced port mode model.
         e_field: The mode's electric field, normalized to 1 W; ``None`` on a
             driven result that keeps no fields.
     """

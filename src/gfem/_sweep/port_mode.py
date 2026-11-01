@@ -172,6 +172,11 @@ class PortModeRule:
         self.options = options
         self.port = _wave_port(model, problem.port)
         self.mode = self.port.mode if problem.mode is None else problem.mode
+        # its own mode: the surface's joint sweep, with the surface's wave
+        # ports in model order, as a driven problem runs it
+        self._ports = (
+            _surface_ports(model, self.port) if problem.mode is None else [self.port]
+        )
         self._model = model
 
     def output_specs(self, model: Model) -> dict[str, jax.ShapeDtypeStruct]:
@@ -223,16 +228,20 @@ class PortModeRule:
             `PortModeSweep`), and ``None``.
         """
         del keep
-        section = port_section(model, self.port)
+        ports = self._ports
+        modes = [self.mode] if len(ports) == 1 else [p.mode for p in ports]
+        lead = min(ports, key=lambda p: p.mode)
+        section = port_section(model, lead)
         with task_manager(self.options.threads):
             space = PortModeSpace(section, self.options.order)
-            [sweep] = port_mode_sweep(
+            sweeps = port_mode_sweep(
                 space,
                 self.problem.frequency,
-                [self.mode],
+                modes,
                 tolerance=self.options.port_mode_tolerance,
-                ports=[self.port],
+                ports=ports,
             )
+        sweep = sweeps[ports.index(self.port)]
         outputs = {
             "gamma": sweep.gamma,
             "Z_PV": sweep.z_pv,
@@ -293,6 +302,13 @@ def _wave_port(model: Model, name: str) -> WavePort:
     )
 
 
+def _surface_ports(model: Model, port: WavePort) -> list[WavePort]:
+    """The wave ports on ``port``'s surface, in model order."""
+    return [
+        p for p in model.ports if isinstance(p, WavePort) and p.surface == port.surface
+    ]
+
+
 # --- the sweep ------------------------------------------------------------------
 
 
@@ -336,7 +352,7 @@ def port_mode_sweep(
     rules = [
         None
         if p.voltage_path is None
-        else _voltage_rule(section, np.asarray(p.voltage_path, float))
+        else _voltage_rule(section, np.asarray(p.voltage_path, float), p.name)
         for p in ports
     ]
     order = np.argsort(f_given, kind="stable")
@@ -932,17 +948,20 @@ def _voltage_functional(
 
 
 def _voltage_rule(
-    section: PortSection, path: np.ndarray | None = None
+    section: PortSection, path: np.ndarray | None = None, name: str | None = None
 ) -> tuple[np.ndarray, np.ndarray]:
     """Plane points and weights (local direction x length, m) of a path.
 
-    ``path`` defaults to the wave port's ``voltage_path``.
+    ``path`` defaults to the section's wave port's ``voltage_path``; ``name``
+    (the port the path belongs to, for messages) to that port's name, which
+    on a shared port surface is the smallest-mode port's.
     """
     path = np.asarray(section.port.voltage_path if path is None else path, float)
+    name = section.port.name if name is None else name
     _local, dist = section.to_local(path)
     if (np.abs(dist) > 1e-5 * section.diameter).any():
         raise ValueError(
-            f"WavePort {section.port.name!r}: voltage_path leaves the port plane; "
+            f"WavePort {name!r}: voltage_path leaves the port plane; "
             "give points (m) on the port surface."
         )
     x, w = _GAUSS
@@ -957,8 +976,15 @@ def _voltage_rule(
 
 
 def path_voltage(
-    space: PortModeSpace, basis: np.ndarray, coords: np.ndarray, path: np.ndarray
+    space: PortModeSpace,
+    basis: np.ndarray,
+    coords: np.ndarray,
+    path: np.ndarray,
+    name: str | None = None,
 ) -> np.ndarray:
-    """``V = int E . dl`` along ``path`` (m) of each field ``basis @ coords[i]``."""
-    rule = _voltage_rule(space.section, path)
+    """``V = int E . dl`` along ``path`` (m) of each field ``basis @ coords[i]``.
+
+    ``name`` is the wave port the field belongs to, for messages.
+    """
+    rule = _voltage_rule(space.section, path, name)
     return coords @ _voltage_functional(space, basis, rule)

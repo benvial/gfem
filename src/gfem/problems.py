@@ -160,6 +160,9 @@ class PortMode:
     is solved exactly. The mode is picked at the lowest frequency and
     followed through the band by its overlap with the neighbouring
     frequency's mode, so it stays the same physical mode through crossings.
+    On a shared port surface it runs the surface's sweep, with the other
+    wave ports of its surface, so it gives the same mode a driven problem
+    uses; an explicit ``mode`` sweeps that rank alone.
 
     Args:
         port: The name of a `WavePort` of the model.
@@ -176,7 +179,8 @@ class PortMode:
         NonDifferentiableError: ``frequency`` is traced by JAX.
 
     `gfem.solve` raises `PortModeError` when the mode is below cutoff
-    somewhere in the band (naming the estimated cutoff) or degenerate, and
+    somewhere in the band (naming the estimated cutoff) or degenerate, or
+    follows the same mode as another wave port of its surface, and
     warns with `PortModeTrackingWarning` when it crosses another mode. The
     2D problem always runs SuperLU and SciPy on the CPU: options with another
     ``device``, ``linear_solver`` or ``eigen_solver`` raise `ValueError`.

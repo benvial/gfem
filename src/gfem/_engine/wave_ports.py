@@ -1,37 +1,42 @@
 """Wave ports in the driven problem: the port mode sweep coupled to the 3D field.
 
-A wave port enters the driven problem through four terms, all in Palace's
-form (the 3D field ``E`` and test function ``v`` in the units of
-`gfem._engine.terms`, the mode ``(E_t, E_n)`` propagating into the domain as
-``exp(-gamma s)``, ``gamma = alpha + i beta``):
+A wave port surface enters the driven problem through four terms, all in
+Palace's form (the 3D field ``E`` and test function ``v`` in the units of
+`gfem._engine.terms`, each mode ``(E_t, E_n)`` propagating into the domain
+as ``exp(-gamma s)``, ``gamma = alpha + i beta``). One surface carries one
+wave port, or several, one mode each (a shared port surface):
 
-- a Robin term ``i beta ∫ mu_r^-1 E_t · v_t`` (`gfem._engine.terms`), with
-  ``beta`` the real part of the mode's wavenumber (its attenuation dropped);
-- a rank-two modal correction ``W = h hᵀ / (hᵀ e) - h_s h_sᵀ / (h_sᵀ e)``
-  per port, never assembled, with ``h = ∫ mu_r^-1 (grad E_n + gamma E_t) ·
-  v_t`` the mode's n x H as a 3D vector, ``h_s`` the same without ``grad
-  E_n`` and ``e`` the mode's tangential trace (Palace's ``W_full -
-  W_scalar``, ``(-i omega / R) s sᵀ`` with ``R = sᵀ e``, in gfem's units).
-  On the port's own mode the Robin term and ``W`` together impose the
-  mode's full n x H, so a hybrid mode (``E_n != 0``) leaves the port
-  without reflection; for a TEM mode ``h = h_s`` and ``W = 0``. ``W`` is
-  complex symmetric and does not depend on the mode's scale;
-- the incident wave's excitation ``2 h``;
-- the S functional, the projection of the field on the conjugated mode,
-  ``S = (1/2) (i / (omega mu0)) ∫ E_t · conj(mu_r^-1 (grad E_n + gamma
-  E_t))`` minus 1 at the excited port, with the mode scaled so that this
-  projection of the incident mode itself has modulus 2 (1 W, in gfem's
-  convention of time-averaged power; Palace's modes carry 1 W peak).
+- one Robin term ``i beta_0 ∫ mu_r^-1 E_t · v_t`` per surface
+  (`gfem._engine.terms`), with ``beta_0`` the real part of the wavenumber
+  of the surface's smallest-``mode`` port (its attenuation dropped);
+- one modal correction of rank ``2 n`` per surface of ``n`` wave ports,
+  ``W = H R_sym⁻¹ Hᵀ - gamma_0 M E G⁻¹ Eᵀ M``, never assembled, with ``H``
+  the modes' n x H as 3D vectors (``h = ∫ mu_r^-1 (grad E_n + gamma E_t) ·
+  v_t``), ``E`` their tangential traces, ``M`` the Robin mass, ``R = Hᵀ
+  E`` (symmetrized) and ``G = Eᵀ M E``. For one port it is Palace's
+  ``W_full - W_scalar``, ``h hᵀ / (hᵀ e) - h_s h_sᵀ / (h_sᵀ e)`` with
+  ``h_s`` the n x H without ``grad E_n``. On every requested mode of a
+  lossless line the Robin term and ``W`` together impose the mode's full
+  n x H, so a hybrid mode (``E_n != 0``) leaves the port without
+  reflection; for a lone TEM mode ``h = h_s`` and ``W = 0``. ``W`` is
+  complex symmetric and does not depend on the modes' scales;
+- each port's incident wave's excitation ``2 h``;
+- each port's S functional, the projection of the field on its conjugated
+  mode, ``S = (1/2) (i / (omega mu0)) ∫ E_t · conj(mu_r^-1 (grad E_n +
+  gamma E_t))`` minus 1 at the excited port, with the mode scaled so that
+  this projection of the incident mode itself has modulus 2 (1 W, in
+  gfem's convention of time-averaged power; Palace's modes carry 1 W peak).
 
 The 3D trace on the port face and the 2D Nédélec space of the port mode
 problem share the face's triangles and order, and NGSolve orders both
 bases by global vertex numbers, so the trace of a 3D field is the 2D field
 with the same coefficients on matching edges and faces (`trace_dofs`). With
-the mode written in the port mode sweep's fixed basis, ``mode(omega) = W
-c(omega)``, the excitation and the functional are fixed vectors (one per
-basis column, assembled on the 2D port once) times tabulated scalars, and
-``W(omega) = vectors C(omega) vectorsᵀ`` with a tabulated ``(2 m, 2 m)``
-coefficient of rank two, which is what the adaptive sweep needs.
+the modes written in the surface's port mode sweep's fixed basis,
+``mode(omega) = W c(omega)``, the excitations and the functionals are fixed
+vectors (one per basis column, assembled on the 2D port once) times
+tabulated scalars, and ``W(omega) = vectors C(omega) vectorsᵀ`` with a
+tabulated ``(2 m, 2 m)`` coefficient of rank ``2 n``, which is what the
+adaptive sweep needs.
 
 The wave ports of one surface share its Robin term, its vectors and its
 modal correction (`PortSurfaceCoupling`); the excitation and the S
@@ -255,9 +260,6 @@ def wave_port_couplings(
             surfaces.setdefault(port.surface, []).append((index, port))
     out = []
     for group in surfaces.values():
-        if len(group) > 1:  # pragma: no cover - the model rejects it
-            names = ", ".join(repr(p.name) for _, p in group)
-            raise NotImplementedError(f"WavePorts {names} share one surface.")
         lead = min((p for _, p in group), key=lambda p: p.mode)
         section = port_section(model, lead)
         modes = PortModeSpace(section, order)
