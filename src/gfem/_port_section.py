@@ -59,11 +59,14 @@ class PortSection:
         eps_nn: Complex relative permittivity along ``n``, ``(n_tri,)``.
         nu_tt: ``R^T mu_tt^-1 R`` with ``R a = a x n``, ``(n_tri, 2, 2)``.
         nu_nn: ``1 / mu_nn``, ``(n_tri,)``.
-        sigma: Electrical conductivity in S/m, ``(n_tri,)``.
+        sigma_tt: Electrical conductivity in the plane, S/m, ``(n_tri, 2, 2)``.
+        sigma_nn: Electrical conductivity along ``n``, S/m, ``(n_tri,)``.
         pec_edges: ``(n, 2)`` node pairs on perfect conductors.
         absorbing_edges: ``(n, 2)`` node pairs on absorbing boundaries.
-        absorbing_admittance: Relative wave admittance ``sqrt(eps / mu)`` of
-            the medium beside each absorbing edge, ``(n,)``.
+        absorbing_admittance: Relative wave admittances ``(Y_tau, Y_n)`` of
+            the medium beside each absorbing edge for the field along the
+            edge and along ``n``, ``(n, 2)`` (`edge_admittance`; both
+            ``sqrt(eps / mu)`` in an isotropic medium).
         faces: The mesh triangle (gfem index) of each of ``triangles``, or
             ``None`` (sections saved before it was recorded).
         impedance_edges: ``(n, 2)`` node pairs on `Conductor` or `Impedance`
@@ -89,7 +92,8 @@ class PortSection:
     eps_nn: np.ndarray
     nu_tt: np.ndarray
     nu_nn: np.ndarray
-    sigma: np.ndarray
+    sigma_tt: np.ndarray
+    sigma_nn: np.ndarray
     pec_edges: np.ndarray
     absorbing_edges: np.ndarray
     absorbing_admittance: np.ndarray
@@ -108,22 +112,30 @@ class PortSection:
         """Largest extent of the cross-section, local units."""
         return float(np.ptp(self.points, axis=0).max())
 
+    @property
+    def max_conductivity(self) -> float:
+        """The largest principal conductivity over the cross-section, S/m."""
+        return float(max(np.linalg.eigvalsh(self.sigma_tt).max(), self.sigma_nn.max()))
+
     def index_squared(self, sigma_term: float = 0.0) -> tuple[float, float]:
         """Bounds on the squared bulk index over the cross-section.
 
+        From the principal values of each triangle's tensors (the diagonal
+        entries of a tensor turned in the plane fall short of them).
+
         Args:
-            sigma_term: ``max conductivity / (omega eps0)`` to add to ``|eps|``.
+            sigma_term: ``max_conductivity / (omega eps0)`` to add to ``|eps|``.
 
         Returns:
-            ``max Re(eps) max Re(mu)`` (the shift, as in Palace) and
-            ``(max |eps| + sigma_term) max |mu|`` (an upper bound on the
-            ``|n|^2`` of any propagating mode).
+            ``max Re(eps) max Re(mu)`` (the shift, as in Palace; largest
+            eigenvalues) and ``(max |eps| + sigma_term) max |mu|`` (an upper
+            bound on the ``|n|^2`` of any propagating mode; spectral norms).
         """
-        eps = np.concatenate([self.eps_tt[:, 0, 0], self.eps_tt[:, 1, 1], self.eps_nn])
-        mu = 1 / np.concatenate([self.nu_tt[:, 0, 0], self.nu_tt[:, 1, 1], self.nu_nn])
+        # mu_tt^-1 is congruent to nu_tt by a rotation: same eigenvalues
+        mu_tt, mu_nn = np.linalg.inv(self.nu_tt), 1 / self.nu_nn
         return (
-            float(eps.real.max() * mu.real.max()),
-            float((np.abs(eps).max() + sigma_term) * np.abs(mu).max()),
+            float(_largest(self.eps_tt, self.eps_nn) * _largest(mu_tt, mu_nn)),
+            float((_norm(self.eps_tt, self.eps_nn) + sigma_term) * _norm(mu_tt, mu_nn)),
         )
 
     def to_local(self, points_m: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -134,6 +146,16 @@ class PortSection:
     def to_global(self, local: np.ndarray) -> np.ndarray:
         """Global points (m) of plane coordinates ``(n, 2)``."""
         return (self.origin + np.asarray(local, float) @ self.frame[:2]) * self.scale
+
+
+def _largest(tt: np.ndarray, nn: np.ndarray) -> float:
+    """The largest eigenvalue of the real parts of ``(tt, nn)`` blocks."""
+    return max(np.linalg.eigvalsh(tt.real).max(), nn.real.max())
+
+
+def _norm(tt: np.ndarray, nn: np.ndarray) -> float:
+    """The largest spectral norm of ``(tt, nn)`` blocks."""
+    return max(np.linalg.norm(tt, ord=2, axis=(1, 2)).max(), np.abs(nn).max())
 
 
 def port_section(model: Model, port: WavePort) -> PortSection:
@@ -192,9 +214,17 @@ def port_section(model: Model, port: WavePort) -> PortSection:
     flip = area2 < 0
     local_tris[flip] = local_tris[flip][:, ::-1]
 
-    eps_tt, eps_nn, nu_tt, nu_nn, sigma = _materials(model, port, tets, frame)
+    eps_tt, eps_nn, nu_tt, nu_nn, sigma_tt, sigma_nn, isotropic = _materials(
+        model, port, tets, frame
+    )
     pec, absorbing, admittance, (imp_edges, imp_group, imp_terms, imp_fill) = _edges(
-        model, port, tris, used, eps_tt=eps_tt, nu_tt=nu_tt
+        model,
+        port,
+        tris,
+        used,
+        points=points,
+        tensors=(eps_tt, eps_nn, nu_tt, nu_nn),
+        isotropic=isotropic,
     )
     return PortSection(
         port=port,
@@ -207,7 +237,8 @@ def port_section(model: Model, port: WavePort) -> PortSection:
         eps_nn=eps_nn,
         nu_tt=nu_tt,
         nu_nn=nu_nn,
-        sigma=sigma,
+        sigma_tt=sigma_tt,
+        sigma_nn=sigma_nn,
         pec_edges=pec,
         absorbing_edges=absorbing,
         absorbing_admittance=admittance,
@@ -220,7 +251,10 @@ def port_section(model: Model, port: WavePort) -> PortSection:
 
 
 def _materials(model: Model, port: WavePort, tets: np.ndarray, frame: np.ndarray):
-    """Per-triangle material values in the port frame."""
+    """Per-triangle material values in the port frame.
+
+    Also whether each triangle's material is isotropic.
+    """
     mesh = model.mesh
     names = {r.tag: r.name for r in mesh.regions if r.dim == 3}
     n = len(tets)
@@ -228,7 +262,9 @@ def _materials(model: Model, port: WavePort, tets: np.ndarray, frame: np.ndarray
     eps_nn = np.zeros(n, complex)
     nu_tt = np.zeros((n, 2, 2), complex)
     nu_nn = np.zeros(n, complex)
-    sigma = np.zeros(n)
+    sigma_tt = np.zeros((n, 2, 2))
+    sigma_nn = np.zeros(n)
+    isotropic = np.ones(n, bool)
     region_of = mesh.tetrahedron_tags[tets]
     for rtag in np.unique(region_of):
         region = names[int(rtag)]
@@ -237,11 +273,16 @@ def _materials(model: Model, port: WavePort, tets: np.ndarray, frame: np.ndarray
         if isinstance(material, Material):
             eps = lossy_permittivity(material)
             mu = principal_tensor(material.mu_r, material.axes).astype(complex)
-            et, en = _in_frame(eps, frame, port, region, "eps_r")
+            sigma = principal_tensor(material.conductivity, material.axes)
+            # tan_delta alone can make the lossy permittivity a tensor
+            eps_name = "tan_delta" if np.ndim(material.eps_r) == 0 else "eps_r"
+            et, en = _in_frame(eps, frame, port, region, eps_name)
             mt, mn = _in_frame(mu, frame, port, region, "mu_r")
+            st, sn = _in_frame(sigma, frame, port, region, "conductivity")
             eps_tt[rows], eps_nn[rows] = et, en
             nu_tt[rows], nu_nn[rows] = _ROT.T @ np.linalg.inv(mt) @ _ROT, 1 / mn
-            sigma[rows] = material.conductivity
+            sigma_tt[rows], sigma_nn[rows] = st, sn
+            isotropic[rows] = material.isotropic
         else:
             pos = np.searchsorted(mesh.elements(region), tets[rows])
             eps = _field(material, "eps_r", 1.0, pos)
@@ -252,8 +293,10 @@ def _materials(model: Model, port: WavePort, tets: np.ndarray, frame: np.ndarray
             eps_nn[rows] = eps
             nu_tt[rows] = (1 / mu)[:, None, None] * np.eye(2)
             nu_nn[rows] = 1 / mu
-            sigma[rows] = _field(material, "conductivity", 0.0, pos).real
-    return eps_tt, eps_nn, nu_tt, nu_nn, sigma
+            sigma = _field(material, "conductivity", 0.0, pos).real
+            sigma_tt[rows] = sigma[:, None, None] * np.eye(2)
+            sigma_nn[rows] = sigma
+    return eps_tt, eps_nn, nu_tt, nu_nn, sigma_tt, sigma_nn, isotropic
 
 
 def _field(material: MaterialField, name: str, default: float, pos: np.ndarray):
@@ -269,9 +312,12 @@ def _in_frame(tensor, frame, port: WavePort, region: str, what: str):
     scale = np.abs(local).max()
     if np.abs(local[:2, 2]).max() > 1e-9 * scale:
         raise ValueError(
-            f"WavePort {port.name!r}: region {region!r} has an anisotropic {what} "
-            "with no principal axis along the port normal; the port mode problem "
-            "needs one (rotate the material axes, or move the port)."
+            f"WavePort {port.name!r}: region {region!r} has {what} with no "
+            "principal axis along the port normal (tangential-normal coupling); "
+            "the port mode problem supports only materials with a principal axis "
+            "along the normal. Rotate the material axes or the port, or end the "
+            "port in a material aligned with it; tilted axes are fine away from "
+            "ports."
         )
     return local[:2, :2], local[2, 2]
 
@@ -328,16 +374,17 @@ def _surfaces_on_edges(
     return [found.get(int(e), {}) for e in p_ids]
 
 
-def _edges(model, port, tris, used, *, eps_tt, nu_tt):
+def _edges(model, port, tris, used, *, points, tensors, isotropic):
     """Perfect-conductor, absorbing and impedance edges of the cross-section.
 
     An edge on several surfaces takes the first of: perfect conductor,
-    `Conductor` / `Impedance`, absorbing.
+    `Conductor` / `Impedance`, absorbing. ``tensors`` are the triangles'
+    ``(eps_tt, eps_nn, nu_tt, nu_nn)``.
     """
     port_edges = _edge_keys(tris)
     kinds = _edge_kinds(model, port)
     local = np.searchsorted(used, port_edges)
-    pec, absorbing, admittance, seen = [], [], [], set()
+    pec, absorbing, owners, names, seen = [], [], [], [], set()
     imp_edges, imp_group, terms, fills = [], [], [], []
     sheet_fill = _sheet_fill_by_edge(model)
     for k, surfaces in enumerate(_surfaces_on_edges(model, port, port_edges)):
@@ -368,17 +415,109 @@ def _edges(model, port, tris, used, *, eps_tt, nu_tt):
             continue
         if "absorbing" in types:
             absorbing.append(local[k])
-            t = k // 3
-            eps = np.trace(eps_tt[t]).real / 2
-            mu = 2 / np.trace(nu_tt[t]).real
-            admittance.append(np.sqrt(eps / mu))
+            owners.append(k // 3)
+            names.append(
+                next(
+                    s
+                    for s, t in zip(sorted(surfaces), types, strict=True)
+                    if t == "absorbing"
+                )
+            )
+    admittance = _absorbing_admittance(
+        port,
+        points,
+        np.asarray(absorbing).reshape(-1, 2),
+        np.asarray(owners, np.int64),
+        surfaces=names,
+        tensors=tensors,
+        isotropic=isotropic,
+    )
     pairs = [
         np.asarray(e, dtype=np.int64).reshape(-1, 2)
         for e in (pec, absorbing, imp_edges)
     ]
     fill = np.asarray(fills, float) if sheet_fill else None
     impedance = (pairs[2], np.asarray(imp_group, np.int64), tuple(terms), fill)
-    return pairs[0], pairs[1], np.asarray(admittance, float), impedance
+    return pairs[0], pairs[1], admittance, impedance
+
+
+def _absorbing_admittance(port, points, edges, owners, *, surfaces, tensors, isotropic):
+    """``(Y_tau, Y_n)`` per absorbing edge from the triangle beside it.
+
+    An isotropic medium keeps its one value ``sqrt(eps / mu)`` in both.
+    """
+    eps_tt, eps_nn, nu_tt, nu_nn = (t[owners] for t in tensors)
+    out = np.zeros((len(owners), 2))
+    iso = isotropic[owners]
+    if iso.any():
+        eps = np.trace(eps_tt[iso], axis1=1, axis2=2).real / 2
+        mu = 2 / np.trace(nu_tt[iso], axis1=1, axis2=2).real
+        out[iso] = np.sqrt(eps / mu)[:, None]
+    for name in dict.fromkeys(np.asarray(surfaces)[~iso]):
+        rows = np.flatnonzero(~iso & (np.asarray(surfaces) == name))
+        tangent = points[edges[rows, 1]] - points[edges[rows, 0]]
+        normal = np.stack([tangent[:, 1], -tangent[:, 0]], axis=1)
+        normal /= np.linalg.norm(normal, axis=1, keepdims=True)
+        out[rows] = edge_admittance(
+            eps_tt[rows],
+            eps_nn[rows],
+            nu_tt[rows],
+            nu_nn[rows],
+            normal,
+            where=f"WavePort {port.name!r}: the absorbing surface {name!r}",
+        )
+    return out
+
+
+def edge_admittance(
+    eps_tt: np.ndarray,
+    eps_nn: np.ndarray,
+    nu_tt: np.ndarray,
+    nu_nn: np.ndarray,
+    normals: np.ndarray,
+    *,
+    where: str,
+) -> np.ndarray:
+    """The admittances ``(Y_tau, Y_n)`` of absorbing edges, ``(m, 2)``.
+
+    An absorbing edge of the cross-section is the trace of a 3D absorbing
+    face, whose admittance is ``Y = A # eps_eff`` (ADR 0051) from the real
+    parts of the material's tensors. With ``n`` principal, as the port mode
+    problem requires, ``Y`` is diagonal in the face's tangents, the edge
+    tangent ``tau`` and ``n``. In the frame ``(m, tau, n)``, ``m`` the
+    in-plane edge normal and ``p = (m, tau)`` the in-plane block:
+
+    - ``Y_tau = sqrt(det eps_p / (eps_mm mu_nn))`` for the field along ``tau``;
+    - ``Y_n = sqrt(eps_nn mu_mm / det mu_p)`` for the field along ``n``.
+
+    Both are ``sqrt(eps / mu)`` in an isotropic medium.
+
+    Args:
+        eps_tt, eps_nn, nu_tt, nu_nn: The medium beside each edge, as in
+            `PortSection`.
+        normals: In-plane unit edge normals ``(m, 2)`` (either sign).
+        where: The surface, for the error message.
+
+    Raises:
+        ValueError: A factor is not positive, so the medium has no real
+            admittance there.
+    """
+    m = np.asarray(normals, float)
+    eps = np.asarray(eps_tt).real
+    mu = (_ROT @ np.linalg.inv(nu_tt) @ _ROT.T).real  # mu_tt = R nu_tt^-1 R^T
+    eps_n = np.asarray(eps_nn).real
+    mu_n = (1 / np.asarray(nu_nn)).real
+    eps_mm = np.einsum("ki,kij,kj->k", m, eps, m)
+    mu_mm = np.einsum("ki,kij,kj->k", m, mu, m)
+    det_eps, det_mu = np.linalg.det(eps), np.linalg.det(mu)
+    if not all((f > 0).all() for f in (det_eps, eps_mm, mu_n, eps_n, mu_mm, det_mu)):
+        raise ValueError(
+            f"{where}: the material beside the port edge has no wave admittance "
+            "there: the real parts of its eps_r and mu_r are not positive definite."
+        )
+    return np.sqrt(
+        np.stack([det_eps / (eps_mm * mu_n), eps_n * mu_mm / det_mu], axis=1)
+    )
 
 
 def _sheet_fill_by_edge(model: Model) -> dict[str, dict[tuple[int, int], float]]:

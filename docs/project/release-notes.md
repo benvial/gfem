@@ -6,6 +6,11 @@
   `Material(eps_r=(2, 2, 2))` is now stored as `eps_r=2.0`: it equals
   `Material(eps_r=2)`, `isotropic` is `True`, and its repr changes. Results are
   unchanged. Old job files holding such a tuple read back as the scalar.
+- **Behaviour change: port modes of rotated transverse tensors.** A port
+  cross-section holding a tensor rotated about the port normal no longer drops
+  its propagating modes (or raises `PortModeError`): the effective-index bound
+  now uses the tensor's largest principal value, not its largest diagonal
+  entry. Models without such a tensor are unchanged.
 
 ## 0.1.0 (2026-11-01)
 

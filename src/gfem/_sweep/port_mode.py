@@ -794,7 +794,7 @@ def _wavenumbers(section: PortSection, frequency: float) -> tuple[float, float, 
     """
     k0_si = 2 * math.pi * frequency / scipy.constants.c
     k0 = k0_si * section.scale
-    n2_shift, n2_max = section.index_squared(float(section.sigma.max()) * _Z0 / k0_si)
+    n2_shift, n2_max = section.index_squared(section.max_conductivity * _Z0 / k0_si)
     k_max = math.sqrt(n2_max) * k0
     if len(section.impedance_terms):
         k_max *= _SLOW_WAVE
