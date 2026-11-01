@@ -15,6 +15,10 @@
   error as ``SolverOptions.port_mode_tolerance`` tightens from 1e-4 to
   1e-8 (measured log-log slope 1.18), and below 1e-5 at the default
   tolerance.
+- The same guide with modes 1 and 2 on each port surface (a shared port
+  surface): reflections and cross-mode entries converge to zero and
+  transmissions to ``exp(-gamma L)`` with the order, and the adaptive sweep
+  matches the uniform one.
 """
 
 from pathlib import Path
@@ -180,6 +184,7 @@ def test_a_shared_hybrid_surface_converges_with_order(hybrid):
         result = gfem.solve(model, gfem.Driven(SHARED_F), options=options)
         errors.append(_shared_error(result))
     print(f"\nshared hybrid guide: max error at orders 2, 3, 4: {errors}")  # noqa: T201
+    # measured 5.6e-3 / 1.9e-4 / 3.0e-6: mode 1's transmission, as for a lone port
     assert errors[0] > errors[1] > errors[2]
     assert errors[2] < 1e-5
 
@@ -197,4 +202,4 @@ def test_the_adaptive_sweep_projects_a_shared_surface_correction(hybrid):
     du = np.abs(np.asarray(adaptive.s.values)[rows] - np.asarray(uniform.s.values))
     print(f"\nshared hybrid guide: adaptive - uniform {du.max():.2e} at rows {rows}")  # noqa: T201
     assert rows
-    assert du.max() <= 1e-6
+    assert du.max() <= 2e-8  # measured 6.6e-9

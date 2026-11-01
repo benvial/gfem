@@ -24,6 +24,7 @@ import gfem
 A, B, SLAB, INSERT, LEAD = 22.86, 5.0, 8.0, 6.0, 40.0  # mm
 EPS = 4.0
 F = (14.5e9, 16e9)
+C0 = 299792458.0
 PORTS = ("in_TE10", "in_TE20", "out_TE10", "out_TE20")
 END = 2 * LEAD + INSERT
 
@@ -80,6 +81,20 @@ def _model(mesh):
     )
 
 
+def test_the_reference_is_a_fabry_perot_slab_at_full_width():
+    # a slab filling the width converts nothing: one mode's reflection and
+    # transmission through a dielectric layer, exp(+i omega t)
+    f, length = 14.5e9, INSERT * 1e-3
+    s = s_matrix(f, a=A * 1e-3, slab=A * 1e-3, eps=EPS, length=length, n=40)
+    k0 = 2 * np.pi * f / C0
+    b1, b2 = (np.sqrt(e * k0**2 - (np.pi / (A * 1e-3)) ** 2) for e in (1, EPS))
+    r, p = (b1 - b2) / (b1 + b2), np.exp(-2j * b2 * length)
+    gamma = r * (1 - p) / (1 - r**2 * p)
+    tau = (1 - r**2) * np.exp(-1j * b2 * length) / (1 - r**2 * p)
+    np.testing.assert_allclose([s[0, 0], s[2, 0]], [gamma, tau], rtol=1e-12)
+    assert np.abs(s[[1, 3], 0]).max() < 1e-12  # into TE20
+
+
 @pytest.fixture(scope="module")
 def insert(tmp_path_factory):
     model = _model(_mesh(tmp_path_factory.mktemp("insert")))
@@ -123,8 +138,8 @@ def test_a_slab_insert_is_lossless_and_reciprocal(insert):
         f"\nslab insert: max |S^H S - I| {np.abs(unitarity).max():.2e}, "
         f"max |S - S^T| {np.abs(s - np.swapaxes(s, 1, 2)).max():.2e}"
     )
-    assert np.abs(unitarity).max() < 2e-3
-    assert np.abs(s - np.swapaxes(s, 1, 2)).max() < 1e-8
+    assert np.abs(unitarity).max() < 8e-8  # measured 2.6e-8
+    assert np.abs(s - np.swapaxes(s, 1, 2)).max() < 1e-8  # measured 5.2e-15
 
 
 def test_the_power_through_each_lead_is_the_modal_power(insert):
@@ -144,4 +159,4 @@ def test_the_power_through_each_lead_is_the_modal_power(insert):
             abs(into - (1 - (np.abs(s[k, :2, col]) ** 2).sum())),
         ]
     print(f"\nslab insert: power_flow - modal power {errors}")  # noqa: T201
-    assert max(errors) < 5e-4
+    assert max(errors) < 1.5e-8  # measured 5.0e-9
