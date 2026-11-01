@@ -385,10 +385,12 @@ class EigenmodeRule:
                 reshift=not full,
                 reshift_first=far,
             )
-            if far and not full and _lost(mode, seed, sigma, accepted, window):
+            retry = far and not full
+            if retry and _lost(mode, seed, k, sigma, accepted=accepted, window=window):
                 # a seed rougher than TRUSTED, refined on a shift nearer
-                # another mode, wanders where round-off takes it: refine it
-                # again on a factorization at its own Ritz value
+                # another mode, wanders where round-off takes it (onto an
+                # accepted mode, a mirror root, or another seed's mode): refine
+                # it again on a factorization at its own Ritz value
                 op.reshift(seed)
                 mode = refine(
                     op,
@@ -762,16 +764,23 @@ def _same(a: Refined, b: Refined, window: float) -> bool:
 def _lost(
     mode: Refined,
     seed: complex,
+    ritz: np.ndarray,
     sigma: float,
+    *,
     accepted: list[Refined],
     window: float,
 ) -> bool:
-    """Whether ``seed``'s refinement gave nothing to accept.
+    """Whether ``seed``'s refinement gave nothing to accept as its mode.
 
-    It did not converge, converged to a static or mirror root, or converged
-    to an accepted mode the seed is not near.
+    It did not converge, converged to a static or mirror root, converged
+    nearer another of the ``ritz`` values than ``seed`` (that seed's mode,
+    which would take this one's place), or converged to an accepted mode
+    the seed is not near.
     """
     if not mode.converged or mode.k.real <= _STATIC * sigma:
+        return True
+    others = ritz[np.abs(ritz - seed) > _MULTIPLE * abs(seed)]
+    if len(others) and np.min(np.abs(others - mode.k)) < abs(mode.k - seed):
         return True
     return any(
         _same(mode, other, window) and not _close(seed, other.k, window)
