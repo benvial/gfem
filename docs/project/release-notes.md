@@ -12,6 +12,13 @@
   each element. Gradients with respect to such a field's values, and material
   gradients of a model that holds one, raise `NonDifferentiableError` in this
   version.
+- **Wave ports accept anisotropic permeability.** A driven solve with a wave
+  port on an anisotropic `mu_r` (with a principal axis along the port normal)
+  no longer raises `NotImplementedError`: the port's boundary term uses the
+  port's tangential inverse-permeability tensor. Fixed with it: the port's
+  modal coupling used the rotated tangential permeability instead of that
+  tensor; no 0.1.0 result changes, because 0.1.0 refused anisotropic `mu_r` at
+  a wave port before reaching it.
 - **Behaviour change: equal principal values are one value.**
   `Material(eps_r=(2, 2, 2))` is now stored as `eps_r=2.0`: it equals
   `Material(eps_r=2)`, `isotropic` is `True`, and its repr changes. Results are

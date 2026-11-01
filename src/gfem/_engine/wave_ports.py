@@ -5,11 +5,13 @@ form (the 3D field ``E`` and test function ``v`` in the units of
 `gfem._engine.terms`, the mode ``(E_t, E_n)`` propagating into the domain as
 ``exp(-gamma s)``, ``gamma = alpha + i beta``):
 
-- a Robin term ``i beta ∫ mu_r^-1 E_t · v_t`` (`gfem._engine.terms`), with
-  ``beta`` the real part of the mode's wavenumber (its attenuation dropped);
+- a Robin term ``i beta ∫ (A E_t) · v_t`` (`gfem._engine.terms`), with
+  ``beta`` the real part of the mode's wavenumber (its attenuation dropped)
+  and ``A`` the port's tangential inverse-permeability tensor (``mu_r^-1``
+  for an isotropic material; the port mode problem's ``nu_tt``, ADR 0054);
 - a rank-two modal correction ``W = h hᵀ / (hᵀ e) - h_s h_sᵀ / (h_sᵀ e)``
-  per port, never assembled, with ``h = ∫ mu_r^-1 (grad E_n + gamma E_t) ·
-  v_t`` the mode's n x H as a 3D vector, ``h_s`` the same without ``grad
+  per port, never assembled, with ``h = ∫ A (grad E_n + gamma E_t) · v_t``
+  the mode's n x H as a 3D vector, ``h_s`` the same without ``grad
   E_n`` and ``e`` the mode's tangential trace (Palace's ``W_full -
   W_scalar``, ``(-i omega / R) s sᵀ`` with ``R = sᵀ e``, in gfem's units).
   On the port's own mode the Robin term and ``W`` together impose the
@@ -18,8 +20,8 @@ form (the 3D field ``E`` and test function ``v`` in the units of
   complex symmetric and does not depend on the mode's scale;
 - the incident wave's excitation ``2 h``;
 - the S functional, the projection of the field on the conjugated mode,
-  ``S = (1/2) (i / (omega mu0)) ∫ E_t · conj(mu_r^-1 (grad E_n + gamma
-  E_t))`` minus 1 at the excited port, with the mode scaled so that this
+  ``S = (1/2) (i / (omega mu0)) ∫ E_t · conj(A (grad E_n + gamma E_t))``
+  minus 1 at the excited port, with the mode scaled so that this
   projection of the incident mode itself has modulus 2 (1 W, in gfem's
   convention of time-averaged power; Palace's modes carry 1 W peak).
 
@@ -65,8 +67,9 @@ class WavePortCoupling:
         sweep: Its port mode sweep over the output frequencies.
         piece: Its Robin term (θ tabulated on the grid).
         vectors: ``(ndof, 2 m)``: per mode basis column, the 3D vector of
-            ``∫ mu_r^-1 (column) · v_t`` (tangential columns) or ``∫
-            mu_r^-1 grad(column) · v_t`` (normal columns).
+            ``∫ A (column) · v_t`` (tangential columns) or ``∫ A
+            grad(column) · v_t`` (normal columns), ``A`` the port's
+            tangential inverse-permeability tensor.
             Zero on the 3D space's fixed DOFs.
         phi: ``(n_freq, 2 m)``: the mode's n x H on those columns, ``gamma
             c_t`` and ``c_n`` (gamma per file unit): ``h = vectors @ phi``.

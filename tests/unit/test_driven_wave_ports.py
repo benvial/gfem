@@ -10,16 +10,23 @@ import itertools
 import math
 from pathlib import Path
 
+import anisotropy as anisotropy_reference
 import jax
 import jax.numpy as jnp
+import ngsolve as ngs
 import numpy as np
 import pytest
+import scipy.constants
+import scipy.sparse as sp
 import structured_meshes as sm
 from solver_misses import cannot_converge_at
 
 import gfem
+from gfem._engine import anisotropy, terms
+from gfem._engine.driven import driven_operator
+from gfem._engine.wave_ports import trace_dofs, wave_port_couplings
 from gfem._linalg import prepare
-from gfem._linalg.base import PlannedHandle
+from gfem._linalg.base import PlannedHandle, free_mask
 
 DATA = Path(__file__).parent / "data"
 C0 = 299792458.0
@@ -405,3 +412,154 @@ def test_an_open_dielectric_guide_transmits_its_fundamental_mode(dielectric_guid
     assert abs(n_eff - N_EFF_SLAB) < 1e-4
     beta = 2 * math.pi * F0 / C0 * n_eff
     assert abs(np.angle(s21 * np.exp(1j * beta * GUIDE_L * 1e-6))) < 0.02
+
+
+# --- anisotropic permeability: the Robin tensor and the modal coupling --------
+
+#: WR-28 filled with mu_r = (1, 2, 1.5), eps_r = (2, 4, 3): TE10 alone
+#: propagates at 16 GHz (research note of ADR 0054).
+F_WR28 = 16e9
+
+
+def test_the_robin_tensor_is_the_plane_wave_n_cross_h():
+    # A E_t = -n x (eta0 H) for a plane wave along n, with A = N mu^-1 N^T
+    rng = np.random.default_rng(3)
+    worst = 0.0
+    for _ in range(200):
+        n = rng.normal(size=3)
+        n /= np.linalg.norm(n)
+        mu = anisotropy_reference.transverse(rng, n, 0.5, 4.0)
+        a = anisotropy.tangential_inverse_permeability(mu[None], n[None])[0]
+        e = np.cross(n, rng.normal(size=3))
+        h = anisotropy_reference.plane_wave_n_cross_h(mu, n, e)
+        worst = max(worst, np.abs(a @ e + h).max() / np.abs(h).max())
+        flipped = anisotropy.tangential_inverse_permeability(mu[None], -n[None])[0]
+        np.testing.assert_allclose(flipped, a, rtol=0, atol=1e-14 * np.abs(a).max())
+    assert worst < 1e-12
+    n = np.array([0.6, 0.0, 0.8])
+    a = anisotropy.tangential_inverse_permeability(2.5 * np.eye(3)[None], n[None])[0]
+    np.testing.assert_allclose(a, (np.eye(3) - np.outer(n, n)) / 2.5, atol=1e-15)
+
+
+@pytest.fixture(scope="module")
+def wr28_mesh(tmp_path_factory):
+    return anisotropy_reference.wr28(tmp_path_factory.mktemp("wr28"))
+
+
+def _wr28(mesh, material):
+    return gfem.Model(
+        mesh,
+        materials={"fill": material},
+        boundaries=[gfem.PEC("walls")],
+        ports=[gfem.WavePort("p1", "port1"), gfem.WavePort("p2", "port2")],
+    )
+
+
+@pytest.fixture(scope="module")
+def turned_wr28(wr28_mesh):
+    # mu_tt and eps_tt turned 30 degrees about the guide axis: the port
+    # frame's mu_tt is a full 2x2 matrix
+    material = gfem.Material(
+        eps_r=(2.0, 4.0, 3.0),
+        mu_r=(1.0, 2.0, 1.5),
+        axes=anisotropy_reference.turned(2, 30.0),
+    )
+    model = _wr28(wr28_mesh, material)
+    op = driven_operator(model, 2)
+    (coupling, _) = wave_port_couplings(
+        model,
+        op.built,
+        op.space,
+        order=2,
+        frequency=(F_WR28,),
+        tolerance=gfem.SolverOptions().port_mode_tolerance,
+    )
+    return model, op, coupling
+
+
+def test_the_modal_coupling_carries_the_modes_power(turned_wr28):
+    # |(i / (omega mu0)) int E_t . conj(n x H)| = 2 |P|: the coupling forms
+    # give the mode's n x H with the same tensor as its power
+    _, _, coupling = turned_wr28
+    sweep = coupling.sweep
+    modes = sweep.space
+    m = sweep.basis.shape[1] // 2
+    gamma = sweep.gamma[0] * coupling.scale  # per file unit
+    c = sweep.coords[0]
+    g_form, t_form = modes.coupling_forms
+    w = sweep.basis[modes.free]
+    h = gamma * (t_form @ (w[:, :m] @ c[:m])) + g_form @ (w[:, m:] @ c[m:])
+    e_t = sweep.basis[: modes.n_t, :m] @ c[:m]
+    omega = 2 * math.pi * F_WR28
+    projection = coupling.scale * abs(e_t @ np.conj(h)) / (omega * scipy.constants.mu_0)
+    power = modes.power(sweep.basis @ c, gamma, omega)
+    # measured 0 (round-off); the rotated mu_tt^-1 gave 1.386 for 2
+    np.testing.assert_allclose(projection, 2 * abs(power), rtol=1e-14)
+
+
+def test_the_port_reaction_is_symmetric(turned_wr28):
+    _, _, coupling = turned_wr28
+    m = coupling.reaction.shape[1]
+    r = coupling.reaction[:m]
+    assert np.abs(r - r.T).max() <= 1e-14 * np.abs(r).max()  # measured 0
+
+
+def test_the_robin_coefficient_is_the_port_sections_inverse_permeability(
+    turned_wr28,
+):
+    model, _, coupling = turned_wr28
+    section = coupling.sweep.space.section
+    coef = terms.wave_port_coefficients(model, "port1")
+    p = section.frame[:2]
+    lifted = p.T @ section.nu_tt @ p
+    assert coef.shape == (len(model.mesh.triangles), 3, 3)
+    # measured 0
+    np.testing.assert_allclose(coef[section.faces], lifted, rtol=0, atol=1e-14)
+    off = np.ones(len(coef), bool)
+    off[section.faces] = False
+    assert (coef[off] == 0).all()
+
+
+def test_the_port_imposes_its_modes_n_cross_h(turned_wr28):
+    # (i beta M + W) e = h on the port's own mode e: Robin term and modal
+    # correction read the same tensor, so the port does not reflect it
+    model, op, coupling = turned_wr28
+    sweep, space = coupling.sweep, op.space
+    idx3, idx2 = trace_dofs(model, sweep.space.section, sweep.space, op.built, space)
+    e = np.zeros(space.ndof, complex)
+    e[idx3] = (sweep.basis @ sweep.coords[0])[idx2]
+    u, v = space.TnT()
+    form = ngs.BilinearForm(space)
+    form += coupling.piece.integrand(u, v)
+    form.Assemble()
+    rows, cols, vals = form.mat.COO()
+    robin = sp.csr_matrix(
+        (np.array(vals), (np.array(rows), np.array(cols))),
+        shape=(space.ndof, space.ndof),
+    )
+    omega = 2 * math.pi * F_WR28
+    vectors = coupling.vectors
+    w = vectors @ (coupling.correction_coefficients(omega) @ (vectors.T @ e))
+    h = vectors @ coupling.phi[0]
+    residual = complex(coupling.piece.theta(omega)) * (robin @ e) + w - h
+    free = free_mask(space.FreeDofs(), space.ndof)
+    assert np.abs(residual[free]).max() <= 4e-15 * np.abs(h).max()  # measured 1.3e-15
+
+
+def test_an_isotropic_port_keeps_a_scalar_robin_coefficient(wr28_mesh):
+    model = _wr28(wr28_mesh, gfem.Material(eps_r=4.0, mu_r=2.0))
+    coef = terms.wave_port_coefficients(model, "port1")
+    on = wr28_mesh.triangle_tags == wr28_mesh.region("port1").tag
+    assert coef.ndim == 1
+    assert (coef[on] == 0.5).all()
+    assert (coef[~on] == 0).all()
+
+
+def test_an_anisotropic_permittivity_at_a_port_takes_the_tensor_path(wr28_mesh):
+    # structural: an anisotropic Material behind the face, whatever its mu_r
+    model = _wr28(wr28_mesh, gfem.Material(eps_r=(2.0, 4.0, 3.0), mu_r=2.0))
+    coef = terms.wave_port_coefficients(model, "port1")
+    on = wr28_mesh.triangle_tags == wr28_mesh.region("port1").tag
+    assert coef.shape == (len(on), 3, 3)
+    expected = np.broadcast_to(np.diag([0.5, 0.5, 0.0]), coef[on].shape)
+    np.testing.assert_allclose(coef[on], expected, rtol=0, atol=1e-15)

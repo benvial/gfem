@@ -31,7 +31,9 @@ with k0 = ω scale / c, the wavenumber per file unit, and the pieces
 
 - a wave port, θ = i beta(ω) per file unit (the real part of its mode's
   propagation constant, tabulated on the output grid by the port mode
-  sweep, see `Tabulated`): ∫ mu_r^-1 E_t · v_t on the port surface.
+  sweep, see `Tabulated`): ∫ (A E_t) · v_t on the port surface, with A
+  the port's tangential inverse-permeability tensor (``mu_r^-1`` for an
+  isotropic material, `wave_port_coefficients`, ADR 0054).
 
 Each θ is a closed-form scalar function of ω, or a table over the output
 grid filled before the solve, and each a_k is assembled without ω, so an
@@ -102,6 +104,7 @@ __all__ = [
     "sheet_fill",
     "surface_impedance",
     "surface_impedance_slope",
+    "wave_port_coefficients",
     "wave_port_piece",
     "wavenumber",
 ]
@@ -898,6 +901,36 @@ def _impedance(
     return _rlc(f"impedance {b.surface}", built.scale, [sheet], "trace", index)
 
 
+def wave_port_coefficients(model: Model, surface: str) -> np.ndarray:
+    """Per-triangle coefficient of a wave port's Robin term on ``surface``.
+
+    ``1 / mu_r`` of the solve-domain element behind each face (`face_owner`),
+    zero off the surface. When an anisotropic element is behind a face
+    (`anisotropic_elements`: structural, never on values), the coefficient
+    is ``(n, 3, 3)``: the port's tangential inverse-permeability tensor ``A
+    = N mu_r^-1 N^T`` (`anisotropy.tangential_inverse_permeability`, the
+    absorbing boundary's ``A``) on those faces and ``1 / mu_r`` times the
+    identity on the others. On a port cross-section (transverse-anisotropic,
+    ADR 0052) ``A`` is the section's ``nu_tt`` in the global frame.
+    """
+    mesh = model.mesh
+    owner = face_owner(model)
+    on = mesh.triangle_tags == mesh.region(surface).tag
+    mu = element_tensors(model, "mu_r")
+    tensor = on & (owner >= 0) & anisotropic_elements(model)[np.maximum(owner, 0)]
+    scalar = mu if mu.ndim == 1 else mu[:, 0, 0]
+    values = np.zeros(len(owner), np.result_type(mu, float))
+    values[on] = 1.0 / scalar[owner[on]]
+    if not tensor.any():
+        return values
+    out = values[:, None, None] * np.eye(3)
+    normals = unit_normals(np.asarray(mesh.nodes, float), mesh.triangles)
+    out[tensor] = anisotropy.tangential_inverse_permeability(
+        _tensors(mu)[owner[tensor]], normals[tensor]
+    )
+    return out
+
+
 def wave_port_piece(
     model: Model,
     built: EngineMesh,
@@ -907,28 +940,14 @@ def wave_port_piece(
     surface: str,
     theta: Tabulated,
 ) -> Piece:
-    """The Robin term of a wave port: θ ∫ mu_r^-1 E_t · v_t on its surface.
+    """The Robin term of a wave port: θ ∫ (A E_t) · v_t on its surface.
 
-    ``mu_r`` is that of the solve-domain element behind each face.
-
-    Raises:
-        NotImplementedError: An anisotropic ``mu_r`` touches the port.
+    ``A`` is the port's tangential inverse-permeability tensor, ``1 /
+    mu_r`` for an isotropic element behind the face
+    (`wave_port_coefficients`).
     """
-    mesh = model.mesh
-    owner = face_owner(model)
-    on = mesh.triangle_tags == mesh.region(surface).tag
-    mu = element_tensors(model, "mu_r")
-    if mu.ndim == 3:
-        if np.ptp(mu[owner[on]] - mu[owner[on]][:, :1, :1] * np.eye(3)) > 0:
-            raise NotImplementedError(
-                f"WavePort {port!r}: an anisotropic mu_r touches the port; driven "
-                "wave ports support isotropic permeability only."
-            )
-        mu = mu[:, 0, 0]
-    values = np.zeros(len(owner), np.result_type(mu, float))
-    values[on] = 1.0 / mu[owner[on]]
     form = _tangential(built, (surface,), order)
-    coef = surface_p0(built, values)
+    coef = surface_coefficient(built, wave_port_coefficients(model, surface))
     return Piece(f"waveport {port}", theta, lambda u, v: form(u, v, coef), kind="port")
 
 

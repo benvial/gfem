@@ -63,6 +63,38 @@ def admittance(eps, mu, n):
     return t.T @ (g @ np.linalg.inv(t @ e)) @ t
 
 
+def plane_wave_n_cross_h(mu, n, e):
+    """``n x H`` (times eta0) of a plane wave ``e exp(-i k0 n . r)`` along n.
+
+    Faraday's law alone, by cross products: ``curl E = -i k0 n x e`` and
+    ``curl E = -i k0 mu (eta0 H)``. Any field ``e`` and any invertible
+    ``mu``.
+    """
+    return np.cross(n, np.linalg.solve(mu, np.cross(n, e)))
+
+
+def transverse(rng, n, lo, hi):
+    """A random real tensor with a principal axis along ``n``.
+
+    Principal values in ``[lo, hi]``; the two others along random
+    directions of the plane normal to ``n``.
+    """
+    t = frame(n)
+    angle = rng.uniform(0, np.pi)
+    c, s = np.cos(angle), np.sin(angle)
+    axes = np.vstack([np.array([[c, s], [-s, c]]) @ t, n])
+    return axes.T @ np.diag(rng.uniform(lo, hi, 3)) @ axes
+
+
+def turned(axis, degrees):
+    """`gfem.Material` axes: the coordinate axes turned about coordinate ``axis``."""
+    t = np.radians(degrees)
+    i, j = (k for k in range(3) if k != axis)
+    r = np.eye(3)
+    r[i, i], r[i, j], r[j, i], r[j, j] = np.cos(t), -np.sin(t), np.sin(t), np.cos(t)
+    return tuple(tuple(float(x) for x in row) for row in r.T)
+
+
 # --- the WR-28 guide ------------------------------------------------------------
 
 #: WR-28 inner width and height, mm (Palace issue #835's guide).
