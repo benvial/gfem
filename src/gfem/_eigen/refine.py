@@ -76,6 +76,9 @@ def refine(
     tolerance after ``max_iterations`` steps). With ``reshift`` False the
     operator is never refactorized.
     """
+    # the eigenvector lives on the free DOFs: weight on the fixed ones would
+    # hide the residual from the backward error (corrections never touch it)
+    x = np.where(op.free, x, 0)
     x = x / np.linalg.norm(x)
     best: Refined | None = None
     history: list[float] = []
