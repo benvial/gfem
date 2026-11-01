@@ -424,3 +424,53 @@ def test_port_mode_result_round_trips_with_its_field(tmp_path, walls):
         np.testing.assert_array_equal(getattr(loaded, name), getattr(result, name))
     points = np.asarray(mesh.nodes)[mesh.triangles[mesh.elements("port1")][:, 0]]
     np.testing.assert_array_equal(loaded.e_field.at(points), result.e_field.at(points))
+
+
+def _of_type(node, tag):
+    if isinstance(node, dict):
+        if node.get("$type") == tag:
+            yield node
+        for v in node.values():
+            yield from _of_type(v, tag)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _of_type(v, tag)
+
+
+def test_an_old_port_section_reads_its_scalar_conductivity_and_admittance(tmp_path):
+    mesh = gfem.Mesh.from_gmsh(DATA / "waveguide.msh", length_unit="mm")
+    model = gfem.Model(
+        mesh,
+        materials={"air": gfem.Material(eps_r=2.0, conductivity=0.01)},
+        boundaries=[gfem.Absorbing("walls")],
+        ports=[gfem.WavePort("p1", "port1")],
+    )
+    job = gfem.Job(model, gfem.PortMode("p1", 10e9), gfem.SolverOptions(order=1))
+    result = job.run(out=tmp_path / "results")
+    new = result.e_field._section
+    assert len(new.absorbing_edges) > 0
+
+    # rewrite the stored section as 0.1.0 wrote it: one conductivity per
+    # triangle and one admittance per absorbing edge
+    path = tmp_path / "results" / "result.json"
+    doc = json.loads(path.read_text())
+    with np.load(path.with_name(doc["arrays"])) as npz:
+        arrays = {k: npz[k] for k in npz.files}
+    (section,) = _of_type(doc, "PortSection")
+    tt, nn = section.pop("sigma_tt")["$array"], section.pop("sigma_nn")["$array"]
+    old = nn.removesuffix("sigma_nn") + "sigma"
+    arrays[old] = arrays.pop(nn)
+    del arrays[tt]
+    section["sigma"] = {"$array": old, "numpy": True}
+    admittance = section["absorbing_admittance"]["$array"]
+    arrays[admittance] = arrays[admittance][:, 0]
+    path.write_text(json.dumps(doc))
+    with path.with_name(doc["arrays"]).open("wb") as f:
+        np.savez(f, **arrays)
+
+    back = gfem.load_result(tmp_path / "results").e_field._section
+    np.testing.assert_array_equal(back.sigma_nn, new.sigma_nn)
+    np.testing.assert_array_equal(back.sigma_tt, new.sigma_tt)
+    np.testing.assert_array_equal(back.sigma_tt[:, 0, 0], 0.01)
+    np.testing.assert_array_equal(back.sigma_tt[:, 0, 1], 0.0)
+    np.testing.assert_array_equal(back.absorbing_admittance, new.absorbing_admittance)

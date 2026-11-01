@@ -9,6 +9,7 @@ verification tier.
 import math
 from pathlib import Path
 
+import anisotropy
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -351,6 +352,115 @@ def test_absorbing_edges_are_accepted(guide_mesh):
     model = guide(guide_mesh, gfem.Absorbing("walls"))
     result = gfem.solve(model, gfem.PortMode("p1", 10e9))
     assert np.isfinite(np.asarray(result.gamma)).all()
+
+
+# --- anisotropic cross-sections ------------------------------------------------
+
+F_WR28 = 20e9  # TE10 alone propagates in the eps_r = (2, 4, 3) guide
+BETA_EPS2 = 395.3211489544672  # TE10 of WR-28 at 20 GHz in eps_r = 2, rad/m
+BETA_EPS4 = 712.5195571307862  # in eps_r = 4
+
+
+def _axes(axis, degrees):
+    """The coordinate axes turned by ``degrees`` about coordinate ``axis``."""
+    t = math.radians(degrees)
+    i, j = (k for k in range(3) if k != axis)
+    r = np.eye(3)
+    r[i, i], r[i, j], r[j, i], r[j, j] = (
+        math.cos(t),
+        -math.sin(t),
+        math.sin(t),
+        math.cos(t),
+    )
+    return tuple(tuple(row) for row in r.T)
+
+
+@pytest.fixture(scope="module")
+def wr28_mesh(tmp_path_factory):
+    return anisotropy.wr28(tmp_path_factory.mktemp("wr28"))
+
+
+def _wr28_gamma(mesh, material, frequency=F_WR28):
+    model = gfem.Model(
+        mesh,
+        materials={"fill": material},
+        boundaries=[gfem.PEC("walls")],
+        ports=[gfem.WavePort("p1", "port1"), gfem.WavePort("p2", "port2")],
+    )
+    result = gfem.solve(
+        model, gfem.PortMode("p1", frequency), options=gfem.SolverOptions(order=3)
+    )
+    return complex(np.asarray(result.gamma)[0])
+
+
+@pytest.mark.parametrize(
+    ("values", "name"),
+    [
+        ({"eps_r": (2.0, 4.0, 3.0)}, "eps_r"),
+        ({"mu_r": (1.0, 2.0, 1.5)}, "mu_r"),
+        ({"conductivity": (0.2, 0.05, 0.1)}, "conductivity"),
+    ],
+    ids=["eps_r", "mu_r", "conductivity"],
+)
+def test_a_tensor_tilted_off_the_port_normal_raises_naming_it(plate_mesh, values, name):
+    # turned 20 degrees about x, in the port plane: tangential-normal coupling
+    material = gfem.Material(**{"eps_r": 4.0, **values}, axes=_axes(0, 20.0))
+    with pytest.raises(
+        ValueError, match=rf"{name} with no principal axis along the port normal"
+    ):
+        gfem.solve(plate(plate_mesh, material), gfem.PortMode("p1", 10e9))
+
+
+def test_a_uniaxial_tensor_turned_inside_its_degenerate_plane_is_accepted(
+    plate_mesh,
+):
+    # (5, 2, 2) with axes 2 and 3 turned about x: the y-z plane is still
+    # degenerate, so z is a principal axis; the TEM mode's E along y sees 2
+    material = gfem.Material(eps_r=(5.0, 2.0, 2.0), axes=_axes(0, 20.0))
+    result = gfem.solve(plate(plate_mesh, material), gfem.PortMode("p1", 10e9))
+    np.testing.assert_allclose(np.asarray(result.n_eff), math.sqrt(2.0), rtol=1e-8)
+
+
+def test_te10_of_a_biaxial_guide_sees_the_permittivity_along_its_field(wr28_mesh):
+    # Palace issue #835: E along y, so beta^2 = 4 k0^2 - (pi / a)^2
+    gamma = _wr28_gamma(wr28_mesh, gfem.Material(eps_r=(2.0, 4.0, 3.0)))
+    np.testing.assert_allclose(gamma.imag, BETA_EPS4, rtol=1e-4)
+
+
+def test_a_tensor_turned_about_the_guide_axis_keeps_a_propagating_mode(wr28_mesh):
+    # no closed form: the mode is hybrid, between the eps_t = 2 and 4 guides
+    material = gfem.Material(eps_r=(2.0, 4.0, 3.0), axes=_axes(2, 30.0))
+    gamma = _wr28_gamma(wr28_mesh, material)
+    assert BETA_EPS2 < gamma.imag < BETA_EPS4
+    assert abs(gamma.real) <= 1e-8 * abs(gamma)
+
+
+def test_te10_reads_the_conductivity_along_its_field(wr28_mesh):
+    def gamma(sigma):
+        material = gfem.Material(eps_r=(2.0, 4.0, 3.0), conductivity=sigma)
+        return _wr28_gamma(wr28_mesh, material)
+
+    reference = gamma((0.2, 0.05, 0.1))
+    # TE10 with eps_y (1 - i sigma_y / (omega eps0)), research note
+    np.testing.assert_allclose(
+        reference, 5.540510958349465 + 712.541098151911j, rtol=1e-4
+    )
+    swap_xz, swap_xy = gamma((0.1, 0.05, 0.2)), gamma((0.05, 0.2, 0.1))
+    assert abs(swap_xz - reference) < 1e-3 * abs(swap_xy - reference)
+
+
+def test_a_mode_above_the_mean_diagonal_index_is_found():
+    # eps_tt = diag(1, 4) turned 45 degrees about the guide axis: its diagonal
+    # entries are 2.5, but the first mode has 2.5 < n_eff^2 < 4
+    model = gfem.Model(
+        gfem.Mesh.from_gmsh(DATA / "square_waveguide.msh", length_unit="mm"),
+        materials={"air": gfem.Material(eps_r=(1.0, 4.0, 1.0), axes=_axes(2, 45.0))},
+        boundaries=[gfem.PEC("walls")],
+        ports=[gfem.WavePort("p1", "port1")],
+    )
+    result = gfem.solve(model, gfem.PortMode("p1", 30e9))
+    n2 = complex(np.asarray(result.n_eff)[0] ** 2)
+    assert 2.5 < n2.real < 4.0
 
 
 # --- errors ---------------------------------------------------------------------
