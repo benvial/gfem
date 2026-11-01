@@ -394,20 +394,22 @@ def test_isotropic_faces_keep_the_scalar_admittance(slab):
 
 
 @pytest.mark.parametrize(
-    ("polarization", "half_space"),
-    # (1 - Y) / (1 + Y), Y = sqrt(eps_y / mu_x) and sqrt(eps_x / mu_y)
-    [("y", 0.2154), ("x", 0.1716)],
+    ("polarization", "admittance"),
+    # Y = sqrt(eps_y / mu_x) and sqrt(eps_x / mu_y): |S11| = 0.2154 and 0.1716
+    [("y", math.sqrt(3.6 / 1.5)), ("x", math.sqrt(2.0 / 1.0))],
 )
 def test_first_order_absorbing_boundary_ends_an_anisotropic_slab_as_a_half_space(
-    slab, polarization, half_space
+    slab, polarization, admittance
 ):
+    half_space = (admittance - 1) / (admittance + 1)
     # k0 d = 1 and 4: with the exact admittance S11 does not depend on d
     frequencies = [k0d * const.c / (2 * math.pi * LENGTH * 1e-3) for k0d in (1.0, 4.0)]
     model = _slab_model(slab, CRYSTAL, polarization=polarization)
     s11 = _s(model, frequency=frequencies, order=3)[:, 0, 0]
-    # the mean diagonal reflected 0.022 off, Palace's coefficient 0.098
-    np.testing.assert_allclose(np.abs(s11), half_space, atol=0.005)
-    assert abs(s11[0] - s11[1]) <= 0.005
+    # MN5: |S11| off by 2.5e-10 at most, S11 apart by 1.1e-9 (the mean diagonal
+    # reflected up to 0.022 off, Palace's coefficient 0.098)
+    np.testing.assert_allclose(np.abs(s11), half_space, rtol=0, atol=1e-9)
+    assert abs(s11[0] - s11[1]) <= 3e-9
 
 
 def _eigenmode(model):

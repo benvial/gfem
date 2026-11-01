@@ -486,7 +486,8 @@ def _trace_shape(terms: Sequence[tuple[Term, complex]], pair: FieldPair, w: Any)
     """
     for term, _ in terms:
         # the rules refuse the node coordinates first (unsupported_input)
-        if term.kind == "trace" and term.coefficient.dim != 1:  # pragma: no cover
+        tensor = getattr(term.coefficient, "dim", 1) != 1
+        if term.kind == "trace" and tensor:  # pragma: no cover
             msg = (
                 f"The trace term {term.name!r} has a tensor coefficient, whose "
                 "shape derivative is not available in this version."
