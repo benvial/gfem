@@ -1,8 +1,13 @@
 # Release notes
 
-gfem has no release yet. The notes start with the v0.1 tag.
+## 0.1.0 (2026-11-01)
 
-## Unreleased
+First release: driven problems (uniform and adaptive sweeps), eigenmode problems
+(including nonlinear ones), electrostatic and port mode problems, with lumped
+and wave ports. Gradients with respect to permittivity, conductivity, sheet
+fill and mesh node coordinates are checked against finite differences.
+
+Changes since the release candidate of 2026-10-21:
 
 The direct and `bddc_gmres` solvers now keep getting faster past 16 CPU
 threads on large problems. Results change only to the solver's precision.

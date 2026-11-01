@@ -1,6 +1,6 @@
 [project]
 name = "gfem"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "Differentiable finite-element electromagnetics for RF, microwave and superconducting devices."
 readme = "README.md"
 requires-python = ">=3.12"
