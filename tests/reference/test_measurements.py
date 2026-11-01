@@ -43,6 +43,10 @@ SAME_MESH_CONFIG = "config_nobisect_tol.json"
 PARITY = 0.05
 CASES = {"MA": SHEET, "MS": SHEET, "SA": GAPS, "default": GAPS}
 #: gfem on r20, per mode (7.68 GHz, 16.67 GHz): participation per kind.
+#: A participation is quadratic in the mode field, like Q, so it shares the
+#: eigenmode goldens' Q tolerance: repeated runs on MareNostrum 5 moved the
+#: smallest value (mode 2, MA) by up to 2.5e-6 relative.
+GOLDEN_RTOL = 5e-5
 GOLDEN: dict[str, list[float]] = {
     "MA": [1.0434512931e-06, 7.4625384967e-07],
     "MS": [1.2694871352e-04, 8.7165195157e-05],
@@ -216,7 +220,7 @@ def test_measurements_cost_little_next_to_the_solve(measured):
 def test_interface_participation_golden_baseline(measured):
     out = measured[0]
     for kind, values in GOLDEN.items():
-        np.testing.assert_allclose(out[kind].participation, values, rtol=1e-7)
+        np.testing.assert_allclose(out[kind].participation, values, rtol=GOLDEN_RTOL)
 
 
 def test_interface_participation_parity_with_palace(solved, case):
