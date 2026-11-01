@@ -201,6 +201,46 @@ def test_boundaries_ports_and_exclusions_round_trip(tmp_path):
     _assert_same_model(model, back.model)
 
 
+def test_matrix_built_and_per_axis_conductivity_materials_round_trip(
+    mesh_path, tmp_path
+):
+    c, s = np.cos(0.4), np.sin(0.4)
+    r = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+    tilted = gfem.Material(
+        eps_r=r @ np.diag([2.0, 3.0, 5.0]) @ r.T,
+        conductivity=r @ np.diag([0.0, 0.5, 1.0]) @ r.T,
+        name="tilted",
+    )
+    wire = gfem.Material(eps_r=7.5, conductivity=(0.0, 0.0, 1.0))
+    model = gfem.Model(
+        gfem.Mesh.from_gmsh(mesh_path), materials={"oxide": tilted, "nitride": wire}
+    )
+    back = _round_trip(gfem.Job(model, PROBLEM), tmp_path)
+    _assert_same_model(model, back.model)
+
+
+def _materials_in(node):
+    if isinstance(node, dict):
+        if node.get("$type") == "Material":
+            yield node
+        for v in node.values():
+            yield from _materials_in(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _materials_in(v)
+
+
+def test_an_old_job_with_equal_principal_values_reads_them_as_one(model, tmp_path):
+    path = gfem.Job(model, PROBLEM).to_json(tmp_path / "job.json")
+    doc = json.loads(path.read_text())
+    (oxide,) = (m for m in _materials_in(doc) if m["eps_r"] == 3.9)
+    oxide["eps_r"] = [2.0, 2.0, 2.0]  # as 0.1.0 wrote Material(eps_r=(2, 2, 2))
+    path.write_text(json.dumps(doc))
+    back = gfem.Job.from_json(path).model.materials["oxide"]
+    assert back == gfem.Material(eps_r=2.0)
+    assert back.isotropic
+
+
 def test_sheet_fields_round_trip(tmp_path):
     path = sm.write_msh22(
         tmp_path / "two.msh", sm.plate(4.0, 3.0, (("a", 0.5), ("b", 0.5)), (2, 1, 1))

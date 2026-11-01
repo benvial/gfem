@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import itertools
 from collections.abc import Callable
 from typing import Any, Literal
 
@@ -29,7 +30,7 @@ class _Property:
     default: float | None
     strict: bool  # value > 0 (else >= 0)
     may_be_complex: bool = False  # in a MaterialField: lossy eps_r, mu_r
-    may_be_tensor: bool = False  # in a Material: three principal values
+    may_be_tensor: bool = False  # in a Material: principal values or a matrix
 
 
 PROPERTIES: tuple[_Property, ...] = (
@@ -40,7 +41,7 @@ PROPERTIES: tuple[_Property, ...] = (
         "mu_r", "1", "em", 1.0, strict=True, may_be_complex=True, may_be_tensor=True
     ),
     _Property("tan_delta", "1", "em", 0.0, strict=False, may_be_tensor=True),
-    _Property("conductivity", "S/m", "em", 0.0, strict=False),
+    _Property("conductivity", "S/m", "em", 0.0, strict=False, may_be_tensor=True),
     _Property("thermal_conductivity", "W/(m K)", "thermal", None, strict=True),
     _Property("density", "kg/m^3", "thermal", None, strict=True),
     _Property("specific_heat", "J/(kg K)", "thermal", None, strict=True),
@@ -54,18 +55,75 @@ _TRACED_REMEDY = (
 )
 
 
-def _bound_error(prop: _Property, owner: str, value: Any) -> ValueError:
+_TENSOR_TOL = 1e-9  # symmetry, diagonality and equal principal values, relative
+
+
+def _bound_error(
+    prop: _Property, owner: str, value: Any, axis: str | None = None
+) -> ValueError:
+    """The passivity error; ``axis`` names a principal axis for a tensor value."""
     bound = "> 0" if prop.strict else ">= 0"
-    if prop.physics == "em":
+    if prop.physics != "em":
         return ValueError(
-            f"{owner} is not passive: {prop.name}={value} but {prop.name} must be "
-            f"{bound}. A passive medium has eps_r > 0, mu_r > 0 and losses "
-            "(tan_delta, conductivity) >= 0."
+            f"{owner}: {prop.name} must be {bound} {prop.unit}, got {value}."
         )
-    return ValueError(f"{owner}: {prop.name} must be {bound} {prop.unit}, got {value}.")
+    if axis is None:
+        what = f"{prop.name}={value} but {prop.name} must be {bound}"
+    else:
+        what = (
+            f"{prop.name} has principal value {value} (along axis {axis}) but "
+            f"every principal value of {prop.name} must be {bound}"
+        )
+    return ValueError(
+        f"{owner} is not passive: {what}. A passive medium has eps_r > 0, "
+        "mu_r > 0 and losses (tan_delta, conductivity) >= 0."
+    )
+
+
+def _short(x: float) -> str:
+    """``x`` to 12 significant digits, so round-off does not show in messages."""
+    return repr(float(f"{x:.12g}") + 0.0)
+
+
+def _vector(a: np.ndarray) -> str:
+    return f"({', '.join(_short(x) for x in a)})"
+
+
+def _check_passive(
+    prop: _Property, values: np.ndarray, owner: str, axes: np.ndarray | None
+) -> None:
+    """Every principal value meets the bound; the first that does not raises."""
+    bad = (values <= 0) if prop.strict else (values < 0)
+    if not bad.any():
+        return
+    k = int(np.flatnonzero(bad)[0])
+    axis = str(k + 1) if axes is None else _vector(axes[k])
+    raise _bound_error(prop, owner, _short(values[k]), axis)
+
+
+def _check_shape(prop: _Property, arr: np.ndarray, owner: str) -> None:
+    if arr.ndim == 1 and prop.may_be_tensor:
+        if arr.shape != (3,):
+            raise ValueError(
+                f"{owner}: {prop.name} takes one value or three principal values "
+                f"(along `axes`), got {arr.shape[0]}."
+            )
+    elif arr.ndim == 2 and prop.may_be_tensor:
+        if arr.shape != (3, 3):
+            raise ValueError(
+                f"{owner}: {prop.name} takes one value, three principal values "
+                f"(along `axes`) or a 3x3 matrix, got shape {arr.shape}."
+            )
+    elif arr.ndim != 0:
+        raise ValueError(f"{owner}: {prop.name} must be a single number.")
 
 
 def _material_value(prop: _Property, value: Any, owner: str) -> Any:
+    """A checked value: a float, a 3-tuple, or a symmetric 3x3 matrix.
+
+    A matrix is returned as a symmetrized array, its passivity unchecked:
+    `_principal` diagonalizes it with the material's other matrices.
+    """
     if value is None:
         if prop.default is not None:
             raise ValueError(f"{owner}: {prop.name} cannot be None.")
@@ -87,19 +145,142 @@ def _material_value(prop: _Property, value: Any, owner: str) -> Any:
         raise ValueError(
             f"{owner}: {prop.name} must be a number, got {value!r}."
         ) from None
-    if arr.ndim == 1 and prop.may_be_tensor:
-        if arr.shape != (3,):
-            raise ValueError(
-                f"{owner}: {prop.name} takes one value or three principal values "
-                f"(along `axes`), got {arr.shape[0]}."
-            )
-    elif arr.ndim != 0:
-        raise ValueError(f"{owner}: {prop.name} must be a single number.")
+    _check_shape(prop, arr, owner)
     if not np.isfinite(arr).all():
         raise ValueError(f"{owner}: {prop.name} must be finite, got {value!r}.")
-    if (arr <= 0).any() if prop.strict else (arr < 0).any():
-        raise _bound_error(prop, owner, value)
-    return float(arr) if arr.ndim == 0 else tuple(float(v) for v in arr)
+    if arr.ndim == 2:
+        if np.linalg.norm(arr - arr.T) > _TENSOR_TOL * np.linalg.norm(arr):
+            raise ValueError(
+                f"{owner}: {prop.name} is not symmetric; non-symmetric "
+                "(gyrotropic) tensors are not supported."
+            )
+        return (arr + arr.T) / 2
+    if arr.ndim == 0:
+        if (arr <= 0) if prop.strict else (arr < 0):
+            raise _bound_error(prop, owner, value)
+        return float(arr)
+    _check_passive(prop, arr, owner, None)
+    if (arr == arr[0]).all():  # equal principal values are one value, exactly
+        return float(arr[0])
+    return tuple(float(v) for v in arr)
+
+
+def _eigenspaces(matrices: list[np.ndarray]) -> list[np.ndarray]:
+    """Orthonormal bases (3 x d) of the common eigenspaces of ``matrices``.
+
+    Each matrix splits the eigenspaces left by the ones before it; eigenvalues
+    within `_TENSOR_TOL` of the matrix's norm stay one eigenspace.
+    """
+    spaces = [np.eye(3)]
+    for m in matrices:
+        tol = _TENSOR_TOL * np.linalg.norm(m)
+        split = []
+        for q in spaces:
+            if q.shape[1] == 1:
+                split.append(q)
+                continue
+            w, v = np.linalg.eigh(q.T @ m @ q)
+            basis = q @ v
+            start = 0
+            for i in range(1, len(w) + 1):
+                if i == len(w) or w[i] - w[i - 1] > tol:
+                    split.append(basis[:, start:i])
+                    start = i
+        spaces = split
+    return spaces
+
+
+def _ordered_axes(spaces: list[np.ndarray]) -> np.ndarray:
+    """The principal axes (rows) spanning ``spaces``, in the normal form.
+
+    Axis k is the one closest to coordinate axis k: of the assignments of
+    coordinate axes to eigenspaces, the one maximizing the summed ``|a_k[k]|``
+    (the first, within round-off). In an eigenspace of dimension > 1 the axes
+    are the Gram-Schmidt projection of its coordinate axes. Each axis's
+    dominant component is positive.
+    """
+    slots = [i for i, q in enumerate(spaces) for _ in range(q.shape[1])]
+    best, best_score = np.eye(3), -np.inf
+    for perm in itertools.permutations(range(3)):
+        axes = np.zeros((3, 3))
+        for i, q in enumerate(spaces):
+            ks = [k for k in range(3) if slots[perm[k]] == i]
+            if q.shape[1] == 1:
+                axes[ks[0]] = q[:, 0]
+                continue
+            p = q @ q.T
+            for j, k in enumerate(ks):
+                v = p[:, k] - axes[ks[:j]].T @ (axes[ks[:j]] @ p[:, k])
+                axes[k] = v / max(np.linalg.norm(v), 1e-300)
+        if not np.allclose(axes @ axes.T, np.eye(3), atol=1e-9):
+            continue  # a coordinate axis (nearly) orthogonal to its eigenspace
+        score = np.abs(np.diag(axes)).sum()
+        if score > best_score + _TENSOR_TOL:
+            best, best_score = axes, score
+    dominant = np.abs(best).argmax(axis=1)
+    return best * np.sign(best[np.arange(3), dominant])[:, None]
+
+
+def _principal(
+    values: dict[str, Any], axes: Any, owner: str
+) -> tuple[dict[str, Any], Any]:
+    """Matrix values turned into principal values along one shared `axes`."""
+    matrices = {n: v for n, v in values.items() if isinstance(v, np.ndarray)}
+    if not matrices:
+        return values, axes
+    first = next(iter(matrices))
+    if axes is not None:
+        raise ValueError(
+            f"{owner}: {first} is a 3x3 matrix, which carries its own principal "
+            "axes; leave `axes` as None."
+        )
+    along_axes = [n for n, v in values.items() if isinstance(v, tuple)]
+    if along_axes:
+        name = along_axes[0]
+        raise ValueError(
+            f"{owner}: {first} is a 3x3 matrix but {name} gives three "
+            "principal values along `axes`, which the matrix derives itself; "
+            f"give {name} as one value or a 3x3 matrix."
+        )
+
+    def off_diagonal(m: np.ndarray, a: np.ndarray) -> bool:
+        d = a @ m @ a.T
+        return np.abs(d - np.diag(np.diag(d))).max() > _TENSOR_TOL * np.linalg.norm(m)
+
+    if not any(off_diagonal(m, np.eye(3)) for m in matrices.values()):
+        a = None
+    else:
+        a = _ordered_axes(_eigenspaces(list(matrices.values())))
+        for name, m in matrices.items():
+            if off_diagonal(m, a):
+                other = next(
+                    (
+                        o
+                        for o, n in matrices.items()
+                        if o != name
+                        and np.linalg.norm(m @ n - n @ m)
+                        > _TENSOR_TOL * np.linalg.norm(m) * np.linalg.norm(n)
+                    ),
+                    next(o for o in matrices if o != name),
+                )
+                pair = [p.name for p in PROPERTIES if p.name in (name, other)]
+                raise ValueError(
+                    f"{pair[0]} and {pair[1]} of {owner} have different principal "
+                    "axes; a material's tensors share one set of principal axes."
+                )
+    out = dict(values)
+    tensor = False
+    for name, m in matrices.items():
+        prop = next(p for p in PROPERTIES if p.name == name)
+        v = np.diag(m) if a is None else np.einsum("ki,ij,kj->k", a, m, a)
+        _check_passive(prop, v, owner, a)
+        if np.ptp(v) <= _TENSOR_TOL * np.linalg.norm(m):
+            # equal to 1e-9, not an approximation; the mean keeps the trace
+            out[name] = float(np.mean(v))
+        else:
+            out[name] = tuple(float(x) for x in v)
+            tensor = True
+    return out, (a if tensor and a is not None else None)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -110,18 +291,22 @@ class Material:
     ε = ε0 eps_r (1 - i tan_delta) - i conductivity / ω.
 
     Attributes:
-        eps_r: Relative permittivity, one value or three principal values
-            along `axes` (symmetric anisotropy).
-        mu_r: Relative permeability, one value or three principal values.
-        tan_delta: Dielectric loss tangent, >= 0: one value, or three
-            principal values along `axes` (an anisotropic crystal such as
-            sapphire). Each principal value of the permittivity is then
-            ``eps_r[k] (1 - i tan_delta[k])``.
-        conductivity: The electrical conductivity in S/m, >= 0 (not the
-            thermal conductivity, which is `thermal_conductivity`).
-        axes: Three orthonormal vectors, the principal directions of an
-            anisotropic `eps_r` / `mu_r` / `tan_delta`. ``None``: the
-            coordinate axes.
+        eps_r: Relative permittivity: one value, three principal values
+            along `axes`, or a real symmetric 3x3 matrix in the global frame.
+        mu_r: Relative permeability, in the same forms as `eps_r`.
+        tan_delta: Dielectric loss tangent, >= 0, in the same forms as
+            `eps_r` (an anisotropic crystal such as sapphire). Each principal
+            value of the permittivity is then ``eps_r[k] (1 - i tan_delta[k])``.
+        conductivity: The electrical conductivity in S/m, in the same forms
+            as `eps_r`, each principal value >= 0 (not the thermal
+            conductivity, which is `thermal_conductivity`).
+        axes: Three orthonormal vectors, the principal directions shared by
+            `eps_r`, `mu_r`, `tan_delta` and `conductivity`. ``None``: the
+            coordinate axes. A matrix input sets them: the material stores
+            the matrix as principal values along derived axes (axis k the
+            one closest to coordinate axis k, its dominant component
+            positive; ``None`` if every matrix is diagonal). Equal principal
+            values are stored as one value.
         thermal_conductivity: Reserved for thermal problems, W/(m K).
             ``None`` means not given.
         density: Reserved for thermal problems, kg/m^3.
@@ -129,8 +314,11 @@ class Material:
         name: A free-form label (for example ``"silicon"``), shown in reprs.
 
     Raises:
-        ValueError: The medium is not passive (eps_r or mu_r <= 0, a negative
-            loss), a value is not finite, or `axes` is not orthonormal.
+        ValueError: The medium is not passive (a principal value of eps_r or
+            mu_r <= 0, or of a loss < 0), a value is not finite, `axes` is
+            not orthonormal, a matrix is not symmetric (gyrotropic tensors are
+            not supported), a matrix is given with `axes` or beside three
+            principal values, or the matrices do not share principal axes.
         NonDifferentiableError: A value is traced by `jax.grad`; use
             `MaterialField.uniform` to differentiate with respect to a
             region's material.
@@ -139,7 +327,7 @@ class Material:
     eps_r: float | tuple[float, float, float] = 1.0
     mu_r: float | tuple[float, float, float] = 1.0
     tan_delta: float | tuple[float, float, float] = 0.0
-    conductivity: float = 0.0
+    conductivity: float | tuple[float, float, float] = 0.0
     axes: tuple[tuple[float, float, float], ...] | None = None
     thermal_conductivity: float | None = None
     density: float | None = None
@@ -148,11 +336,14 @@ class Material:
 
     def __post_init__(self) -> None:
         owner = f"Material {self.name!r}" if self.name else "Material"
-        for prop in PROPERTIES:
-            value = _material_value(prop, getattr(self, prop.name), owner)
-            object.__setattr__(self, prop.name, value)
-        if self.axes is not None:
-            object.__setattr__(self, "axes", _axes(self.axes, owner))
+        values = {
+            p.name: _material_value(p, getattr(self, p.name), owner) for p in PROPERTIES
+        }
+        values, axes = _principal(values, self.axes, owner)
+        for name, value in values.items():
+            object.__setattr__(self, name, value)
+        if axes is not None:
+            object.__setattr__(self, "axes", _axes(axes, owner))
 
     def __repr__(self) -> str:
         parts = [
@@ -164,9 +355,16 @@ class Material:
 
     @property
     def isotropic(self) -> bool:
-        """Whether `eps_r`, `mu_r` and `tan_delta` are single numbers."""
+        """Whether every tensor property is one number.
+
+        The tensor properties are `eps_r`, `mu_r`, `tan_delta` and
+        `conductivity`; when each is one number, the material does not depend
+        on the field direction.
+        """
         return not any(
-            isinstance(v, tuple) for v in (self.eps_r, self.mu_r, self.tan_delta)
+            isinstance(getattr(self, p.name), tuple)
+            for p in PROPERTIES
+            if p.may_be_tensor
         )
 
 
@@ -201,7 +399,7 @@ def _axes(axes: Any, owner: str) -> tuple[tuple[float, float, float], ...]:
     if a.shape != (3, 3) or not np.allclose(a @ a.T, np.eye(3), atol=1e-9):
         raise ValueError(
             f"{owner}: axes must be three orthonormal 3-vectors (the principal "
-            f"directions of eps_r / mu_r / tan_delta), got {axes!r}."
+            f"directions of eps_r / mu_r / tan_delta / conductivity), got {axes!r}."
         )
     return tuple(tuple(float(x) for x in row) for row in a)  # ty: ignore[invalid-return-type]
 
@@ -358,8 +556,8 @@ class MaterialField:
             if not m.isotropic:
                 raise ValueError(
                     "MaterialField supports isotropic materials only; "
-                    f"{m.name or 'a material'} has per-axis eps_r, mu_r or "
-                    "tan_delta."
+                    f"{m.name or 'a material'} has per-axis eps_r, mu_r, "
+                    "tan_delta or conductivity."
                 )
         rho = jnp.asarray(density, dtype=jnp.float64)
         w = _SCHEMES[scheme](rho, penalty)
@@ -388,8 +586,8 @@ class MaterialField:
         if not material.isotropic:
             raise ValueError(
                 "MaterialField supports isotropic materials only; "
-                f"{material.name or 'this material'} has per-axis eps_r, mu_r or "
-                "tan_delta."
+                f"{material.name or 'this material'} has per-axis eps_r, mu_r, "
+                "tan_delta or conductivity."
             )
         props = {
             n: jnp.asarray(getattr(material, n), dtype=jnp.float64)
