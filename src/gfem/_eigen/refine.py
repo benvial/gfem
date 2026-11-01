@@ -31,9 +31,11 @@ __all__ = ["MAX_SHIFTS", "Refined", "refine"]
 
 #: Refactorizations allowed per refined mode.
 MAX_SHIFTS = 3
-#: A seed this close to an eigenpair (backward error) has a Ritz value
-#: accurate enough to refactorize at; a rougher one is refined on the
-#: current shift, which pulls it to the mode nearest that shift.
+#: A seed of a frozen (nonpolynomial) operator this close to an eigenpair
+#: (backward error) has a Ritz value accurate enough to refactorize at; a
+#: rougher one is refined on the current shift, which pulls it to the mode
+#: nearest that shift. A polynomial operator's Ritz values are its own, so
+#: its seeds are always refactorized at.
 TRUSTED = 1e-6
 
 
@@ -69,8 +71,9 @@ def refine(
     """Refine the pair ``(k, x)`` to backward error ``tolerance``.
 
     ``reshift_first``: refactorize at ``k`` before the first correction
-    step (the current shift is nearer another mode than this one), if the
-    seed's backward error is within `TRUSTED`.
+    step (the current shift is nearer another mode than this one), unless
+    the operator is nonpolynomial and the seed's backward error is above
+    `TRUSTED`.
 
     Returns the best pair seen (``converged`` False if it misses the
     tolerance after ``max_iterations`` steps). With ``reshift`` False the
@@ -92,7 +95,8 @@ def refine(
         if error <= tolerance or step == max_iterations:
             break
         stalled = len(history) >= 3 and history[-1] > 0.5 * history[-3]
-        trusted = reshift_first and step == 0 and error <= TRUSTED
+        rough = bool(op.nonpolynomial) and error > TRUSTED
+        trusted = reshift_first and step == 0 and not rough
         if reshift and (trusted or (stalled and shifts < MAX_SHIFTS)):
             op.reshift(k)
             shifts += 1

@@ -387,7 +387,7 @@ class EigenmodeRule:
             )
             retry = far and not full
             if retry and _lost(mode, seed, k, sigma, accepted=accepted, window=window):
-                # a seed rougher than TRUSTED, refined on a shift nearer
+                # a frozen seed rougher than TRUSTED, refined on a shift nearer
                 # another mode, wanders where round-off takes it (onto an
                 # accepted mode, a mirror root, or another seed's mode): refine
                 # it again on a factorization at its own Ritz value
