@@ -629,7 +629,10 @@ def test_the_shared_hybrid_correction_is_symmetric_of_rank_2n(hybrid_couplings):
     sigma = np.linalg.svd(c, compute_uv=False)
     assert sigma[3] > 1e-8 * sigma[0]
     assert sigma[4] <= 1e-12 * sigma[0]  # rank 2 n = 4
-    w = surface.vectors @ c @ surface.vectors.T
+    # W = U C Uᵀ on random vectors (W itself is a dense ndof x ndof)
+    u = surface.vectors
+    x = np.random.default_rng(0).standard_normal((u.shape[0], 6))
+    w = x.T @ (u @ (c @ (u.T @ x)))
     assert np.linalg.norm(w - w.T) <= 1e-12 * np.linalg.norm(w)
 
 
@@ -644,6 +647,9 @@ def test_a_lone_hybrid_port_correction_is_the_closed_form(hybrid_couplings):
     h = u @ port.phi[0]
     gamma = port.sweep.gamma[0] * port.scale
     h_s = u @ np.concatenate([gamma * coords[:m], np.zeros(m)])
-    closed = np.outer(h, h) / (h @ e) - np.outer(h_s, h_s) / (h_s @ e)
-    w = u @ surface.correction_coefficients(2 * math.pi * HYBRID_SHARED_F[0]) @ u.T
+    # on random vectors: W itself is a dense ndof x ndof
+    x = np.random.default_rng(0).standard_normal((u.shape[0], 6))
+    closed = np.outer(h, h @ x) / (h @ e) - np.outer(h_s, h_s @ x) / (h_s @ e)
+    c = surface.correction_coefficients(2 * math.pi * HYBRID_SHARED_F[0])
+    w = u @ (c @ (u.T @ x))
     assert np.linalg.norm(w - closed) <= 1e-12 * np.linalg.norm(closed)
