@@ -957,10 +957,21 @@ class EigenmodeResult:
             for a real field).
         bulk_participation: Electric energy participation of each volume
             region of the solve domain, by region name: the fraction of the
-            mode's electric energy ``E`` stored in it. Times the region's
-            ``tan_delta``, it is the region's contribution to ``1 / Q``
-            (for a per-axis ``tan_delta`` that holds only if the field lies
-            along one principal axis).
+            mode's electric energy ``E`` stored in it. For an isotropic
+            loss, the region's contribution to ``1 / Q`` is ``p * (tan_delta
+            + conductivity / (eps0 eps_r Re omega))``; for a per-axis loss
+            use `principal_participation`.
+        principal_participation: The electric energy participation of each
+            anisotropic volume region (an anisotropic `Material`, or a
+            `MaterialField` with `axes`) split along its principal axes, by
+            region name: ``(n_modes, 3)``, in the order of the material's
+            `axes` (the coordinate axes when ``None``), ``p_k = 1/2 eps0
+            ∫ eps_r[k] |a_k . E|^2 dV / E``; the three add up to the region's
+            `bulk_participation`. The region's contribution to ``1 / Q`` is
+            ``sum_k p_k (tan_delta[k] + conductivity[k] / (eps0 eps_r[k] Re
+            omega))`` for any field direction (with losses uniform over the
+            region). Isotropic regions have no entry. Not differentiable,
+            like `bulk_participation`.
         e_fields: The mode fields, one `Field` per mode (read them with
             `e_field`): peak phasors in V/m, quantity ``"E"``, on H(curl)
             of the solve order over the solve domain, each with its mode's
@@ -991,6 +1002,9 @@ class EigenmodeResult:
     e_fields: tuple[Field, ...] = ()
     materials: dict[str, Any] = dataclasses.field(default_factory=dict)
     cluster: jax.Array | None = None
+    principal_participation: dict[str, jax.Array] = dataclasses.field(
+        default_factory=dict
+    )
 
     def __post_init__(self) -> None:
         """Hold fields and materials as tuple and dict; label simple modes."""
@@ -1035,8 +1049,10 @@ class EigenmodeResult:
         ``cluster`` over the dimension ``mode`` (0 = nearest the target);
         `q_port` and `participation` over ``("mode", "port")``, one port
         axis for both (NaN where a port has no value), and
-        `bulk_participation` over ``("mode", "region")``. The fields and
-        materials are not exported. Needs the ``xarray`` extra: ``pip
+        `bulk_participation` over ``("mode", "region")``, and
+        `principal_participation` over ``("mode", "anisotropic_region",
+        "axis")`` (axis 0, 1, 2 in each material's `axes` order). The fields
+        and materials are not exported. Needs the ``xarray`` extra: ``pip
         install "gfem[xarray]"``.
 
         Raises:
@@ -1071,6 +1087,15 @@ class EigenmodeResult:
                 ("mode", "region"),
                 np.stack([np.asarray(v) for v in self.bulk_participation.values()], 1),
             )
+        if self.principal_participation:
+            coords["anisotropic_region"] = list(self.principal_participation)
+            coords["axis"] = np.arange(3)
+            data["principal_participation"] = _variable(
+                ("mode", "anisotropic_region", "axis"),
+                np.stack(
+                    [np.asarray(v) for v in self.principal_participation.values()], 1
+                ),
+            )
         return xr.Dataset(data, coords=coords)
 
     def __repr__(self) -> str:
@@ -1094,5 +1119,6 @@ register_fields(
         "e_fields",
         "materials",
         "cluster",
+        "principal_participation",
     ),
 )

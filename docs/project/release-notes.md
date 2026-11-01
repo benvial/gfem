@@ -43,6 +43,11 @@
   its propagating modes (or raises `PortModeError`): the effective-index bound
   now uses the tensor's largest principal value, not its largest diagonal
   entry. Models without such a tensor are unchanged.
+- **Behaviour change: `interface_participation`'s vacuum test.** A side is
+  vacuum only when no wave in it is slower than in vacuum (largest principal
+  `eps_r` × largest `mu_r` equal to 1). A side such as `eps_r = (1, 1, 4)` was
+  taken as vacuum, and `"MA"`/`"SA"` read its normal field with ε0 (a 4×
+  error); it no longer is. Isotropic sides are unchanged.
 
 ## 0.1.0 (2026-11-01)
 

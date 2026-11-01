@@ -34,7 +34,9 @@ among them (best-effort: no Arnoldi attempt is added for it).
 Post-processing follows Palace: electric energy ``E = 1/2 Re ∫ D* . E`` per
 volume region plus ``C |V|^2 / 2`` per capacitive lumped port; a port's
 voltage is its driven voltage functional. Each mode is scaled to ``E =
-1 J`` with ``∫ D . E`` real and positive.
+1 J`` with ``∫ D . E`` real and positive. An anisotropic region's energy is
+also split along its principal axes (``1/2 ε0 eps_k ∫ |a_k . E|^2``, ADR
+0055).
 """
 
 from __future__ import annotations
@@ -56,6 +58,7 @@ from gfem._eigen.refine import Refined, refine
 from gfem._eigen.seed import MIN_SUBSPACE
 from gfem._engine import terms
 from gfem._engine.cache import Entry
+from gfem._engine.coefficients import anisotropic_regions
 from gfem._engine.domain import em_region
 from gfem._engine.driven import (
     DrivenOperator,
@@ -66,6 +69,7 @@ from gfem._engine.eigen import (
     DivFreeProjector,
     eigen_operator,
     element_energy,
+    principal_energy,
     projector,
 )
 from gfem._engine.fields import fe_space
@@ -174,6 +178,8 @@ class EigenmodeRule:
         mesh, active = model.mesh, model._domain.active  # noqa: SLF001
         #: Volume regions with tetrahedra in the solve domain: the field support.
         self.regions = tuple(r for r in mesh.volumes if active[mesh.elements(r)].any())
+        #: The regions with an anisotropic material: the principal split.
+        self.anisotropic = anisotropic_regions(model, self.regions)
         self._mesh = model.mesh
         self._materials = dict(model.materials)
         self._excluded = model._domain.excluded  # noqa: SLF001
@@ -196,9 +202,9 @@ class EigenmodeRule:
         Returns:
             ``{"omega": (n,) complex rad/s, "error": (n,), "q_port":
             (n_resistive, n), "participation": (n_inductive, n), "bulk":
-            (n_regions, n), "e_field": (ndof, n) complex, "cluster": (n,)
-            int}``, modes nearest the target first, and the kept `Entry`
-            (``None`` unless ``keep``).
+            (n_regions, n), "principal": (n_anisotropic, n, 3), "e_field":
+            (ndof, n) complex, "cluster": (n,) int}``, modes nearest the
+            target first, and the kept `Entry` (``None`` unless ``keep``).
 
         Raises:
             EigenmodeConvergenceError: Fewer than ``n_modes`` modes
@@ -462,10 +468,14 @@ class EigenmodeRule:
         }
         mesh = model.mesh
         density = element_energy(model, op)
+        split = (
+            principal_energy(model, op, self.anisotropic) if self.anisotropic else None
+        )
         n = len(modes)
         omega = np.array([m.k * const.c / scale for m in modes], dtype=complex)
         fields = np.zeros((space.ndof, n), dtype=complex)
         bulk = np.zeros((len(self.regions), n))
+        principal = np.zeros((len(self.anisotropic), n, 3))
         q_port = np.zeros((len(self.resistive), n))
         participation = np.zeros((len(self.inductive), n))
         for j, mode in enumerate(modes):
@@ -490,6 +500,15 @@ class EigenmodeRule:
             fields[:, j] = x * amplitude
             for r, region in enumerate(self.regions):
                 bulk[r, j] = per_tet[mesh.elements(region)].sum() / energy
+            if split is not None:
+                # the same energy along each principal axis
+                per_axis = np.zeros((len(mesh.tetrahedra), 3))
+                per_axis[built.tetrahedron_order] = (
+                    0.5 * const.epsilon_0 * scale * np.real(split(x))
+                )
+                for r, region in enumerate(self.anisotropic):
+                    elements = mesh.elements(region)
+                    principal[r, j] = per_axis[elements].sum(axis=0) / energy
             w = omega[j].real
             for p, name in enumerate(self.resistive):
                 resistance = ports[name].port.rlc[0]
@@ -506,6 +525,7 @@ class EigenmodeRule:
             "q_port": q_port,
             "participation": participation,
             "bulk": bulk,
+            "principal": principal,
             "e_field": fields,
         }
 
@@ -528,6 +548,9 @@ class EigenmodeRule:
                 (len(self.inductive), n), jnp.float64
             ),
             "bulk": jax.ShapeDtypeStruct((len(self.regions), n), jnp.float64),
+            "principal": jax.ShapeDtypeStruct(
+                (len(self.anisotropic), n, 3), jnp.float64
+            ),
             "e_field": jax.ShapeDtypeStruct((space.ndof, n), jnp.complex128),
             "cluster": jax.ShapeDtypeStruct((n,), jnp.int64),
         }
@@ -705,6 +728,10 @@ class EigenmodeRule:
             bulk_participation={
                 region: jnp.asarray(outputs["bulk"][r])
                 for r, region in enumerate(self.regions)
+            },
+            principal_participation={
+                region: jnp.asarray(outputs["principal"][r])
+                for r, region in enumerate(self.anisotropic)
             },
             e_fields=tuple(fields),
             materials=self._materials,

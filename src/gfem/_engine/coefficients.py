@@ -23,12 +23,14 @@ from gfem.model import Model
 
 __all__ = [
     "anisotropic_elements",
+    "anisotropic_regions",
     "coefficient",
     "element_tensors",
     "element_values",
     "lossy_eps",
     "p0",
     "permittivity",
+    "principal_permittivity",
     "surface_coefficient",
     "surface_p0",
 ]
@@ -118,6 +120,50 @@ def _with_tensors(
     for region, value in (materials | fields).items():
         tensor[mesh.elements(region)] = value
     return tensor
+
+
+def anisotropic_regions(model: Model, regions: tuple[str, ...]) -> tuple[str, ...]:
+    """The ``regions`` whose material is anisotropic, in order.
+
+    Structural: a `Material` that is not `Material.isotropic` (a per-axis
+    loss alone counts) and a `MaterialField` with `axes`, whatever its
+    values.
+    """
+    out = []
+    for region in regions:
+        material = model.materials.get(region)
+        if isinstance(material, Material):
+            anisotropic = not material.isotropic
+        else:
+            anisotropic = material is not None and material.axes is not None
+        if anisotropic:
+            out.append(region)
+    return tuple(out)
+
+
+def principal_permittivity(
+    model: Model, regions: tuple[str, ...]
+) -> tuple[np.ndarray, np.ndarray]:
+    """Real principal ``eps_r`` and principal axes per tetrahedron.
+
+    ``(n, 3)`` values and ``(n, 3, 3)`` axes (rows ``a_k``) for the
+    tetrahedra of ``regions`` (`anisotropic_regions`), in their material's
+    `axes` order (the coordinate axes when ``None``); zero elsewhere, so
+    ``sum_k values[:, k] a_k a_k^T`` is ``Re eps_r`` on those tetrahedra.
+    """
+    mesh = model.mesh
+    values = np.zeros((len(mesh.tetrahedra), 3))
+    axes = np.zeros((len(mesh.tetrahedra), 3, 3))
+    for region in regions:
+        material = model.materials[region]
+        if isinstance(material, Material):
+            value = np.real(np.asarray(material.eps_r, complex))
+        else:
+            value = np.real(_principal_values(material, "eps_r"))
+        members = mesh.elements(region)
+        values[members] = np.broadcast_to(value, (len(members), 3))
+        axes[members] = np.eye(3) if material.axes is None else material.axes
+    return values, axes
 
 
 def p0(built: EngineMesh, values: np.ndarray) -> ngs.GridFunction:

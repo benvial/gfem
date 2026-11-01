@@ -24,7 +24,11 @@ from gfem._eigen.operator import EigenOperator, NonPolynomial, split
 from gfem._eigen.seed import MIN_SUBSPACE
 from gfem._engine import quadrature, terms
 from gfem._engine.cache import discretization
-from gfem._engine.coefficients import coefficient, element_tensors
+from gfem._engine.coefficients import (
+    coefficient,
+    element_tensors,
+    principal_permittivity,
+)
 from gfem._engine.domain import domain_key, h1_space, pec_surfaces
 from gfem._engine.driven import DrivenOperator, real_space
 from gfem._linalg import Handle, Operator, ResolvedLinearSolver
@@ -37,6 +41,7 @@ __all__ = [
     "eigen_operator",
     "element_energy",
     "matvec",
+    "principal_energy",
     "projector",
 ]
 
@@ -178,6 +183,46 @@ def element_energy(
             element_wise=True,
         )
         return values.NumPy()
+
+    return density
+
+
+def principal_energy(
+    model: Model, op: DrivenOperator, regions: tuple[str, ...]
+) -> Callable[[np.ndarray], np.ndarray]:
+    """``x -> ∫ eps_k |a_k . x|^2`` per element and principal axis.
+
+    `element_energy` split along the principal axes ``a_k`` of the
+    anisotropic ``regions`` (`gfem._engine.coefficients.anisotropic_regions`),
+    with their real principal ``eps_k``: ``(n, 3)`` in the engine mesh's
+    element order, zero outside ``regions``. The three columns add up to
+    `element_energy` on ``regions``.
+    """
+    built = op.built
+    values, axes = principal_permittivity(model, regions)
+    parts = [
+        coefficient(
+            built,
+            values[:, k, None, None] * axes[:, k, :, None] * axes[:, k, None, :],
+        )
+        for k in range(3)
+    ]
+    gf = ngs.GridFunction(op.space)
+
+    def density(x: np.ndarray) -> np.ndarray:
+        gf.vec.FV().NumPy()[:] = x
+        return np.stack(
+            [
+                ngs.Integrate(
+                    (part * gf) * ngs.Conj(gf),
+                    built.mesh,
+                    order=2 * op.order,
+                    element_wise=True,
+                ).NumPy()
+                for part in parts
+            ],
+            axis=1,
+        )
 
     return density
 

@@ -63,7 +63,7 @@ __all__ = [
 #: Phys. Lett. 99, 113513 (2011)).
 InterfaceKind = Literal["default", "MA", "MS", "SA"]
 INTERFACE_KINDS = get_args(InterfaceKind)
-#: A medium is vacuum when its fastest light speed is within this of c.
+#: A medium is vacuum when its slowest light speed is within this of c.
 _VACUUM = 1.0 - 1e-6
 
 
@@ -138,19 +138,23 @@ def interface_participation(
       sides of an interior surface.
 
     each times ``eps0 / 2`` and integrated over the surface. A medium is
-    vacuum when its light speed is that of vacuum (to 1e-6). Where both
-    sides are of the wanted kind, the two sides' values are averaged; where
-    neither is (``"MA"`` on a plate under substrate), the surface adds
-    nothing. Sides inside volumes the model excludes from the solve
-    (metal) do not count. The participation is that energy over the mode's
-    electric energy ``E`` (1 J, see `gfem.conventions`), and
-    ``participation * tan_delta`` is the layer's contribution to ``1 / Q``.
+    vacuum when no wave in it is slower than in vacuum: its slowest light
+    speed, from its largest principal ``eps_r`` and ``mu_r``, is that of
+    vacuum (to 1e-6), so an anisotropic side such as ``eps_r = (1, 1, 4)`` is
+    not vacuum. The layer itself is isotropic. Where both sides are of the
+    wanted kind, the two sides' values are averaged; where neither is
+    (``"MA"`` on a plate under substrate), the surface adds nothing. Sides
+    inside volumes the model excludes from the solve (metal) do not count. The
+    participation is that energy over the mode's electric energy ``E`` (1 J,
+    see `gfem.conventions`), and ``participation * tan_delta`` is the layer's
+    contribution to ``1 / Q``.
 
     Differentiable with respect to ``thickness``, ``eps_r``, ``tan_delta``,
     the mode fields and the substrate's `MaterialField` permittivity (the
-    ``"MS"`` flux). Mode fields are not differentiable in this version, so
-    a gradient that reaches the eigenmode solve raises
-    `gfem.NonDifferentiableError` there; mesh-node gradients raise.
+    ``"MS"`` flux), per principal axis for a field with `axes`. Mode fields
+    are not differentiable in this version, so a gradient that reaches the
+    eigenmode solve raises `gfem.NonDifferentiableError` there; mesh-node
+    gradients raise.
 
     Args:
         modes: An eigenmode result.
@@ -354,7 +358,9 @@ def _media(
 
     tets = np.maximum(sides, 0)
     eps = jnp.zeros((*sides.shape, 3, 3)) + jnp.eye(3)
-    speed2 = jnp.ones(sides.shape)  # (c_max / c0)^2 = 1 / (eps_min mu_min)
+    # (c_min / c0)^2 >= 1 / (eps_max mu_max): no wave slower than in vacuum
+    # means the side's permittivity is eps0 I, which the layers need
+    speed2 = jnp.ones(sides.shape)
     for region, material in materials.items():
         members = mesh.elements(region)
         position = np.full(len(mesh.tetrahedra), -1)
@@ -362,12 +368,12 @@ def _media(
         inside = jnp.asarray((position[tets] >= 0) & exists)
         if isinstance(material, Material):
             tensor = jnp.asarray(_tensor(material).real)
-            low = float(np.min(material.eps_r)) * float(np.min(material.mu_r))
+            high = float(np.max(material.eps_r)) * float(np.max(material.mu_r))
             value = jnp.broadcast_to(tensor, eps.shape)
-            low = jnp.full(sides.shape, low)
+            high = jnp.full(sides.shape, high)
         elif material.axes is not None:
             # principal values along fixed axes: the tensor per element, and
-            # the bound from the smallest principal values
+            # the bound from the largest principal values
             index = np.maximum(position[tets], 0)
 
             def principal(v: Any, index: np.ndarray = index) -> jax.Array:
@@ -378,8 +384,8 @@ def _media(
             a = jnp.asarray(material.axes)
             value = jnp.einsum("...k,ki,kj->...ij", e_r, a, a)
             value = jnp.broadcast_to(value, eps.shape)
-            low = jnp.min(e_r, axis=-1) * jnp.min(m_r, axis=-1)
-            low = jnp.broadcast_to(low, sides.shape)
+            high = jnp.max(e_r, axis=-1) * jnp.max(m_r, axis=-1)
+            high = jnp.broadcast_to(high, sides.shape)
         else:
             e_r = 1.0 if material.eps_r is None else material.eps_r
             m_r = 1.0 if material.mu_r is None else material.mu_r
@@ -389,9 +395,9 @@ def _media(
             e_r = e_r[index] if e_r.ndim else jnp.full(sides.shape, e_r)
             m_r = m_r[index] if m_r.ndim else jnp.full(sides.shape, m_r)
             value = e_r[..., None, None] * jnp.eye(3)
-            low = e_r * m_r
+            high = e_r * m_r
         eps = jnp.where(inside[..., None, None], value, eps)
-        speed2 = jnp.where(inside, 1.0 / low, speed2)
+        speed2 = jnp.where(inside, 1.0 / high, speed2)
     vacuum = speed2 >= _VACUUM**2
     return eps, vacuum
 
