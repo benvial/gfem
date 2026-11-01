@@ -96,7 +96,7 @@ import numpy as np
 from gfem._boundaries import Conductor, Impedance
 from gfem._engine import quadrature
 from gfem._engine.cache import discretization
-from gfem._engine.coefficients import element_axes
+from gfem._engine.coefficients import element_axes, per_axis_elements
 from gfem._engine.domain import boundary_region
 from gfem._materials import MaterialField
 from gfem.errors import NonDifferentiableError
@@ -801,13 +801,14 @@ def _per_axis_sensitivity(
     axes of each tetrahedron's field (`element_axes`).
 
     Raises:
-        NotImplementedError: A term reads a wanted property but has no
-            per-axis derivative (a rule bug: its forward refuses fields
-            with axes).
+        NotImplementedError: A term reads a wanted property on an element
+            of a field with axes but has no per-axis derivative (a rule bug:
+            its forward refuses fields with axes there).
     """
     if not props:
         return {}
     axes = element_axes(model)
+    fields = per_axis_elements(model)
     moments: dict[tuple[str, int], np.ndarray] = {}
     out: dict[str, np.ndarray] = {}
     for prop in sorted(props):
@@ -817,9 +818,14 @@ def _per_axis_sensitivity(
             if derivative is None:
                 continue
             axis = derivative.per_axis
-            if axis is None:  # pragma: no cover - rule bug
+            if axis is None:
+                # a face term none of whose owners holds principal values
+                # (second-order absorbing beside isotropic elements only)
+                owner = term.owner
+                if owner is not None and not fields[owner[owner >= 0]].any():
+                    continue
                 msg = f"The term {term.name!r} has no per-axis derivative of {prop}."
-                raise NotImplementedError(msg)
+                raise NotImplementedError(msg)  # pragma: no cover - rule bug
             key = (term.name, term.length_power + axis.length_power)
             if key not in moments:
                 moments[key] = _moment_pass(model, pairs, term, key[1])

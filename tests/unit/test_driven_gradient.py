@@ -212,9 +212,10 @@ def test_equal_principal_values_give_the_isotropic_s_and_cotangents(axes_line):
     equal = {k: jnp.repeat(v[:, None], 3, axis=1) for k, v in values.items()}
     iso, iso_grad = jax.value_and_grad(lambda v: objective(v, axes=None))(values)
     per_axis, axes_grad = jax.value_and_grad(objective)(equal)
-    assert abs(float(per_axis) - float(iso)) <= 1e-12 * abs(float(iso))
+    # measured on MN5: S 7.3e-15 relative, cotangents 1.1e-15 .. 1.5e-15
+    assert abs(float(per_axis) - float(iso)) <= 3e-14 * abs(float(iso))
     for name, g in iso_grad.items():
-        assert _relative(axes_grad[name].sum(axis=1), g) <= 1e-12, name
+        assert _relative(axes_grad[name].sum(axis=1), g) <= 5e-15, name
 
 
 def test_a_uniform_cotangent_is_the_sum_of_the_per_element_ones(axes_line):
@@ -225,8 +226,56 @@ def test_a_uniform_cotangent_is_the_sum_of_the_per_element_ones(axes_line):
     objective = _field_objective(axes_line)
     uniform_grad = jax.grad(lambda v: objective(v, axes=field.axes))(uniform)
     element_grad = jax.grad(lambda v: objective(v, axes=field.axes))(per_element)
+    # measured on MN5: 3.3e-16 .. 5.6e-16 relative
     for name, g in uniform_grad.items():
-        assert _relative(element_grad[name].sum(axis=0), g) <= 1e-12, name
+        assert _relative(element_grad[name].sum(axis=0), g) <= 2e-15, name
+
+
+def test_principal_values_beside_a_second_order_wall_of_isotropic_material(
+    tmp_path,
+):
+    # the second-order absorbing term has no per-axis derivative: it reads
+    # only the isotropic air behind it, so it adds nothing to the crystal's
+    side, length = 2.0, 6.0
+    tol = 1e-9 * length
+
+    def surface(c):
+        if abs(c[2]) < tol:
+            return "port"
+        if abs(c[2] - length) < tol:
+            return "end"
+        return "ywalls" if min(abs(c[1]), abs(c[1] - side)) < tol else ""
+
+    def volume(c):
+        return "crystal" if c[2] < length / 2 else "air"
+
+    edges = (
+        np.linspace(0, side, 3),
+        np.linspace(0, side, 3),
+        np.linspace(0, length, 7),
+    )
+    path = sm.write_msh22(tmp_path / "slab.msh", sm.structured(edges, volume, surface))
+    mesh = gfem.Mesh.from_gmsh(path, length_unit="mm")
+    options = gfem.SolverOptions(linear_solver="direct")
+
+    def objective(eps):
+        model = gfem.Model(
+            mesh,
+            materials={
+                "crystal": gfem.MaterialField(eps_r=eps, axes=TILTED),
+                "air": gfem.Material(),
+            },
+            boundaries=[gfem.PEC("ywalls"), gfem.Absorbing("end", order=2)],
+            ports=[gfem.LumpedPort("p1", "port", "+y")],
+        )
+        s = gfem.solve(model, gfem.Driven(frequency=10e9), options=options).s
+        return jnp.sum(jnp.abs(s.values) ** 2)
+
+    rng = np.random.default_rng(13)
+    n = len(mesh.elements("crystal"))
+    eps = jnp.asarray(rng.uniform(2.0, 5.0, (n, 3)))
+    directions = unit_directions(rng, eps.shape, 1)
+    assert_gradient_matches(objective, eps, directions, step=STEPS["eps_r"])
 
 
 def test_unexcited_port_rows_use_an_adjoint_solve(line):
