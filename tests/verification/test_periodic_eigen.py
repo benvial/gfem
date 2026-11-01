@@ -5,12 +5,13 @@
   Hermitian cell), and the lowest band's field advances by exp(-i k·Δr)
   between two points, which pins the sign of the Bloch phase.
 - C3, a layered (Bragg) line: its bands are the transfer-matrix roots,
-  lossless (real) and lossy (complex: the two-sided refinement), at both
-  edges of the gap k = π/a, at π/2a, and plain at Γ.
+  lossless (real) and lossy (complex), at both edges of the gap k = π/a, at
+  π/2a, and plain at Γ.
 - C4, an empty cube periodic along x, y and z (no other boundary): the
   lowest band is a doublet at c|k| / 2π.
 - C1, the Bloch line loaded by its two 50 ohm ports: a damped Bloch problem
-  whose resonance is the root of det(Z(f, k) + R) = 0.
+  (its left eigenvectors are not conj(x): the two-sided refinement) whose
+  resonance is the root of det(Z(f, k) + R) = 0.
 """
 
 import math

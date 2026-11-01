@@ -511,8 +511,11 @@ class EigenmodeRule:
             if self.problem.wave_vector is not None:
                 # a Bloch mode's ∫ E . E depends on the cell and can vanish:
                 # its largest coefficient is made real and positive instead
-                largest = x[largest_entry(x)]
+                # (set exactly: the product's imaginary part is round-off)
+                i = largest_entry(x)
+                largest = x[i]
                 x = x * (np.conj(largest) / abs(largest))
+                x[i] = abs(largest)
             else:
                 s = x @ divfree.energy(x)
                 x = x * np.exp(-0.5j * np.angle(s))

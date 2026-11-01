@@ -596,7 +596,9 @@ def _eigen_periodic(
             jnp.zeros(len(classes)),
             rng,
             step=STEPS["nodes"],
-            taylor=4e-5,
+            # smaller steps' remainders reach the eigen tolerance's error (1e-9)
+            taylor=2e-4,
+            taylor_ratio=2.0,
             taylor_at=jnp.full(len(classes), 1e-5),
         )
     name = EIGEN_CELL_INPUTS[cell.input]

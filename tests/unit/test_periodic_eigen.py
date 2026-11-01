@@ -73,9 +73,12 @@ def test_bloch_mode_phase_fixes_its_largest_solve_coefficient(c2_mesh):
 
 
 def test_lossy_bloch_mode_is_refined_two_sided(c3_mesh):
-    # lossy: T(k) is neither symmetric nor Hermitian, so conj(x) is not the
-    # left eigenvector; the refinement's y is
-    model = pc.c3(c3_mesh, pc.C3_TAN_DELTA)
+    # one lossy layer: T(k) is neither symmetric nor Hermitian (nor a
+    # Hermitian K and a uniformly lossy M, whose k^2 is real and whose left
+    # eigenvector is conj(x)), so conj(x) is not the left eigenvector; the
+    # refinement's y is
+    low = gfem.Material(eps_r=pc.C3_EPS_LOW, tan_delta=pc.C3_TAN_DELTA)
+    model = pc.c3(c3_mesh).with_material("low", low)
     k = 0.5 * math.pi / (pc.C3_A * MM)
     problem = gfem.Eigenmode(target=2.5e9, wave_vector=(k, 0.0, 0.0))
     options = gfem.SolverOptions(order=pc.C3_ORDER)
@@ -121,7 +124,11 @@ def test_bloch_eigen_at_k_zero_is_plain_periodicity(c3_mesh):
     ("options", "error", "message"),
     [
         ({"linear_solver": "bddc_gmres"}, ValueError, "linear_solver='direct'"),
-        ({"device": "cuda"}, NotImplementedError, "device='cpu'"),
+        (
+            {"linear_solver": "direct", "device": "cuda"},
+            NotImplementedError,
+            "device='cpu'",
+        ),
     ],
     ids=["bddc_gmres", "cuda"],
 )
