@@ -236,7 +236,7 @@ def _dofs(
     out = np.zeros(space.ndof, bool)
 
     def mark(node: ngs.NodeId) -> None:
-        dofs = np.asarray(space.GetDofNrs(node))
+        dofs = np.asarray(space.GetDofNrs(node), dtype=np.int64)
         out[dofs[dofs >= 0]] = True
 
     def key(node: ngs.NodeId) -> tuple[int, ...]:

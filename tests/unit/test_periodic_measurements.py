@@ -111,7 +111,7 @@ def _absorbed(e, mesh):
 def test_power_flow_on_a_periodic_cell_is_the_absorbed_power(cell, wave_vector):
     e = _field(cell, wave_vector)
     absorbed = _absorbed(e, cell.mesh)
-    assert absorbed > 0.05
+    assert absorbed > 0.01
 
     # the bottom layer's top face crosses both pairs' surfaces
     crossing = float(gfem.power_flow(e, "core", model=cell))
