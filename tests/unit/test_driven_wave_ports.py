@@ -733,26 +733,84 @@ def test_a_lone_first_mode_never_warns_though_mode_2_propagates(plate_mesh):
     _silent(line(plate_mesh), gfem.Driven(F), OPTIONS)
 
 
-def test_a_lossless_shared_port_surface_warns_nothing(plate_mesh, hybrid_guide):
+# A rectangular guide (a = 4 mm, b = 1.5 mm, 2 mm long) with an eps_r = 4
+# block in one quadrant of its cross-section, eps_r = 2 elsewhere: no
+# symmetry, so one mode's conjugated S functional reads the other at the
+# order of the block's loss. (The hybrid guide's modes 1 and 2 stay
+# orthogonal: measured cross-projection <= 5e-5 up to tan_delta = 0.45,
+# where its modes swap ranks.) Modes 1 and 2 propagate at 50 and 55 GHz,
+# mode 3 is cut off (PortMode solves: beta_2 = 363 and 832 rad/m).
+QUADRANT_F = (50e9, 55e9)
+QUADRANT_A, QUADRANT_B, QUADRANT_L = 4.0, 1.5, 2.0  # mm
+QUADRANT_OPTIONS = gfem.SolverOptions(order=2, linear_solver="direct")
+
+
+@pytest.fixture(scope="module")
+def quadrant_mesh(tmp_path_factory):
+    eps = 1e-9
+
+    def volume(c):
+        return "block" if c[1] < QUADRANT_A / 2 and c[2] < QUADRANT_B / 2 else "fill"
+
+    def surface(c):
+        x, y, z = c
+        if abs(x) < eps:
+            return "port1"
+        if abs(x - QUADRANT_L) < eps:
+            return "port2"
+        if min(y, z, QUADRANT_A - y, QUADRANT_B - z) < eps:
+            return "walls"
+        return ""
+
+    edges = (
+        np.linspace(0, QUADRANT_L, 5),
+        np.linspace(0, QUADRANT_A, 9),
+        np.linspace(0, QUADRANT_B, 5),
+    )
+    path = tmp_path_factory.mktemp("quadrant") / "quadrant.msh"
+    sm.write_msh22(path, sm.structured(edges, volume, surface))
+    return gfem.Mesh.from_gmsh(path, length_unit="mm")
+
+
+def quadrant_guide(mesh, tan_delta):
+    return gfem.Model(
+        mesh,
+        materials={
+            "block": gfem.Material(eps_r=4.0, tan_delta=tan_delta),
+            "fill": gfem.Material(eps_r=2.0),
+        },
+        boundaries=[gfem.PEC("walls")],
+        ports=[
+            gfem.WavePort(name, f"port{name[1]}", mode=int(name[-1]))
+            for name in HYBRID_SHARED
+        ],
+    )
+
+
+def test_a_lossless_shared_port_surface_warns_nothing(
+    plate_mesh, hybrid_guide, quadrant_mesh
+):
     _silent(shared_line(plate_mesh), gfem.Driven(F2), SHARED_OPTIONS)
     options = gfem.SolverOptions(order=3, linear_solver="direct")
     _silent(shared_hybrid(hybrid_guide), gfem.Driven(HYBRID_SHARED_F), options)
+    # cross-projection measured 6.8e-15
+    lossless = quadrant_guide(quadrant_mesh, 0.0)
+    _silent(lossless, gfem.Driven(QUADRANT_F), QUADRANT_OPTIONS)
 
 
-def test_a_lossy_shared_port_surface_warns_its_cross_projection(hybrid_guide):
-    model = shared_hybrid(hybrid_guide)
-    lossy = gfem.Material(eps_r=6.0, tan_delta=0.05)
-    model = model.replace(materials={**model.materials, "block": lossy})
-    options = gfem.SolverOptions(order=3, linear_solver="direct")
+def test_a_lossy_shared_port_surface_warns_its_cross_projection(quadrant_mesh):
+    model = quadrant_guide(quadrant_mesh, 0.02)
     with pytest.warns(gfem.PortModeProjectionWarning) as record:
-        gfem.solve(model, gfem.Driven(HYBRID_SHARED_F), options=options)
-    (message,) = [str(w.message) for w in record]
-    value = float(re.search(r"cross-projection of ([0-9.e+-]+)", message).group(1))
-    print(f"cross-projection {value:.3g}: {message}")
-    assert value > 1e-2
-    assert "'port1'" in message or "'port2'" in message
-    assert "GHz" in message
-    assert "biorthogonal" in message
+        gfem.solve(model, gfem.Driven(QUADRANT_F), options=QUADRANT_OPTIONS)
+    messages = [str(w.message) for w in record]
+    assert len(messages) == 2  # once per surface
+    for end, message in zip((1, 2), messages, strict=True):
+        for name in (f"'p{end}_m1'", f"'p{end}_m2'", f"'port{end}'", "biorthogonal"):
+            assert name in message
+        assert "at 50 GHz" in message  # where it is largest
+        value = float(re.search(r"cross-projection of ([0-9.e+-]+)", message)[1])
+        # measured 2.67e-2 (1.34 tan_delta): the order of the block's loss
+        assert 2e-2 < value < 3.5e-2
 
 
 # --- a mirror half model: ranks count the modes the symmetry plane admits -------
@@ -797,13 +855,9 @@ def test_a_half_model_s_mode_1_is_the_first_mode_its_plane_admits(half_plate):
     result = _silent(half_plate, gfem.Driven(F2), SHARED_OPTIONS)
     expected = np.array([beta2(f) for f in F2])
     gamma = np.asarray(result.port_modes["p1"].gamma)
-    print(
-        f"half plate: gamma rel. error {np.abs(gamma / (1j * expected) - 1).max():.3g}"
-    )
-    np.testing.assert_allclose(gamma, 1j * expected, rtol=1e-4)
+    np.testing.assert_allclose(gamma, 1j * expected, rtol=6e-8)  # measured 2.1e-8
     s21 = np.asarray(result.s.values)[:, 1, 0]
     # no voltage path: the mode's sign is a mesh-dependent rule
     transmitted = np.exp(-1j * expected * L)
     error = np.minimum(np.abs(s21 - transmitted), np.abs(s21 + transmitted))
-    print(f"half plate: |S21 - exp(-i beta2 L)| = {error.max():.3g}")
-    assert error.max() < 1e-3
+    assert error.max() < 6e-7  # measured 1.8e-7
