@@ -12,6 +12,13 @@ operator is refactorized at the current ``k`` (complex: a low-Q mode is far
 from any real shift), at most `MAX_SHIFTS` times per mode; the iteration
 then converges like Rayleigh quotient iteration.
 
+A general ``T`` (a Bloch wave vector, `EigenOperator.general`) is refined
+two-sided: a left vector ``y`` (``T(k)^T y = 0``), started at ``conj(x)``
+(exact for a lossless, undamped cell), takes the same steps on the transposed
+system, ``y <- y - T(sigma)^-T T(k)^T y`` on the same factorization; ``k``
+comes from ``y^T T(k) x = 0``, second order in both errors, and a pair
+converges when both backward errors meet the tolerance (ADR 0042).
+
 For a polynomial ``T`` an Arnoldi pair usually meets the tolerance at once
 (step 0 is only the Rayleigh functional, which sharpens ``k`` to second
 order in the eigenvector's error); the iteration repairs the pairs that the
@@ -46,9 +53,11 @@ class Refined:
     Attributes:
         k: Wavenumber per file unit.
         x: Eigenvector (unit 2-norm).
-        error: Its backward error.
+        error: Its backward error (the larger of ``x``'s and ``y``'s).
         iterations: Correction steps taken.
         converged: Whether ``error`` met the tolerance.
+        y: The left eigenvector (unit 2-norm) of a general operator,
+            ``None`` when complex symmetric (the left vector is ``x``).
     """
 
     k: complex
@@ -56,6 +65,7 @@ class Refined:
     error: float
     iterations: int
     converged: bool
+    y: np.ndarray | None = None
 
 
 def refine(
@@ -83,15 +93,18 @@ def refine(
     # hide the residual from the backward error (corrections never touch it)
     x = np.where(op.free, x, 0)
     x = x / np.linalg.norm(x)
+    y = np.conj(x) if op.general else None
     best: Refined | None = None
     history: list[float] = []
     shifts = 0
     for step in range(max_iterations + 1):
-        k = op.rayleigh(x, k)
+        k = op.rayleigh(x, k, left=y)
         error = op.backward_error(k, x)
+        if y is not None:
+            error = max(error, op.backward_error(k, y, transpose=True))
         history.append(error)
         if best is None or error < best.error:
-            best = Refined(k, x, error, step, error <= tolerance)
+            best = Refined(k, x, error, step, error <= tolerance, y)
         if error <= tolerance or step == max_iterations:
             break
         stalled = len(history) >= 3 and history[-1] > 0.5 * history[-3]
@@ -103,6 +116,9 @@ def refine(
             history.clear()
         x = x - op.solve(op.apply(k, x))
         x = x / np.linalg.norm(x)
+        if y is not None:
+            y = y - op.solve(op.apply(k, y, transpose=True), transpose=True)
+            y = y / np.linalg.norm(y)
     if best is None:  # pragma: no cover - the loop runs at least once
         raise RuntimeError("No refinement step ran.")
     return best

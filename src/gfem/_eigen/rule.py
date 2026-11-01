@@ -35,6 +35,18 @@ Post-processing follows Palace: electric energy ``E = 1/2 Re ∫ D* . E`` per
 volume region plus ``C |V|^2 / 2`` per capacitive lumped port; a port's
 voltage is its driven voltage functional. Each mode is scaled to ``E =
 1 J`` with ``∫ D . E`` real and positive.
+
+On a model with `gfem.Periodic` pairs the modes are solved on the periodic
+space and their fields expanded to the unpaired space (``e = P x``,
+`DrivenOperator.expand`); the backward pass's pairs are expanded too
+(``P X``, and ``conj(P) Y`` on the left). With ``Eigenmode.wave_vector``
+(Bloch) ``T(k)`` is general (ADR 0042): the refinement is two-sided, its
+left eigenvectors ``Y`` replace ``X`` on the left of every gradient (``G =
+Y^T T'(k_c) X``), only the ``direct`` linear solver runs it (transposed
+solves on its factors), the real snap of a lossless cell tests that ``K``
+and ``M`` are Hermitian, and the phase of a mode makes its largest
+solve-space coefficient real and positive (``∫ E . E`` over a Bloch cell can
+vanish).
 """
 
 from __future__ import annotations
@@ -61,6 +73,7 @@ from gfem._engine.driven import (
     DrivenOperator,
     driven_operator,
     operator_terms,
+    unpaired_space,
 )
 from gfem._engine.eigen import (
     DivFreeProjector,
@@ -132,6 +145,12 @@ _SEED_TOLERANCE = 1e-3
 #: the largest) make an objective symmetric in the cluster to first order
 #: (a smooth symmetric function's cotangents differ by O(gap)).
 _SYMMETRIC_RTOL = 1e-3
+#: A Bloch cluster's ``G = Y^T T' X`` with a condition number above this is
+#: singular: a defective eigenvalue, whose frequency has no derivative.
+_DEFECTIVE = 1e8
+#: ``|v^H A u - conj(u^H A v)|`` below this times ``|A| |u| |v|`` for ``K``
+#: and ``M``: a Hermitian (lossless) Bloch problem, whose eigenvalues are real.
+_HERMITIAN = 1e-12
 
 
 class EigenmodeRule:
@@ -170,6 +189,8 @@ class EigenmodeRule:
             _petsc.require_slepc("eigen_solver")
         _check_supported(model)
         check_wave_vector(model, problem.wave_vector, "Eigenmode")
+        if problem.wave_vector is not None:
+            _check_bloch(self.linear)
         lumped = [p for p in model.ports if isinstance(p, LumpedPort)]
         #: Ports with a resistance (coupling Q) and with an inductance
         #: (participation), in model order.
@@ -210,14 +231,14 @@ class EigenmodeRule:
         order = opts.order
         n_modes = self.problem.n_modes
         with task_manager(opts.threads):
-            op = driven_operator(model, order)
+            op = driven_operator(model, order, wave_vector=self.problem.wave_vector)
             built = op.built
             sigma = terms.wavenumber(2 * math.pi * self.problem.target, built.scale)
             eop = self.operator(op, sigma)
             divfree = None
             try:
                 eop.factorize()  # before the projector's setup
-                divfree = projector(model, op)
+                divfree = projector(model, op, self.problem.wave_vector)
                 seed_tolerance = opts.eigen_tolerance
                 # the companion problem also holds each mode's mirror root
                 # -conj(k), |k + sigma| from the shift (behind its mode, about
@@ -254,19 +275,25 @@ class EigenmodeRule:
                     raise EigenmodeConvergenceError(
                         self._convergence_message(eop, modes, failed)
                     )
-                if not eop.seed_damped and not eop.nonpolynomial and _is_real(eop):
-                    modes = [
-                        Refined(m.k.real, m.x, m.error, m.iterations, m.converged)
-                        for m in modes
-                    ]
+                lossless = _is_hermitian if eop.general else _is_real
+                if not eop.seed_damped and not eop.nonpolynomial and lossless(eop):
+                    modes = [dataclasses.replace(m, k=m.k.real) for m in modes]
                     if guard is not None:
                         guard = dataclasses.replace(guard, k=guard.k.real)
-                outputs = self._postprocess(model, op, divfree, modes)
+                outputs, x = self._postprocess(model, op, divfree, modes)
                 ks = [m.k for m in modes]
                 outputs["cluster"] = clusters(ks, opts.cluster_rtol)
                 entry = None
                 if keep:
-                    entry = self._entry(eop, ks, outputs, guard)
+                    y = None
+                    if eop.general:
+                        # every pair of a general operator carries its left one
+                        y = np.stack(
+                            [m.x if m.y is None else m.y for m in modes], axis=1
+                        )
+                    entry = self._entry(
+                        eop, ks, x, y, labels=outputs["cluster"], guard=guard
+                    )
             finally:
                 eop.free_handle()
                 if divfree is not None:
@@ -303,18 +330,22 @@ class EigenmodeRule:
         self,
         op: EigenOperator,
         ks: list[complex],
-        outputs: dict[str, object],
+        x: np.ndarray,
+        y: np.ndarray | None,
+        *,
+        labels: np.ndarray,
         guard: Refined | None,
     ) -> Entry:
         """What the backward pass needs: no handle, the modes and their T'.
 
-        ``gram`` is block diagonal by cluster: ``x_i^T T'(k_c) x_j`` for
-        modes i, j of cluster c, with ``k_c`` the cluster's mean.
-        ``incomplete`` flags the modes of a cluster the guard mode belongs
-        to.
+        ``x`` holds the modes on the solve space, ``y`` their left
+        eigenvectors (``None``: ``x``, complex symmetric). ``gram`` is block
+        diagonal by cluster: ``y_i^T T'(k_c) x_j`` for modes i, j of cluster
+        c, with ``k_c`` the cluster's mean. ``incomplete`` flags the modes
+        of a cluster the guard mode belongs to.
         """
-        x = np.asarray(outputs["e_field"])
-        labels = np.asarray(outputs["cluster"])
+        left = x if y is None else y
+        labels = np.asarray(labels)
         k = np.array(ks, dtype=complex)
         gram = np.zeros((len(k), len(k)), dtype=complex)
         incomplete = np.zeros(len(k), dtype=bool)
@@ -323,19 +354,19 @@ class EigenmodeRule:
             members = np.flatnonzero(labels == label)
             mean = k[members].mean()
             tx = np.stack([op.derivative(mean, x[:, j]) for j in members], axis=1)
-            gram[np.ix_(members, members)] = x[:, members].T @ tx
+            gram[np.ix_(members, members)] = left[:, members].T @ tx
             if guard is not None and any(_close(guard.k, k[j], rtol) for j in members):
                 incomplete[members] = True
-        return Entry(
-            self.physics,
-            fields={
-                "x": x,
-                "k": k,
-                "cluster": labels,
-                "gram": gram,
-                "incomplete": incomplete,
-            },
-        )
+        fields = {
+            "x": x,
+            "k": k,
+            "cluster": labels,
+            "gram": gram,
+            "incomplete": incomplete,
+        }
+        if y is not None:
+            fields["y"] = y
+        return Entry(self.physics, fields=fields)
 
     def _select(
         self,
@@ -454,7 +485,12 @@ class EigenmodeRule:
         op,
         divfree: DivFreeProjector,
         modes: list[Refined],
-    ) -> dict[str, object]:
+    ) -> tuple[dict[str, object], np.ndarray]:
+        """The outputs, and the modes scaled to them on the solve space.
+
+        ``e_field`` holds the modes expanded to the unpaired space on a
+        periodic model (``P x``).
+        """
         built, space, order = op.built, op.space, op.order
         scale = built.scale
         ports = {data.port.name: data for data in op.ports}
@@ -466,16 +502,22 @@ class EigenmodeRule:
         density = element_energy(model, op)
         n = len(modes)
         omega = np.array([m.k * const.c / scale for m in modes], dtype=complex)
-        fields = np.zeros((space.ndof, n), dtype=complex)
+        solve = np.zeros((space.ndof, n), dtype=complex)
         bulk = np.zeros((len(self.regions), n))
         q_port = np.zeros((len(self.resistive), n))
         participation = np.zeros((len(self.inductive), n))
         for j, mode in enumerate(modes):
             x = mode.x
-            s = x @ divfree.energy(x)
-            x = x * np.exp(-0.5j * np.angle(s))
-            if x[largest_entry(x)].real < 0:
-                x = -x
+            if self.problem.wave_vector is not None:
+                # a Bloch mode's ∫ E . E depends on the cell and can vanish:
+                # its largest coefficient is made real and positive instead
+                largest = x[largest_entry(x)]
+                x = x * (np.conj(largest) / abs(largest))
+            else:
+                s = x @ divfree.energy(x)
+                x = x * np.exp(-0.5j * np.angle(s))
+                if x[largest_entry(x)].real < 0:
+                    x = -x
             # electric energy per element (gfem order) at this amplitude
             per_tet = np.zeros(len(mesh.tetrahedra))
             per_tet[built.tetrahedron_order] = (
@@ -489,7 +531,7 @@ class EigenmodeRule:
             )
             energy = per_tet.sum() + capacitors
             amplitude = math.sqrt(MODE_ENERGY / energy)
-            fields[:, j] = x * amplitude
+            solve[:, j] = x * amplitude
             for r, region in enumerate(self.regions):
                 bulk[r, j] = per_tet[mesh.elements(region)].sum() / energy
             w = omega[j].real
@@ -502,14 +544,15 @@ class EigenmodeRule:
                 current = volts[name] / (1j * w * inductance)
                 ratio = inductance * abs(current) ** 2 / (2 * energy)
                 participation[p, j] = math.copysign(ratio, volts[name].real)
-        return {
+        outputs = {
             "omega": omega,
             "error": np.array([m.error for m in modes]),
             "q_port": q_port,
             "participation": participation,
             "bulk": bulk,
-            "e_field": fields,
+            "e_field": op.expand(solve),
         }
+        return outputs, solve
 
     # --- the solve_vjp interface ---------------------------------------------------
 
@@ -556,28 +599,35 @@ class EigenmodeRule:
     ) -> list[FieldPair]:
         """Fold the ``omega`` cotangents into one field pair per cluster.
 
-        With ``ω = k c / scale``, cluster c's modes ``X`` and ``G = X^T
-        T'(k_c) X``: ``ct_c d(Σ ω)/dp = -(c / scale) ct_c tr(G^-1 X^T (dT/dp)
-        X)``, the pair ``(-(c / scale) ct_c X, X G^-1)`` weighted with the
-        pieces' θ at ``k_c``. A simple mode is a cluster of one (``G =
-        x^T T' x``). No solve.
+        With ``ω = k c / scale``, cluster c's modes ``X``, their left
+        eigenvectors ``Y`` (``X`` unless Bloch) and ``G = Y^T T'(k_c) X``:
+        ``ct_c d(Σ ω)/dp = -(c / scale) ct_c tr(G^-1 Y^T (dT/dp) X)``, the
+        pair ``(-(c / scale) ct_c Y, X G^-1)`` weighted with the pieces' θ
+        at ``k_c``. A simple mode is a cluster of one (``G = y^T T' x``). No
+        solve. On a periodic model the pair is expanded to the unpaired
+        space, ``(conj(P) Y, P X G^-1)``: ``y^T P^H a P x = (conj(P) y)^T a
+        (P x)`` for the unpaired forms ``a``.
 
         Raises:
             DegenerateModeError: The cotangents on a cluster's modes differ
-                (an objective not symmetric in them), or a cluster with a
-                nonzero cotangent extends beyond the ``n_modes`` modes.
+                (an objective not symmetric in them), a cluster with a
+                nonzero cotangent extends beyond the ``n_modes`` modes, or a
+                Bloch cluster's ``G`` is singular (a defective eigenvalue).
         """
         ct = cotangents.get("omega")
         if ct is None or not np.any(ct):
             return []
         fields = entry.fields
         x, k, labels = fields["x"], fields["k"], fields["cluster"]
+        y = fields.get("y", x)
         gram, incomplete = fields["gram"], fields["incomplete"]
         ct = np.asarray(ct, dtype=complex)
         pairs = []
         with task_manager(self.options.threads):
             op = self.driven(model)
             domain = em_region(model, op.built)
+            space = unpaired_space(model, op)
+            expansion = op.expansion
             per_k = const.c / op.built.scale
             for label in np.unique(labels):
                 members = np.flatnonzero(labels == label)
@@ -591,11 +641,20 @@ class EigenmodeRule:
                         self._degenerate_message(k, members, c, incomplete, per_k)
                     )
                 g = gram[np.ix_(members, members)]
+                if "y" in fields and np.linalg.cond(g) > _DEFECTIVE:
+                    raise DegenerateModeError(
+                        self._defective_message(k, members, g, per_k)
+                    )
+                left = y[:, members]
+                right = x[:, members] @ np.linalg.inv(g)
+                if expansion is not None:
+                    left = expansion.conj() @ left
+                    right = expansion @ right
                 pairs.append(
                     FieldPair(
-                        space=op.space,
-                        left=-per_k * c.mean() * x[:, members],
-                        right=x[:, members] @ np.linalg.inv(g),
+                        space=space,
+                        left=-per_k * c.mean() * left,
+                        right=right,
                         weights=op.weights(k[members].mean() * per_k),
                         order=op.order,
                         domain=domain,
@@ -612,7 +671,9 @@ class EigenmodeRule:
         last = getattr(self, "_last_driven", None)
         if last is not None and last[0] is model:
             return last[1]
-        op = driven_operator(model, self.options.order)
+        op = driven_operator(
+            model, self.options.order, wave_vector=self.problem.wave_vector
+        )
         self._last_driven = (model, op)
         return op
 
@@ -666,6 +727,23 @@ class EigenmodeRule:
             "aggregate such as log-sum-exp instead of max), with n_modes "
             "covering the whole cluster; break the symmetry of the design; or "
             "use a gfem.Driven sweep as a surrogate."
+        )
+
+    def _defective_message(
+        self, k: np.ndarray, members: np.ndarray, g: np.ndarray, per_k: float
+    ) -> str:
+        ghz = k[members] * per_k / (2 * math.pi * 1e9)
+        modes = ", ".join(
+            f"{int(j)} ({f.real:.9g} GHz)" for j, f in zip(members, ghz, strict=True)
+        )
+        return (
+            f"DegenerateModeError: mode(s) {modes} have a singular Y^T T'(k) X "
+            f"(condition number {np.linalg.cond(g):.3g}): under a Bloch wave "
+            "vector, the eigenvalue is defective (an exceptional point of the "
+            "lossy cell), where its left and right eigenvectors are orthogonal "
+            "and its frequency is not differentiable. Remedies: move the wave "
+            "vector or the design off the exceptional point, or use a "
+            "gfem.Driven sweep as a surrogate."
         )
 
     def result(self, outputs: dict) -> EigenmodeResult:
@@ -799,6 +877,50 @@ def _is_real(op: EigenOperator) -> bool:
     probe = np.where(op.free, np.random.default_rng(1).standard_normal(len(op.free)), 0)
     kx, _, mx = op.parts(probe.astype(complex))
     return not kx.imag.any() and not mx.imag.any()
+
+
+def _is_hermitian(op: EigenOperator) -> bool:
+    """Whether ``K`` and ``M`` are Hermitian: a lossless Bloch problem.
+
+    A Bloch-phased ``K`` is complex even when lossless (`_is_real` never
+    holds): two random complex probes ``u``, ``v`` test ``|v^H A u -
+    conj(u^H A v)| <= _HERMITIAN |A| |u| |v|`` for ``K`` and ``M``.
+    """
+    rng = np.random.default_rng(1)
+    n = len(op.free)
+    u, v = (
+        np.where(op.free, rng.standard_normal(n) + 1j * rng.standard_normal(n), 0)
+        for _ in range(2)
+    )
+    ku, _, mu = op.parts(u)
+    kv, _, mv = op.parts(v)
+    nk, _, nm, *_ = op.norms
+    size = np.linalg.norm(u) * np.linalg.norm(v)
+    return all(
+        abs(np.vdot(v, au) - np.conj(np.vdot(u, av))) <= _HERMITIAN * norm * size
+        for au, av, norm in ((ku, kv, nk), (mu, mv, nm))
+    )
+
+
+def _check_bloch(linear: ResolvedLinearSolver) -> None:
+    """Raise for what a Bloch eigenmode solve cannot use (before any assembly).
+
+    Two-sided refinement solves the transposed system on the shift's
+    factors: only the ``direct`` linear solver on the CPU has them.
+    """
+    if linear.kind != "direct":
+        raise ValueError(
+            "Eigenmode.wave_vector sets a Bloch phase, so the eigenmode operator "
+            "is not symmetric and its refinement solves the transposed system, "
+            f"which linear_solver={linear.kind!r} cannot: use "
+            "linear_solver='direct'."
+        )
+    if linear.device != "cpu":
+        raise NotImplementedError(
+            "Eigenmode.wave_vector sets a Bloch phase, so the eigenmode operator "
+            f"is not symmetric, and the GPU solver (device={linear.device!r}, "
+            "cuDSS) factors symmetric operators only: use device='cpu'."
+        )
 
 
 def _check_supported(model: Model) -> None:
