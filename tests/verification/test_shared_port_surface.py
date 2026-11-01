@@ -123,8 +123,8 @@ def test_a_slab_insert_converts_te10_to_te20_as_mode_matching_says(insert, refer
         for order in (2, 3)
     ]
     print(f"\nslab insert: max |S - S_ref| at orders 2, 3: {errors}")  # noqa: T201
-    assert errors[0] > errors[1]
-    assert errors[1] < 2e-3
+    assert errors[0] > errors[1]  # measured 2.2e-3, 3.3e-5
+    assert errors[1] < 1e-4
     s = np.asarray(results[3].s.values)
     assert np.abs(s[:, PORTS.index("out_TE20"), PORTS.index("in_TE10")]).min() > 0.5
 
@@ -139,7 +139,7 @@ def test_a_slab_insert_is_lossless_and_reciprocal(insert):
         f"max |S - S^T| {np.abs(s - np.swapaxes(s, 1, 2)).max():.2e}"
     )
     assert np.abs(unitarity).max() < 8e-8  # measured 2.6e-8
-    assert np.abs(s - np.swapaxes(s, 1, 2)).max() < 1e-8  # measured 5.2e-15
+    assert np.abs(s - np.swapaxes(s, 1, 2)).max() < 1e-8  # measured 6e-15
 
 
 def test_the_power_through_each_lead_is_the_modal_power(insert):
