@@ -297,6 +297,25 @@ def test_characteristic_impedance_needs_kept_port_mode_fields(plate_mesh, plate_
     np.testing.assert_allclose(z, z_tem(), rtol=1e-8)
 
 
+def test_a_singular_reaction_raises_instead_of_dropping_the_correction(
+    plate_mesh, monkeypatch
+):
+    from gfem._engine import wave_ports
+
+    built = wave_ports.PortSurfaceCoupling
+
+    def vanishing(piece, vectors, reaction, ports):
+        return built(piece, vectors, np.zeros_like(reaction), ports)
+
+    monkeypatch.setattr(wave_ports, "PortSurfaceCoupling", vanishing)
+    with pytest.raises(gfem.PortModeError, match="singular") as caught:
+        gfem.solve(line(plate_mesh), gfem.Driven(F), options=OPTIONS)
+    message = str(caught.value)
+    assert "'p1'" in message
+    assert "'port1'" in message
+    assert f"{F[0] / 1e9:.6g} GHz" in message
+
+
 # --- hybrid modes: the modal correction -------------------------------------------
 
 HYBRID_F = (9e9, 16e9)
