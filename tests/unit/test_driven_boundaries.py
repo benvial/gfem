@@ -363,7 +363,8 @@ def test_admittance_derivatives_are_the_reference_admittance_differentiated():
             got = (by_e if k < 3 else by_m)[0, k % 3]
             fd = _reference_derivative(values, k)
             worst = max(worst, np.abs(got - fd).max() / np.abs(fd).max())
-    assert worst <= 1e-7
+    # measured on MN5: 5.3e-9 (the differences' truncation and round-off)
+    assert worst <= 2e-8
 
 
 #: A square parallel-plate section (mm) along z: the slab fills it.

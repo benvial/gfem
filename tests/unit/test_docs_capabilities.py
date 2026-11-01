@@ -204,7 +204,11 @@ def test_a_bare_input_kind_reads_as_a_one_tuple(data):
 
 
 def test_a_gradient_no_cell_verifies_fails(data):
-    cells = [c for c in data[0] if (c.problem, c.input) != ("electrostatic", "eps_r")]
+    cells = [
+        c
+        for c in data[0]
+        if (c.problem, c.input.removesuffix("_axes")) != ("electrostatic", "eps_r")
+    ]
     with pytest.raises(caps.CapabilitiesError, match="Electrostatic x Permittivity"):
         _derive(data, cells=cells)
 
