@@ -110,5 +110,7 @@ def test_a_uniform_field_fill_gives_its_material_s_s(mesh, values, axes, frequen
     s, field_gamma = _solve(
         mesh, gfem.MaterialField.uniform("fill", material), frequency
     )
-    np.testing.assert_allclose(s, expected, rtol=0, atol=1e-12)
-    np.testing.assert_allclose(field_gamma, gamma, rtol=1e-12)
+    # measured on MN5 (the port frame rounds the field's tensors differently):
+    # max |dS| 3.7e-15, gamma 2.3e-15 relative
+    np.testing.assert_allclose(s, expected, rtol=0, atol=1.2e-14)
+    np.testing.assert_allclose(field_gamma, gamma, rtol=7e-15)
