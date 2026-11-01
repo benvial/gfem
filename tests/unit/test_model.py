@@ -193,6 +193,81 @@ def test_at_most_one_electromagnetic_condition_per_surface(mesh):
         )
 
 
+def test_several_wave_ports_share_a_surface_one_mode_each(mesh):
+    ports = (
+        gfem.WavePort("in_TE0", "air__None", mode=1),
+        gfem.LumpedPort("p", "air__sub", "+z"),
+        gfem.WavePort("in_TM0", "air__None", mode=3),
+    )
+    model = gfem.Model(mesh, materials={"sub": SI, "air": AIR}, ports=ports)
+    assert model.port_names == ("in_TE0", "p", "in_TM0")
+
+
+def test_wave_ports_on_one_surface_request_different_modes(mesh):
+    with pytest.raises(ValueError) as info:
+        gfem.Model(
+            mesh,
+            materials={"sub": SI, "air": AIR},
+            ports=[
+                gfem.WavePort("in_a", "air__None"),
+                gfem.WavePort("in_b", "air__None"),
+            ],
+        )
+    assert str(info.value) == (
+        "WavePorts 'in_a' and 'in_b' on surface 'air__None' both request mode "
+        "1; give each wave port on a surface a different mode."
+    )
+
+
+def test_wave_ports_on_one_surface_need_the_same_pec_edges(mesh):
+    with pytest.raises(ValueError) as info:
+        gfem.Model(
+            mesh,
+            materials={"sub": SI, "air": AIR},
+            ports=[
+                gfem.WavePort("in_TE0", "air__None", pec_edges=("metal_z",)),
+                gfem.WavePort("in_TM0", "air__None", mode=2),
+            ],
+        )
+    assert str(info.value) == (
+        "WavePorts 'in_TE0' and 'in_TM0' on surface 'air__None' share one port "
+        "mode problem, so they need the same pec_edges; got ('metal_z',) and ()."
+    )
+    # equal as sets: order and repeats do not matter
+    gfem.Model(
+        mesh,
+        materials={"sub": SI, "air": AIR},
+        ports=[
+            gfem.WavePort("a", "air__None", pec_edges=("metal_z", "metal_xy")),
+            gfem.WavePort("b", "air__None", mode=2, pec_edges=("metal_xy", "metal_z")),
+        ],
+    )
+
+
+def test_a_wave_port_shares_its_surface_only_with_wave_ports(mesh):
+    with pytest.raises(ValueError, match=r"more than one electromagnetic.*Keep one"):
+        gfem.Model(
+            mesh,
+            materials={"sub": SI, "air": AIR},
+            boundaries=[gfem.PEC("air__None")],
+            ports=[
+                gfem.WavePort("a", "air__None"),
+                gfem.WavePort("b", "air__None", mode=2),
+            ],
+        )
+    # the mixed-kinds error comes first, before the same-mode one
+    with pytest.raises(ValueError, match="more than one electromagnetic"):
+        gfem.Model(
+            mesh,
+            materials={"sub": SI, "air": AIR},
+            ports=[
+                gfem.WavePort("a", "sub__None"),
+                gfem.WavePort("b", "sub__None"),
+                gfem.LumpedPort("p", "sub__None", "+z"),
+            ],
+        )
+
+
 def test_port_names_are_unique(mesh):
     with pytest.raises(ValueError, match="'p'"):
         gfem.Model(
