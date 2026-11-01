@@ -241,7 +241,7 @@ class PardisoFactors:
     Holds no lock: its handle calls it under its own.
     """
 
-    def __init__(self, inverse: ngs.BaseMatrix, free: np.ndarray) -> None:
+    def __init__(self, inverse: Any, free: np.ndarray) -> None:
         """Hold ``inverse``, factored on the matrix's ``free`` rows and columns."""
         #: The inverse a solve applies.
         self.inverse = inverse
@@ -251,9 +251,7 @@ class PardisoFactors:
         self._gather: np.ndarray | None = None
         self._built = False
 
-    def new_values(
-        self, matrix: ngs.BaseMatrix, write: Callable[[ngs.BaseMatrix], None]
-    ) -> None:
+    def new_values(self, matrix: Any, write: Callable[[Any], None]) -> None:
         """``write(matrix)``, then factorize its new values on the plan.
 
         The first call builds the gather index, before the values change:
@@ -288,7 +286,7 @@ class PardisoFactors:
             factors = 1024 * (int(params[15]) + int(params[16]))
         return factors + (0 if self._gather is None else self._gather.nbytes)
 
-    def _gather_index(self, matrix: ngs.BaseMatrix) -> np.ndarray | None:
+    def _gather_index(self, matrix: Any) -> np.ndarray | None:
         """Where PARDISO's buffer reads ``matrix``'s values, or ``None``.
 
         NGSolve's wrapper factors the free-row, free-column upper triangle in
@@ -303,7 +301,7 @@ class PardisoFactors:
         except Exception:  # noqa: BLE001 - any failure falls back to Update()
             return None
 
-    def _checked_gather_index(self, matrix: ngs.BaseMatrix) -> np.ndarray | None:
+    def _checked_gather_index(self, matrix: Any) -> np.ndarray | None:
         buffer = getattr(self.inverse, "_data_np", None)
         if not isinstance(buffer, np.ndarray) or not hasattr(
             self.inverse, "_call_pardiso"

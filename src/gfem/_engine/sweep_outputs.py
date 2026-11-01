@@ -189,7 +189,9 @@ class SweepOutputs:
         )
 
     @classmethod
-    def join(cls, blocks: Sequence[tuple[Sequence[int], SweepOutputs]]) -> SweepOutputs:
+    def join(
+        cls, blocks: Sequence[tuple[Sequence[int] | np.ndarray, SweepOutputs]]
+    ) -> SweepOutputs:
         """Frequency workers' blocks joined in order.
 
         Args:

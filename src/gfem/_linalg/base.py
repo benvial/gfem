@@ -251,7 +251,8 @@ class NgsHandle:
             raise RuntimeError("This solver handle was freed.")
         return self._map(self._matrix, X)
 
-    def _live(self) -> ngs.BaseMatrix:
+    # the held NGSolve sparse matrix: its stubs do not declare CSR()
+    def _live(self) -> Any:
         """The held matrix; call under the lock.
 
         Raises:

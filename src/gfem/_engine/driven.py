@@ -936,7 +936,8 @@ class DrivenRule:
         kept = [
             (grid[n], port) for n in self.kept if n in out.rows for port in self.excite
         ]
-        coefficients = out.e_field
+        # NumPy rows, which Field takes as they are
+        coefficients: Any = out.e_field
         e_fields = []
         if coefficients is not None:  # every kept frequency's fields are there
             e_fields = [
@@ -1015,7 +1016,9 @@ class DrivenRule:
         )
         e_fields: ReducedFields | tuple = ()
         if kept and out.reduced is not None:
-            basis, coordinates = out.reduced
+            # NumPy arrays, which ReducedFields takes as they are
+            reduced: Any = out.reduced
+            basis, coordinates = reduced
             e_fields = ReducedFields(
                 basis=basis,
                 coordinates=coordinates,
