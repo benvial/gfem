@@ -84,7 +84,10 @@ class PortModeRows:
     def of(
         cls, waves: Sequence[WavePortCoupling], rows: tuple[int, ...]
     ) -> PortModeRows | None:
-        """The modes of the wave ports ``waves`` at ``rows``; ``None`` without any."""
+        """The modes of the wave ports ``waves`` (model port order) at ``rows``.
+
+        ``None`` without any.
+        """
         if not waves:
             return None
         sweeps = tuple(c.sweep for c in waves)
