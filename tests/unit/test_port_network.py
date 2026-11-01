@@ -5,6 +5,7 @@ arrays and duck-typed wave port couplings, and one `PortNetwork.build` on a
 parallel-plate line's driven operator (assembled, no linear solve).
 """
 
+import dataclasses
 import math
 from types import SimpleNamespace
 
@@ -200,3 +201,37 @@ def test_build_reads_a_lumped_port_as_its_voltage_over_sqrt_2r(line):
     assert np.isfinite(functional[:, 0]).all()
     assert np.isnan(functional[:, 1]).all()
     assert network.rhs(OMEGAS[0]).shape == (op.space.ndof, 1)
+
+
+def _mode(index, column):
+    return SimpleNamespace(
+        index=index,
+        omegas=np.array(OMEGAS),
+        excitation=lambda w, column=column: column * w / OMEGAS[0],
+        functional=lambda _, column=column: 2j * column,
+        z_ref=np.full(len(OMEGAS), 10.0 * (index + 1)),
+        deembedding=lambda _: 1.0,
+    )
+
+
+def test_build_gives_one_term_per_wave_port_surface(line):
+    # two lumped ports dropped from the operator: indices 0 and 1 are the
+    # modes of one duck-typed surface
+    op = dataclasses.replace(driven.driven_operator(line, 1), ports=())
+    rng = np.random.default_rng(9)
+    vectors = _complex(rng, op.space.ndof, 4)
+    first, second = _complex(rng, 4), _complex(rng, 4)
+    surface = SimpleNamespace(
+        vectors=vectors, ports=(_mode(1, second), _mode(0, first))
+    )
+    network = PortNetwork.build(line, op, [surface], columns=[1, 0], n_freq=2)
+    assert len(network.excitation) == 1
+    assert len(network.outputs) == 1
+    assert [c.index for c in network.waves] == [0, 1]
+    np.testing.assert_array_equal(network.z_ref, [[10.0, 20.0], [10.0, 20.0]])
+    w = OMEGAS[1]
+    rhs = vectors @ np.stack([second, first], axis=1) * (w / OMEGAS[0])
+    np.testing.assert_allclose(network.rhs(w), rhs, rtol=1e-14, atol=0)
+    x = _complex(rng, op.space.ndof, 2)
+    out = np.stack([first, second]) @ (np.conj(vectors).T @ x) * 2j
+    np.testing.assert_allclose(network.outgoing(w, x), out, rtol=1e-12, atol=0)
