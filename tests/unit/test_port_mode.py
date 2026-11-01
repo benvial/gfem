@@ -463,6 +463,47 @@ def test_a_mode_above_the_mean_diagonal_index_is_found(wr28_mesh):
     assert 2.5 < n2.real < 4.0  # measured 2.678
 
 
+def test_a_field_with_axes_off_the_port_normal_raises_whatever_its_values(
+    plate_mesh,
+):
+    # structural: the test reads the field's fixed axes, never its values,
+    # so equal principal values raise too
+    n = len(plate_mesh.elements("fill"))
+    field = gfem.MaterialField(eps_r=jnp.full((n, 3), 4.0), axes=_axes(0, 20.0))
+    with pytest.raises(
+        ValueError, match=r"eps_r with no principal axis along the port normal"
+    ):
+        gfem.solve(plate(plate_mesh, field), gfem.PortMode("p1", 10e9))
+
+
+def test_a_field_with_axes_has_the_mode_of_its_material(wr28_mesh):
+    # turned about the guide axis, with per-axis eps_r, mu_r, tan_delta and
+    # conductivity: per element, the field holds the material's tensors
+    material = gfem.Material(
+        eps_r=(2.0, 4.0, 3.0),
+        mu_r=(1.0, 2.0, 1.5),
+        tan_delta=(1e-3, 2e-3, 0.0),
+        conductivity=(0.2, 0.05, 0.1),
+        axes=_axes(2, 30.0),
+    )
+    expected = _wr28_gamma(wr28_mesh, material, 16e9)
+    uniform = gfem.MaterialField.uniform("fill", material)
+    np.testing.assert_allclose(
+        _wr28_gamma(wr28_mesh, uniform, 16e9), expected, rtol=1e-12
+    )
+    n = len(wr28_mesh.elements("fill"))
+    per_element = gfem.MaterialField(
+        **{
+            k: jnp.tile(jnp.asarray(getattr(material, k)), (n, 1))
+            for k in ("eps_r", "mu_r", "tan_delta", "conductivity")
+        },
+        axes=material.axes,
+    )
+    np.testing.assert_allclose(
+        _wr28_gamma(wr28_mesh, per_element, 16e9), expected, rtol=1e-12
+    )
+
+
 # --- errors ---------------------------------------------------------------------
 
 

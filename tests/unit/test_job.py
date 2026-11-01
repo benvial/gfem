@@ -44,8 +44,9 @@ def _assert_same_model(a, b):
         assert type(m) is type(n)
         if isinstance(m, gfem.MaterialField):
             assert m.region == n.region
+            assert m.axes == n.axes
             for prop in gfem.model.MaterialField.__dataclass_fields__:
-                if prop == "region":
+                if prop in ("region", "axes"):
                     continue
                 x, y = getattr(m, prop), getattr(n, prop)
                 assert (x is None) == (y is None)
@@ -217,6 +218,52 @@ def test_matrix_built_and_per_axis_conductivity_materials_round_trip(
     )
     back = _round_trip(gfem.Job(model, PROBLEM), tmp_path)
     _assert_same_model(model, back.model)
+
+
+def test_material_fields_with_axes_round_trip(model, tmp_path):
+    n = len(model.mesh.elements("oxide"))
+    c, s = np.cos(0.4), np.sin(0.4)
+    axes = ((c, s, 0.0), (-s, c, 0.0), (0.0, 0.0, 1.0))
+    field = gfem.MaterialField(
+        eps_r=jnp.tile(jnp.array([2.0, 3.0, 5.0]), (n, 1)),
+        conductivity=jnp.array([0.0, 0.5, 1.0]),
+        thermal_conductivity=jnp.ones(n),
+        axes=axes,
+    )
+    crystal = gfem.Material(eps_r=(2.0, 3.0, 4.0), axes=axes)
+    uniform = gfem.MaterialField.uniform("nitride", crystal)
+    changed = model.replace(materials={"oxide": field, "nitride": uniform})
+    back = _round_trip(gfem.Job(changed, PROBLEM), tmp_path)
+    _assert_same_model(changed, back.model)
+    assert back.model.materials["oxide"].axes == field.axes
+
+
+def test_an_old_material_field_reads_without_axes(model, tmp_path):
+    n = len(model.mesh.elements("oxide"))
+    field = gfem.MaterialField(eps_r=jnp.linspace(2.0, 4.0, n))
+    path = gfem.Job(model.with_material("oxide", field), PROBLEM).to_json(
+        tmp_path / "job.json"
+    )
+    doc = json.loads(path.read_text())
+    fields = list(_typed_in(doc, "MaterialField"))
+    assert fields
+    for f in fields:
+        f.pop("axes")  # as 0.1.0 wrote it
+    path.write_text(json.dumps(doc))
+    back = gfem.Job.from_json(path).model.materials["oxide"]
+    assert back.axes is None
+    np.testing.assert_array_equal(back.eps_r, field.eps_r)
+
+
+def _typed_in(node, tag):
+    if isinstance(node, dict):
+        if node.get("$type") == tag:
+            yield node
+        for v in node.values():
+            yield from _typed_in(v, tag)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _typed_in(v, tag)
 
 
 def _materials_in(node):

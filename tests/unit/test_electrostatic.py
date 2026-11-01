@@ -195,6 +195,20 @@ def test_conductivity_and_loss_do_not_change_the_capacitance(stack, conductivity
     np.testing.assert_allclose(cap.capacitance, plain.capacitance, rtol=1e-13)
 
 
+def test_a_uniform_field_of_a_crystal_has_the_crystal_s_capacitance(stack):
+    crystal = gfem.Material(
+        eps_r=(3.0, 5.0, 6.0),
+        tan_delta=(0.01, 0.02, 0.03),
+        conductivity=(0.02, 0.05, 0.03),
+        axes=((1 / 3, 2 / 3, 2 / 3), (2 / 3, 1 / 3, -2 / 3), (2 / 3, -2 / 3, 1 / 3)),
+    )
+    problem = gfem.Electrostatic(terminals=STACK, ground="bottom")
+    expected = _c(stack.with_material("oxide", crystal), problem).capacitance
+    field = gfem.MaterialField.uniform("oxide", crystal)
+    cap = _c(stack.with_material("oxide", field), problem).capacitance
+    np.testing.assert_allclose(cap, expected, rtol=1e-12)
+
+
 def test_solving_twice_gives_the_same_matrix(stack):
     problem = gfem.Electrostatic(terminals=STACK, ground="bottom")
     first = _c(stack, problem, order=2)

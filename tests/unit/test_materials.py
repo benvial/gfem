@@ -353,14 +353,10 @@ def test_interpolate_is_differentiable_in_the_density():
     np.testing.assert_allclose(jax.grad(total)(jnp.full(4, 0.3)), np.full(4, 9.0))
 
 
-def test_interpolate_rejects_unknown_scheme_and_anisotropic_materials():
+def test_interpolate_rejects_an_unknown_scheme():
     with pytest.raises(ValueError, match="scheme"):
         gfem.MaterialField.interpolate(
             jnp.ones(2), gfem.Material(), gfem.Material(), scheme="cubic"
-        )
-    with pytest.raises(ValueError, match="isotropic"):
-        gfem.MaterialField.interpolate(
-            jnp.ones(2), gfem.Material(), gfem.Material(eps_r=(1.0, 2.0, 3.0))
         )
 
 
@@ -392,3 +388,181 @@ def test_material_repr_shows_only_what_differs_from_vacuum():
     assert repr(gfem.Material()) == "Material()"
     m = gfem.Material(eps_r=11.7, tan_delta=1e-4, name="si")
     assert repr(m) == "Material(eps_r=11.7, tan_delta=0.0001, name='si')"
+
+
+# --- MaterialField with axes: principal values on fixed axes -------------------
+
+#: A tilted orthonormal frame (rows are the principal axes).
+TILTED = tuple(tuple(row) for row in _rotation((1, 2, 3), 0.4).T)
+
+
+def _crystal(axes=TILTED, order=(0, 1, 2), signs=(1, 1, 1)):
+    """A biaxial lossy crystal, its axes (and values) permuted or sign-flipped."""
+    eps, tan, mu = (2.0, 3.0, 5.0), (1e-3, 2e-3, 3e-3), (1.5, 1.0, 1.2)
+    return gfem.Material(
+        eps_r=tuple(eps[k] for k in order),
+        tan_delta=tuple(tan[k] for k in order),
+        mu_r=tuple(mu[k] for k in order),
+        axes=tuple(
+            tuple(s * x for x in axes[k]) for k, s in zip(order, signs, strict=True)
+        ),
+    )
+
+
+def _field_tensor(field, name, element=None):
+    """``sum_k v_k a_k a_k^T`` of a field's principal values (independent sum)."""
+    values = np.asarray(getattr(field, name))
+    values = values if element is None else values[element]
+    return _tensor(values, field.axes)
+
+
+def test_a_material_field_with_axes_holds_three_principal_values_per_element():
+    values = jnp.array([[2.0, 3.0, 5.0], [2.5, 3.5, 4.0]])
+    f = gfem.MaterialField(eps_r=values, thermal_conductivity=[1.0, 2.0], axes=TILTED)
+    assert f.n_elements == 2
+    assert f.axes == TILTED
+    assert f.eps_r.shape == (2, 3)
+    assert f.thermal_conductivity.shape == (2,)
+    uniform = gfem.MaterialField(eps_r=[2.0, 3.0, 5.0], axes=np.eye(3))
+    assert uniform.n_elements is None
+    assert uniform.axes == ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    assert "axes=" in repr(f)
+    assert "axes" not in repr(gfem.MaterialField(eps_r=jnp.ones(2)))
+    # axes are static: a tree map keeps them, and the leaves are the values
+    g = jax.tree.map(lambda x: x * 2, f)
+    assert g.axes == TILTED
+    assert [x.shape for x in jax.tree.leaves(f)] == [(2, 3), (2,)]
+
+
+def test_material_field_shape_rules_with_and_without_axes():
+    with pytest.raises(ValueError, match=r"principal values need `axes`"):
+        gfem.MaterialField(eps_r=jnp.ones((4, 3)))
+    with pytest.raises(ValueError, match="three principal values"):
+        gfem.MaterialField(eps_r=jnp.ones((4, 2)), axes=TILTED)
+    with pytest.raises(ValueError, match="three principal values"):
+        gfem.MaterialField(eps_r=jnp.ones(4), axes=TILTED)
+    with pytest.raises(ValueError, match="same number"):
+        gfem.MaterialField(
+            eps_r=jnp.ones((4, 3)), conductivity=jnp.ones((3, 3)), axes=TILTED
+        )
+    with pytest.raises(ValueError, match="orthonormal"):
+        gfem.MaterialField(eps_r=jnp.ones(3), axes=((1, 0, 0), (1, 1, 0), (0, 0, 1)))
+
+
+def test_material_field_passivity_is_checked_per_principal_value():
+    with pytest.raises(ValueError, match="passive"):
+        gfem.MaterialField(eps_r=jnp.array([[2.0, 3.0, -1.0]]), axes=TILTED)
+    with pytest.raises(ValueError, match="passive"):
+        gfem.MaterialField(conductivity=jnp.array([0.0, -1.0, 0.0]), axes=TILTED)
+    with pytest.raises(ValueError, match="negative imaginary part"):
+        gfem.MaterialField(eps_r=jnp.array([2.0, 3.0 + 0.1j, 4.0]), axes=TILTED)
+    lossy = gfem.MaterialField(eps_r=jnp.array([2.0, 3.0 - 0.1j, 4.0]), axes=TILTED)
+    assert lossy.eps_r.dtype == jnp.complex128
+
+
+def test_traced_material_field_axes_raise():
+    def objective(angle):
+        c, s = jnp.cos(angle), jnp.sin(angle)
+        axes = jnp.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+        return gfem.MaterialField(eps_r=jnp.ones(3), axes=axes).eps_r.sum()
+
+    with pytest.raises(gfem.NonDifferentiableError, match="axes are fixed"):
+        jax.grad(objective)(0.3)
+
+
+def test_uniform_field_of_an_anisotropic_material_holds_its_principal_values():
+    crystal = _crystal()
+    f = gfem.MaterialField.uniform("r", crystal)
+    assert f.axes == crystal.axes
+    for name in ("eps_r", "mu_r", "tan_delta", "conductivity"):
+        assert getattr(f, name).shape == (3,)
+    np.testing.assert_array_equal(f.eps_r, crystal.eps_r)
+    np.testing.assert_array_equal(f.conductivity, [0.0, 0.0, 0.0])
+    assert f.thermal_conductivity is None
+    # per-axis values without axes: along the coordinate axes
+    wire = gfem.MaterialField.uniform("w", gfem.Material(conductivity=(0.0, 0.0, 1.0)))
+    assert wire.axes == ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    np.testing.assert_array_equal(wire.eps_r, [1.0, 1.0, 1.0])
+    # an isotropic material keeps the isotropic field
+    assert gfem.MaterialField.uniform("r", gfem.Material(eps_r=2.0)).axes is None
+
+
+def test_interpolate_blends_an_isotropic_and_an_anisotropic_material_per_axis():
+    crystal, air = _crystal(), gfem.Material()
+    rho = jnp.array([0.0, 0.5, 1.0])
+    for void, solid, ends in ((air, crystal, (0, 2)), (crystal, air, (2, 0))):
+        f = gfem.MaterialField.interpolate(rho, void, solid)
+        assert f.eps_r.shape == f.mu_r.shape == f.tan_delta.shape == (3, 3)
+        eps = _tensor(crystal.eps_r, crystal.axes)
+        np.testing.assert_allclose(
+            _field_tensor(f, "eps_r", ends[0]), np.eye(3), atol=1e-14
+        )
+        np.testing.assert_allclose(_field_tensor(f, "eps_r", ends[1]), eps, atol=1e-14)
+        np.testing.assert_allclose(
+            _field_tensor(f, "eps_r", 1), (eps + np.eye(3)) / 2, atol=1e-14
+        )
+        mu = _tensor(crystal.mu_r, crystal.axes)
+        np.testing.assert_allclose(_field_tensor(f, "mu_r", ends[1]), mu, atol=1e-14)
+    one = gfem.MaterialField.interpolate(jnp.asarray(1.0), air, crystal)
+    assert one.eps_r.shape == (3,)
+    assert sorted(np.asarray(one.eps_r).tolist()) == [2.0, 3.0, 5.0]  # exactly
+
+
+def test_interpolate_gives_one_field_for_permuted_or_sign_flipped_axes():
+    rho = jnp.array([0.2, 0.7])
+    air = gfem.Material()
+    reference = gfem.MaterialField.interpolate(rho, air, _crystal())
+    for order, signs in (((1, 2, 0), (1, 1, 1)), ((0, 1, 2), (-1, 1, -1))):
+        other = _crystal(order=order, signs=signs)
+        f = gfem.MaterialField.interpolate(rho, air, other)
+        assert f.axes == reference.axes
+        for name in ("eps_r", "mu_r", "tan_delta", "conductivity"):
+            np.testing.assert_array_equal(getattr(f, name), getattr(reference, name))
+
+
+def test_interpolate_blends_two_coaxial_crystals_and_refuses_others():
+    a = _crystal()
+    b = gfem.Material(eps_r=(4.0, 6.0, 7.0), axes=TILTED, conductivity=(0, 1, 0))
+    f = gfem.MaterialField.interpolate(jnp.array([0.25]), a, b)
+    expected = 0.75 * _tensor(a.eps_r, a.axes) + 0.25 * _tensor(b.eps_r, b.axes)
+    np.testing.assert_allclose(_field_tensor(f, "eps_r", 0), expected, atol=1e-14)
+    sigma = 0.25 * _tensor(b.conductivity, b.axes)
+    np.testing.assert_allclose(_field_tensor(f, "conductivity", 0), sigma, atol=1e-14)
+    turned = _crystal(axes=tuple(tuple(r) for r in _rotation((0, 0, 1), 0.3).T))
+    with pytest.raises(ValueError, match="different principal axes"):
+        gfem.MaterialField.interpolate(jnp.array([0.5]), a, turned)
+
+
+def test_interpolate_of_two_isotropic_materials_keeps_an_isotropic_field():
+    f = gfem.MaterialField.interpolate(
+        jnp.array([0.0, 0.5]), gfem.Material(), gfem.Material(eps_r=3.0)
+    )
+    assert f.axes is None
+    assert f.eps_r.shape == (2,)
+    np.testing.assert_array_equal(f.eps_r, [1.0, 2.0])
+
+
+def test_element_values_refuse_a_property_held_per_axis(tmp_path):
+    import structured_meshes as sm
+
+    from gfem._engine import coefficients
+
+    path = sm.write_msh22(
+        tmp_path / "two.msh", sm.plate(4.0, 3.0, (("a", 0.5), ("b", 0.5)), (1, 1, 1))
+    )
+    mesh = gfem.Mesh.from_gmsh(path)
+    n = len(mesh.elements("a"))
+    values = np.tile([2.0, 3.0, 5.0], (n, 1)) * np.linspace(1, 2, n)[:, None]
+    field = gfem.MaterialField(eps_r=values, axes=TILTED)
+    model = gfem.Model(mesh, materials={"a": field, "b": gfem.Material(eps_r=4.0)})
+    with pytest.raises(ValueError, match=r"'a'.*eps_r.*per principal axis"):
+        coefficients.element_values(model, "eps_r")
+    np.testing.assert_array_equal(
+        coefficients.element_values(model, "mu_r"), np.ones(len(mesh.tetrahedra))
+    )
+    tensors = coefficients.element_tensors(model, "eps_r")
+    for i, e in enumerate(mesh.elements("a")):
+        np.testing.assert_allclose(
+            tensors[e], _tensor(values[i], TILTED), rtol=0, atol=1e-14
+        )
+    np.testing.assert_array_equal(tensors[mesh.elements("b")], 4.0 * np.eye(3))

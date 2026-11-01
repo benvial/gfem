@@ -530,6 +530,31 @@ def test_per_axis_conductivity_damps_along_its_axis(mesh):
     np.testing.assert_allclose(omega.imag, isotropic.imag, rtol=2e-4)
 
 
+def test_a_uniform_field_of_a_crystal_has_the_crystal_s_modes(mesh):
+    # a tilted biaxial lossy, conducting, magnetic crystal: its uniform field
+    # holds the same principal values on the same axes
+    crystal = gfem.Material(
+        eps_r=(3.0, 5.0, 6.0),
+        mu_r=(1.5, 1.0, 1.2),
+        tan_delta=(0.01, 0.02, 0.03),
+        conductivity=(0.02, 0.05, 0.03),
+        axes=((1 / 3, 2 / 3, 2 / 3), (2 / 3, 1 / 3, -2 / 3), (2 / 3, -2 / 3, 1 / 3)),
+    )
+
+    def omega(material):
+        model = gfem.Model(
+            mesh,
+            materials={"dielectric": material},
+            boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+        )
+        problem = gfem.Eigenmode(target=5e9, n_modes=2)
+        return np.asarray(gfem.solve(model, problem).omega)
+
+    expected = omega(crystal)
+    field = omega(gfem.MaterialField.uniform("dielectric", crystal))
+    np.testing.assert_allclose(field, expected, rtol=1e-12)
+
+
 def test_first_order_absorbing_walls_damp_the_modes(tmp_path):
     # a wide line with absorbing side walls: a quadratic problem whose modes
     # radiate through the walls

@@ -268,6 +268,38 @@ def test_per_axis_conductivity_is_a_loss_tangent_falling_as_one_over_omega(mesh)
     assert np.abs(s[1] - expected[1]).max() > 1e-3
 
 
+#: A tilted biaxial crystal with per-axis eps_r, mu_r, tan_delta and conductivity.
+CRYSTAL = gfem.Material(
+    eps_r=(3.0, 5.0, 6.0),
+    mu_r=(1.5, 1.0, 1.2),
+    tan_delta=(0.01, 0.02, 0.03),
+    conductivity=(0.02, 0.05, 0.03),
+    axes=((1 / 3, 2 / 3, 2 / 3), (2 / 3, 1 / 3, -2 / 3), (2 / 3, -2 / 3, 1 / 3)),
+)
+
+
+def test_a_uniform_field_of_a_crystal_solves_like_the_crystal(mesh):
+    # MaterialField.uniform holds the crystal's principal values on its axes:
+    # the same tensors in every piece, the first-order absorbing side walls
+    # (behind the crystal) included
+    def model(material):
+        return gfem.Model(
+            mesh,
+            materials={"dielectric": material},
+            boundaries=[gfem.PEC("bottom"), gfem.PEC("top"), gfem.Absorbing("side")],
+            ports=[
+                gfem.LumpedPort("p1", "port1", "+z"),
+                gfem.LumpedPort("p2", "port2", "+z"),
+            ],
+        )
+
+    problem = gfem.Driven(frequency=[F, 2 * F])
+    expected = np.asarray(_s(model(CRYSTAL), problem).s.values)
+    field = gfem.MaterialField.uniform("dielectric", CRYSTAL)
+    s = np.asarray(_s(model(field), problem).s.values)
+    np.testing.assert_allclose(s, expected, rtol=0, atol=1e-12)
+
+
 def test_bddc_gmres_is_the_default_and_matches_direct(line):
     problem = gfem.Driven(frequency=[3e9, 4e9])
     direct = np.asarray(_s(line, problem).s.values)

@@ -432,6 +432,17 @@ def test_second_order_absorbing_boundary_refuses_an_anisotropic_material(slab, s
         solve(model)
 
 
+@pytest.mark.parametrize("solve", [_driven, _eigenmode])
+def test_second_order_absorbing_boundary_refuses_any_field_with_axes(slab, solve):
+    # structural: equal principal values still raise, so an optimizer moving
+    # the field's values never flips the refusal
+    n = len(slab.elements("b"))
+    field = gfem.MaterialField(eps_r=jnp.full((n, 3), 4.0), axes=np.eye(3))
+    model = _slab_model(slab, gfem.Material(eps_r=4.0), field, order=2)
+    with pytest.raises(NotImplementedError, match=r"Absorbing 'end': order 2 needs"):
+        solve(model)
+
+
 def test_second_order_absorbing_boundary_takes_a_per_axis_loss_tangent(slab):
     lossy = gfem.Material(eps_r=4.0, tan_delta=(0.01, 0.0, 0.02))
     model = _slab_model(slab, lossy, order=2)
