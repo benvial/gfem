@@ -1,5 +1,12 @@
 # Release notes
 
+## Unreleased
+
+- **Behaviour change: equal principal values are one value.**
+  `Material(eps_r=(2, 2, 2))` is now stored as `eps_r=2.0`: it equals
+  `Material(eps_r=2)`, `isotropic` is `True`, and its repr changes. Results are
+  unchanged. Old job files holding such a tuple read back as the scalar.
+
 ## 0.1.0 (2026-11-01)
 
 First release: driven problems (uniform and adaptive sweeps), eigenmode problems
