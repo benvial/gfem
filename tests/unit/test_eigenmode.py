@@ -512,7 +512,7 @@ def test_shared_port_surface_raises_naming_the_surface_and_its_ports(mesh):
         gfem.solve(model, gfem.Eigenmode(target=8e9))
     message = str(raised.value)
     assert "shared port surface 'port1'" in message
-    assert "'o1'" in message and "'o2'" in message
+    assert "'o1', 'o2'" in message
     assert "gfem.Driven" in message
     assert "LumpedPort" not in message
 
