@@ -223,6 +223,62 @@ def test_two_sided_sheet_picks_the_vacuum_or_substrate_side(sheet):
     )
 
 
+# --- the vacuum side next to anisotropic media -----------------------------------
+
+#: A tilted set of principal axes (rows): a_k . z = 2/3, -2/3, 1/3.
+AXES = ((1 / 3, 2 / 3, 2 / 3), (2 / 3, 1 / 3, -2 / 3), (2 / 3, -2 / 3, 1 / 3))
+
+
+def _with_air(modes, air):
+    """The ``side`` modes measured with ``air`` as the air's material."""
+    materials = {"sub": modes.materials["sub"], "air": air}
+    return dataclasses.replace(modes, materials=materials)
+
+
+@pytest.mark.parametrize(
+    "air",
+    [
+        gfem.Material(eps_r=(1.0, 1.0, 4.0)),
+        # every wave along a principal axis travels at c, yet D_x = 2 eps0 E_x
+        gfem.Material(eps_r=(2.0, 0.5, 0.5), mu_r=(2.0, 0.5, 0.5)),
+        gfem.MaterialField(eps_r=jnp.array([1.0, 1.0, 4.0]), axes=AXES),
+        gfem.MaterialField(
+            eps_r=jnp.array([2.0, 0.5, 0.5]),
+            mu_r=jnp.array([2.0, 0.5, 0.5]),
+            axes=AXES,
+        ),
+    ],
+    ids=["material-1-1-4", "material-2-.5-.5", "field-1-1-4", "field-2-.5-.5"],
+)
+def test_an_anisotropic_side_with_a_wave_at_c_is_not_vacuum(side, air):
+    # a medium is vacuum only when no wave in it is slower than in vacuum
+    modes = _with_air(side, air)
+    for kind in ("MA", "SA"):
+        none = gfem.interface_participation(modes, "top_air", T, 10.0, kind=kind)
+        np.testing.assert_array_equal(none.participation, [0.0])
+    # the "MS" layer now reads that side's flux
+    ms = gfem.interface_participation(modes, "top_air", T, 10.0, kind="MS")
+    assert float(ms.participation[0]) > 0
+
+
+@pytest.mark.parametrize(
+    "air",
+    [
+        gfem.Material(eps_r=1 + 5e-7),
+        gfem.MaterialField(eps_r=jnp.asarray(1 + 5e-7)),
+        gfem.MaterialField(eps_r=jnp.array([1.0, 1.0, 1 + 5e-7]), axes=AXES),
+    ],
+    ids=["material", "field", "field-axes"],
+)
+def test_a_side_within_1e_6_of_vacuum_is_vacuum(side, air):
+    # "MA" reads E on the vacuum side only: the same layer, bit for bit
+    expected = gfem.interface_participation(side, "top_air", T, 10.0, kind="MA")
+    p = gfem.interface_participation(
+        _with_air(side, air), "top_air", T, 10.0, kind="MA"
+    )
+    np.testing.assert_array_equal(p.participation, expected.participation)
+
+
 # --- validation --------------------------------------------------------------------
 
 
@@ -273,6 +329,36 @@ def test_substrate_permittivity_differentiates_the_metal_substrate_layer(side):
     p = f(jnp.asarray(EPS)).participation[0]
     g = jax.grad(lambda e: f(e).participation[0])(jnp.asarray(EPS))
     np.testing.assert_allclose(g, 2 * p / EPS, rtol=1e-10)
+
+
+def test_per_axis_substrate_permittivity_differentiates_the_metal_substrate_layer(
+    side,
+):
+    # holding the mode fixed: E is normal on the PEC plate, so (eps E)_n =
+    # eps_zz E_z, p_MS grows as eps_zz^2, and dp/deps_k = 2 p (a_k . z)^2 / eps_zz
+    def f(values):
+        sub = gfem.MaterialField(eps_r=values, axes=AXES)
+        modes = dataclasses.replace(
+            side, materials={"sub": sub, "air": gfem.Material()}
+        )
+        return gfem.interface_participation(
+            modes, "top_sub", T, 5.0, kind="MS"
+        ).participation[0]
+
+    values = jnp.array([5.0, 9.0, 12.0])
+    z2 = np.array([4.0, 4.0, 1.0]) / 9  # (a_k . z)^2
+    eps_zz = float(values @ z2)
+    p = float(f(values))
+    isotropic = float(f(jnp.full(3, EPS)))
+    np.testing.assert_allclose(p, isotropic * (eps_zz / EPS) ** 2, rtol=1e-12)
+    g = np.asarray(jax.grad(f)(values))
+    np.testing.assert_allclose(g, 2 * p * z2 / eps_zz, rtol=1e-8)
+    h = 1e-4
+    fd = [
+        (float(f(values.at[k].add(h))) - float(f(values.at[k].add(-h)))) / (2 * h)
+        for k in range(3)
+    ]
+    np.testing.assert_allclose(g, fd, rtol=1e-6)
 
 
 def test_through_the_eigenmode_solve_the_gradient_raises(tmp_path):

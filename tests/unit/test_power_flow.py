@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 import scipy.constants as const
 import structured_meshes as sm
+from anisotropy import turned
 
 import gfem
 
@@ -155,20 +156,22 @@ def _tetrahedron_rule(n):
     return points, weight
 
 
-def _band_loss(e, mesh, band, tan_delta):
-    """``1/2 ω eps0 eps_r tanδ ∫ |E|^2`` over the band, from point values."""
+def _band_loss(e, mesh, band, loss):
+    """``1/2 ∫ E* . G E`` over the band, from point values.
+
+    ``loss`` holds each band element's loss tensor ``G = ω eps0 eps_r
+    tan_delta + sigma`` (S/m) in the global frame, ``(n_band, 3, 3)``.
+    """
     ref, weight = _tetrahedron_rule(5)  # |E|^2 of order 3: degree 6
     total = 0.0
-    eps_r = np.where(_centroids(mesh)[:, 0] < LENGTH / 2 * 1e-6, *EPS)
     tets = mesh.elements("dielectric")
-    for k in np.flatnonzero(band):
+    for g, k in zip(loss, np.flatnonzero(band), strict=True):
         p = mesh.nodes[mesh.tetrahedra[tets[k]]]
         jac = (p[1:] - p[0]).T
         values = np.asarray(e.at(p[0] + ref @ jac.T))
-        density = (np.abs(values) ** 2).sum(axis=1)
-        total += eps_r[k] * abs(np.linalg.det(jac)) * (weight @ density)
-    omega = 2 * np.pi * F0
-    return 0.5 * omega * const.epsilon_0 * tan_delta * total
+        density = np.einsum("qi,ij,qj->q", values.conj(), g, values).real
+        total += abs(np.linalg.det(jac)) * (weight @ density)
+    return 0.5 * total
 
 
 def test_a_lossy_band_absorbs_the_power_between_two_planes(plate_mesh):
@@ -179,7 +182,46 @@ def test_a_lossy_band_absorbs_the_power_between_two_planes(plate_mesh):
     e, s11, s21 = _solve(model)
     before = float(gfem.power_flow(e, _below(5.0), model=model))
     after = float(gfem.power_flow(e, _below(15.0), model=model))
-    absorbed = _band_loss(e, plate_mesh, band, tan_delta)
+    eps_r = np.where(x < LENGTH / 2 * 1e-6, *EPS)[band]
+    omega = 2 * np.pi * F0
+    loss = (omega * const.epsilon_0 * tan_delta * eps_r)[:, None, None] * np.eye(3)
+    absorbed = _band_loss(e, plate_mesh, band, loss)
+    assert absorbed > 0.01
+    assert before - after == pytest.approx(absorbed, rel=1e-9)
+    assert before - after == pytest.approx(1 - s11 - s21, rel=1e-9)
+
+
+def test_a_lossy_anisotropic_band_absorbs_its_tensor_loss(plate_mesh):
+    # a field on axes turned about the line (x stays a principal axis, as
+    # the wave ports need), with per-axis loss tangents and conductivities
+    # in the band only: the power lost between two planes is the tensor
+    # volume loss 1/2 ω ∫ E*.ε''E + 1/2 ∫ E*.sigma E
+    axes = turned(0, 35)
+    a = np.asarray(axes)
+    x = _centroids(plate_mesh)[:, 0]
+    band = (x > 7.5e-6) & (x < 12.5e-6)
+    n = len(x)
+    eps_r = np.repeat(np.where(x < LENGTH / 2 * 1e-6, *EPS)[:, None], 3, axis=1)
+    tan_delta = np.where(band[:, None], [0.02, 0.06, 0.01], 0.0)
+    sigma = np.where(band[:, None], [5.0, 0.0, 20.0], 0.0)  # S/m
+    model = gfem.Model(
+        plate_mesh,
+        materials={
+            "dielectric": gfem.MaterialField(
+                eps_r=eps_r, tan_delta=tan_delta, conductivity=sigma, axes=axes
+            )
+        },
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+        ports=[gfem.WavePort("p1", "port1"), gfem.WavePort("p2", "port2")],
+    )
+    assert tan_delta.shape == sigma.shape == (n, 3)
+    e, s11, s21 = _solve(model)
+    before = float(gfem.power_flow(e, _below(5.0), model=model))
+    after = float(gfem.power_flow(e, _below(15.0), model=model))
+    omega = 2 * np.pi * F0
+    principal = omega * const.epsilon_0 * eps_r * tan_delta + sigma
+    loss = np.einsum("ek,ki,kj->eij", principal[band], a, a)
+    absorbed = _band_loss(e, plate_mesh, band, loss)
     assert absorbed > 0.01
     assert before - after == pytest.approx(absorbed, rel=1e-9)
     assert before - after == pytest.approx(1 - s11 - s21, rel=1e-9)

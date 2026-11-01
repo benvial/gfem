@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 import scipy.constants as const
 import structured_meshes as sm
+from anisotropy import turned
 from eigen_cases import (
     EPS,
     ETA0,
@@ -189,6 +190,79 @@ def test_bulk_participation_shares_the_energy_between_regions(tmp_path):
     np.testing.assert_allclose(p["low"], [0.3], rtol=1e-5)
     np.testing.assert_allclose(p["high"], [0.7], rtol=1e-5)
     np.testing.assert_allclose(p["low"] + p["high"], [1.0], rtol=1e-14)
+
+
+def _crystal_line(mesh, **losses):
+    """The line in a biaxial crystal on axes turned 30 degrees about x."""
+    crystal = gfem.Material(eps_r=(3.0, 4.0, 6.0), axes=turned(0, 30), **losses)
+    return gfem.Model(
+        mesh,
+        materials={"dielectric": crystal},
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+    )
+
+
+def test_principal_participation_gives_a_per_axis_loss_exactly(mesh):
+    # E lies along z, off every principal axis: (a_k . z)^2 = 0, 1/4, 3/4.
+    # Per axis, 1/Q = sum_k p_k (tan_delta_k + sigma_k / (eps0 eps_k Re omega))
+    # (design 1/Q = 3.18e-3), to O(1/Q) against the complex eigenvalue, with
+    # p from the lossy solve or from a lossless one (assumed losses)
+    problem = gfem.Eigenmode(target=6.4e9)
+    lossless = gfem.solve(_crystal_line(mesh), problem)
+    eps = np.array([3.0, 4.0, 6.0])
+    tan_delta = np.array([1e-2, 0.0, 3e-3])
+    w0 = float(lossless.omega[0].real)
+    sigma = np.array([0.0, 4e-3 * const.epsilon_0 * 4.0 * w0, 0.0])
+    lossy = gfem.solve(
+        _crystal_line(mesh, tan_delta=tuple(tan_delta), conductivity=tuple(sigma)),
+        problem,
+    )
+    omega = complex(lossy.omega[0])
+    inverse_q = 2 * abs(omega.imag) / abs(omega)
+    per_axis = tan_delta + sigma / (const.epsilon_0 * eps * omega.real)
+    for result in (lossy, lossless):
+        assert set(result.principal_participation) == {"dielectric"}
+        p = np.asarray(result.principal_participation["dielectric"])
+        assert p.shape == (1, 3)
+        np.testing.assert_allclose(
+            p.sum(axis=1), result.bulk_participation["dielectric"], rtol=1e-12
+        )
+        np.testing.assert_allclose(p[0] @ per_axis, inverse_q, rtol=1e-2)
+    # the rule of one loss tangent, with their mean, is far off
+    mean = float(lossy.bulk_participation["dielectric"][0]) * tan_delta.mean()
+    assert abs(mean / inverse_q - 1) > 0.2
+
+
+def test_principal_participation_covers_the_anisotropic_regions_only(tmp_path):
+    # the layered line: "high" a field on turned axes with equal principal
+    # values, "low" isotropic. The TEM field is E_z, so high's share 0.7
+    # splits as (a_k . z)^2 = 0, 1/4, 3/4
+    path = tmp_path / "layered.msh"
+    layers = (("low", 0.3), ("high", 0.7))
+    sm.write_msh22(path, sm.strip_line(L, W, H, (20, 1, 1), layers=layers))
+    mesh = gfem.Mesh.from_gmsh(path, length_unit="mm")
+    n = len(mesh.elements("high"))
+    high = gfem.MaterialField(eps_r=jnp.full((n, 3), EPS), axes=turned(0, 30))
+    model = gfem.Model(
+        mesh,
+        materials={"low": gfem.Material(eps_r=EPS), "high": high},
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+    )
+    result = gfem.solve(model, gfem.Eigenmode(target=8e9, n_modes=2))
+    assert list(result.principal_participation) == ["high"]
+    p = np.asarray(result.principal_participation["high"])
+    assert p.shape == (2, 3)
+    np.testing.assert_allclose(
+        p.sum(axis=1), result.bulk_participation["high"], rtol=1e-12
+    )
+    np.testing.assert_allclose(p, [[0.0, 0.175, 0.525]] * 2, rtol=1e-5, atol=1e-6)
+    pytest.importorskip("xarray")
+    ds = result.to_xarray()
+    da = ds["principal_participation"]
+    assert da.dims == ("mode", "anisotropic_region", "axis")
+    assert list(ds["anisotropic_region"].values) == ["high"]
+    np.testing.assert_array_equal(ds["axis"], [0, 1, 2])
+    np.testing.assert_array_equal(da.sel(anisotropic_region="high"), p)
 
 
 # --- quadratic problem: resistive ports --------------------------------------------

@@ -404,6 +404,38 @@ def test_unknown_type_asks_for_a_newer_gfem(model, tmp_path):
         gfem.Job.from_json(path)
 
 
+def test_principal_participation_round_trips_and_an_old_result_reads_none(
+    tmp_path,
+):
+    from gfem import _codec
+
+    result = gfem.EigenmodeResult(
+        omega=jnp.array([1e10 + 1e6j, 2e10 + 3e6j]),
+        error=jnp.array([1e-12, 2e-12]),
+        bulk_participation={
+            "crystal": jnp.array([0.6, 0.5]),
+            "air": jnp.array([0.4, 0.5]),
+        },
+        principal_participation={
+            "crystal": jnp.array([[0.1, 0.2, 0.3], [0.05, 0.25, 0.2]])
+        },
+    )
+    context = _codec.Context(tmp_path)
+    encoder = _codec.Encoder(context)
+    doc = json.loads(json.dumps(encoder.encode(result)))
+    back = _codec.Decoder(context, encoder.arrays).decode(doc)
+    assert list(back.principal_participation) == ["crystal"]
+    np.testing.assert_array_equal(
+        back.principal_participation["crystal"],
+        result.principal_participation["crystal"],
+    )
+    (stored,) = _typed_in(doc, "EigenmodeResult")
+    del stored["principal_participation"]  # as 0.1.0 wrote it
+    old = _codec.Decoder(context, encoder.arrays).decode(doc)
+    assert old.principal_participation == {}
+    np.testing.assert_array_equal(old.omega, result.omega)
+
+
 # --- running and results -------------------------------------------------------------
 
 
