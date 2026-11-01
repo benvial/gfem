@@ -7,7 +7,8 @@ Every builder that writes a mesh takes the directory to write it to (a
 pytest ``tmp_path_factory.mktemp`` directory).
 
 - `layered_line`: a two-layer parallel-plate line, lumped ports, second-order
-  absorbing side walls (driven and adaptive material gradients).
+  absorbing side walls (driven and adaptive material gradients); first-order
+  ones for fields with axes (`with_axes_fields`, on the `TILTED` axes).
 - `stack`, `capacitor`: two-layer capacitors (electrostatic material and
   shape gradients).
 - `shape_line`: the two-layer line with a conductor top plate and a lossy,
@@ -63,8 +64,12 @@ def _mesh(directory: Path, name: str, mesh: tuple, unit: str = "mm") -> gfem.Mes
 # --- driven: the two-layer line ----------------------------------------------------
 
 
-def layered_line(directory: Path) -> gfem.Model:
-    """Two layers between PEC plates, lumped ports, absorbing (order 2) sides."""
+def layered_line(directory: Path, absorbing_order: int = 2) -> gfem.Model:
+    """Two layers between PEC plates, lumped ports, absorbing sides.
+
+    Of ``absorbing_order``: second-order sides raise next to a field with
+    axes, so the per-axis designs take first-order ones.
+    """
     mesh = _mesh(
         directory, "line.msh", sm.strip_line(4.0, 2.0, 1.0, (4, 2, 1), layers=LAYERS)
     )
@@ -74,7 +79,7 @@ def layered_line(directory: Path) -> gfem.Model:
         boundaries=[
             gfem.PEC("bottom"),
             gfem.PEC("top"),
-            gfem.Absorbing("side", order=2),
+            gfem.Absorbing("side", order=absorbing_order),
         ],
         ports=[
             gfem.LumpedPort("p1", "port1", "+z"),
@@ -92,16 +97,46 @@ def line_design(line: gfem.Model, seed: int = 0):
     return {"eps_r": jnp.asarray(eps), "conductivity": jnp.asarray(sigma)}, rng
 
 
-def with_fields(line: gfem.Model, values: dict) -> gfem.Model:
-    """``line`` with ``values`` (one per tetrahedron, mesh order) as fields."""
+def with_fields(line: gfem.Model, values: dict, axes=None) -> gfem.Model:
+    """``line`` with ``values`` (one per tetrahedron, mesh order) as fields.
+
+    With ``axes``, the values are principal values, ``(n, 3)``, on them.
+    """
     n_sub = len(line.mesh.elements("sub"))
     parts = {
         "sub": {k: v[:n_sub] for k, v in values.items()},
         "cover": {k: v[n_sub:] for k, v in values.items()},
     }
     return line.replace(
-        materials={r: gfem.MaterialField(**p) for r, p in parts.items()}
+        materials={r: gfem.MaterialField(**p, axes=axes) for r, p in parts.items()}
     )
+
+
+# --- principal values on fixed axes --------------------------------------------
+
+
+def _turned(axis, angle: float) -> np.ndarray:
+    """The rotation by ``angle`` (rad) about ``axis`` (Rodrigues)."""
+    k = np.asarray(axis, float) / np.linalg.norm(axis)
+    cross = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    return np.eye(3) + np.sin(angle) * cross + (1 - np.cos(angle)) * cross @ cross
+
+
+#: Principal axes tilted off every coordinate axis and plane (rows a_k: the
+#: coordinate axes turned by 0.7 rad about (1, 2, 3)), so every off-diagonal
+#: entry of each a_k a_k^T is nonzero.
+TILTED = tuple(tuple(float(x) for x in row) for row in _turned((1, 2, 3), 0.7).T)
+#: Factors that make one value three distinct principal values (biaxial).
+BIAXIAL = np.array([1.0, 1.15, 0.85])
+
+
+def line_axes_design(line: gfem.Model, seed: int = 0):
+    """`line_design` per principal value: ``(n, 3)``, biaxial in every element."""
+    rng = np.random.default_rng(seed)
+    n = len(line.mesh.tetrahedra)
+    eps = rng.uniform(2.0, 6.0, (n, 3)) * (1 - 0.02j)
+    sigma = rng.uniform(0.5, 2.0, (n, 3))
+    return {"eps_r": jnp.asarray(eps), "conductivity": jnp.asarray(sigma)}, rng
 
 
 # --- electrostatics ----------------------------------------------------------------
@@ -121,13 +156,16 @@ def stack(directory: Path) -> gfem.Model:
     )
 
 
-def stack_fields(model: gfem.Model, eps) -> gfem.Model:
-    """``model`` with one P0 permittivity ``eps`` over both layers."""
+def stack_fields(model: gfem.Model, eps, axes=None) -> gfem.Model:
+    """``model`` with one P0 permittivity ``eps`` over both layers.
+
+    With ``axes``, ``eps`` holds principal values, ``(n, 3)``, on them.
+    """
     n_ox = len(model.mesh.elements("oxide"))
     return model.replace(
         materials={
-            "oxide": gfem.MaterialField(eps_r=eps[:n_ox]),
-            "nitride": gfem.MaterialField(eps_r=eps[n_ox:]),
+            "oxide": gfem.MaterialField(eps_r=eps[:n_ox], axes=axes),
+            "nitride": gfem.MaterialField(eps_r=eps[n_ox:], axes=axes),
         }
     )
 
@@ -342,11 +380,15 @@ def ramp(mesh: gfem.Mesh, region: str, start: float, stop: float):
     return jnp.asarray(np.linspace(start, stop, len(mesh.elements(region))))
 
 
-def terminated(mesh: gfem.Mesh, eps, sigma) -> gfem.Model:
-    """The line resonator with P0 fields, ended by 500 ohm lumped ports."""
+def terminated(mesh: gfem.Mesh, eps, sigma, axes=None) -> gfem.Model:
+    """The line resonator with P0 fields, ended by 500 ohm lumped ports.
+
+    With ``axes``, ``eps`` and ``sigma`` hold principal values on them.
+    """
+    field = gfem.MaterialField(eps_r=eps, conductivity=sigma, axes=axes)
     return gfem.Model(
         mesh,
-        materials={"dielectric": gfem.MaterialField(eps_r=eps, conductivity=sigma)},
+        materials={"dielectric": field},
         boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
         ports=[
             gfem.LumpedPort("p1", "port1", "+z", impedance=500.0),

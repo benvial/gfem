@@ -78,6 +78,28 @@ def test_verified_cells_list_their_solvers_and_sweeps(derived):
     assert cell["source"] == "tests/verification/test_gradient_matrix.py"
 
 
+def test_principal_value_cells_fold_into_their_property_column(derived):
+    assert caps.CELL_INPUTS["eps_r_axes"] == "eps_r"
+    assert caps.CELL_INPUTS["conductivity_axes"] == "conductivity"
+    both = {
+        ("driven", "eps_r"),
+        ("driven", "conductivity"),
+        ("eigenmode", "eps_r"),
+        ("eigenmode", "conductivity"),
+        ("electrostatic", "eps_r"),
+    }
+    for row in derived["rows"]:
+        for cell in row["cells"]:
+            key = (row["key"], cell["column"])
+            if key in both:
+                assert cell["forms"] == ["isotropic", "principal values"], key
+                assert cell["forms_text"] == "isotropic and principal values", key
+            else:
+                assert cell["forms_text"] == "", key
+    # the label (and so the front page's compact matrix) does not change
+    assert _cell(derived, "driven", "eps_r")["label"] == "FD-verified"
+
+
 def test_raising_cells_name_their_error(derived):
     sheet = _cell(derived, "electrostatic", "fill")
     assert sheet["label"] == "raises NotImplementedError"
@@ -87,12 +109,17 @@ def test_raising_cells_name_their_error(derived):
 
 def test_raises_list_is_the_out_of_scope_rows_off_the_grid(derived):
     rows = {r["label"]: r for r in derived["raises"]}
-    assert len(rows) == 7
+    assert len(rows) == 11
     assert "electrostatic \N{MULTIPLICATION SIGN} sheet fill" not in rows
     assert (
         rows["probe \N{MULTIPLICATION SIGN} node coordinates"]["error"]
         == "NonDifferentiableError"
     )
+    assert rows["material axes (orientation)"] == {
+        "label": "material axes (orientation)",
+        "error": "NonDifferentiableError",
+        "when": "",
+    }
     nodes = rows["driven \N{MULTIPLICATION SIGN} nodes of a port surface"]
     assert nodes == {
         "label": "driven \N{MULTIPLICATION SIGN} nodes of a port surface",
@@ -131,6 +158,12 @@ def test_a_new_problem_in_the_cells_fails(data):
 def test_a_new_input_in_the_cells_fails(data):
     cells = [*data[0], dataclasses.replace(data[0][0], input="chirality")]
     with pytest.raises(caps.CapabilitiesError, match="chirality"):
+        _derive(data, cells=cells)
+
+
+def test_an_unknown_suffix_of_a_property_fails(data):
+    cells = [*data[0], dataclasses.replace(data[0][0], input="eps_r_tensor")]
+    with pytest.raises(caps.CapabilitiesError, match="eps_r_tensor"):
         _derive(data, cells=cells)
 
 

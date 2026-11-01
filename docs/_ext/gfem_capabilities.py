@@ -6,6 +6,11 @@ data, imported by path without running a solve: ``CELLS``
 (tests/verification/test_gradient_matrix.py), ``EXPECTED`` and
 ``OUT_OF_SCOPE`` (tests/verification/test_gradient_matrix_raise_table.py).
 
+A cell input with the suffix ``_axes`` (``eps_r_axes``) is the same
+property per principal value of a field with fixed axes: it folds into its
+property's column, whose cells then name the forms their tests cover
+("isotropic and principal values").
+
 Every claim that cannot be derived raises `CapabilitiesError`, which the
 Sphinx hook turns into an `ExtensionError`: a problem key or input kind the
 mapping below does not know, a grid cell with no outcome or with
@@ -91,7 +96,15 @@ PROBLEMS = {
 }
 # CELLS input names, and the material properties of EXPECTED's input kinds
 # ("material", <region>, <property>); None: known, but not a grid column.
-CELL_INPUTS = {name: name for name in COLUMNS}
+# A suffix AXES names the property per principal value (fixed axes).
+AXES = "_axes"
+CELL_INPUTS = {name: name for name in COLUMNS} | {
+    f"{name}{AXES}": name for name in ("eps_r", "conductivity")
+}
+# The value forms of a material column's cells, by cell input.
+FORMS = {"eps_r": "isotropic", "conductivity": "isotropic"} | {
+    f"{name}{AXES}": "principal values" for name in ("eps_r", "conductivity")
+}
 MATERIAL_PROPERTIES = {
     "eps_r": "eps_r",
     "conductivity": "conductivity",
@@ -106,6 +119,15 @@ SOLVERS = {"direct": "direct solver", "bddc_gmres": "BDDC + GMRES"}
 GRID_LABELS = {"electrostatic x sheet fill": ("electrostatic", "fill")}
 STATUS_TEXT = {"verified": "FD-verified", "zero": "exact zero", "raises": "raises"}
 OUTCOMES = {"gradient", "zero", "raises"}
+
+
+def forms_text(forms: list[str]) -> str:
+    """A column's value forms as a cell detail ("" for isotropic only)."""
+    if forms == ["isotropic", "principal values"]:
+        return "isotropic and principal values"
+    if forms == ["principal values"]:
+        return "principal values only"
+    return ""
 
 
 def _input_column(kind) -> str | None:
@@ -281,6 +303,7 @@ def _resolve(row, column, *, cells, claimed, labels, ports_of_row) -> dict:
         )
     (status,) = statuses
     ports = [p for p in dict.fromkeys(PROBLEMS[c.problem].ports for c in cells) if p]
+    forms = sorted({FORMS[c.input] for c in cells if c.input in FORMS})
     note = f"{' and '.join(ports)} ports" if ports and set(ports) < ports_of_row else ""
     label = STATUS_TEXT[status]
     if error:
@@ -298,6 +321,8 @@ def _resolve(row, column, *, cells, claimed, labels, ports_of_row) -> dict:
         "solvers": [SOLVERS[s] for s in dict.fromkeys(c.solver for c in cells)],
         "sweeps": [s for s in dict.fromkeys(c.sweep for c in cells) if s],
         "ports": ports,
+        "forms": forms,
+        "forms_text": forms_text(forms),
         "source": MATRIX_TEST if cells else RAISE_TEST,
     }
 
@@ -494,7 +519,8 @@ def _directives() -> dict:
             mark.extend(self.source(cell["source"], nodes.Text(cell["label"])))
             out = [mark]
             if cell["status"] == "verified":
-                parts = [", ".join(cell["solvers"])]
+                parts = [cell["forms_text"]] if cell["forms_text"] else []
+                parts.append(", ".join(cell["solvers"]))
                 if cell["sweeps"]:
                     parts.append(f"{' and '.join(cell['sweeps'])} sweep")
                 if cell["ports"]:
