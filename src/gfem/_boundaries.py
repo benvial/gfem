@@ -187,6 +187,48 @@ class Impedance:
         _check_fill(self.fill, "Impedance")
 
 
+@dataclasses.dataclass(frozen=True)
+class Periodic:
+    """A periodic pair: two exterior surfaces related by a translation.
+
+    The fields on the two surfaces are identified node for node. The
+    translation a runs from ``surfaces[0]`` to ``surfaces[1]`` and is
+    measured from the mesh (`Model.periodic_translations`); the two surface
+    meshes must be identical up to it (gmsh: ``setPeriodic``). A model takes
+    one to three pairs, along independent directions. With no Bloch wave
+    vector on the problem the fields are equal on both surfaces (plain
+    periodicity); with ``wave_vector=k`` (rad/m) on `gfem.Driven` or
+    `gfem.Eigenmode`, E(r + a) = exp(-i k·a) E(r) (`gfem.conventions`,
+    Bloch periodicity). The order of the two surfaces is not physical:
+    swapping them flips a and gives the same field.
+
+    Attributes:
+        surfaces: The two surface region names (first, second).
+    """
+
+    surfaces: tuple[str, str]
+    _physics: ClassVar[str] = "em"
+
+    def __post_init__(self) -> None:
+        value = self.surfaces
+        if (
+            isinstance(value, str)
+            or not isinstance(value, (list, tuple))
+            or len(value) != 2
+            or not all(isinstance(s, str) for s in value)
+        ):
+            raise TypeError(
+                "Periodic: surfaces must be two surface names (first, second), "
+                f"got {value!r}."
+            )
+        if value[0] == value[1]:
+            raise ValueError(
+                f"Periodic: the two surfaces must differ, got {value[0]!r} twice; "
+                "a periodic pair joins two opposite surfaces of the cell."
+            )
+        object.__setattr__(self, "surfaces", (value[0], value[1]))
+
+
 def _set_rlc(obj: Any, owner: str) -> None:
     for name, unit in (
         ("resistance", "ohm"),
@@ -197,12 +239,12 @@ def _set_rlc(obj: Any, owner: str) -> None:
         object.__setattr__(obj, name, value)
 
 
-for _cls in (PEC, PMC, Absorbing):
+for _cls in (PEC, PMC, Absorbing, Periodic):
     jax.tree_util.register_static(_cls)
 register_fields(Conductor, ("fill",))
 register_fields(Impedance, ("fill",))
 
-Boundary = PEC | PMC | Absorbing | Conductor | Impedance
+Boundary = PEC | PMC | Absorbing | Conductor | Impedance | Periodic
 
 
 # --- ports ----------------------------------------------------------------------
@@ -423,6 +465,6 @@ def sheet_of(item: Boundary | Port) -> SheetField | None:
 
 def surfaces_of(item: Boundary | Port) -> tuple[str, ...]:
     """The surfaces a boundary condition or port occupies."""
-    if isinstance(item, LumpedPort):
+    if isinstance(item, (LumpedPort, Periodic)):
         return item.surfaces
     return (item.surface,)
