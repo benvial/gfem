@@ -49,6 +49,20 @@ curl and gradient terms (products of first derivatives, degree 2p - 2), on
 the exact rule of that degree, which gives the same values with fewer
 points.
 
+A **per-axis** leaf (a `MaterialField` with `axes`, principal values
+``v_k`` along fixed axes ``a_k``) moves a coefficient coaxial with the
+axes: ``dC/dv_k = s_k P_k`` with ``P_k = a_k a_k^T`` and ``s_k`` the
+isotropic scalar derivative on axis k. Its pass integrates the symmetric
+**moment** ``M_e = int_e sym(u (x) v)`` (of the values, curls or gradients:
+6 components per element) once per term, and contracts it per axis,
+``s_k a_k^T M_e a_k``; ``tr M_e`` is the scalar pass's integral, so equal
+principal values give per-axis cotangents that sum to the isotropic one. A
+face term (the first-order absorbing admittance, which is not coaxial once
+the normal is tilted) integrates ``int_f sym(u_t (x) v_t)`` per face and
+contracts it with ``dc_f/dv_k`` (a 3 x 3 tensor per face and axis) into
+its owner. The moment pass runs only when a per-axis leaf is wanted: an
+isotropic leaf keeps the scalar pass.
+
 A **sheet field** (`gfem.SheetField`, a fill per face of a `Conductor` or
 `Impedance` surface) multiplies the coefficient of each of its boundary's
 pieces face by face, ``c_p,f = fill_f c_p``, so ``dA / dfill_f = sum_p
@@ -64,7 +78,8 @@ code path. A later pass plugs in beside these: load pairs ``int lambda psi``
 for problem-leaf sources.
 
 Design inputs are named by kind tuples, the same ones `gfem._adjoint` uses:
-``("material", region, property)`` is a `MaterialField` leaf,
+``("material", region, property)`` is a `MaterialField` leaf (per axis when
+the field has `axes`),
 ``("boundary", index, "fill", "fill")`` the fill of the sheet field of
 ``model.boundaries[index]`` and ``("nodes",)`` the mesh node coordinates.
 """
@@ -81,12 +96,15 @@ import numpy as np
 from gfem._boundaries import Conductor, Impedance
 from gfem._engine import quadrature
 from gfem._engine.cache import discretization
+from gfem._engine.coefficients import element_axes
 from gfem._engine.domain import boundary_region
+from gfem._materials import MaterialField
 from gfem.errors import NonDifferentiableError
 from gfem.model import Model
 
 __all__ = [
     "INTEGRANDS",
+    "MOMENTS",
     "PROPERTIES",
     "SHAPE_FORMS",
     "SHEET_FORMS",
@@ -122,12 +140,20 @@ class Derivative:
             ``scale ** (term.length_power + length_power)``. 1 for the
             driven conductivity, whose coefficient ``eta0 sigma scale`` reads
             ``eta0`` per unit ``sigma``.
+        per_axis: The per-axis form, for a `MaterialField` with `axes`
+            (``None``: the term has none). Its ``declared`` is per principal
+            value: for a volume term the scalar ``s`` of ``dC/dv_k = s_k
+            a_k a_k^T`` per tetrahedron and axis, ``(n, 3)`` or a constant;
+            for a face term ``dc_f/dv_k`` of the tetrahedron behind each
+            face, ``(n_triangles, 3, 3, 3)`` per gfem triangle (axis k,
+            then the 3 x 3 coefficient). Its ``chain`` is ``(n, 3)``.
     """
 
     declared: Callable[[], np.ndarray | float | complex] | float | complex
     holomorphic: bool
     chain: Callable[[], np.ndarray] | None = None
     length_power: int = 0
+    per_axis: Derivative | None = None
 
     def evaluated(self) -> np.ndarray | float | complex:
         """``dc_t / dp`` (`declared`, evaluated if it is a function)."""
@@ -213,14 +239,25 @@ INTEGRANDS: dict[str, Callable[[Any, Any], Any]] = {
     "curl trace": lambda u, v: ngs.curl(u).Trace() * ngs.curl(v).Trace(),
 }
 
+#: The symmetric moment ``u (x) v`` of each kind of `Term` with a
+#: per-axis derivative: what the moment pass integrates.
+MOMENTS: dict[str, Callable[[Any, Any], Any]] = {
+    "gradient": lambda u, v: ngs.OuterProduct(ngs.grad(u), ngs.grad(v)),
+    "curl": lambda u, v: ngs.OuterProduct(ngs.curl(u), ngs.curl(v)),
+    "value": ngs.OuterProduct,
+    "trace": lambda u, v: ngs.OuterProduct(u.Trace(), v.Trace()),
+}
+#: The 6 components of a symmetric 3 x 3 moment, in the pass's order.
+_SYMMETRIC = ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2))
+
 #: The material properties each operator family differentiates: the
 #: properties its terms carry `Term.derivatives` for. Static, so that
 #: `unsupported` answers before any operator exists (at trace time).
-#: Design inputs are `MaterialField` leaves, which are isotropic: the
-#: derivatives read isotropic element values. A `Material` with per-axis
-#: eps_r / tan_delta is a constant (its tensor enters the forward pieces
-#: only), and the values its elements show there (means) are never
-#: differentiated.
+#: Design inputs are `MaterialField` leaves: isotropic ones read one value
+#: per element, those with `axes` their principal values
+#: (`Derivative.per_axis`). A `Material` (isotropic or not) is a constant:
+#: its tensor enters the forward pieces only, and the values its elements
+#: show to the derivatives are never differentiated.
 PROPERTIES: dict[str, frozenset[str]] = {
     # a(u, v) = eps0 int Re(eps_r) grad u . grad v
     "electrostatic": frozenset({"eps_r"}),
@@ -370,6 +407,61 @@ def _element_pass(
     per_face[built.triangle_order] = form.vec.FV().NumPy()
     on = owner >= 0
     np.add.at(out, owner[on], per_face[on])
+    return out * built.scale**length_power
+
+
+def _moment_pass(
+    model: Model, pairs: list[FieldPair], term: Term, length_power: int
+) -> np.ndarray:
+    """``sum_pairs theta_t sum_k int sym(left_k (x) right_k)``, per element.
+
+    Of the values, curls, gradients or tangential traces as the kind reads
+    them (`MOMENTS`), times ``scale ** length_power``: ``(n_tetrahedra, 3,
+    3)`` for a volume term, ``(n_triangles, 3, 3)`` per gfem triangle for a
+    face term (not summed into the owners: its derivative is per face).
+    The trace of each moment is `_element_pass`'s integral.
+    """
+    built = discretization(model.mesh).built
+    moment = MOMENTS[term.kind]
+    name = term.name
+    pairs = [p for p in pairs if name in p.weights]
+    is_complex = any(
+        np.iscomplexobj(p.left)
+        or np.iscomplexobj(p.right)
+        or np.iscomplexobj(p.weights[name])
+        for p in pairs
+    )
+    owner = term.owner
+    face = owner is not None
+    count = len(model.mesh.tetrahedra) if owner is None else len(owner)
+    out = np.zeros((count, 3, 3), dtype=complex if is_complex else float)
+    if not pairs:
+        return out
+    if face:
+        p0 = ngs.SurfaceL2(built.mesh, order=0, complex=is_complex)
+        order = built.triangle_order
+    else:
+        p0 = ngs.L2(built.mesh, order=0, complex=is_complex)
+        order = built.tetrahedron_order
+    space = ngs.FESpace([p0] * len(_SYMMETRIC))
+    tests = space.TestFunction()
+    form = ngs.LinearForm(space)
+    for pair in pairs:
+        if face:
+            measure = quadrature.ds(pair.order, definedon=term.region)
+        else:
+            measure = quadrature.dx(pair.order, definedon=pair.domain)
+        m = _pair_integrand(moment, pair)
+        parts = [
+            (m[i, j] if i == j else 0.5 * (m[i, j] + m[j, i])) * q
+            for (i, j), q in zip(_SYMMETRIC, tests, strict=True)
+        ]
+        form += pair.weights[name] * sum(parts[1:], parts[0]) * measure
+    form.Assemble()
+    values = form.vec.FV().NumPy().reshape(len(_SYMMETRIC), -1)
+    for c, (i, j) in enumerate(_SYMMETRIC):
+        out[order, i, j] = values[c]
+        out[order, j, i] = values[c]
     return out * built.scale**length_power
 
 
@@ -624,7 +716,8 @@ def sensitivity(
 
     Returns:
         Per wanted material kind, one value per tetrahedron of the region
-        (mesh order): the real cotangent, or for a complex dependence the
+        (mesh order), or ``(n, 3)`` (one per principal axis) for a field
+        with `axes`: the real cotangent, or for a complex dependence the
         complex one (``sum ct * dy/dp`` when holomorphic, see
         `Derivative`). Per sheet fill, one complex value per face of
         the surface (``mesh.elements(surface)`` order), ``sum ct * dy/dfill``.
@@ -656,13 +749,20 @@ def sensitivity(
     return out
 
 
+def _per_axis(model: Model, kind: tuple) -> bool:
+    """Whether material ``kind`` is a leaf of principal values (field `axes`)."""
+    material = model.materials.get(kind[1])
+    return isinstance(material, MaterialField) and material.per_axis(kind[2])
+
+
 def _material_sensitivity(
     model: Model, pairs: list[FieldPair], wants: set[Hashable], terms: Sequence[Term]
 ) -> dict[Hashable, np.ndarray]:
     """The material part of `sensitivity`: each property's terms, in their order."""
+    axis_kinds = {k for k in wants if _per_axis(model, k)}  # ty: ignore[invalid-argument-type]
     integrals: dict[tuple[str, int], np.ndarray] = {}
     per_property: dict[str, np.ndarray] = {}
-    for prop in sorted({k[2] for k in wants}):  # ty: ignore[not-subscriptable]
+    for prop in sorted({k[2] for k in wants - axis_kinds}):  # ty: ignore[not-subscriptable]
         total: np.ndarray = np.zeros(len(model.mesh.tetrahedra))
         for term in terms:
             derivative = term.derivatives.get(prop)
@@ -678,7 +778,65 @@ def _material_sensitivity(
                     part = derivative.chain() * part
             total = total + part
         per_property[prop] = np.asarray(total)
+    per_axis = _per_axis_sensitivity(
+        model,
+        pairs,
+        {k[2] for k in axis_kinds},  # ty: ignore[not-subscriptable]
+        terms,
+    )
     return {
-        kind: per_property[kind[2]][model.mesh.elements(kind[1])]  # ty: ignore[not-subscriptable]
+        kind: (per_axis if kind in axis_kinds else per_property)[kind[2]][  # ty: ignore[not-subscriptable]
+            model.mesh.elements(kind[1])  # ty: ignore[not-subscriptable]
+        ]
         for kind in wants
     }
+
+
+def _per_axis_sensitivity(
+    model: Model, pairs: list[FieldPair], props: set[str], terms: Sequence[Term]
+) -> dict[str, np.ndarray]:
+    """Each property's cotangent per tetrahedron and principal axis, ``(n, 3)``.
+
+    From the terms' `Derivative.per_axis` forms and the moment pass, on the
+    axes of each tetrahedron's field (`element_axes`).
+
+    Raises:
+        NotImplementedError: A term reads a wanted property but has no
+            per-axis derivative (a rule bug: its forward refuses fields
+            with axes).
+    """
+    if not props:
+        return {}
+    axes = element_axes(model)
+    moments: dict[tuple[str, int], np.ndarray] = {}
+    out: dict[str, np.ndarray] = {}
+    for prop in sorted(props):
+        total: np.ndarray = np.zeros((len(model.mesh.tetrahedra), 3))
+        for term in terms:
+            derivative = term.derivatives.get(prop)
+            if derivative is None:
+                continue
+            axis = derivative.per_axis
+            if axis is None:  # pragma: no cover - rule bug
+                msg = f"The term {term.name!r} has no per-axis derivative of {prop}."
+                raise NotImplementedError(msg)
+            key = (term.name, term.length_power + axis.length_power)
+            if key not in moments:
+                moments[key] = _moment_pass(model, pairs, term, key[1])
+            moment = moments[key]
+            if term.owner is None:
+                # s_k a_k^T M a_k per tetrahedron and axis
+                along = np.einsum("eki,eij,ekj->ek", axes, moment, axes)
+                part = axis.evaluated() * along
+            else:
+                per_face = np.einsum("fkij,fij->fk", axis.evaluated(), moment)
+                part = np.zeros((len(model.mesh.tetrahedra), 3), per_face.dtype)
+                on = term.owner >= 0
+                np.add.at(part, term.owner[on], per_face[on])
+            if not axis.holomorphic:
+                part = np.real(part)
+                if axis.chain is not None:
+                    part = axis.chain() * part
+            total = total + part
+        out[prop] = np.asarray(total)
+    return out
