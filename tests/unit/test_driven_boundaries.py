@@ -387,7 +387,10 @@ def test_isotropic_faces_keep_the_scalar_admittance(slab):
     assert (on & ~behind_a).any()
     assert (tensor[behind_a] == math.sqrt(4.0 / 2.0) * np.eye(3)).all()
     crystal = np.diag([math.sqrt(2.0 / 1.0), math.sqrt(3.6 / 1.5), 0.0])
-    np.testing.assert_allclose(tensor[on & ~behind_a], crystal[None], atol=1e-14)
+    behind_b = tensor[on & ~behind_a]
+    np.testing.assert_allclose(
+        behind_b, np.broadcast_to(crystal, behind_b.shape), atol=1e-14
+    )
 
 
 @pytest.mark.parametrize(
