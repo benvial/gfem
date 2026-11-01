@@ -350,15 +350,16 @@ def test_per_axis_substrate_permittivity_differentiates_the_metal_substrate_laye
     eps_zz = float(values @ z2)
     p = float(f(values))
     isotropic = float(f(jnp.full(3, EPS)))
-    np.testing.assert_allclose(p, isotropic * (eps_zz / EPS) ** 2, rtol=1e-12)
+    np.testing.assert_allclose(p, isotropic * (eps_zz / EPS) ** 2, rtol=1e-14)
     g = np.asarray(jax.grad(f)(values))
-    np.testing.assert_allclose(g, 2 * p * z2 / eps_zz, rtol=1e-8)
+    # measured on MN5: analytic 1.1e-16, central differences 1.6e-11
+    np.testing.assert_allclose(g, 2 * p * z2 / eps_zz, rtol=1e-13)
     h = 1e-4
     fd = [
         (float(f(values.at[k].add(h))) - float(f(values.at[k].add(-h)))) / (2 * h)
         for k in range(3)
     ]
-    np.testing.assert_allclose(g, fd, rtol=1e-6)
+    np.testing.assert_allclose(g, fd, rtol=5e-11)
 
 
 def test_through_the_eigenmode_solve_the_gradient_raises(tmp_path):

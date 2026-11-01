@@ -223,8 +223,9 @@ def test_a_lossy_anisotropic_band_absorbs_its_tensor_loss(plate_mesh):
     loss = np.einsum("ek,ki,kj->eij", principal[band], a, a)
     absorbed = _band_loss(e, plate_mesh, band, loss)
     assert absorbed > 0.01
-    assert before - after == pytest.approx(absorbed, rel=1e-9)
-    assert before - after == pytest.approx(1 - s11 - s21, rel=1e-9)
+    # measured on MN5: 7.0e-13 and 1.2e-10
+    assert before - after == pytest.approx(absorbed, rel=3e-12)
+    assert before - after == pytest.approx(1 - s11 - s21, rel=4e-10)
 
 
 def test_power_flow_names_what_it_needs(step):

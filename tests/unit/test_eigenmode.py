@@ -227,8 +227,9 @@ def test_principal_participation_gives_a_per_axis_loss_exactly(mesh):
         np.testing.assert_allclose(
             p.sum(axis=1), result.bulk_participation["dielectric"], rtol=1e-12
         )
-        np.testing.assert_allclose(p[0] @ per_axis, inverse_q, rtol=1e-2)
-    # the rule of one loss tangent, with their mean, is far off
+        # measured on MN5: 3.2e-6 (well inside O(1/Q) = 3e-3)
+        np.testing.assert_allclose(p[0] @ per_axis, inverse_q, rtol=1e-5)
+    # the rule of one loss tangent, with their mean, is far off (36 % on MN5)
     mean = float(lossy.bulk_participation["dielectric"][0]) * tan_delta.mean()
     assert abs(mean / inverse_q - 1) > 0.2
 
@@ -255,7 +256,9 @@ def test_principal_participation_covers_the_anisotropic_regions_only(tmp_path):
     np.testing.assert_allclose(
         p.sum(axis=1), result.bulk_participation["high"], rtol=1e-12
     )
-    np.testing.assert_allclose(p, [[0.0, 0.175, 0.525]] * 2, rtol=1e-5, atol=1e-6)
+    # measured on MN5: 3.6e-4 relative, 5.2e-6 along x (the discrete field's
+    # small E_x / E_y part)
+    np.testing.assert_allclose(p, [[0.0, 0.175, 0.525]] * 2, rtol=1e-3, atol=2e-5)
     pytest.importorskip("xarray")
     ds = result.to_xarray()
     da = ds["principal_participation"]
