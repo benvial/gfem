@@ -227,3 +227,37 @@ jobs:
       run: |
         py=.venv-gate/bin/python; [ -x "$py" ] || py=.venv-gate/Scripts/python.exe
         "$py" -I tools/licence_gate.py --wheel dist/*.whl
+
+  wheel-smoke:
+    # The built wheel solves: electrostatic with its gradient, driven and
+    # eigenmode against closed forms (tools/wheel_smoke.py), from a fresh
+    # venv with no lockfile. Not -I: the script imports its helper
+    # structured_meshes from tools/.
+    name: wheel smoke (${{ matrix.os }}, py${{ matrix.python }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.12", "3.14"]
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/download-artifact@v4
+      with:
+        name: dist
+        path: dist/
+    - uses: astral-sh/setup-uv@v6
+      with:
+        version: ${{ env.UV_VERSION }}
+    - name: Install the built wheel into a fresh venv
+      run: |
+        uv venv .venv-smoke --python "${{ matrix.python }}"
+        uv pip install --python .venv-smoke dist/*.whl
+    - name: Smoke solve
+      run: |
+        py=.venv-smoke/bin/python; [ -x "$py" ] || py=.venv-smoke/Scripts/python.exe
+        "$py" -E -s tools/wheel_smoke.py
