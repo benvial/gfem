@@ -149,6 +149,37 @@ def test_a_mode_crossing_warns_and_follows_the_physical_mode(slab_mesh):
     assert abs(n_eff[-1] - np.asarray(top.n_eff).real[0]) > 1e-3
 
 
+def test_two_requested_modes_of_a_shared_surface_cross_cleanly(slab_mesh):
+    # mode 4 crosses mode 5 near 18 GHz (rank order at 16 GHz)
+    model = slab(slab_mesh).replace(
+        ports=[
+            gfem.WavePort("p1_m4", "port1", mode=4),
+            gfem.WavePort("p1_m5", "port1", mode=5),
+        ]
+    )
+    grid = np.linspace(16e9, 40e9, 60)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        m4 = gfem.solve(model, gfem.PortMode("p1_m4", grid))
+    texts = [str(w.message) for w in caught]
+    assert all(w.category is gfem.PortModeTrackingWarning for w in caught)
+    # each port whose rank changes warns
+    assert any("WavePort 'p1_m4': the tracked mode 4 is mode 5" in t for t in texts)
+    assert any("WavePort 'p1_m5': the tracked mode 5 is mode 4" in t for t in texts)
+    with pytest.warns(gfem.PortModeTrackingWarning):
+        m5 = gfem.solve(model, gfem.PortMode("p1_m5", grid))
+    n4, n5 = np.asarray(m4.n_eff).real, np.asarray(m5.n_eff).real
+    # each continuous along its physical branch: measured 0.035 and 0.071
+    # (mode 5 rises steeply just above its cutoff)
+    assert np.abs(np.diff(n4)).max() < 0.05
+    assert np.abs(np.diff(n5)).max() < 0.1
+    # mode 4 is the branch a lone sweep follows (measured 1.2e-13)
+    lone = gfem.solve(slab(slab_mesh), gfem.PortMode("p1", grid, mode=4))
+    np.testing.assert_allclose(n4, np.asarray(lone.n_eff).real, rtol=0, atol=1e-11)
+    # distinct at every frequency, closest at the crossing: measured 3.9e-4
+    assert np.abs(n4 - n5).min() > 1e-4
+
+
 def test_no_tracking_warning_without_a_crossing(slab_mesh):
     with warnings.catch_warnings():
         warnings.simplefilter("error", gfem.PortModeTrackingWarning)

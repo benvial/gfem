@@ -340,6 +340,7 @@ def test_port_mode_on_a_shared_surface_is_the_driven_problems_mode(
     result = gfem.solve(hybrid_shared, gfem.PortMode(port, HYBRID_F), options=options)
     driven = hybrid_driven.port_modes[port]
     assert result.mode == driven.mode
+    # measured 4.6e-15
     np.testing.assert_allclose(result.gamma, driven.gamma, rtol=1e-12)
     np.testing.assert_array_equal(result.solved, driven.solved)
     coords = result.e_field._coords
