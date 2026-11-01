@@ -193,7 +193,7 @@ def test_at_most_one_electromagnetic_condition_per_surface(mesh):
         )
 
 
-def test_several_wave_ports_share_a_surface_one_mode_each(mesh):
+def test_several_wave_ports_form_a_shared_port_surface_one_mode_each(mesh):
     ports = (
         gfem.WavePort("in_TE0", "air__None", mode=1),
         gfem.LumpedPort("p", "air__sub", "+z"),
@@ -203,7 +203,7 @@ def test_several_wave_ports_share_a_surface_one_mode_each(mesh):
     assert model.port_names == ("in_TE0", "p", "in_TM0")
 
 
-def test_wave_ports_on_one_surface_request_different_modes(mesh):
+def test_wave_ports_of_a_shared_surface_request_different_modes(mesh):
     with pytest.raises(ValueError) as info:
         gfem.Model(
             mesh,
@@ -219,7 +219,7 @@ def test_wave_ports_on_one_surface_request_different_modes(mesh):
     )
 
 
-def test_wave_ports_on_one_surface_need_the_same_pec_edges(mesh):
+def test_wave_ports_of_a_shared_surface_need_the_same_pec_edges(mesh):
     with pytest.raises(ValueError) as info:
         gfem.Model(
             mesh,
@@ -244,7 +244,7 @@ def test_wave_ports_on_one_surface_need_the_same_pec_edges(mesh):
     )
 
 
-def test_a_wave_port_shares_its_surface_only_with_wave_ports(mesh):
+def test_a_shared_surface_holds_only_wave_ports(mesh):
     with pytest.raises(ValueError, match=r"more than one electromagnetic.*Keep one"):
         gfem.Model(
             mesh,
