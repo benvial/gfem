@@ -167,7 +167,9 @@ def wave_port_couplings(
             continue
         section = port_section(model, port)
         modes = PortModeSpace(section, order)
-        sweep = port_mode_sweep(modes, frequency, port.mode, tolerance=tolerance)
+        [sweep] = port_mode_sweep(
+            modes, frequency, [port.mode], tolerance=tolerance, ports=[port]
+        )
         idx3, idx2 = trace_dofs(model, section, modes, built, space)
         free = free_mask(space.FreeDofs(), space.ndof)
         idx3, idx2 = idx3[free[idx3]], idx2[free[idx3]]

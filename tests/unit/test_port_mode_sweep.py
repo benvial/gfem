@@ -16,7 +16,7 @@ import pytest
 import gfem
 from gfem._engine.port_mode import PortModeSpace
 from gfem._port_section import port_section
-from gfem._sweep.port_mode import port_mode_sweep
+from gfem._sweep.port_mode import _Candidates, _Greedy, port_mode_sweep
 
 DATA = Path(__file__).parent / "data"
 C0 = 299792458.0
@@ -174,7 +174,7 @@ def test_a_degenerate_mode_raises_port_mode_error():
 def test_the_sweep_field_is_affine_in_its_coordinates_at_one_watt(slab_mesh):
     model = slab(slab_mesh, tan_delta=0.02, voltage_path=((4e-3, 0, 0), (4e-3, B, 0)))
     space = PortModeSpace(port_section(model, model.ports[0]), 2)
-    sweep = port_mode_sweep(space, GRID, 1, tolerance=1e-6)
+    [sweep] = port_mode_sweep(space, GRID, [1], tolerance=1e-6, ports=[model.ports[0]])
     m = sweep.basis.shape[1]
     assert sweep.basis.shape == (space.space.ndof, m)
     assert sweep.coords.shape == (len(GRID), m)
@@ -186,3 +186,70 @@ def test_the_sweep_field_is_affine_in_its_coordinates_at_one_watt(slab_mesh):
         assert abs(abs(power) - 1.0) < 1e-10
     assert (sweep.voltage.real > 0).all()
     np.testing.assert_allclose(sweep.z_pv, np.abs(sweep.voltage) ** 2 / 2)
+
+
+# --- several modes of one port surface -------------------------------------------
+
+# mode 4 of the slab guide propagates from 16 GHz (the crossing test above)
+JOINT = np.linspace(16e9, 20e9, 8)
+
+
+def shared_ports():
+    return [
+        gfem.WavePort("in_TE0", "port1", mode=1),
+        gfem.WavePort("in_TM0", "port1", mode=2),
+    ]
+
+
+@pytest.fixture(scope="module")
+def joint(slab_mesh):
+    """Two requested modes, kept at the lowest frequency's exact solve."""
+    model = slab(slab_mesh)
+    space = PortModeSpace(port_section(model, model.ports[0]), 2)
+    greedy = _Greedy(space, JOINT, [1, 2], 1e-6, shared_ports())
+    first = greedy._solve(0)
+    greedy._keep(0, first, [0, 1])
+    return greedy, first
+
+
+def test_a_reduced_tie_of_two_modes_gives_both_an_infinite_backward_error(joint):
+    greedy, _ = joint
+    k0, k_max = greedy.k0[1], greedy.k_max[1]
+    apart = [greedy.coords_at(0, 0), greedy.coords_at(0, 1)]
+    assert all(
+        math.isfinite(eta) for _, _, eta in greedy.reduced.solve(k0, k_max, apart)
+    )
+    tied = [greedy.coords_at(0, 0)] * 2
+    assert all(math.isinf(eta) for _, _, eta in greedy.reduced.solve(k0, k_max, tied))
+
+
+def test_an_exact_tie_of_two_modes_raises_naming_both_ports_and_the_surface(joint):
+    greedy, first = joint
+    # one candidate left: both requested modes can only follow it
+    one = _Candidates(
+        lam=first.lam[:1], vecs=first.vecs[:, :1], residual=first.residual[:1]
+    )
+    with pytest.raises(
+        gfem.PortModeError,
+        match=r"WavePorts 'in_TE0' and 'in_TM0' on surface 'port1' follow the same "
+        r"mode at 16\.5714 GHz \(an unresolved crossing between two requested modes\)",
+    ):
+        greedy._closest(1, one, 0, certain=True)
+    # against an uncertain reference the tie is accepted provisionally
+    assert greedy._closest(1, one, 0, certain=False) == [0, 0]
+
+
+def test_a_joint_sweep_of_one_surface_shares_its_solves_and_basis(slab_mesh):
+    model = slab(slab_mesh)
+    space = PortModeSpace(port_section(model, model.ports[0]), 2)
+    te, tm = port_mode_sweep(space, JOINT, [1, 2], tolerance=1e-6, ports=shared_ports())
+    assert te.basis is tm.basis
+    np.testing.assert_array_equal(te.solved, tm.solved)
+    assert max(te.residual.max(), tm.residual.max()) <= 1e-6
+    # each mode is the one a lone exact solve gives at every exact sample
+    for mode, sweep in ((1, te), (2, tm)):
+        for i in np.flatnonzero(sweep.solved):
+            lone = exact(model, JOINT[i], mode=mode)
+            np.testing.assert_allclose(
+                sweep.gamma[i], np.asarray(lone.gamma)[0], rtol=1e-9
+            )

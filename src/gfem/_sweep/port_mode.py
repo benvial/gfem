@@ -22,11 +22,14 @@ model instead of one exact solve per frequency:
 
 Across frequencies the mode is **tracked** by its overlap (L2 inner product)
 with the neighbouring tabulated mode, never by ranking, which follows the
-physical mode through crossings and ignores spurious Ritz values. Each mode
-is normalized to 1 W. Its phase is fixed at the lowest frequency by a
-quadrant integral of its tangential magnetic field and is continuous after
-it (the overlap with the previous frequency's mode is real and positive);
-with a voltage path, ``Re V > 0`` at every frequency.
+physical mode through crossings and ignores spurious Ritz values. Several
+modes of one port surface share the sweep: every exact solve and the reduced
+basis serve all of them, the guard passes a frequency when every mode passes,
+and two modes never follow the same candidate. Each mode is normalized to
+1 W. Its phase is fixed at the lowest frequency by a quadrant integral of its
+tangential magnetic field and is continuous after it (the overlap with the
+previous frequency's mode is real and positive); with a voltage path,
+``Re V > 0`` at every frequency.
 """
 
 from __future__ import annotations
@@ -223,11 +226,12 @@ class PortModeRule:
         section = port_section(model, self.port)
         with task_manager(self.options.threads):
             space = PortModeSpace(section, self.options.order)
-            sweep = port_mode_sweep(
+            [sweep] = port_mode_sweep(
                 space,
                 self.problem.frequency,
-                self.mode,
+                [self.mode],
                 tolerance=self.options.port_mode_tolerance,
+                ports=[self.port],
             )
         outputs = {
             "gamma": sweep.gamma,
@@ -295,46 +299,64 @@ def _wave_port(model: Model, name: str) -> WavePort:
 def port_mode_sweep(
     space: PortModeSpace,
     frequency: tuple[float, ...] | np.ndarray,
-    mode: int,
+    modes: list[int],
     *,
     tolerance: float,
-) -> PortModeSweep:
-    """The guarded port mode sweep of one wave port (see the module docstring).
+    ports: list[WavePort],
+) -> list[PortModeSweep]:
+    """The guarded port mode sweep of one port surface (see the module docstring).
+
+    Every exact solve serves all requested modes, and the reduced model
+    shares one basis; each mode is tracked by its own overlap, and two modes
+    never follow the same candidate. One mode is today's single-port sweep.
 
     Args:
-        space: The port's discrete port mode problem.
+        space: The surface's discrete port mode problem.
         frequency: The output grid, Hz (any order).
-        mode: Which mode at the lowest frequency, in rank order.
+        modes: Which modes at the lowest frequency, in rank order (distinct).
         tolerance: Backward error a reduced mode must reach.
+        ports: The wave port of each mode (its name for messages, its
+            voltage path).
+
+    Returns:
+        One `PortModeSweep` per mode, sharing ``space``, ``basis`` and
+        ``solved``.
 
     Raises:
-        PortModeError: The mode is below cutoff somewhere in the band, or is
-            degenerate, or two candidates cannot be told apart.
+        PortModeError: A mode is below cutoff somewhere in the band, or is
+            degenerate, or two candidates cannot be told apart, or two modes
+            follow the same candidate.
 
     Warns:
-        PortModeTrackingWarning: The tracked mode stops being the ``mode``-th
+        PortModeTrackingWarning: A tracked mode stops being its ``mode``-th
             in rank order inside the band (a crossing).
     """
     f_given = np.asarray(frequency, float)
     section = space.section
-    rule = _voltage_rule(section) if section.port.voltage_path is not None else None
+    rules = [
+        None if p.voltage_path is None else _voltage_rule(section, p.voltage_path)
+        for p in ports
+    ]
     order = np.argsort(f_given, kind="stable")
-    sweep = _Greedy(space, f_given[order], mode, tolerance)
+    sweep = _Greedy(space, f_given[order], modes, tolerance, ports)
     sweep.run()
-    basis, coords, gamma, voltage = sweep.normalized(rule)
+    basis, coords, gamma, voltage = sweep.normalized(rules)
     out = np.empty_like(order)
     out[order] = np.arange(len(order))
-    return PortModeSweep(
-        space=space,
-        frequency=f_given,
-        gamma=gamma[out],
-        residual=sweep.residual[out],
-        solved=sweep.solved[out],
-        floor=sweep.floor[out],
-        basis=basis,
-        coords=coords[out],
-        voltage=voltage[out],
-    )
+    return [
+        PortModeSweep(
+            space=space,
+            frequency=f_given,
+            gamma=gamma[k, out],
+            residual=sweep.residual[k, out],
+            solved=sweep.solved[out],
+            floor=sweep.floor[k, out],
+            basis=basis,
+            coords=coords[k, out],
+            voltage=voltage[k, out],
+        )
+        for k in range(len(modes))
+    ]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -349,50 +371,56 @@ class _Candidates:
 class _Greedy:
     """State of one port mode sweep over a sorted grid.
 
-    Tracking is certified link by link: a frequency's mode is trusted only
-    when chosen by overlap with an accurate mode at the previous grid
+    Tracking is certified link by link: a frequency's modes are trusted only
+    when chosen by overlap with accurate modes at the previous grid
     frequency. An exact solve whose reference was further away (the top of
     the band at the start, or a frequency after a failing stretch) is
     re-checked once its neighbour below passes, and re-selected if another
-    of its candidates continues the mode better.
+    of its candidates continues a mode better.
+
+    Per mode ``k`` (row of ``lam``, ``residual``, ``floor``; entry of
+    ``coords`` and of each ``pick``); ``solved`` is shared by the modes.
     """
 
     def __init__(
-        self, space: PortModeSpace, f: np.ndarray, mode: int, tolerance: float
+        self,
+        space: PortModeSpace,
+        f: np.ndarray,
+        modes: list[int],
+        tolerance: float,
+        ports: list[WavePort],
     ) -> None:
         self.space = space
         self.f = f
-        self.mode = mode
+        self.modes = list(modes)
+        self.ports = list(ports)
         self.tolerance = tolerance
-        n = len(f)
+        n, n_modes = len(f), len(self.modes)
         self.k0 = np.empty(n)
         self.k_max = np.empty(n)
         self.shift = np.empty(n)
         for i, fi in enumerate(f):
             self.k0[i], self.k_max[i], self.shift[i] = _wavenumbers(space.section, fi)
         self.reduced = _Reduced(space)
-        self.lam = np.zeros(n, complex)
-        self.coords: list[np.ndarray] = [np.zeros(0)] * n
-        self.residual = np.full(n, np.inf)
+        self.lam = np.zeros((n_modes, n), complex)
+        self.coords: list[list[np.ndarray]] = [[np.zeros(0)] * n for _ in self.modes]
+        self.residual = np.full((n_modes, n), np.inf)
         self.solved = np.zeros(n, bool)
-        self.floor = np.full(n, tolerance)
-        # exact solves: candidates and the position (in Palace's order) kept
+        self.floor = np.full((n_modes, n), tolerance)
+        # exact solves: candidates and the positions (in Palace's order) kept
         self.candidates: dict[int, _Candidates] = {}
-        self.pick: dict[int, int] = {}
-
-    @property
-    def name(self) -> str:
-        return self.space.section.port.name
+        self.pick: dict[int, list[int]] = {}
 
     # --- driver ---------------------------------------------------------------
 
     def run(self) -> None:
         n = len(self.f)
         first = self._solve(0)
-        if len(first.lam) < self.mode:
+        if len(first.lam) < max(self.modes):
             raise self._cutoff_error(first)
-        self._check_degenerate(first)
-        self._keep(0, first, self.mode - 1)
+        for k in range(len(self.modes)):
+            self._check_degenerate(first, k)
+        self._keep(0, first, [mode - 1 for mode in self.modes])
         if n <= _EXACT_ONLY:
             for j in range(1, n):
                 self._exact(j, j - 1, certain=True)
@@ -404,25 +432,29 @@ class _Greedy:
                 self._rebuild()
                 continue
             if passed.all():
-                self._warn_crossing()
+                for k in range(len(self.modes)):
+                    self._warn_crossing(k)
                 return
-            excess = self.residual / self.floor
+            # the worst mode at each frequency decides where to enrich
+            excess = (self.residual / self.floor).max(axis=0)
             j = int(np.argmax(np.where(passed, -np.inf, excess)))
             if passed[j - 1]:
                 self._exact(j, j - 1, certain=True)
             else:
                 good = np.flatnonzero(passed)
                 self._exact(j, int(good[np.argmin(np.abs(good - j))]), certain=False)
+        names = " and ".join(repr(p.name) for p in self.ports)
+        modes = " and ".join(str(mode) for mode in self.modes)
         raise PortModeError(  # pragma: no cover - a safeguard
-            f"WavePort {self.name!r}: the port mode sweep could not settle which "
-            f"mode continues mode {self.mode} over {self._band()}. Narrow the band "
+            f"WavePort {names}: the port mode sweep could not settle which "
+            f"mode continues mode {modes} over {self._band()}. Narrow the band "
             "or use a LumpedPort."
         )
 
     # --- exact solves -----------------------------------------------------------
 
     def _solve(self, j: int) -> _Candidates:
-        space, mode = self.space, self.mode
+        space, mode = self.space, max(self.modes)
         a, b = space.pencil.at(self.k0[j])
         n = a.shape[0]
         first = max(6, 2 * mode + 4)
@@ -445,49 +477,72 @@ class _Greedy:
                 break
         return _Candidates(lam=lam[ranked], vecs=vecs[:, ranked], residual=res[ranked])
 
-    def _keep(self, j: int, cand: _Candidates, pos: int) -> None:
-        """Make candidate ``pos`` of the exact solve at ``j`` the mode there."""
+    def _keep(self, j: int, cand: _Candidates, picks: list[int]) -> None:
+        """Make candidate ``picks[k]`` of the exact solve at ``j`` mode ``k`` there."""
         new = j not in self.candidates
         self.candidates[j] = cand
-        self.pick[j] = pos
+        self.pick[j] = list(picks)
         self.solved[j] = True
-        self.lam[j] = cand.lam[pos]
-        self.residual[j] = cand.residual[pos]
+        self.lam[:, j] = cand.lam[picks]
+        self.residual[:, j] = cand.residual[picks]
         if new:
-            self.reduced.add(cand.vecs[:, pos])
+            self.reduced.add(cand.vecs[:, picks])
 
     def _exact(self, j: int, ref: int, *, certain: bool) -> None:
-        """Exact solve at ``j``, keeping the candidate closest to mode ``ref``.
+        """Exact solve at ``j``, keeping the candidates closest to the modes at ``ref``.
 
         Args:
             j: Grid index.
-            ref: Grid index of the reference mode.
-            certain: The reference is an accurate mode at the grid neighbour,
+            ref: Grid index of the reference modes.
+            certain: The reference is accurate modes at the grid neighbour,
                 so an ambiguous choice is an error.
         """
         cand = self._solve(j)
-        if len(cand.lam) == 0:
-            raise self._evanescent_error(j)
+        if len(cand.lam) < len(self.modes):
+            # too few candidates for distinct modes: the highest-ranked
+            # requested mode is the one that stopped propagating
+            raise self._evanescent_error(j, int(np.argmax(self.modes)))
         self._keep(j, cand, self._closest(j, cand, ref, certain=certain))
 
-    def _closest(self, j: int, cand: _Candidates, ref: int, *, certain: bool) -> int:
-        x_ref = self.reduced.lift(self.coords_at(ref))
-        overlap = _overlaps(self.space.mass, x_ref, cand.vecs)
-        best = np.argsort(-overlap, kind="stable")
-        if (
-            certain
-            and len(best) > 1
-            and overlap[best[1]] > overlap[best[0]] - _AMBIGUOUS
-        ):
-            raise PortModeError(
-                f"WavePort {self.name!r}: two modes overlap the tracked mode "
-                f"{self.mode} almost equally at {self.f[j] / 1e9:.6g} GHz (overlaps "
-                f"{overlap[best[0]]:.3f} and {overlap[best[1]]:.3f}): a degenerate "
-                "pair or an unresolved crossing. Break the cross-section's symmetry, "
-                "or make the unwanted mode non-propagating (for example with "
-                "WavePort(pec_edges=...))."
-            )
-        return int(best[0])
+    def _closest(
+        self, j: int, cand: _Candidates, ref: int, *, certain: bool
+    ) -> list[int]:
+        """Each mode's candidate at ``j``: the closest to that mode at ``ref``.
+
+        With an uncertain reference two modes may provisionally share a
+        candidate; the certain re-check in `_tabulate` raises if they still do.
+        """
+        picks = []
+        for k, mode in enumerate(self.modes):
+            x_ref = self.reduced.lift(self.coords_at(ref, k))
+            overlap = _overlaps(self.space.mass, x_ref, cand.vecs)
+            best = np.argsort(-overlap, kind="stable")
+            if (
+                certain
+                and len(best) > 1
+                and overlap[best[1]] > overlap[best[0]] - _AMBIGUOUS
+            ):
+                raise PortModeError(
+                    f"{self._who(k)}: two modes overlap the tracked mode "
+                    f"{mode} almost equally at {self.f[j] / 1e9:.6g} GHz (overlaps "
+                    f"{overlap[best[0]]:.3f} and {overlap[best[1]]:.3f}): a degenerate "
+                    "pair or an unresolved crossing. Break the cross-section's "
+                    "symmetry, or make the unwanted mode non-propagating (for "
+                    "example with WavePort(pec_edges=...))."
+                )
+            picks.append(int(best[0]))
+        if certain:
+            for k, other in itertools.combinations(range(len(picks)), 2):
+                if picks[k] == picks[other]:
+                    raise PortModeError(
+                        f"WavePorts {self.ports[k].name!r} and "
+                        f"{self.ports[other].name!r} on surface "
+                        f"{self.ports[k].surface!r} follow the same mode at "
+                        f"{self.f[j] / 1e9:.6g} GHz (an unresolved crossing between "
+                        "two requested modes). Narrow the band or break the "
+                        "cross-section's symmetry."
+                    )
+        return picks
 
     def _rebuild(self) -> None:
         """A fresh basis from the exact modes kept now."""
@@ -495,12 +550,13 @@ class _Greedy:
         for j in sorted(self.candidates):
             self.reduced.add(self.candidates[j].vecs[:, self.pick[j]])
 
-    def _warn_crossing(self) -> None:
+    def _warn_crossing(self, k: int) -> None:
+        mode = self.modes[k]
         for j in sorted(self.pick):
-            if self.pick[j] != self.mode - 1:
+            if self.pick[j][k] != mode - 1:
                 warnings.warn(
-                    f"WavePort {self.name!r}: the tracked mode {self.mode} is mode "
-                    f"{self.pick[j] + 1} in rank order at "
+                    f"WavePort {self.ports[k].name!r}: the tracked mode {mode} is "
+                    f"mode {self.pick[j][k] + 1} in rank order at "
                     f"{self.f[j] / 1e9:.6g} GHz (a mode crossing inside the band). "
                     "gfem keeps following the physical mode; a solver that ranks "
                     "modes at each frequency would switch modes there, so its "
@@ -510,11 +566,11 @@ class _Greedy:
                 )
                 return
 
-    def coords_at(self, j: int) -> np.ndarray:
-        """Reduced coordinates of the tabulated mode at ``j`` (current basis)."""
+    def coords_at(self, j: int, k: int) -> np.ndarray:
+        """Reduced coordinates of mode ``k`` tabulated at ``j`` (current basis)."""
         if self.solved[j]:
-            return self.reduced.project(self.candidates[j].vecs[:, self.pick[j]])
-        y = self.coords[j]
+            return self.reduced.project(self.candidates[j].vecs[:, self.pick[j][k]])
+        y = self.coords[k][j]
         return np.concatenate([y, np.zeros(self.reduced.size - len(y))])
 
     # --- reduced solves -----------------------------------------------------------
@@ -522,44 +578,57 @@ class _Greedy:
     def _tabulate(self) -> np.ndarray | None:
         """Walk up the grid, filling unsolved frequencies from the reduced model.
 
-        Each frequency tracks the mode at the previous one.
+        Each frequency tracks the modes at the previous one; it passes when
+        every mode passes.
 
         Returns:
             Which frequencies pass the guard, or ``None`` when an exact sample
             was re-selected (the basis must be rebuilt).
         """
-        n = len(self.f)
+        n, n_modes = len(self.f), len(self.modes)
         solved = np.flatnonzero(self.solved)
         passed = np.zeros(n, bool)
         for i in range(n):
             nearest = solved[np.argmin(np.abs(self.f[solved] - self.f[i]))]
-            self.floor[i] = max(self.tolerance, _FLOOR * self.residual[nearest])
+            self.floor[:, i] = np.maximum(
+                self.tolerance, _FLOOR * self.residual[:, nearest]
+            )
             if self.solved[i]:
                 if i > 0 and passed[i - 1]:
                     cand = self.candidates[i]
-                    pos = self._closest(i, cand, i - 1, certain=True)
-                    if pos != self.pick[i]:
-                        self._keep(i, cand, pos)
+                    picks = self._closest(i, cand, i - 1, certain=True)
+                    if picks != self.pick[i]:
+                        self._keep(i, cand, picks)
                         return None
-                self.coords[i] = self.coords_at(i)
+                for k in range(n_modes):
+                    self.coords[k][i] = self.coords_at(i, k)
             else:
-                lam, y, eta = self.reduced.solve(
-                    self.k0[i], self.k_max[i], self.coords_at(i - 1)
-                )
-                self.lam[i], self.coords[i], self.residual[i] = lam, y, eta
-            passed[i] = self.residual[i] <= self.floor[i]
+                refs = [self.coords_at(i - 1, k) for k in range(n_modes)]
+                pairs = self.reduced.solve(self.k0[i], self.k_max[i], refs)
+                for k, (lam, y, eta) in enumerate(pairs):
+                    self.lam[k, i], self.coords[k][i], self.residual[k, i] = lam, y, eta
+            passed[i] = (self.residual[:, i] <= self.floor[:, i]).all()
         beta = np.sqrt(-self.lam + 0j).real
         gone = passed & ~self.solved & (beta <= _EVANESCENT * self.k_max)
         if gone.any():
-            raise self._evanescent_error(int(np.flatnonzero(gone)[0]))
+            i = int(np.flatnonzero(gone.any(axis=0))[0])
+            raise self._evanescent_error(i, int(np.flatnonzero(gone[:, i])[0]))
         return passed
 
     # --- normalization ----------------------------------------------------------
 
     def normalized(
-        self, rule: tuple[np.ndarray, np.ndarray] | None
+        self, rules: list[tuple[np.ndarray, np.ndarray] | None]
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """The fixed basis, 1 W coordinates, gamma (1/m) and voltages."""
+        """The fixed basis, then per mode 1 W coordinates, gamma (1/m) and voltages.
+
+        Args:
+            rules: Each mode's voltage path rule, or ``None`` without a path.
+
+        Returns:
+            ``basis (ndof, 2m)``, ``coords (n_modes, n_f, 2m)``, ``gamma
+            (n_modes, n_f)`` and ``voltage (n_modes, n_f)``.
+        """
         space, red = self.space, self.reduced
         m = red.size
         tangential = space.free < space.n_t
@@ -573,40 +642,44 @@ class _Greedy:
         ln, lt = ln @ w, lt @ w
         basis = np.zeros((space.space.ndof, 2 * m))
         basis[space.free] = w
-        volts = None if rule is None else _voltage_functional(space, basis, rule)
 
-        n = len(self.f)
-        coords = np.zeros((n, 2 * m), complex)
-        voltage = np.full(n, complex(math.nan, math.nan))
+        n, n_modes = len(self.f), len(self.modes)
+        coords = np.zeros((n_modes, n, 2 * m), complex)
+        voltage = np.full((n_modes, n), complex(math.nan, math.nan))
         gamma = 1j * np.sqrt(-self.lam + 0j)
-        for i in range(n):
-            y = self.coords_at(i)
-            z = np.concatenate([y / gamma[i], y])
-            omega = 2 * math.pi * self.f[i]
-            power = (
-                0.5
-                * space.section.scale
-                * 1j
-                / (omega * scipy.constants.mu_0)
-                * (z @ g_red @ z.conj() + gamma[i].conjugate() * (z @ t_red @ z.conj()))
-            )
-            z /= math.sqrt(abs(power))
-            if i == 0:
-                g = -1j * (ln @ z + gamma[i] * (lt @ z))
-                c = w @ z
-                if abs(g) > 1e-12 * np.abs(c).max():
-                    z *= abs(g) / g
+        for k, rule in enumerate(rules):
+            volts = None if rule is None else _voltage_functional(space, basis, rule)
+            for i in range(n):
+                y = self.coords_at(i, k)
+                z = np.concatenate([y / gamma[k, i], y])
+                omega = 2 * math.pi * self.f[i]
+                power = (
+                    0.5
+                    * space.section.scale
+                    * 1j
+                    / (omega * scipy.constants.mu_0)
+                    * (
+                        z @ g_red @ z.conj()
+                        + gamma[k, i].conjugate() * (z @ t_red @ z.conj())
+                    )
+                )
+                z /= math.sqrt(abs(power))
+                if i == 0:
+                    g = -1j * (ln @ z + gamma[k, i] * (lt @ z))
+                    c = w @ z
+                    if abs(g) > 1e-12 * np.abs(c).max():
+                        z *= abs(g) / g
+                    else:
+                        e = largest_entry(c)
+                        z *= abs(c[e]) / c[e]
                 else:
-                    k = largest_entry(c)
-                    z *= abs(c[k]) / c[k]
-            else:
-                o = coords[i - 1].conj() @ mass @ z
-                z *= abs(o) / o
-            if volts is not None:
-                voltage[i] = volts @ z
-                if voltage[i].real < 0:
-                    z, voltage[i] = -z, -voltage[i]
-            coords[i] = z
+                    o = coords[k, i - 1].conj() @ mass @ z
+                    z *= abs(o) / o
+                if volts is not None:
+                    voltage[k, i] = volts @ z
+                    if voltage[k, i].real < 0:
+                        z, voltage[k, i] = -z, -voltage[k, i]
+                coords[k, i] = z
         return basis, coords, gamma / space.section.scale, voltage
 
     # --- errors -------------------------------------------------------------------
@@ -614,16 +687,38 @@ class _Greedy:
     def _band(self) -> str:
         return f"{self.f[0] / 1e9:.6g}-{self.f[-1] / 1e9:.6g} GHz"
 
-    def _cutoff_error(self, first: _Candidates) -> PortModeError:
-        """The mode is evanescent at the lowest frequency: locate its cutoff."""
-        n, mode = len(self.f), self.mode
-        remedy = (
-            "Start the band above the cutoff, pick a lower mode, or use a LumpedPort."
+    def _who(self, k: int) -> str:
+        """Mode ``k``'s wave port, with its surface when that is shared."""
+        port = self.ports[k]
+        others = [p.name for p in self.ports if p is not port]
+        if not others:
+            return f"WavePort {port.name!r}"
+        shared = ", ".join(repr(name) for name in others)
+        return (
+            f"WavePort {port.name!r} on surface {port.surface!r} (shared with {shared})"
         )
+
+    def _remedy(self, first: str) -> str:
+        """``first``, then the LumpedPort remedy (and dropping a shared port)."""
+        if len(self.ports) == 1:
+            return f"{first}, or use a LumpedPort."
+        return f"{first}, use a LumpedPort, or drop that wave port."
+
+    def _cutoff_error(self, first: _Candidates) -> PortModeError:
+        """A mode is evanescent at the lowest frequency: locate its cutoff.
+
+        The lowest-ranked failing mode is the one reported.
+        """
+        k = min(
+            (k for k, mode in enumerate(self.modes) if mode > len(first.lam)),
+            key=lambda k: self.modes[k],
+        )
+        n, mode, who = len(self.f), self.modes[k], self._who(k)
+        remedy = self._remedy("Start the band above the cutoff, pick a lower mode")
         top = self._solve(n - 1) if n > 1 else first
         if n == 1 or len(top.lam) < mode:
             return PortModeError(
-                f"WavePort {self.name!r}: mode {mode} does not propagate in the band "
+                f"{who}: mode {mode} does not propagate in the band "
                 f"{self._band()} (the cross-section carries {len(first.lam)} "
                 f"propagating mode(s) at {self.f[0] / 1e9:.6g} GHz and "
                 f"{len(top.lam)} at {self.f[-1] / 1e9:.6g} GHz): the band is below "
@@ -637,22 +732,24 @@ class _Greedy:
                 hi, cand = mid, c
             else:
                 lo = mid
-        cutoff = self._cutoff_estimate(hi, cand, top)
+        cutoff = self._cutoff_estimate(hi, cand, top, mode)
         return PortModeError(
-            f"WavePort {self.name!r}: mode {mode} has its cutoff inside the band "
+            f"{who}: mode {mode} has its cutoff inside the band "
             f"{self._band()}, at about {cutoff / 1e9:.4g} GHz (it is evanescent at "
             f"{self.f[lo] / 1e9:.6g} GHz and propagates at {self.f[hi] / 1e9:.6g} "
             f"GHz). {remedy}"
         )
 
-    def _cutoff_estimate(self, hi: int, cand: _Candidates, top: _Candidates) -> float:
+    def _cutoff_estimate(
+        self, hi: int, cand: _Candidates, top: _Candidates, mode: int
+    ) -> float:
         """Cutoff frequency from ``beta^2`` linear in ``k0^2`` (bracketed)."""
         f_lo, f_hi = self.f[hi - 1], self.f[hi]
         n = len(self.f)
         if hi == n - 1:
             return 0.5 * (f_lo + f_hi)
-        b1 = -cand.lam[self.mode - 1].real
-        b2 = -top.lam[self.mode - 1].real
+        b1 = -cand.lam[mode - 1].real
+        b2 = -top.lam[mode - 1].real
         k1, k2 = self.k0[hi] ** 2, self.k0[n - 1] ** 2
         slope = (b2 - b1) / (k2 - k1)
         if slope <= 0:
@@ -661,27 +758,40 @@ class _Greedy:
         fc = math.sqrt(kc2) / self.k0[hi] * self.f[hi]
         return min(max(fc, f_lo), f_hi)
 
-    def _evanescent_error(self, j: int) -> PortModeError:
+    def _evanescent_error(self, j: int, k: int) -> PortModeError:
+        remedy = self._remedy("Restrict the band to where the mode propagates")
         return PortModeError(
-            f"WavePort {self.name!r}: the tracked mode {self.mode} stops propagating "
+            f"{self._who(k)}: the tracked mode {self.modes[k]} stops propagating "
             f"at {self.f[j] / 1e9:.6g} GHz inside the band {self._band()} (a cutoff "
-            "in the band). Restrict the band to where the mode propagates, or use a "
-            "LumpedPort."
+            f"in the band). {remedy}"
         )
 
-    def _check_degenerate(self, first: _Candidates) -> None:
+    def _check_degenerate(self, first: _Candidates, k: int) -> None:
+        """Mode ``k`` against every candidate at the lowest frequency."""
         beta = np.sqrt(-first.lam + 0j)
-        k = self.mode - 1
-        close = np.abs(beta - beta[k]) <= _DEGENERATE * abs(beta[k])
-        close[k] = False
-        if close.any():
+        pos = self.modes[k] - 1
+        close = np.abs(beta - beta[pos]) <= _DEGENERATE * abs(beta[pos])
+        close[pos] = False
+        if not close.any():
+            return
+        partners = [i for i, mode in enumerate(self.modes) if close[mode - 1]]
+        if partners:
+            port, other = self.ports[k], self.ports[partners[0]]
             raise PortModeError(
-                f"WavePort {self.name!r}: mode {self.mode} is degenerate at "
-                f"{self.f[0] / 1e9:.6g} GHz (another mode has the same propagation "
-                "constant), so the port's field is not defined. Break the "
-                "cross-section's symmetry (for example with the mesh or a "
-                "WavePort(pec_edges=...) wall)."
+                f"WavePorts {port.name!r} and {other.name!r} on surface "
+                f"{port.surface!r} request modes {self.modes[k]} and "
+                f"{self.modes[partners[0]]}, which are degenerate at "
+                f"{self.f[0] / 1e9:.6g} GHz (the same propagation constant), so the "
+                "ports' fields are not defined. Break the cross-section's symmetry "
+                "(for example with the mesh or a WavePort(pec_edges=...) wall)."
             )
+        raise PortModeError(
+            f"{self._who(k)}: mode {self.modes[k]} is degenerate at "
+            f"{self.f[0] / 1e9:.6g} GHz (another mode has the same propagation "
+            "constant), so the port's field is not defined. Break the "
+            "cross-section's symmetry (for example with the mesh or a "
+            "WavePort(pec_edges=...) wall)."
+        )
 
 
 class _Reduced:
@@ -701,16 +811,20 @@ class _Reduced:
     def size(self) -> int:
         return self.v.shape[1]
 
-    def add(self, x: np.ndarray) -> None:
-        """Add the real and imaginary parts of ``x`` (Gram-Schmidt twice)."""
-        scale = np.linalg.norm(x)
-        for part in (x.real, x.imag):
-            w = part.copy()
-            for _ in range(2):
-                w -= self.v @ (self.v.T @ w)
-            norm = np.linalg.norm(w)
-            if norm > _NEW_DIRECTION * scale:
-                self.v = np.column_stack([self.v, w / norm])
+    def add(self, xs: np.ndarray) -> None:
+        """Add the real and imaginary parts of each column of ``xs``, in order.
+
+        Gram-Schmidt twice per part.
+        """
+        for x in xs.T:
+            scale = np.linalg.norm(x)
+            for part in (x.real, x.imag):
+                w = part.copy()
+                for _ in range(2):
+                    w -= self.v @ (self.v.T @ w)
+                norm = np.linalg.norm(w)
+                if norm > _NEW_DIRECTION * scale:
+                    self.v = np.column_stack([self.v, w / norm])
         products = [m @ self.v for _, _, m in self._pieces]
         self._r = np.linalg.qr(np.concatenate(products, axis=1), mode="r")
         self._red = [self.v.T @ p for p in products]
@@ -723,12 +837,12 @@ class _Reduced:
         return self.v @ y
 
     def solve(
-        self, k0: float, k_max: float, ref: np.ndarray
-    ) -> tuple[complex, np.ndarray, float]:
-        """The reduced pair that tracks ``ref`` and its backward error.
+        self, k0: float, k_max: float, refs: list[np.ndarray]
+    ) -> list[tuple[complex, np.ndarray, float]]:
+        """The reduced pair that tracks each of ``refs``, and its backward error.
 
-        The backward error is infinite when no pair qualifies or two overlap
-        ``ref`` almost equally.
+        A backward error is infinite when no pair qualifies, two overlap its
+        reference almost equally, or two references pick the same pair.
         """
         theta = self.space.pencil.theta(k0)
         n = self.size
@@ -743,21 +857,26 @@ class _Reduced:
         beta = np.sqrt(-lam + 0j)
         ok = np.isfinite(lam) & (beta.real <= k_max * (1 + 1e-6))
         if not ok.any():
-            return complex(math.nan), np.zeros(n), math.inf
+            return [(complex(math.nan), np.zeros(n), math.inf) for _ in refs]
         idx = np.flatnonzero(ok)
         y = vecs[:, idx]
-        num = np.abs(ref.conj() @ self._mass @ y)
-        den = np.sqrt(
-            (ref.conj() @ self._mass @ ref).real
-            * np.einsum("ik,ij,jk->k", y.conj(), self._mass, y).real
-        )
-        overlap = num / den
-        best = np.argsort(-overlap, kind="stable")
-        i = int(best[0])
-        lam_i, y_i = complex(lam[idx[i]]), y[:, i]
-        if len(best) > 1 and overlap[best[1]] > overlap[i] - _AMBIGUOUS:
-            return lam_i, y_i, math.inf
-        return lam_i, y_i, self._backward_error(theta, lam_i, y_i)
+        norms = np.einsum("ik,ij,jk->k", y.conj(), self._mass, y).real
+        picks, clear = [], []
+        for ref in refs:
+            num = np.abs(ref.conj() @ self._mass @ y)
+            overlap = num / np.sqrt((ref.conj() @ self._mass @ ref).real * norms)
+            best = np.argsort(-overlap, kind="stable")
+            i = int(best[0])
+            picks.append(i)
+            clear.append(len(best) == 1 or overlap[best[1]] <= overlap[i] - _AMBIGUOUS)
+        out = []
+        for i, ok_i in zip(picks, clear, strict=True):
+            lam_i, y_i = complex(lam[idx[i]]), y[:, i]
+            if ok_i and picks.count(i) == 1:
+                out.append((lam_i, y_i, self._backward_error(theta, lam_i, y_i)))
+            else:  # ambiguous, or two modes on one pair
+                out.append((lam_i, y_i, math.inf))
+        return out
 
     def _backward_error(
         self, theta: tuple[complex, ...], lam: complex, y: np.ndarray
