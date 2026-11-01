@@ -265,11 +265,18 @@ def _edge_port_c1(directory):
     cell = sm.periodic_cell(edges, sheets=(("sheet2", pc.C1_X2),), surface=surface)
     path = sm.write_msh22(directory / "edge.msh", cell)
     mesh = gfem.Mesh.from_gmsh(path, length_unit="mm")
-    return pc.c1(mesh).replace(
+    return gfem.Model(
+        mesh,
+        materials={"cell": gfem.Material(eps_r=pc.C1_EPS, tan_delta=pc.C1_TAN_DELTA)},
+        boundaries=[
+            gfem.Periodic(("x_min", "x_max")),
+            gfem.PEC("z_min"),
+            gfem.PEC("z_max"),
+        ],
         ports=[
             gfem.LumpedPort("p1", "edge_port", "+z", impedance=50.0),
             gfem.LumpedPort("p2", "sheet2", "+z", impedance=50.0),
-        ]
+        ],
     )
 
 
