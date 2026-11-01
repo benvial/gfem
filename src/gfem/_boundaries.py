@@ -91,6 +91,11 @@ class Absorbing:
     solver using it differs from gfem at order 2 (they agree at order 1 and
     on adequately sized boxes).
 
+    Next to an anisotropic material, order 1 uses the normal-incidence
+    admittance tensor of that material for the face normal (i k0 ∮ (Y E_t)
+    · v_t, exact for a plane wave at normal incidence; real parts of ε and
+    μ, as for isotropic faces). Order 2 raises `NotImplementedError` there.
+
     Attributes:
         surface: The surface region's name.
         order: 1 or 2.

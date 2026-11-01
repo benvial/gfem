@@ -13,7 +13,9 @@ with k0 = ω scale / c, the wavenumber per file unit, and the pieces
   for a per-axis `Material`);
 - ``conductivity``, θ = i k0: ∫ eta0 sigma scale E · v;
 - ``absorbing``, θ = i k0: ∫ sqrt(eps_r / mu_r) E_t · v_t on every
-  absorbing surface (real parts of the adjacent element's values);
+  absorbing surface (real parts of the adjacent element's values); next to
+  an anisotropic material, ∫ (Y E_t) · v_t with the face's normal-incidence
+  admittance tensor Y (`gfem._engine.anisotropy`, ADR 0051);
 - ``absorbing order 2``, θ = 1 / (2 i k0): ∫ mu_r^-1 (eps_r mu_r)^-1/2
   (n · curl E)(n · curl v) on second-order absorbing surfaces (the
   textbook sign, see `gfem.Absorbing`);
@@ -62,17 +64,20 @@ import numpy as np
 import scipy.constants as const
 
 from gfem._boundaries import Absorbing, Conductor, Impedance, LumpedPort
-from gfem._engine import quadrature
+from gfem._engine import anisotropy, quadrature
 from gfem._engine.coefficients import (
+    anisotropic_elements,
     coefficient,
     element_tensors,
     element_values,
     lossy_eps,
+    surface_coefficient,
     surface_p0,
 )
 from gfem._engine.domain import boundary_region
 from gfem._engine.mesh import EngineMesh
 from gfem._engine.sensitivity import Derivative
+from gfem._morph import unit_normals
 from gfem._sheet import check_fill
 from gfem.conventions import EXTERIOR_THICKNESS_FACTOR
 from gfem.errors import PortGeometryError
@@ -84,7 +89,10 @@ __all__ = [
     "LumpedPortData",
     "Piece",
     "Tabulated",
+    "absorbing_coefficients",
     "absorbing_faces",
+    "absorbing_shape_unsupported",
+    "check_absorbing",
     "excitation_per_voltage",
     "face_owner",
     "lumped_ports",
@@ -480,10 +488,11 @@ def pieces(
 
     absorbing = [b for b in model.boundaries if isinstance(b, Absorbing)]
     if absorbing:
+        check_absorbing(model)
         surfaces, owner = absorbing_faces(model, order=1)
-        admittance, curl = _absorbing_coefficients(model, eps, owner)
+        admittance, curl = absorbing_coefficients(model, surfaces, owner)
         form = _tangential(built, surfaces, order, tris)
-        y_cf = surface_p0(built, admittance)
+        y_cf = surface_coefficient(built, admittance)
         out.append(
             Piece(
                 "absorbing",
@@ -529,25 +538,95 @@ def pieces(
     return out
 
 
-def _absorbing_coefficients(
-    model: Model, eps: np.ndarray, owner: np.ndarray
+def absorbing_coefficients(
+    model: Model, surfaces: tuple[str, ...], owner: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
     """Per-triangle coefficients of the absorbing terms.
 
     `_absorbing` of the real parts of the solve-domain element behind each
-    triangle (``owner``; tensors through their mean diagonal).
+    triangle (``owner``). A face of ``surfaces`` with an anisotropic element
+    behind it (`anisotropic_elements`) takes the admittance tensor
+    `anisotropy.admittance` instead: the first coefficient is then ``(n,
+    3, 3)``, holding ``sqrt(e / m)`` times the identity on the other faces.
+
+    Raises:
+        ValueError: The admittance of an anisotropic face is undefined.
     """
-    mu = element_tensors(model, "mu_r")
-    if eps.ndim == 3:
-        eps = np.trace(eps, axis1=1, axis2=2) / 3
-    if mu.ndim == 3:
-        mu = np.trace(mu, axis1=1, axis2=2) / 3
-    eps, mu = np.real(eps), np.real(mu)
-    values = np.stack([_absorbing(eps, mu, 1), _absorbing(eps, mu, 2)], axis=1)
+    e = np.real(element_values(model, "eps_r") * _loss(model))
+    m = np.real(element_values(model, "mu_r"))
+    values = np.stack([_absorbing(e, m, 1), _absorbing(e, m, 2)], axis=1)
     out = np.zeros((len(owner), 2))
     ok = owner >= 0
     out[ok] = values[owner[ok]]
-    return out[:, 0], out[:, 1]
+    first, curl = out[:, 0], out[:, 1]
+    mesh = model.mesh
+    tensor = ok & anisotropic_elements(model)[np.maximum(owner, 0)]
+    tensor &= np.isin(mesh.triangle_tags, [mesh.region(s).tag for s in surfaces])
+    if not tensor.any():
+        return first, curl
+    eps = _tensors(np.real(lossy_eps(model)))
+    mu = _tensors(np.real(element_tensors(model, "mu_r")))
+    normals = unit_normals(np.asarray(mesh.nodes, float), mesh.triangles)
+    y = first[:, None, None] * np.eye(3)
+    for surface in surfaces:
+        on = tensor & (mesh.triangle_tags == mesh.region(surface).tag)
+        if on.any():
+            y[on] = anisotropy.admittance(
+                eps[owner[on]],
+                mu[owner[on]],
+                normals[on],
+                where=f"Absorbing {surface!r}",
+            )
+    return y, curl
+
+
+def _tensors(values: np.ndarray) -> np.ndarray:
+    """Per-element values as ``(n, 3, 3)`` tensors."""
+    return values[:, None, None] * np.eye(3) if values.ndim == 1 else values
+
+
+def _anisotropic_faces(model: Model, surface: str) -> bool:
+    """Whether an anisotropic element is behind a face of ``surface``."""
+    mesh = model.mesh
+    owner = face_owner(model)[mesh.triangle_tags == mesh.region(surface).tag]
+    return bool(anisotropic_elements(model)[owner[owner >= 0]].any())
+
+
+def check_absorbing(model: Model) -> None:
+    """Raise for an absorbing boundary this version cannot apply.
+
+    Structural: it reads which materials are anisotropic, never values.
+
+    Raises:
+        NotImplementedError: A second-order `Absorbing` surface has an
+            anisotropic element behind a face (`anisotropic_elements`).
+    """
+    for b in model.boundaries:
+        second = isinstance(b, Absorbing) and b.order == 2
+        if second and _anisotropic_faces(model, b.surface):
+            raise NotImplementedError(
+                f"Absorbing {b.surface!r}: order 2 needs an isotropic material "
+                "behind the surface; an anisotropic eps_r / mu_r touches it. "
+                "Use order=1, or put an isotropic layer between the material "
+                "and the boundary."
+            )
+
+
+def absorbing_shape_unsupported(model: Model) -> str | None:
+    """Why shape gradients of ``model`` are unavailable here, or None.
+
+    The node pass transports a scalar absorbing coefficient only: an
+    `Absorbing` surface with an anisotropic element behind a face (a tensor
+    admittance) has no shape derivative in this version.
+    """
+    for b in model.boundaries:
+        if isinstance(b, Absorbing) and _anisotropic_faces(model, b.surface):
+            return (
+                f"the Absorbing surface {b.surface!r} has an anisotropic material "
+                "behind it, and the shape derivative of its tensor admittance is "
+                "not available in this version"
+            )
+    return None
 
 
 # The absorbing coefficients of the real e and m of the adjacent material,

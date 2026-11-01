@@ -177,6 +177,8 @@ class EigenmodeRule:
         self._mesh = model.mesh
         self._materials = dict(model.materials)
         self._excluded = model._domain.excluded  # noqa: SLF001
+        #: Why the node coordinates cannot be differentiated, or None.
+        self.nodes_unsupported = terms.absorbing_shape_unsupported(model)
 
     # --- forward -----------------------------------------------------------------
 
@@ -536,6 +538,14 @@ class EigenmodeRule:
             return "read" if kind[2] in self.reads else "unread"
         return "read"
 
+    def unsupported_input(self, kind: tuple) -> str | None:
+        """Why a read input cannot be differentiated here, or ``None``.
+
+        The node coordinates, next to a tensor absorbing admittance
+        (`terms.absorbing_shape_unsupported`).
+        """
+        return self.nodes_unsupported if kind == ("nodes",) else None
+
     def nondifferentiable_output(self, name: str) -> str:
         """The error message for a cotangent on output ``name``."""
         return (
@@ -808,3 +818,4 @@ def _check_supported(model: Model) -> None:
                 f"{port.name!r}, ..., impedance=<line impedance>), or find the "
                 "resonance and Q from a gfem.Driven sweep."
             )
+    terms.check_absorbing(model)

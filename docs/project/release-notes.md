@@ -1,5 +1,20 @@
 # Release notes
 
+## Unreleased
+
+- **Behaviour change: absorbing boundaries next to anisotropic materials.**
+  - A first-order `Absorbing` surface touching an anisotropic material now
+    uses that material's normal-incidence admittance for each face. It
+    replaced the mean of the tensor diagonals, which reflected up to about
+    13 % at normal incidence next to a uniaxial dielectric (ADR 0051).
+  - S, fields and Q of such models change; faces next to isotropic materials
+    are bit for bit unchanged.
+  - A second-order surface touching an anisotropic material now raises
+    `NotImplementedError`.
+  - Node-coordinate gradients of a model whose absorbing face has an
+    anisotropic material behind it now raise `NonDifferentiableError`; 0.1.0
+    differentiated the approximate coefficient.
+
 ## 0.1.0 (2026-11-01)
 
 First release: driven problems (uniform and adaptive sweeps), eigenmode problems
