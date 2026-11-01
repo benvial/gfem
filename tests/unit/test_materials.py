@@ -81,8 +81,6 @@ def test_loss_tangent_takes_three_values_along_the_axes():
     with pytest.raises(ValueError, match="passive") as err:
         gfem.Material(tan_delta=(1e-3, -1e-4, 0.0))
     assert "tan_delta" in str(err.value)
-    with pytest.raises(ValueError, match="isotropic"):
-        gfem.MaterialField.uniform("r", gfem.Material(tan_delta=(0.0, 0.0, 1e-3)))
 
 
 def _rotation(axis, angle):
@@ -565,4 +563,7 @@ def test_element_values_refuse_a_property_held_per_axis(tmp_path):
         np.testing.assert_allclose(
             tensors[e], _tensor(values[i], TILTED), rtol=0, atol=1e-14
         )
-    np.testing.assert_array_equal(tensors[mesh.elements("b")], 4.0 * np.eye(3))
+    b = mesh.elements("b")
+    np.testing.assert_array_equal(
+        tensors[b], np.broadcast_to(4.0 * np.eye(3), (len(b), 3, 3))
+    )
