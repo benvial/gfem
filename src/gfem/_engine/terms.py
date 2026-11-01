@@ -922,7 +922,7 @@ def wave_port_coefficients(model: Model, surface: str) -> np.ndarray:
     out = values[:, None, None] * np.eye(3)
     normals = unit_normals(np.asarray(mesh.nodes, float), mesh.triangles)
     out[tensor] = anisotropy.tangential_inverse_permeability(
-        mu[owner[tensor]], normals[tensor]
+        _tensors(mu)[owner[tensor]], normals[tensor]
     )
     return out
 

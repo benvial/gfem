@@ -11,8 +11,9 @@ guide is still uniform.
 
 The port's Robin term and its modal coupling must read the port's
 inverse-permeability tensor ``A = N mu^-1 N^T``: with the rotated
-permeability in the coupling instead, the mu = (1, 2, 1.5) guide reflects
-about 0.33 (ADR 0054).
+permeability in the coupling instead (ADR 0054), the mu = (1, 2, 1.5) guide
+reflected |S11| = 0.50, and 0.24 with that fill turned about the guide
+axis (measured on MN5).
 """
 
 import anisotropy

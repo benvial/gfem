@@ -531,7 +531,10 @@ def test_the_port_imposes_its_modes_n_cross_h(turned_wr28):
     form += coupling.piece.integrand(u, v)
     form.Assemble()
     rows, cols, vals = form.mat.COO()
-    robin = sp.csr_matrix((np.array(vals), (np.array(rows), np.array(cols))))
+    robin = sp.csr_matrix(
+        (np.array(vals), (np.array(rows), np.array(cols))),
+        shape=(space.ndof, space.ndof),
+    )
     omega = 2 * math.pi * F_WR28
     vectors = coupling.vectors
     w = vectors @ (coupling.correction_coefficients(omega) @ (vectors.T @ e))
@@ -548,3 +551,13 @@ def test_an_isotropic_port_keeps_a_scalar_robin_coefficient(wr28_mesh):
     assert coef.ndim == 1
     assert (coef[on] == 0.5).all()
     assert (coef[~on] == 0).all()
+
+
+def test_an_anisotropic_permittivity_at_a_port_takes_the_tensor_path(wr28_mesh):
+    # structural: an anisotropic Material behind the face, whatever its mu_r
+    model = _wr28(wr28_mesh, gfem.Material(eps_r=(2.0, 4.0, 3.0), mu_r=2.0))
+    coef = terms.wave_port_coefficients(model, "port1")
+    on = wr28_mesh.triangle_tags == wr28_mesh.region("port1").tag
+    assert coef.shape == (len(on), 3, 3)
+    expected = np.broadcast_to(np.diag([0.5, 0.5, 0.0]), coef[on].shape)
+    np.testing.assert_allclose(coef[on], expected, rtol=0, atol=1e-15)
