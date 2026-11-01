@@ -286,6 +286,31 @@ def test_a_far_seed_refined_onto_a_farther_root_still_gives_its_own_mode(
     np.testing.assert_allclose(result.omega, roots[:3], rtol=3e-4)
 
 
+def test_a_pair_with_its_weight_on_the_fixed_dofs_is_not_converged(mesh, monkeypatch):
+    # on CI, root 3's seed refined on mode 2's shift ended with 1e-8 of its
+    # norm on the free DOFs: measured on the whole vector, its backward
+    # error passed the tolerance at 22.62-0.13j GHz, off any root
+    rule = eigen_rule.EigenmodeRule
+    select, refined = rule._select, []
+
+    def refine_a_stray_pair(self, op, *args, **kwargs):
+        rng = np.random.default_rng(0)
+        free = rng.standard_normal(len(op.free)) + 1j * rng.standard_normal(
+            len(op.free)
+        )
+        free = np.where(op.free, free, 0)
+        stray = np.where(op.free, 1e-12 * free / np.linalg.norm(free), 1.0)
+        k = op.rayleigh(stray, op.shift)
+        refined.append(
+            eigen_rule.refine(op, k, stray, tolerance=1e-10, max_iterations=0)
+        )
+        return select(self, op, *args, **kwargs)
+
+    monkeypatch.setattr(rule, "_select", refine_a_stray_pair)
+    gfem.solve(terminated_line(mesh, 1000.0), gfem.Eigenmode(target=8e9))
+    assert not refined[0].converged
+
+
 def _count_shift_prepares(monkeypatch) -> list[int]:
     """Spy on the eigen operator's `prepare`: one entry per ``T(k)`` handle."""
     calls = []
