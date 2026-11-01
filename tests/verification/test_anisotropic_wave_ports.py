@@ -56,17 +56,23 @@ def _solve(mesh, material, frequency):
 
 def test_a_guide_with_anisotropic_permeability_transmits_its_te10_mode(mesh):
     s, gamma = _solve(mesh, gfem.Material(eps_r=EPS, mu_r=MU), F_MU)
-    np.testing.assert_allclose(gamma.imag, BETA_MU, rtol=1e-4)
-    assert abs(s[0, 0]) <= 1e-2
-    assert abs(s[1, 1]) <= 1e-2
-    assert abs(np.angle(s[1, 0] * np.exp(1j * BETA_MU * LENGTH * 1e-3))) <= 1e-2
-    assert abs(s[0, 1] - s[1, 0]) <= 1e-8  # reciprocal
+    # measured on MN5: gamma 2.4e-9, |S11| = |S22| = 2.6e-8, phase 2.7e-6 rad,
+    # reciprocity 2.0e-15; the rotated mu_tt^-1 in the coupling gave |S11| 0.50
+    np.testing.assert_allclose(gamma.imag, BETA_MU, rtol=7e-9)
+    assert abs(s[0, 0]) <= 8e-8
+    assert abs(s[1, 1]) <= 8e-8
+    assert abs(np.angle(s[1, 0] * np.exp(1j * BETA_MU * LENGTH * 1e-3))) <= 8e-6
+    assert abs(s[0, 1] - s[1, 0]) <= 1e-14  # reciprocal
 
 
 def test_a_guide_with_per_axis_conductivity_attenuates_along_its_field(mesh):
     material = gfem.Material(eps_r=EPS, conductivity=SIGMA)
     s, _ = _solve(mesh, material, F_SIGMA)
-    assert abs(s[1, 0] - np.exp(-GAMMA_SIGMA * LENGTH * 1e-3)) <= 1e-3
+    # measured on MN5: 4.9e-5 and |S11| = 5.5e-3. The Robin term reads beta
+    # only (Palace's form, attenuation dropped), so the lossy port reflects
+    # about alpha / (2 beta) = 3.9e-3; the ceiling of the verification plan
+    # stays.
+    assert abs(s[1, 0] - np.exp(-GAMMA_SIGMA * LENGTH * 1e-3)) <= 1.5e-4
     assert abs(s[0, 0]) <= 1e-2
 
 
@@ -79,6 +85,8 @@ def test_a_fill_turned_about_the_guide_axis_does_not_reflect(mesh, values, frequ
     # Palace issue #835 (eps only) reflected |S11| ~ 2.5 here
     material = gfem.Material(**values, axes=anisotropy.turned(2, 30.0))
     s, gamma = _solve(mesh, material, frequency)
-    assert abs(gamma.real) <= 1e-8 * abs(gamma)  # a propagating mode
-    assert abs(s[0, 0]) <= 1e-2
-    assert abs(s[1, 0]) >= 0.99
+    # measured on MN5 (eps, eps_mu): |Re gamma| / |gamma| 2.0e-18, 1.7e-21;
+    # |S11| 6.5e-8, 5.2e-7; 1 - |S21| 4.2e-8, 2.6e-8
+    assert abs(gamma.real) <= 6e-18 * abs(gamma)  # a propagating mode
+    assert abs(s[0, 0]) <= 1.5e-6
+    assert abs(s[1, 0]) >= 1 - 1.5e-7

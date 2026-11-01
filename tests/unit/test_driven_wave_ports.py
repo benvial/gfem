@@ -493,14 +493,15 @@ def test_the_modal_coupling_carries_the_modes_power(turned_wr28):
     omega = 2 * math.pi * F_WR28
     projection = coupling.scale * abs(e_t @ np.conj(h)) / (omega * scipy.constants.mu_0)
     power = modes.power(sweep.basis @ c, gamma, omega)
-    np.testing.assert_allclose(projection, 2 * abs(power), rtol=1e-10)
+    # measured 0 (round-off); the rotated mu_tt^-1 gave 1.386 for 2
+    np.testing.assert_allclose(projection, 2 * abs(power), rtol=1e-14)
 
 
 def test_the_port_reaction_is_symmetric(turned_wr28):
     _, _, coupling = turned_wr28
     m = coupling.reaction.shape[1]
     r = coupling.reaction[:m]
-    assert np.abs(r - r.T).max() <= 1e-10 * np.abs(r).max()
+    assert np.abs(r - r.T).max() <= 1e-14 * np.abs(r).max()  # measured 0
 
 
 def test_the_robin_coefficient_is_the_port_sections_inverse_permeability(
@@ -512,6 +513,7 @@ def test_the_robin_coefficient_is_the_port_sections_inverse_permeability(
     p = section.frame[:2]
     lifted = p.T @ section.nu_tt @ p
     assert coef.shape == (len(model.mesh.triangles), 3, 3)
+    # measured 0
     np.testing.assert_allclose(coef[section.faces], lifted, rtol=0, atol=1e-14)
     off = np.ones(len(coef), bool)
     off[section.faces] = False
@@ -541,7 +543,7 @@ def test_the_port_imposes_its_modes_n_cross_h(turned_wr28):
     h = vectors @ coupling.phi[0]
     residual = complex(coupling.piece.theta(omega)) * (robin @ e) + w - h
     free = free_mask(space.FreeDofs(), space.ndof)
-    assert np.abs(residual[free]).max() <= 1e-12 * np.abs(h).max()
+    assert np.abs(residual[free]).max() <= 4e-15 * np.abs(h).max()  # measured 1.3e-15
 
 
 def test_an_isotropic_port_keeps_a_scalar_robin_coefficient(wr28_mesh):
