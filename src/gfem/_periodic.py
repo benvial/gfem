@@ -98,6 +98,42 @@ def pairing(mesh: Mesh, first: str, second: str) -> Pairing:
     return cache[key]
 
 
+def pair_of_surface(mesh: Mesh, name: str) -> Pairing | None:
+    """The periodic pair a model on ``mesh``'s topology made of surface ``name``.
+
+    Read from the per-topology cache of `pairing`, so it knows the pairs of
+    every `gfem.Periodic` model built on this topology; ``None`` when no
+    pair has ``name`` as a surface.
+    """
+    for p in _PAIRINGS.get(mesh._topology, {}).values():  # noqa: SLF001
+        if name in (p.first, p.second):
+            return p
+    return None
+
+
+def tie_roots(n_nodes: int, pairings: Iterable[Pairing]) -> np.ndarray:
+    """Per node, the smallest node of its tie class.
+
+    A tie class is a set of nodes the periodic pairs identify (a corner of a
+    3-pair cell is a class of 8 nodes, a node of one surface a class of 2,
+    an unpaired node a class of its own). Keys built from the roots are the
+    same for an edge or face and its images across the pairs.
+    """
+    pairs = list(pairings)
+    root = np.arange(n_nodes)
+    if not pairs:
+        return root
+    rows = np.concatenate([p.master for p in pairs])
+    cols = np.concatenate([p.minion for p in pairs])
+    graph = scipy.sparse.coo_matrix(
+        (np.ones(len(rows)), (rows, cols)), shape=(n_nodes, n_nodes)
+    )
+    _, label = scipy.sparse.csgraph.connected_components(graph, directed=False)
+    smallest = np.full(label.max() + 1, n_nodes)
+    np.minimum.at(smallest, label, root)
+    return smallest[label]
+
+
 def _surface_triangles(mesh: Mesh, name: str) -> np.ndarray:
     return mesh.triangles[mesh.triangle_tags == mesh.region(name).tag]
 
@@ -289,33 +325,26 @@ def check_nodes(nodes: np.ndarray, pairings: Iterable[Pairing]) -> None:
 
 
 def tie_classes(n_nodes: int, pairings: Iterable[Pairing]) -> np.ndarray:
-    """The tie class of every node: the representative node it moves with.
+    """The tie class of every node, by its representative: the node it moves with.
 
-    Nodes joined by any pair's ``(master, minion)``, directly or through a
-    chain, form one class (a corner of a 3-pair cell is a class of 8, a cell
-    edge one of 4, a face node one of 2); every other node is its own class.
-    The representative is the class's lowest node that is no pair's minion,
-    which lies on the first surface of every pair it is in.
+    The classes of `tie_roots`; the representative is the class's lowest
+    node that is no pair's minion, which lies on the first surface of every
+    pair it is in (for `gfem.shape.boundary_morph`'s tied motion).
 
     Returns:
         ``(n_nodes,)`` int: the representative of each node's class (the
         node itself for an unpaired node).
     """
     pairs = list(pairings)
+    roots = tie_roots(n_nodes, pairs)
     if not pairs:
-        return np.arange(n_nodes)
-    master = np.concatenate([p.master for p in pairs])
-    minion = np.concatenate([p.minion for p in pairs])
-    graph = scipy.sparse.coo_array(
-        (np.ones(len(master)), (master, minion)), shape=(n_nodes, n_nodes)
-    )
-    n_classes, labels = scipy.sparse.csgraph.connected_components(graph, directed=False)
+        return roots
     # prefer the nodes that are no minion, then the lowest index
     key = np.arange(n_nodes)
-    key[minion] += n_nodes
-    lowest = np.full(n_classes, 2 * n_nodes)
-    np.minimum.at(lowest, labels, key)
-    return lowest[labels] % n_nodes
+    key[np.concatenate([p.minion for p in pairs])] += n_nodes
+    lowest = np.full(n_nodes, 2 * n_nodes)
+    np.minimum.at(lowest, roots, key)
+    return lowest[roots] % n_nodes
 
 
 def bloch_phases(
