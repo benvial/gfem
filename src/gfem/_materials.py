@@ -287,8 +287,11 @@ def _principal(
 class Material:
     """A linear medium, constant over the region it is assigned to.
 
-    Keyword-only. Units are SI. Under e^{+iωt} the complex permittivity is
-    ε = ε0 eps_r (1 - i tan_delta) - i conductivity / ω.
+    Keyword-only. Units are SI. Under e^{+iωt} the complex permittivity is,
+    per principal axis ``a_k`` (the rows of `axes`),
+    ε = ε0 Σ_k [eps_r[k] (1 - i tan_delta[k]) - i conductivity[k] / (ε0 ω)]
+    a_k a_kᵀ; a single value counts for all three axes. The two loss
+    models, `tan_delta` and `conductivity`, add.
 
     Attributes:
         eps_r: Relative permittivity: one value, three principal values

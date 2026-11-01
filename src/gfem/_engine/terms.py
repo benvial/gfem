@@ -11,7 +11,8 @@ with k0 = ω scale / c, the wavenumber per file unit, and the pieces
 - ``curl_curl``, θ = 1: ∫ mu_r^-1 curl E · curl v;
 - ``mass``, θ = -k0²: ∫ eps_r (1 - i tan_delta) E · v (per principal axis
   for a per-axis `Material`);
-- ``conductivity``, θ = i k0: ∫ eta0 sigma scale E · v;
+- ``conductivity``, θ = i k0: ∫ eta0 sigma scale E · v (sigma a 3x3
+  tensor along its principal axes for a per-axis `Material`);
 - ``absorbing``, θ = i k0: ∫ sqrt(eps_r / mu_r) E_t · v_t on every
   absorbing surface (real parts of the adjacent element's values);
 - ``absorbing order 2``, θ = 1 / (2 i k0): ∫ mu_r^-1 (eps_r mu_r)^-1/2
@@ -460,16 +461,19 @@ def pieces(
             },
         ),
     ]
-    sigma = np.where(active, element_values(model, "conductivity").real, 0.0)
+    # a per-axis Material gives its 3x3 tensor; its own i k0 piece, not
+    # folded into the mass (the eigen operator splits the pieces by power of k)
+    sigma = element_tensors(model, "conductivity").real
+    sigma = np.where(active.reshape((-1,) + (1,) * (sigma.ndim - 1)), sigma, 0.0)
     if sigma.any():
-        # eta0 sigma scale (real sigma); its derivative eta0 leaves out the
-        # length scale
+        # eta0 sigma scale (real symmetric sigma); its derivative eta0 leaves
+        # out the length scale
         sigma_cf = coefficient(built, ETA0 * scale * sigma)
         out.append(
             Piece(
                 "conductivity",
                 lambda w: 1j * k(w),
-                lambda u, v: sigma_cf * u * v * dx,
+                lambda u, v: (sigma_cf * u) * v * dx,
                 kind="value",
                 coefficient=sigma_cf,
                 derivatives={

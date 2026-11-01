@@ -22,7 +22,8 @@ is the electrical engineering convention (Touchstone, scikit-rf, SPICE write
 
 - a wave travelling along ``+s`` is ``exp(-gamma s)``, with
   ``gamma = alpha + i beta`` and attenuation ``alpha >= 0``;
-- a lossy permittivity is ``ε_r (1 - i tan δ)`` (negative imaginary part);
+- a lossy permittivity is ``ε_r (1 - i tan δ) - i sigma / (ε0 ω)``, per
+  principal axis for an anisotropic material (negative imaginary part);
 - an inductor's impedance is ``+iωL``, a capacitor's ``1 / (iωC)``;
 - a decaying eigenmode has ``Im ω > 0``.
 
