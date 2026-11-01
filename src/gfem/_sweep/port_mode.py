@@ -334,7 +334,9 @@ def port_mode_sweep(
     f_given = np.asarray(frequency, float)
     section = space.section
     rules = [
-        None if p.voltage_path is None else _voltage_rule(section, p.voltage_path)
+        None
+        if p.voltage_path is None
+        else _voltage_rule(section, np.asarray(p.voltage_path, float))
         for p in ports
     ]
     order = np.argsort(f_given, kind="stable")
