@@ -224,16 +224,18 @@ class PortModeSpace:
     def coupling_forms(self) -> tuple[sp.csr_matrix, sp.csr_matrix]:
         """The matrices that couple a mode to the 3D field on the port face.
 
-        ``M_G[i, j] = int (mu_tt^-1 grad psi_j) . phi_i`` and ``M_T[i, j] =
-        int (mu_tt^-1 phi_j) . phi_i``: rows over every Nédélec DOF ``phi_i``
-        (the trace of the 3D field, Dirichlet DOFs included), columns over the
-        free DOFs (the mode). ``mu_tt`` is the in-plane relative permeability.
+        ``M_G[i, j] = int (nu_tt grad psi_j) . phi_i`` and ``M_T[i, j] = int
+        (nu_tt phi_j) . phi_i``: rows over every Nédélec DOF ``phi_i`` (the
+        trace of the 3D field, Dirichlet DOFs included), columns over the free
+        DOFs (the mode). ``nu_tt`` is the port's tangential inverse-permeability
+        tensor ``A`` in the port frame, the tensor of the mode's n x H (as in
+        `power`) and of the 3D Robin term (`gfem._engine.terms`).
         """
         (et, en), (vt, _vn) = self.space.TnT()
-        muinv = _rotate(self._coef["nu_tt"])
+        nu = self._coef["nu_tt"]
         dx = self._dx()
         out = []
-        for integrand in ((muinv * ngs.grad(en)) * vt * dx, (muinv * et) * vt * dx):
+        for integrand in ((nu * ngs.grad(en)) * vt * dx, (nu * et) * vt * dx):
             form = ngs.BilinearForm(self.space)
             form += integrand
             form.Assemble()
@@ -345,12 +347,6 @@ class PortModeSpace:
         return complex(
             ngs.Integrate(cf, self.mesh, order=quadrature.degree(self.order))
         )
-
-
-def _rotate(nu_tt: ngs.CoefficientFunction) -> ngs.CoefficientFunction:
-    """``mu_tt^-1 = R nu_tt R^T`` from ``nu_tt = R^T mu_tt^-1 R`` (``R a = a x n``)."""
-    r = ngs.CF((0.0, 1.0, -1.0, 0.0), dims=(2, 2))
-    return r * nu_tt * r.trans
 
 
 def _build_mesh(section: PortSection) -> ngs.Mesh:
