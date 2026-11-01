@@ -54,7 +54,7 @@ __all__ = [
 
 _BOUNDARY_TYPES = (PEC, PMC, Absorbing, Conductor, Impedance, Periodic)
 #: The most periodic pairs a model takes (a 3D cell).
-MAX_PERIODIC_PAIRS = 3
+_MAX_PERIODIC_PAIRS = 3
 #: Sine of the angle below which two translations count as parallel.
 _PARALLEL_SINE = 1e-6
 _PORT_TYPES = (LumpedPort, WavePort)
@@ -293,7 +293,7 @@ class Model:
     def _check_periodic(self) -> tuple[Pairing, ...]:
         """Pair the nodes of every `Periodic` and check the pairs (ADR 0041)."""
         pairs = [b for b in self.boundaries if isinstance(b, Periodic)]
-        if len(pairs) > MAX_PERIODIC_PAIRS:
+        if len(pairs) > _MAX_PERIODIC_PAIRS:
             raise ValueError(
                 f"A cell has at most three periodic pairs, got {len(pairs)}: "
                 f"{', '.join(repr(p) for p in pairs)}."
@@ -495,7 +495,7 @@ def _check_independent(pairs: list[Pairing]) -> None:
                 f"Pairs {pairs[i].label} and {pairs[j].label} are translated along "
                 "parallel directions; a cell has one pair per lattice direction."
             )
-    if len(a) == MAX_PERIODIC_PAIRS:
+    if len(a) == _MAX_PERIODIC_PAIRS:
         volume = abs(np.linalg.det(np.stack(a))) / np.prod(
             [np.linalg.norm(v) for v in a]
         )
