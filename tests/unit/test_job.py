@@ -384,3 +384,44 @@ def test_port_mode_result_round_trips_with_its_field(tmp_path, walls):
         np.testing.assert_array_equal(getattr(loaded, name), getattr(result, name))
     points = np.asarray(mesh.nodes)[mesh.triangles[mesh.elements("port1")][:, 0]]
     np.testing.assert_array_equal(loaded.e_field.at(points), result.e_field.at(points))
+
+
+def test_a_shared_port_surface_round_trips_through_a_bundle(tmp_path):
+    # two modes per end of a parallel plate (W = 40, D = 10, L = 20 um)
+    mesh = gfem.Mesh.from_gmsh(DATA / "parallel_plate.msh", length_unit="um")
+    w, d, length = 40e-6, 10e-6, 20e-6
+
+    def path(x, z):
+        return ((x, 0.0, z), (x, d, z))
+
+    model = gfem.Model(
+        mesh,
+        materials={"fill": gfem.Material(eps_r=4.0)},
+        boundaries=[gfem.PEC("plates")],
+        ports=[
+            gfem.WavePort("p1_TEM", "port1", 1, 1e-6, path(w / 2, 0.0)),
+            gfem.WavePort("p1_m2", "port1", 2, 2e-6, path(w / 4, 0.0)),
+            gfem.WavePort("p2_TEM", "port2", 1),
+            gfem.WavePort("p2_m2", "port2", 2, voltage_path=path(w / 4, length)),
+        ],
+    )
+    job = gfem.Job(model, gfem.Driven((2.0e12, 2.5e12)), gfem.SolverOptions(order=2))
+    job = gfem.Job.from_json(job.to_json(tmp_path / "job.json"))
+    assert job.model.ports == model.ports
+    result = job.run(out=tmp_path / "out")
+    loaded = gfem.load_result(tmp_path / "out")
+    np.testing.assert_array_equal(loaded.s.values, result.s.values)
+    np.testing.assert_array_equal(loaded.s.z_ref, result.s.z_ref)
+    assert loaded.offsets == result.offsets
+    assert dict(loaded.offsets) == {
+        "p1_TEM": 1e-6,
+        "p1_m2": 2e-6,
+        "p2_TEM": 0.0,
+        "p2_m2": 0.0,
+    }
+    assert set(loaded.port_modes) == set(model.port_names)
+    for name, mode in result.port_modes.items():
+        for field in ("frequency", "gamma", "Z_PV", "residual", "solved"):
+            np.testing.assert_array_equal(
+                getattr(loaded.port_modes[name], field), getattr(mode, field)
+            )

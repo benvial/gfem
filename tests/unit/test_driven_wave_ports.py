@@ -424,3 +424,226 @@ def test_an_open_dielectric_guide_transmits_its_fundamental_mode(dielectric_guid
     assert abs(n_eff - N_EFF_SLAB) < 1e-4
     beta = 2 * math.pi * F0 / C0 * n_eff
     assert abs(np.angle(s21 * np.exp(1j * beta * GUIDE_L * 1e-6))) < 0.02
+
+
+# --- a shared port surface: several modes of one port --------------------------
+
+# Modes 1 (TEM) and 2 (cos(pi x / W)) propagate; mode 2 is cut off at 1.874
+# THz and mode 3 at 3.75 THz.
+F2 = (2.0e12, 2.5e12)
+SHARED = ("p1_TEM", "p1_m2", "p2_TEM", "p2_m2")
+
+
+def shared_line(mesh, order=SHARED):
+    # paths along y where each mode's E_y is positive: every polarity is fixed
+    def path(x, z):
+        return ((x, 0.0, z), (x, D, z))
+
+    ports = {
+        "p1_TEM": gfem.WavePort("p1_TEM", "port1", 1, voltage_path=path(W / 2, 0.0)),
+        "p1_m2": gfem.WavePort("p1_m2", "port1", 2, voltage_path=path(W / 4, 0.0)),
+        "p2_TEM": gfem.WavePort("p2_TEM", "port2", 1, voltage_path=path(W / 2, L)),
+        "p2_m2": gfem.WavePort("p2_m2", "port2", 2, voltage_path=path(W / 4, L)),
+    }
+    return gfem.Model(
+        mesh,
+        materials={"fill": gfem.Material(eps_r=EPS)},
+        boundaries=[gfem.PEC("plates")],
+        ports=[ports[name] for name in order],
+    )
+
+
+def beta2(f):
+    return math.sqrt(beta(f) ** 2 - (math.pi / W) ** 2)
+
+
+@pytest.fixture(scope="module")
+def shared_result(plate_mesh):
+    return gfem.solve(shared_line(plate_mesh), gfem.Driven(F2), options=OPTIONS)
+
+
+def _entries(s, pairs):
+    """``s[:, i, j]`` for each ``(i, j)``, and the largest other ``|s|``."""
+    n = s.shape[1]
+    rest = np.ones((n, n), bool)
+    for i, j in pairs:
+        rest[i, j] = False
+    return [s[:, i, j] for i, j in pairs], np.abs(s[:, rest]).max()
+
+
+def test_a_shared_port_surface_transmits_each_mode_of_a_parallel_plate(shared_result):
+    s = np.asarray(shared_result.s.values)
+    (tem, tem_back, m2, m2_back), rest = _entries(s, [(2, 0), (0, 2), (3, 1), (1, 3)])
+    expected_tem = np.exp(-1j * np.array([beta(f) for f in F2]) * L)
+    expected_m2 = np.exp(-1j * np.array([beta2(f) for f in F2]) * L)
+    np.testing.assert_allclose(tem, expected_tem, atol=1e-5)
+    np.testing.assert_allclose(tem_back, expected_tem, atol=1e-5)
+    np.testing.assert_allclose(m2, expected_m2, atol=1e-3)
+    np.testing.assert_allclose(m2_back, expected_m2, atol=1e-3)
+    assert rest < 1e-3  # reflections and cross-mode entries
+    modes = shared_result.port_modes
+    for name, b, rtol in (("p1_TEM", beta, 1e-8), ("p2_m2", beta2, 1e-4)):
+        gamma = np.asarray(modes[name].gamma)
+        np.testing.assert_allclose(gamma, 1j * np.array([b(f) for f in F2]), rtol=rtol)
+
+
+def test_a_shared_port_surface_is_lossless_and_reciprocal(shared_result):
+    s = np.asarray(shared_result.s.values)
+    # every propagating mode is requested: S is unitary
+    unitarity = np.einsum("fki,fkj->fij", s.conj(), s) - np.eye(4)
+    assert np.abs(unitarity).max() < 1e-3
+    assert np.abs(s - np.swapaxes(s, 1, 2)).max() < 1e-8
+
+
+def test_a_shared_port_surface_s_follows_the_port_order(plate_mesh, shared_result):
+    # one surface's wave ports need not be adjacent
+    order = ("p2_m2", "p1_TEM", "p2_TEM", "p1_m2")
+    result = gfem.solve(
+        shared_line(plate_mesh, order), gfem.Driven(F2), options=OPTIONS
+    )
+    assert result.s.ports == order
+    k = [SHARED.index(name) for name in order]
+    s = np.asarray(shared_result.s.values)[:, k][:, :, k]
+    np.testing.assert_allclose(result.s.values, s, rtol=0, atol=1e-10)
+
+
+def test_a_shared_port_surface_excites_one_mode_alone(plate_mesh, shared_result):
+    problem = gfem.Driven(F2, excite="p1_m2")
+    result = gfem.solve(shared_line(plate_mesh), problem, options=OPTIONS)
+    column = np.asarray(shared_result.s.values)[:, :, SHARED.index("p1_m2")]
+    np.testing.assert_allclose(
+        np.asarray(result.s.values)[:, :, 0], column, rtol=0, atol=1e-10
+    )
+
+
+# Modes 1 and 2 of the hybrid guide both propagate from 16 GHz.
+HYBRID_SHARED_F = (16e9, 20e9)
+HYBRID_SHARED = ("p1_m1", "p1_m2", "p2_m1", "p2_m2")
+
+
+def shared_hybrid(guide):
+    return guide.replace(
+        ports=[
+            gfem.WavePort(name, f"port{name[1]}", mode=int(name[-1]))
+            for name in HYBRID_SHARED
+        ]
+    )
+
+
+@pytest.fixture(scope="module")
+def shared_hybrid_result(hybrid_guide):
+    options = gfem.SolverOptions(order=3, linear_solver="direct")
+    problem = gfem.Driven(HYBRID_SHARED_F)
+    return gfem.solve(shared_hybrid(hybrid_guide), problem, options=options)
+
+
+def test_a_shared_hybrid_guide_transmits_both_modes(shared_hybrid_result):
+    s = np.asarray(shared_hybrid_result.s.values)
+    pairs = [(2, 0), (0, 2), (3, 1), (1, 3)]
+    transmitted, rest = _entries(s, pairs)
+    modes = shared_hybrid_result.port_modes
+    for (i, j), t in zip(pairs, transmitted, strict=True):
+        gamma = np.asarray(modes[HYBRID_SHARED[j]].gamma)
+        expected = np.exp(-gamma * HYBRID_LENGTH)
+        # no voltage path: the sign of each mode is a mesh-dependent rule
+        error = np.minimum(np.abs(t - expected), np.abs(t + expected))
+        assert error.max() < (1e-4 if i % 2 == 0 else 1e-3)
+    assert rest < 1e-3  # reflections and cross-mode entries
+    assert np.abs(s - np.swapaxes(s, 1, 2)).max() < 1e-8
+
+
+@pytest.fixture(scope="module")
+def hybrid_couplings(hybrid_guide):
+    """The engine's port 1 surface of the shared and of the lone hybrid guide."""
+    from gfem._engine.driven import DrivenRule
+
+    out = {}
+    for name, model in (
+        ("shared", shared_hybrid(hybrid_guide)),
+        ("lone", hybrid_guide),
+    ):
+        problem = gfem.Driven(HYBRID_SHARED_F[:1])
+        rule = DrivenRule(model, problem, gfem.SolverOptions(order=3))
+        system, _ = rule._ports(model)
+        out[name] = (model, system.operator, system.surfaces[0])
+    return out
+
+
+def _robin_and_traces(model, operator, surface):
+    """The surface's Robin mass (θ = 1), the free DOFs and each mode's 3D trace."""
+    import ngsolve as ngs
+    import scipy.sparse
+
+    from gfem._engine.wave_ports import trace_dofs
+    from gfem._linalg.base import free_mask
+
+    space = operator.space
+    u, v = space.TnT()
+    form = ngs.BilinearForm(space)
+    form += surface.piece.integrand(u, v)
+    form.Assemble()
+    data, cols, rowptr = form.mat.CSR()
+    mass = scipy.sparse.csr_matrix(
+        (np.array(data), np.array(cols), np.array(rowptr)), shape=(space.ndof,) * 2
+    )
+    free = free_mask(space.FreeDofs(), space.ndof)
+    sweep = surface.ports[0].sweep
+    modes = sweep.space
+    idx3, idx2 = trace_dofs(model, modes.section, modes, operator.built, space)
+    idx3, idx2 = idx3[free[idx3]], idx2[free[idx3]]
+    m = surface.vectors.shape[1] // 2
+    traces = []
+    for c in surface.ports:
+        e_t = sweep.basis[: modes.n_t, :m] @ c.sweep.coords[0, :m]
+        e = np.zeros(space.ndof, complex)
+        e[idx3] = e_t[idx2]
+        traces.append(e)
+    return mass, free, traces
+
+
+def test_a_shared_hybrid_surface_imposes_each_requested_mode(hybrid_couplings):
+    # (i beta_0 M + W) E_k = H_k: the port is reflectionless on every mode
+    model, operator, surface = hybrid_couplings["shared"]
+    omega = 2 * math.pi * HYBRID_SHARED_F[0]
+    mass, free, traces = _robin_and_traces(model, operator, surface)
+    u, c = surface.vectors, surface.correction_coefficients(omega)
+    theta = complex(surface.piece.theta(omega))
+    assert len(traces) == 2
+    for port, e in zip(surface.ports, traces, strict=True):
+        h = u @ port.phi[0]
+        imposed = theta * (mass @ e) + u @ (c @ (u.T @ e))
+        assert np.linalg.norm((imposed - h)[free]) <= 1e-12 * np.linalg.norm(h[free])
+
+
+def test_a_shared_hybrid_surface_has_a_non_diagonal_gram_matrix(hybrid_couplings):
+    # the modes are not orthogonal on the port: G is used in full
+    _, _, surface = hybrid_couplings["shared"]
+    _, _, g = surface._blocks(0)
+    assert abs(g[0, 1]) / math.sqrt(abs(g[0, 0] * g[1, 1])) > 0.05
+
+
+def test_the_shared_hybrid_correction_is_symmetric_of_rank_2n(hybrid_couplings):
+    _, _, surface = hybrid_couplings["shared"]
+    c = surface.correction_coefficients(2 * math.pi * HYBRID_SHARED_F[0])
+    assert np.linalg.norm(c - c.T) <= 1e-12 * np.linalg.norm(c)
+    sigma = np.linalg.svd(c, compute_uv=False)
+    assert sigma[3] > 1e-8 * sigma[0]
+    assert sigma[4] <= 1e-12 * sigma[0]  # rank 2 n = 4
+    w = surface.vectors @ c @ surface.vectors.T
+    assert np.linalg.norm(w - w.T) <= 1e-12 * np.linalg.norm(w)
+
+
+def test_a_lone_hybrid_port_correction_is_the_closed_form(hybrid_couplings):
+    # W = h hᵀ / (hᵀ e) - h_s h_sᵀ / (h_sᵀ e) (Palace's W_full - W_scalar)
+    model, operator, surface = hybrid_couplings["lone"]
+    _, _, (e,) = _robin_and_traces(model, operator, surface)
+    (port,) = surface.ports
+    u = surface.vectors
+    m = u.shape[1] // 2
+    coords = port.sweep.coords[0]
+    h = u @ port.phi[0]
+    gamma = port.sweep.gamma[0] * port.scale
+    h_s = u @ np.concatenate([gamma * coords[:m], np.zeros(m)])
+    closed = np.outer(h, h) / (h @ e) - np.outer(h_s, h_s) / (h_s @ e)
+    w = u @ surface.correction_coefficients(2 * math.pi * HYBRID_SHARED_F[0]) @ u.T
+    assert np.linalg.norm(w - closed) <= 1e-12 * np.linalg.norm(closed)
