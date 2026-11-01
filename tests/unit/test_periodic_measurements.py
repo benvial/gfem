@@ -19,7 +19,6 @@ import scipy.constants as const
 import structured_meshes as sm
 
 import gfem
-from gfem._engine.driven import DrivenOperator
 
 MM = 1e-3
 AX, AY, H = 8.0, 2.0, 2.0  # mm
@@ -34,16 +33,6 @@ K = (0.3 * math.pi / (AX * MM), 0.2 * math.pi / (AY * MM), 0.0)
 #: Error of the power identity, W, for 1 W incident (ticket 06; measured
 #: 6e-14 plain and 1.4e-13 Bloch).
 POWER_TOL = 1e-12
-
-# A Bloch driven solve is right once ticket 03 declares the operator general.
-BLOCH = pytest.param(
-    K,
-    id="bloch",
-    marks=pytest.mark.skipif(
-        not hasattr(DrivenOperator, "symmetry"),
-        reason="Bloch driven solves need the general operator of ticket 03",
-    ),
-)
 
 
 def _in_core(x, z):
@@ -108,7 +97,9 @@ def _absorbed(e, mesh):
     return 0.5 * omega * const.epsilon_0 * EPS * TAN_DELTA * total
 
 
-@pytest.mark.parametrize("wave_vector", [pytest.param(None, id="plain"), BLOCH])
+@pytest.mark.parametrize(
+    "wave_vector", [pytest.param(None, id="plain"), pytest.param(K, id="bloch")]
+)
 def test_power_flow_on_a_periodic_cell_is_the_absorbed_power(cell, wave_vector):
     e = _field(cell, wave_vector)
     absorbed = _absorbed(e, cell.mesh)

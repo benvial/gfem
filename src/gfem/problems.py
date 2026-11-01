@@ -339,7 +339,9 @@ class Driven:
             (`gfem.conventions`, Bloch periodicity). The same k at every
             frequency. ``None``: plain periodicity, the fields equal on both
             surfaces of every pair. Any vector, (0, 0, 0) included, declares
-            a Bloch solve.
+            a Bloch solve: a uniform sweep on the CPU, with
+            ``linear_solver`` ``"direct"`` or ``"bddc_gmres"``, whose S is
+            not symmetric (S(k)ᵀ = S(-k)).
 
     Raises:
         TypeError: ``excite`` is not port names, or ``keep_fields`` is not a

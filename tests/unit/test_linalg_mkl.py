@@ -542,9 +542,11 @@ def test_bddc_coarse_problem_is_factored_by_gfem_flagged_pardiso(  # noqa: PLR09
     assert wrapper["pivot_perturbation"] == 16  # 1e-16, not NGSolve's 1e-13
     assert wrapper["matrix_type"] == matrix_type
     # the same iterations and solution as a sparse Cholesky coarse problem
+    # (UMFPACK's LU when A^T != A)
     monkeypatch.setattr(pardiso, "pardiso_available", lambda: False)
     ref_handle, ref, ref_its = _bddc_solve(built, complex_valued, symmetry)
-    assert ref_handle._preconditioner.flags.ToDict()["inverse"] == "sparsecholesky"
+    reference = "sparsecholesky" if symmetric else "umfpack"
+    assert ref_handle._preconditioner.flags.ToDict()["inverse"] == reference
     assert len(coarse_wrappers) == 1
     assert its == ref_its
     assert its[-1] > 1  # order 4: the coarse problem is not all of A
@@ -591,15 +593,18 @@ def test_a_bddc_setup_serving_many_columns_on_16_threads_factors_its_coarse_prob
     assert len(coarse_wrappers) == 3
 
 
-@pytest.mark.parametrize("symmetry", ["complex_symmetric", "general"])
-def test_bddc_coarse_problem_without_mkl_is_sparse_cholesky(
-    built, monkeypatch, symmetry
+@pytest.mark.parametrize(
+    ("symmetry", "inverse"),
+    [("complex_symmetric", "sparsecholesky"), ("general", "umfpack")],
+)
+def test_bddc_coarse_problem_without_mkl_is_sparse_cholesky_or_umfpack(
+    built, monkeypatch, symmetry, inverse
 ):
     monkeypatch.setattr(pardiso, "pardiso_available", lambda: False)
     assert pardiso.pardiso_inverse(symmetry, is_complex=True) is None
     op, _ = _laplace(built, complex_valued=True, shift=1 - 2j)
     handle = prepare(op, symmetry=symmetry, kind="bddc_gmres")
-    assert handle._preconditioner.flags.ToDict()["inverse"] == "sparsecholesky"
+    assert handle._preconditioner.flags.ToDict()["inverse"] == inverse
 
 
 @pytest.mark.parametrize("symmetry", ["hermitian", "general"])

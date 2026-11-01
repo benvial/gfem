@@ -501,7 +501,8 @@ def _refuse(symmetry: Symmetry, *, is_complex: bool) -> None:
     if not equals_its_transpose(symmetry, is_complex=is_complex):
         raise ValueError(
             "linear_solver='petsc' needs A^T = A: a real symmetric or complex "
-            f"symmetric operator, not {symmetry!r}."
+            f"symmetric operator, not {symmetry!r}; use linear_solver='direct' or "
+            "'bddc_gmres'."
         )
 
 

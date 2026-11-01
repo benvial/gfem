@@ -1,10 +1,16 @@
-"""Plain periodic driven solves, and the rule refusals of periodic models.
+"""Plain and Bloch periodic driven solves, and the rule refusals of periodic models.
 
 A plain periodic pair (no wave vector) whose field is uniform across the
 pair acts as a PMC wall (U2); a plain periodic two-port line (C1 at k = 0)
 gives a symmetric S equal to the closed form, and fields on the unpaired
 space, equal on twin points of the pair. A mesh move that breaks a pair
 raises where the solve first sees concrete nodes.
+
+With a Bloch wave vector the operator is general: k = 0 gives the plain S
+(U1), the LU backends and BDDC agree (U3), S(k)^T = S(-k) also with a port
+touching the pair's second surface (U4), and the backends that factor
+symmetric operators only, and the adaptive sweep, refuse a wave vector at
+the rule (U5).
 """
 
 import math
@@ -18,6 +24,7 @@ import scipy.constants as const
 import structured_meshes as sm
 
 import gfem
+from gfem._linalg import pardiso
 
 MM = 1e-3
 
@@ -204,3 +211,132 @@ def test_a_wave_vector_off_the_translations_is_refused(c1_mesh):
             pc.c1(c1_mesh),
             gfem.Driven(pc.C1_FREQUENCY, wave_vector=(pc.C1_K[0], 50.0, 0.0)),
         )
+
+
+# --- Bloch: k = 0, backends, reciprocity across +-k -----------------------------------
+
+
+def _bloch_s(model, wave_vector, linear_solver="direct", **options):
+    result = gfem.solve(
+        model,
+        gfem.Driven(pc.C1_FREQUENCY, wave_vector=wave_vector),
+        options=gfem.SolverOptions(
+            order=pc.C1_ORDER, linear_solver=linear_solver, **options
+        ),
+    )
+    (s,) = np.asarray(result.s.values)
+    return s
+
+
+def test_bloch_at_k_zero_is_plain_periodicity(c1_mesh):
+    # one operator, factored by LDL^T on the plain path and by LU on the Bloch one
+    plain = _bloch_s(pc.c1(c1_mesh), None)
+    zero = _bloch_s(pc.c1(c1_mesh), (0.0, 0.0, 0.0))
+    np.testing.assert_allclose(zero, plain, rtol=1e-10)
+
+
+#: The tolerance of the BDDC solve against the direct ones (10x below).
+BLOCH_BDDC_TOL = 1e-9
+
+
+def test_bloch_backends_agree(c1_mesh, monkeypatch):
+    model = pc.c1(c1_mesh)
+    mkl = _bloch_s(model, pc.C1_K)
+    bddc = _bloch_s(model, pc.C1_K, "bddc_gmres", tolerance=BLOCH_BDDC_TOL)
+    monkeypatch.setattr(pardiso, "pardiso_available", lambda: False)
+    assert pardiso.pardiso_inverse("general", is_complex=True) is None
+    umfpack = _bloch_s(model, pc.C1_K)
+    assert np.abs(mkl - mkl.T).max() > 0.5  # a Bloch S: not symmetric
+    np.testing.assert_allclose(umfpack, mkl, rtol=1e-8)
+    np.testing.assert_allclose(bddc, mkl, rtol=0, atol=10 * BLOCH_BDDC_TOL)
+
+
+def _edge_port_c1(directory):
+    """C1 with port p1 on the y_min strip of the last x cell, touching x_max."""
+    dx = pc.C1_A / 16
+
+    def surface(c):
+        return "edge_port" if c[1] < 1e-9 and c[0] > pc.C1_A - dx else ""
+
+    edges = tuple(
+        np.linspace(0, s, n + 1)
+        for s, n in zip((pc.C1_A, pc.C1_W, pc.C1_H), (16, 1, 1), strict=True)
+    )
+    cell = sm.periodic_cell(edges, sheets=(("sheet2", pc.C1_X2),), surface=surface)
+    path = sm.write_msh22(directory / "edge.msh", cell)
+    mesh = gfem.Mesh.from_gmsh(path, length_unit="mm")
+    return gfem.Model(
+        mesh,
+        materials={"cell": gfem.Material(eps_r=pc.C1_EPS, tan_delta=pc.C1_TAN_DELTA)},
+        boundaries=[
+            gfem.Periodic(("x_min", "x_max")),
+            gfem.PEC("z_min"),
+            gfem.PEC("z_max"),
+        ],
+        ports=[
+            gfem.LumpedPort("p1", "edge_port", "+z", impedance=50.0),
+            gfem.LumpedPort("p2", "sheet2", "+z", impedance=50.0),
+        ],
+    )
+
+
+def test_bloch_s_transposed_is_s_at_minus_k(tmp_path):
+    # p1's edges on x_max are the pair's second surface: its voltage is read
+    # through the Bloch phase of the minion DOFs
+    model = _edge_port_c1(tmp_path)
+    plus = _bloch_s(model, pc.C1_K)
+    minus = _bloch_s(model, tuple(-v for v in pc.C1_K))
+    assert np.abs(plus - plus.T).max() > 1e-2
+    np.testing.assert_allclose(plus.T, minus, rtol=0, atol=1e-9)
+
+
+# --- Bloch refusals at the rule -------------------------------------------------------
+
+
+#: Per refusal: the solver options, the sweep, the error and its message.
+BLOCH_REFUSALS = {
+    "cudss": (
+        {"linear_solver": "direct", "device": "cuda"},
+        "uniform",
+        NotImplementedError,
+        (
+            r"the GPU solver \(device='cuda', cuDSS\) factors symmetric operators "
+            r"only: use device='cpu'"
+        ),
+    ),
+    "petsc": (
+        {"linear_solver": "petsc"},
+        "uniform",
+        ValueError,
+        (
+            r"linear_solver='petsc' factors symmetric operators only: use "
+            r"linear_solver='direct' or 'bddc_gmres'"
+        ),
+    ),
+    "adaptive": (
+        {},
+        "adaptive",
+        NotImplementedError,
+        (
+            r"Driven\.wave_vector sets a Bloch phase, which the adaptive sweep "
+            r"cannot solve in this version of gfem: use sweep='uniform'"
+        ),
+    ),
+}
+
+
+@pytest.mark.parametrize("refusal", list(BLOCH_REFUSALS))
+def test_bloch_refusals_come_before_assembly(c1_mesh, monkeypatch, refusal):
+    from gfem._engine import driven
+
+    options, sweep, error, message = BLOCH_REFUSALS[refusal]
+
+    def assembled(*_, **__):
+        raise AssertionError("assembled before the refusal")
+
+    monkeypatch.setattr(driven, "driven_operator", assembled)
+    problem = gfem.Driven(
+        [pc.C1_FREQUENCY, 1.1 * pc.C1_FREQUENCY], wave_vector=pc.C1_K, sweep=sweep
+    )
+    with pytest.raises(error, match=message):
+        gfem.solve(pc.c1(c1_mesh), problem, options=gfem.SolverOptions(**options))

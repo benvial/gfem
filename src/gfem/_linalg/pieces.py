@@ -37,10 +37,19 @@ class AssembledPieces:
     """
 
     def __init__(
-        self, space: ngs.FESpace, integrands: Sequence[Callable[[Any, Any], Any]]
+        self,
+        space: ngs.FESpace,
+        integrands: Sequence[Callable[[Any, Any], Any]],
+        *,
+        symmetric: bool = True,
     ) -> None:
-        """Hold ``space`` and each piece's integrand ``(trial, test) -> integrals``."""
+        """Hold ``space`` and each piece's integrand ``(trial, test) -> integrals``.
+
+        ``symmetric`` is the forms' flag: False for a general operator (a
+        Bloch phase); the full matrix is stored either way.
+        """
         self._space = space
+        self._symmetric = symmetric
         self._integrands = tuple(integrands)
         self._built = False
         self._template: ngs.BaseMatrix | None = None
@@ -119,7 +128,7 @@ class AssembledPieces:
         u, v = self._space.TnT()
         matrices = []
         for integrand in self._integrands:
-            form = ngs.BilinearForm(self._space, symmetric=True)
+            form = ngs.BilinearForm(self._space, symmetric=self._symmetric)
             form += integrand(u, v)
             form.Assemble()
             matrices.append(form.mat)
