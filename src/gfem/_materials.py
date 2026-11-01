@@ -703,7 +703,7 @@ class MaterialField:
         """
         axes = None
         if not material.isotropic:
-            axes = material.axes or tuple(tuple(r) for r in np.eye(3).tolist())
+            axes = material.axes or _axes(np.eye(3), "MaterialField.uniform")
         props = {}
         for n in PROPERTY_NAMES:
             value = getattr(material, n)
