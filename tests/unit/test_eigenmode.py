@@ -255,6 +255,37 @@ def test_seeds_far_from_the_last_reshift_still_give_their_own_modes(
     np.testing.assert_allclose(result.omega, expected, rtol=3e-4)
 
 
+def test_a_far_seed_refined_onto_a_farther_root_still_gives_its_own_mode(
+    mesh, monkeypatch
+):
+    # on Windows (py3.14), root 3's seed refined on mode 2's shift converged
+    # to root 4 or 5, not yet accepted, which then took root 3's place; here
+    # that refinement is made to land on root 4 on every platform
+    model = terminated_line(mesh, 1000.0)
+    roots = line_roots(1000.0, range(1, 5))
+    rule = eigen_rule.EigenmodeRule
+    seeds, shift_invert, refine = {}, rule._shift_invert, eigen_rule.refine
+
+    def capture(self, op, *args, **kwargs):
+        k, vectors = shift_invert(self, op, *args, **kwargs)
+        seeds.update(k=k, vectors=vectors)
+        return k, vectors
+
+    def onto_root_4(op, k, x, **kwargs):
+        omega = np.asarray(seeds["k"]) * const.c / op.scale
+        root_3 = abs(k * const.c / op.scale - roots[2]) < 1e-3 * abs(roots[2])
+        if root_3 and abs(op.shift - k) > 1e-3 * abs(k):  # a shift nearer another
+            j = int(np.argmin(np.abs(omega - roots[3])))
+            op.reshift(seeds["k"][j])
+            return refine(op, seeds["k"][j], seeds["vectors"][:, j], **kwargs)
+        return refine(op, k, x, **kwargs)
+
+    monkeypatch.setattr(rule, "_shift_invert", capture)
+    monkeypatch.setattr(eigen_rule, "refine", onto_root_4)
+    result = gfem.solve(model, gfem.Eigenmode(target=8e9, n_modes=3))
+    np.testing.assert_allclose(result.omega, roots[:3], rtol=3e-4)
+
+
 def _count_shift_prepares(monkeypatch) -> list[int]:
     """Spy on the eigen operator's `prepare`: one entry per ``T(k)`` handle."""
     calls = []
