@@ -306,7 +306,9 @@ def c4(mesh: gfem.Mesh) -> gfem.Model:
 # --- G: the gradient cell ---------------------------------------------------------
 
 G_A, G_B, G_H = 4.0, 5.0, 3.0  # mm
-G_CELLS = (4, 5, 3)  # 1 mm cells
+#: The grid planes, mm: ports at x = 1 and 3 and 3 < y < 4, the wall at
+#: y = 2, the floor below z = 1, the sheet at z = 2.
+G_EDGES = ((0.0, 1.0, 3.0, 4.0), (0.0, 2.0, 3.0, 4.0, 5.0), (0.0, 1.0, 2.0, 3.0))
 G_SHEET_Z = 2.0  # the Impedance sheet, mm
 G_WALL_Y = 2.0  # the sidewall between "core" and "sub", mm
 G_FREQUENCIES = (20e9, 28e9)
@@ -323,7 +325,7 @@ def g_mesh(directory: Path) -> gfem.Mesh:
     crosses the x seam) and the lumped-port faces "port1" (x = 1) and
     "port2" (x = 3), both on 3 < y < 4, z < 1, away from the pairs.
     """
-    edges = _edges((G_A, G_B, G_H), G_CELLS)
+    edges = tuple(np.asarray(e) for e in G_EDGES)
     tol = 1e-9 * G_B
 
     def volume(c):

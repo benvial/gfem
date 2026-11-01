@@ -402,8 +402,13 @@ def sheet_cases(sheet_mesh):
 
 @pytest.fixture(scope="module")
 def driven_periodic_cases(tmp_path_factory):
-    # the C1 line (periodic along x), a material field over its cell
-    mesh = pc.c1_mesh(tmp_path_factory.mktemp("c1"))
+    # the C1 line (periodic along x) on 3 cells, its port sheets the inner
+    # grid planes, a material field over its cell
+    path = tmp_path_factory.mktemp("c1") / "c1.msh"
+    edges = ((0.0, pc.C1_X1, pc.C1_X2, pc.C1_A), (0.0, pc.C1_W), (0.0, pc.C1_H))
+    sheets = (("sheet1", pc.C1_X1), ("sheet2", pc.C1_X2))
+    sm.write_msh22(path, sm.periodic_cell(tuple(map(np.asarray, edges)), sheets=sheets))
+    mesh = gfem.Mesh.from_gmsh(path, length_unit="mm")
     model = pc.c1(mesh).with_material("cell", _field(mesh, "cell"))
     return {
         "driven_periodic_plain": (
