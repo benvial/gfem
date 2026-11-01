@@ -283,6 +283,14 @@ def _materials(model: Model, port: WavePort, tets: np.ndarray, frame: np.ndarray
             nu_tt[rows], nu_nn[rows] = _ROT.T @ np.linalg.inv(mt) @ _ROT, 1 / mn
             sigma_tt[rows], sigma_nn[rows] = st, sn
             isotropic[rows] = material.isotropic
+        elif material.axes is not None:
+            pos = np.searchsorted(mesh.elements(region), tets[rows])
+            tensors = _field_tensors(material, frame, port, region, pos)
+            (et, en), (mt, mn), (st, sn) = tensors
+            eps_tt[rows], eps_nn[rows] = et, en
+            nu_tt[rows], nu_nn[rows] = _ROT.T @ np.linalg.inv(mt) @ _ROT, 1 / mn
+            sigma_tt[rows], sigma_nn[rows] = st.real, sn.real
+            isotropic[rows] = False
         else:
             pos = np.searchsorted(mesh.elements(region), tets[rows])
             eps = _field(material, "eps_r", 1.0, pos)
@@ -305,6 +313,48 @@ def _field(material: MaterialField, name: str, default: float, pos: np.ndarray):
         return np.full(len(pos), default, complex)
     arr = np.asarray(value).astype(complex)
     return np.broadcast_to(arr, (len(pos),)) if arr.ndim == 0 else arr[pos]
+
+
+def _field_tensors(
+    material: MaterialField,
+    frame: np.ndarray,
+    port: WavePort,
+    region: str,
+    pos: np.ndarray,
+):
+    """A field with `axes` as lossy eps, mu and sigma blocks per triangle.
+
+    Each is ``(tt, nn)``: ``(n, 2, 2)`` and ``(n,)`` in the port frame, from
+    ``sum_k v_k a_k a_k^T`` per element. The normal-axis test reads the
+    field's fixed axes, never its values (structural): an axis along the
+    normal is needed whatever the principal values.
+    """
+    axes = np.asarray(material.axes, float)
+    given = [
+        n
+        for n in ("eps_r", "mu_r", "tan_delta", "conductivity")
+        if getattr(material, n) is not None
+    ]
+    # distinct principal values: block-diagonal in the frame iff an axis is
+    # along the normal
+    probe = principal_tensor((1.0, 2.0, 3.0), material.axes)
+    if given:
+        _in_frame(probe, frame, port, region, given[0])
+    local = axes @ frame.T  # (3 axes, 3 frame components)
+
+    def values(name: str, default: float) -> np.ndarray:
+        v = getattr(material, name)
+        if v is None:
+            return np.full((len(pos), 3), default, complex)
+        v = np.asarray(v).astype(complex)
+        return np.broadcast_to(v, (len(pos), 3)) if v.ndim == 1 else v[pos]
+
+    eps = values("eps_r", 1.0) * (1 - 1j * values("tan_delta", 0.0).real)
+    out = []
+    for v in (eps, values("mu_r", 1.0), values("conductivity", 0.0)):
+        t = np.einsum("ek,ki,kj->eij", v, local, local)
+        out.append((t[:, :2, :2], t[:, 2, 2]))
+    return out
 
 
 def _in_frame(tensor, frame, port: WavePort, region: str, what: str):

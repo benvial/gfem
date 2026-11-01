@@ -556,8 +556,12 @@ def absorbing_coefficients(
     Raises:
         ValueError: The admittance of an anisotropic face is undefined.
     """
-    e = np.real(element_values(model, "eps_r") * _loss(model))
-    m = np.real(element_values(model, "mu_r"))
+    # a field with axes holds no one value per element: its faces take the
+    # tensor path below (`anisotropic_elements`), so the placeholder 1 there
+    # reaches no absorbing face
+    tan = np.real(element_values(model, "tan_delta", per_axis=1.0))
+    e = np.real(element_values(model, "eps_r", per_axis=1.0) * (1.0 - 1j * tan))
+    m = np.real(element_values(model, "mu_r", per_axis=1.0))
     values = np.stack([_absorbing(e, m, 1), _absorbing(e, m, 2)], axis=1)
     out = np.zeros((len(owner), 2))
     ok = owner >= 0

@@ -365,6 +365,21 @@ def _media(
             low = float(np.min(material.eps_r)) * float(np.min(material.mu_r))
             value = jnp.broadcast_to(tensor, eps.shape)
             low = jnp.full(sides.shape, low)
+        elif material.axes is not None:
+            # principal values along fixed axes: the tensor per element, and
+            # the bound from the smallest principal values
+            index = np.maximum(position[tets], 0)
+
+            def principal(v: Any, index: np.ndarray = index) -> jax.Array:
+                v = jnp.real(jnp.asarray(1.0 if v is None else v))
+                return v[index] if v.ndim == 2 else jnp.broadcast_to(v, (3,))
+
+            e_r, m_r = principal(material.eps_r), principal(material.mu_r)
+            a = jnp.asarray(material.axes)
+            value = jnp.einsum("...k,ki,kj->...ij", e_r, a, a)
+            value = jnp.broadcast_to(value, eps.shape)
+            low = jnp.min(e_r, axis=-1) * jnp.min(m_r, axis=-1)
+            low = jnp.broadcast_to(low, sides.shape)
         else:
             e_r = 1.0 if material.eps_r is None else material.eps_r
             m_r = 1.0 if material.mu_r is None else material.mu_r

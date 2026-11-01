@@ -47,6 +47,7 @@ PROPERTIES: tuple[_Property, ...] = (
     _Property("specific_heat", "J/(kg K)", "thermal", None, strict=True),
 )
 PROPERTY_NAMES = tuple(p.name for p in PROPERTIES)
+_BY_NAME = {p.name: p for p in PROPERTIES}
 
 _TRACED_REMEDY = (
     "To differentiate with respect to a region's material, assign "
@@ -395,9 +396,11 @@ def lossy_permittivity(material: Material) -> np.ndarray:
     return principal_tensor(eps * (1 - 1j * tan), material.axes)
 
 
-def _axes(axes: Any, owner: str) -> tuple[tuple[float, float, float], ...]:
+def _axes(
+    axes: Any, owner: str, remedy: str = _TRACED_REMEDY
+) -> tuple[tuple[float, float, float], ...]:
     if is_traced(axes):
-        raise NonDifferentiableError(f"{owner}: axes are fixed. {_TRACED_REMEDY}")
+        raise NonDifferentiableError(f"{owner}: axes are fixed. {remedy}")
     a = np.asarray(axes, dtype=float)
     if a.shape != (3, 3) or not np.allclose(a @ a.T, np.eye(3), atol=1e-9):
         raise ValueError(
@@ -410,7 +413,8 @@ def _axes(axes: Any, owner: str) -> tuple[tuple[float, float, float], ...]:
 # --- MaterialField --------------------------------------------------------------
 
 
-def _field_value(prop: _Property, value: Any) -> jax.Array | None:
+def _field_value(prop: _Property, value: Any, per_axis: bool) -> jax.Array | None:
+    """A checked field value; ``per_axis``: three principal values (along `axes`)."""
     if value is None:
         return None
     arr = jnp.asarray(value)
@@ -423,11 +427,23 @@ def _field_value(prop: _Property, value: Any) -> jax.Array | None:
         arr = arr.astype(jnp.complex128)
     else:
         arr = arr.astype(jnp.float64)
-    if arr.ndim > 1:
+    if per_axis:
+        if arr.ndim not in (1, 2) or arr.shape[-1] != 3:
+            raise ValueError(
+                f"MaterialField: {prop.name} has shape {arr.shape}, but a field "
+                "with `axes` holds three principal values per element (shape "
+                "(n_elements, 3)), or for the whole region (shape (3,))."
+            )
+    elif arr.ndim > 1:
+        need = (
+            "; principal values need `axes` (np.eye(3) for the coordinate axes)"
+            if prop.may_be_tensor
+            else ""
+        )
         raise ValueError(
             f"MaterialField: {prop.name} has shape {arr.shape}, but a material "
             "field holds one value per element (shape (n_elements,)), or one "
-            "value for the whole region (shape ())."
+            f"value for the whole region (shape ()){need}."
         )
     if not is_traced(arr):
         _check_field_values(prop, np.asarray(arr))
@@ -459,6 +475,68 @@ _SCHEMES: dict[str, Callable[[jax.Array, float], jax.Array]] = {
 }
 
 
+def _common_axes(
+    void: Material, solid: Material
+) -> tuple[tuple[tuple[float, float, float], ...], tuple[dict, dict]]:
+    """The shared principal axes of two materials and their values along them.
+
+    The axes are `_principal`'s normal form of the union of both materials'
+    tensors; each tensor property's values come back as three principal
+    values along them. Each axis and value is taken exactly from the
+    material it matches (the eigensolver only orders them), so materials
+    equal up to the order or sign of their axes give equal values.
+
+    Raises:
+        ValueError: The materials' tensors have different principal axes.
+    """
+    tensors = [p.name for p in PROPERTIES if p.may_be_tensor]
+    own = {}  # each material's axes as an array
+    matrices = []
+    for m in (void, solid):
+        own[id(m)] = np.eye(3) if m.axes is None else np.asarray(m.axes, float)
+        for name in tensors:
+            value = getattr(m, name)
+            if isinstance(value, tuple):
+                matrices.append(principal_tensor(value, m.axes))
+    a = _ordered_axes(_eigenspaces(matrices))
+    # snap each axis to the material axis it matches, signed as in the
+    # normal form (an axis in a degenerate eigenspace may match none)
+    for m in (void, solid):
+        if m.isotropic:
+            continue
+        for k in range(3):
+            dots = own[id(m)] @ a[k]
+            j = int(np.abs(dots).argmax())
+            if abs(dots[j]) > 1 - _TENSOR_TOL:
+                axis = own[id(m)][j]
+                a[k] = axis * np.sign(axis[np.abs(axis).argmax()])
+    ends, ends_of = [], (void, solid)
+    for m in ends_of:
+        values: dict[str, Any] = {n: getattr(m, n) for n in PROPERTY_NAMES}
+        for name in tensors:
+            value = getattr(m, name)
+            if not isinstance(value, tuple):
+                values[name] = np.full(3, value)
+                continue
+            matrix = principal_tensor(value, m.axes)
+            d = a @ matrix @ a.T
+            scale = np.linalg.norm(matrix)
+            if np.abs(d - np.diag(np.diag(d))).max() > _TENSOR_TOL * scale:
+                names = [repr(x.name) if x.name else "(unnamed)" for x in ends_of]
+                raise ValueError(
+                    f"MaterialField.interpolate: void {names[0]} and solid "
+                    f"{names[1]} have different principal axes; a material "
+                    "field holds principal values along one fixed set of axes. "
+                    "Rotate one material, or build the field directly."
+                )
+            # each principal value exactly as the material gives it
+            own_values = np.asarray(value)
+            nearest = np.abs(np.diag(d)[:, None] - own_values[None, :]).argmin(axis=1)
+            values[name] = own_values[nearest]
+        ends.append(values)
+    return _axes(a, "MaterialField.interpolate"), (ends[0], ends[1])
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
 class MaterialField:
     """Material properties that vary over one volume region, per element (P0).
@@ -473,6 +551,13 @@ class MaterialField:
     `eps_r` and `mu_r` may be complex (lossy, negative imaginary part under
     e^{+iωt}); `conductivity` is electrical, S/m.
 
+    With `axes`, the field is anisotropic: each of `eps_r`, `mu_r`,
+    `tan_delta` and `conductivity` holds three principal values along the
+    axes, shape ``(n_elements, 3)`` per element or ``(3,)`` for the whole
+    region (an isotropic value is three equal values); the thermal
+    properties keep one value. The axes are fixed: the values vary, the
+    principal directions do not.
+
     Build one with `MaterialField.interpolate` (a design density blended
     between two materials) or `MaterialField.uniform` (a whole region whose
     constant material should be differentiable).
@@ -480,6 +565,16 @@ class MaterialField:
     Attributes:
         region: The region the field was built for, or ``None``. When set,
             the model checks that the field is assigned to this region.
+        axes: Three orthonormal vectors, the principal directions of the
+            per-axis values, or ``None`` (an isotropic field). Static data,
+            not a pytree leaf: it cannot be differentiated.
+
+    Raises:
+        ValueError: A value is not passive or finite, a tensor property's
+            shape does not fit `axes` (a 2-D array needs `axes`; with `axes`
+            the last dimension is 3), the per-element sizes differ, or
+            `axes` is not orthonormal.
+        NonDifferentiableError: `axes` is traced by JAX.
     """
 
     eps_r: jax.Array | None = None
@@ -490,13 +585,21 @@ class MaterialField:
     density: jax.Array | None = None
     specific_heat: jax.Array | None = None
     region: str | None = None
+    axes: tuple[tuple[float, float, float], ...] | None = None
 
     def __post_init__(self) -> None:
+        if self.axes is not None:
+            remedy = (
+                "The orientation is not a design input; differentiate with "
+                "respect to the principal values instead."
+            )
+            object.__setattr__(self, "axes", _axes(self.axes, "MaterialField", remedy))
         sizes = set()
         for prop in PROPERTIES:
-            value = _field_value(prop, getattr(self, prop.name))
+            per_axis = self.per_axis(prop.name)
+            value = _field_value(prop, getattr(self, prop.name), per_axis)
             object.__setattr__(self, prop.name, value)
-            if value is not None and value.ndim == 1:
+            if value is not None and value.ndim == 1 + per_axis:
                 sizes.add(value.shape[0])
         if all(getattr(self, n) is None for n in PROPERTY_NAMES):
             raise ValueError(
@@ -514,9 +617,13 @@ class MaterialField:
         """Number of per-element values, or ``None`` if every value is uniform."""
         for name in PROPERTY_NAMES:
             v = getattr(self, name)
-            if v is not None and v.ndim == 1:
+            if v is not None and v.ndim == 1 + self.per_axis(name):
                 return int(v.shape[0])
         return None
+
+    def per_axis(self, name: str) -> bool:
+        """Whether property ``name`` holds three principal values along `axes`."""
+        return self.axes is not None and _BY_NAME[name].may_be_tensor
 
     @property
     def properties(self) -> tuple[str, ...]:
@@ -533,12 +640,19 @@ class MaterialField:
         scheme: Literal["linear", "simp", "ramp"] = "linear",
         penalty: float = 3.0,
     ) -> MaterialField:
-        """Blend two isotropic materials by a density per element.
+        """Blend two materials by a density per element.
 
         Each property that both materials define becomes
         ``void + w(density) * (solid - void)``, with ``w`` the scheme's
         weight: ``linear`` (w = rho), ``simp`` (w = rho^penalty) or ``ramp``
         (w = rho / (1 + penalty (1 - rho))). Differentiable in ``density``.
+
+        Anisotropic materials blend per principal value, when every tensor
+        of both shares one set of principal axes (an isotropic material
+        shares any, so air and a crystal blend). The field then has those
+        `axes` (in `Material`'s normal form: axis k the one closest to
+        coordinate axis k), so axes given in another order or sign give the
+        same field. Two isotropic materials give an isotropic field.
 
         Args:
             density: One value per element, in [0, 1] (0 = void, 1 = solid).
@@ -548,28 +662,30 @@ class MaterialField:
             penalty: The SIMP / RAMP penalty.
 
         Raises:
-            ValueError: Unknown scheme, or an anisotropic material.
+            ValueError: Unknown scheme, or two materials whose tensors have
+                different principal axes.
         """
         if scheme not in _SCHEMES:
             raise ValueError(
                 f"Unknown interpolation scheme {scheme!r}; use one of "
                 f"{', '.join(repr(s) for s in _SCHEMES)}."
             )
-        for m in (void, solid):
-            if not m.isotropic:
-                raise ValueError(
-                    "MaterialField supports isotropic materials only; "
-                    f"{m.name or 'a material'} has per-axis eps_r, mu_r, "
-                    "tan_delta or conductivity."
-                )
         rho = jnp.asarray(density, dtype=jnp.float64)
         w = _SCHEMES[scheme](rho, penalty)
+        if void.isotropic and solid.isotropic:
+            axes = None
+            ends = tuple(
+                {n: getattr(m, n) for n in PROPERTY_NAMES} for m in (void, solid)
+            )
+        else:
+            axes, ends = _common_axes(void, solid)
         props = {}
         for name in PROPERTY_NAMES:
-            a, b = getattr(void, name), getattr(solid, name)
+            a, b = ends[0][name], ends[1][name]
             if a is not None and b is not None:
-                props[name] = a + w * (b - a)
-        return cls(**props)
+                per_axis = axes is not None and _BY_NAME[name].may_be_tensor
+                props[name] = a + (w[..., None] if per_axis else w) * (b - a)
+        return cls(**props, axes=axes)
 
     @classmethod
     def uniform(cls, region: str, material: Material) -> MaterialField:
@@ -577,27 +693,27 @@ class MaterialField:
 
         Each property the material defines becomes one scalar leaf, so
         ``jax.grad`` gives the sensitivity to the region's eps_r,
-        conductivity, ... directly.
+        conductivity, ... directly. An anisotropic material gives a field
+        on its `axes` (the coordinate axes if ``None``) whose tensor
+        properties are ``(3,)`` leaves of principal values.
 
         Args:
             region: The volume region the field is for.
-            material: An isotropic material.
-
-        Raises:
-            ValueError: The material is anisotropic.
+            material: The material.
         """
+        axes = None
         if not material.isotropic:
-            raise ValueError(
-                "MaterialField supports isotropic materials only; "
-                f"{material.name or 'this material'} has per-axis eps_r, mu_r, "
-                "tan_delta or conductivity."
-            )
-        props = {
-            n: jnp.asarray(getattr(material, n), dtype=jnp.float64)
-            for n in PROPERTY_NAMES
-            if getattr(material, n) is not None
-        }
-        return cls(**props, region=region)
+            axes = material.axes or tuple(tuple(r) for r in np.eye(3).tolist())
+        props = {}
+        for n in PROPERTY_NAMES:
+            value = getattr(material, n)
+            if value is None:
+                continue
+            arr = jnp.asarray(value, dtype=jnp.float64)
+            if axes is not None and _BY_NAME[n].may_be_tensor:
+                arr = jnp.broadcast_to(arr, (3,))
+            props[n] = arr
+        return cls(**props, region=region, axes=axes)
 
     def __repr__(self) -> str:
         n = self.n_elements
@@ -614,6 +730,8 @@ class MaterialField:
                 f"{name}={lo:.4g}" if lo == hi else f"{name} in [{lo:.4g}, {hi:.4g}]"
             )
         where = f", region={self.region!r}" if self.region else ""
+        if self.axes is not None:
+            parts.append(f"axes={self.axes!r}")
         return f"MaterialField({size}{where}, {', '.join(parts)})"
 
 

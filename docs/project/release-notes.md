@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Anisotropic material fields.** A `MaterialField` with `axes` holds three
+  principal values per element, shape `(n_elements, 3)`, or for the whole
+  region, shape `(3,)`, along fixed axes. `MaterialField.uniform` now takes
+  an anisotropic `Material`, and `MaterialField.interpolate` blends two
+  materials per principal value when their tensors share principal axes (air
+  and a crystal, for example); materials with different axes raise. Driven,
+  eigenmode, electrostatic and port mode solves read the field's tensor on
+  each element. Gradients with respect to such a field's values, and material
+  gradients of a model that holds one, raise `NonDifferentiableError` in this
+  version.
 - **Behaviour change: equal principal values are one value.**
   `Material(eps_r=(2, 2, 2))` is now stored as `eps_r=2.0`: it equals
   `Material(eps_r=2)`, `isotropic` is `True`, and its repr changes. Results are
