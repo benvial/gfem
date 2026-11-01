@@ -512,6 +512,29 @@ def test_conductivity_damps_the_line_exactly(mesh):
     np.testing.assert_allclose(complex(lossy.omega[0]), k * const.c, rtol=1e-10)
 
 
+def test_per_axis_conductivity_damps_along_its_axis(mesh):
+    # the mode is E_z: only the conductivity along z (the first axis here)
+    # damps it, as an isotropic conductivity of that value (up to the
+    # discrete field's small E_x / E_y part; the mean would damp 34x more)
+    sigma = 0.05
+    problem = gfem.Eigenmode(target=8e9)
+    isotropic = complex(gfem.solve(line(mesh, conductivity=sigma), problem).omega[0])
+    per_axis = line(
+        mesh,
+        conductivity=(sigma, 50 * sigma, 50 * sigma),
+        axes=((0, 0, 1), (1, 0, 0), (0, 1, 0)),
+    )
+    omega = complex(gfem.solve(per_axis, problem).omega[0])
+    print(
+        "T07 re:",
+        abs(omega.real / isotropic.real - 1),
+        "im:",
+        abs(omega.imag / isotropic.imag - 1),
+    )
+    np.testing.assert_allclose(omega.real, isotropic.real, rtol=1e-5)
+    np.testing.assert_allclose(omega.imag, isotropic.imag, rtol=1e-3)
+
+
 def test_first_order_absorbing_walls_damp_the_modes(tmp_path):
     # a wide line with absorbing side walls: a quadratic problem whose modes
     # radiate through the walls

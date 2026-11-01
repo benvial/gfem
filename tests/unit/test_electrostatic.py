@@ -173,11 +173,22 @@ def test_other_boundaries_carry_no_charge(stack):
     np.testing.assert_allclose(cap.capacitance, plain.capacitance, rtol=1e-12)
 
 
-def test_conductivity_and_loss_do_not_change_the_capacitance(stack):
-    lossy = {
-        "oxide": gfem.Material(eps_r=3.9, tan_delta=0.1, conductivity=1.0, mu_r=4.0),
-        "nitride": gfem.Material(eps_r=7.5, conductivity=1e3),
-    }
+@pytest.mark.parametrize(
+    ("conductivity", "axes"),
+    [
+        (1.0, None),
+        (
+            (1.0, 0.0, 30.0),
+            ((1 / 3, 2 / 3, 2 / 3), (2 / 3, 1 / 3, -2 / 3), (2 / 3, -2 / 3, 1 / 3)),
+        ),
+    ],
+    ids=["isotropic", "tilted-tensor"],
+)
+def test_conductivity_and_loss_do_not_change_the_capacitance(stack, conductivity, axes):
+    oxide = gfem.Material(
+        eps_r=3.9, tan_delta=0.1, conductivity=conductivity, mu_r=4.0, axes=axes
+    )
+    lossy = {"oxide": oxide, "nitride": gfem.Material(eps_r=7.5, conductivity=1e3)}
     problem = gfem.Electrostatic(terminals=STACK, ground="bottom")
     plain = _c(stack, problem)
     cap = _c(stack.replace(materials=lossy), problem)

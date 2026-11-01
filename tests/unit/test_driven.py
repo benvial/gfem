@@ -235,6 +235,44 @@ def test_per_axis_loss_tangent_acts_along_its_axis(mesh):
     np.testing.assert_allclose(s, isotropic, atol=1e-5)
 
 
+def test_per_axis_conductivity_is_a_loss_tangent_falling_as_one_over_omega(mesh):
+    # tan_delta[k] + sigma[k] / (eps0 omega0 eps_r[k]) along each principal
+    # axis is the same complex permittivity at omega0, so the two models give
+    # the same S there (the conductivity piece is k-linear, the mass piece
+    # k-quadratic: at 2 omega0 they differ); tilted axes mix all three into
+    # the TEM field's E_z
+    def model(material):
+        return gfem.Model(
+            mesh,
+            materials={"dielectric": material},
+            boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+            ports=[
+                gfem.LumpedPort("p1", "port1", "+z"),
+                gfem.LumpedPort("p2", "port2", "+z"),
+            ],
+        )
+
+    axes = ((1 / 3, 2 / 3, 2 / 3), (2 / 3, 1 / 3, -2 / 3), (2 / 3, -2 / 3, 1 / 3))
+    eps, tan, sigma = (3.0, 5.0, 6.0), (0.01, 0.02, 0.03), (0.02, 0.05, 0.03)
+    folded = tuple(
+        t + s / (const.epsilon_0 * 2 * math.pi * F * e)
+        for e, t, s in zip(eps, tan, sigma, strict=True)
+    )
+    problem = gfem.Driven(frequency=[F, 2 * F])
+    conducting = gfem.Material(eps_r=eps, tan_delta=tan, conductivity=sigma, axes=axes)
+    s = np.asarray(_s(model(conducting), problem).s.values)
+    tangent = gfem.Material(eps_r=eps, tan_delta=folded, axes=axes)
+    expected = np.asarray(_s(model(tangent), problem).s.values)
+    print(
+        "T06 at f0:",
+        np.abs(s[0] - expected[0]).max(),
+        "at 2 f0:",
+        np.abs(s[1] - expected[1]).max(),
+    )
+    np.testing.assert_allclose(s[0], expected[0], rtol=1e-10, atol=1e-10)
+    assert np.abs(s[1] - expected[1]).max() > 1e-3
+
+
 def test_bddc_gmres_is_the_default_and_matches_direct(line):
     problem = gfem.Driven(frequency=[3e9, 4e9])
     direct = np.asarray(_s(line, problem).s.values)
