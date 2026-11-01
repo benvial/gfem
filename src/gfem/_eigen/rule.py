@@ -109,8 +109,10 @@ _OVERLAP = 0.9
 #: Ritz values this close (relative) are one multiple eigenvalue. The seed
 #: solver returns an arbitrary basis of its eigenspace, as nearly parallel as
 #: round-off makes it: the seeds are orthonormalized, or two members would
-#: overlap like one mode refined twice.
-_MULTIPLE = 1e-8
+#: overlap like one mode refined twice. Round-off also splits the multiple
+#: Ritz value: by up to 3e-8 for a frozen nonlinear seed at its 1e-3 seed
+#: tolerance.
+_MULTIPLE = 1e-6
 #: A seed that needs correction steps is refined on a new factorization at
 #: its own Ritz value when the current shift would contract its error by
 #: less than this per step (the shift is nearer another Ritz value: residual
