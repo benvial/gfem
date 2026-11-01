@@ -53,4 +53,6 @@ def _s(mesh, fill):
 def test_a_uniform_field_beside_the_ports_gives_its_material_s_s(guide_mesh, material):
     expected = _s(guide_mesh, material)
     s = _s(guide_mesh, gfem.MaterialField.uniform("fill", material))
-    np.testing.assert_allclose(s, expected, rtol=0, atol=1e-12)
+    # measured on MN5: 6.9e-15 (the port frame rounds the field's tensors
+    # differently)
+    np.testing.assert_allclose(s, expected, rtol=0, atol=2e-14)

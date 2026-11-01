@@ -552,7 +552,7 @@ def test_a_uniform_field_of_a_crystal_has_the_crystal_s_modes(mesh):
 
     expected = omega(crystal)
     field = omega(gfem.MaterialField.uniform("dielectric", crystal))
-    np.testing.assert_allclose(field, expected, rtol=1e-12)
+    np.testing.assert_array_equal(field, expected)  # measured on MN5: bit for bit
 
 
 def test_first_order_absorbing_walls_damp_the_modes(tmp_path):

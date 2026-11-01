@@ -488,8 +488,9 @@ def test_a_field_with_axes_has_the_mode_of_its_material(wr28_mesh):
     )
     expected = _wr28_gamma(wr28_mesh, material, 16e9)
     uniform = gfem.MaterialField.uniform("fill", material)
+    # measured on MN5: 1.0e-15 relative, 1.5e-15 per element
     np.testing.assert_allclose(
-        _wr28_gamma(wr28_mesh, uniform, 16e9), expected, rtol=1e-12
+        _wr28_gamma(wr28_mesh, uniform, 16e9), expected, rtol=5e-15
     )
     n = len(wr28_mesh.elements("fill"))
     per_element = gfem.MaterialField(
@@ -500,7 +501,7 @@ def test_a_field_with_axes_has_the_mode_of_its_material(wr28_mesh):
         axes=material.axes,
     )
     np.testing.assert_allclose(
-        _wr28_gamma(wr28_mesh, per_element, 16e9), expected, rtol=1e-12
+        _wr28_gamma(wr28_mesh, per_element, 16e9), expected, rtol=5e-15
     )
 
 

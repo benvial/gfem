@@ -206,7 +206,7 @@ def test_a_uniform_field_of_a_crystal_has_the_crystal_s_capacitance(stack):
     expected = _c(stack.with_material("oxide", crystal), problem).capacitance
     field = gfem.MaterialField.uniform("oxide", crystal)
     cap = _c(stack.with_material("oxide", field), problem).capacitance
-    np.testing.assert_allclose(cap, expected, rtol=1e-12)
+    np.testing.assert_array_equal(cap, expected)  # measured on MN5: bit for bit
 
 
 def test_solving_twice_gives_the_same_matrix(stack):

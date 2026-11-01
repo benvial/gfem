@@ -297,7 +297,7 @@ def test_a_uniform_field_of_a_crystal_solves_like_the_crystal(mesh):
     expected = np.asarray(_s(model(CRYSTAL), problem).s.values)
     field = gfem.MaterialField.uniform("dielectric", CRYSTAL)
     s = np.asarray(_s(model(field), problem).s.values)
-    np.testing.assert_allclose(s, expected, rtol=0, atol=1e-12)
+    np.testing.assert_array_equal(s, expected)  # measured on MN5: bit for bit
 
 
 def test_bddc_gmres_is_the_default_and_matches_direct(line):
