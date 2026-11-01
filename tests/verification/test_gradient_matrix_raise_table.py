@@ -17,11 +17,13 @@ v0.1's gradients (``pytest -m verification -k gradient_matrix``).
 """
 
 import dataclasses
+import math
 from pathlib import Path
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import periodic_cases as pc
 import pytest
 import structured_meshes as sm
 
@@ -615,6 +617,38 @@ def _out_probe_in_the_node_coordinates(request):
     jax.make_jaxpr(jax.grad(objective))(jnp.asarray(model.mesh.nodes))
 
 
+# --- periodic eigenmode rows ----------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def bragg_cell(tmp_path_factory):
+    """The C3 Bragg line (tests/periodic_cases.py): one periodic pair."""
+    return pc.c3(pc.c3_mesh(tmp_path_factory.mktemp("bragg")))
+
+
+def _bloch_eigenmode(kx):
+    return gfem.Eigenmode(target=5e9, wave_vector=(kx, 0.0, 0.0))
+
+
+def _out_eigenmode_traced_wave_vector(request):
+    # the wave vector is a static problem field, never a leaf
+    model = request.getfixturevalue("bragg_cell")
+
+    def objective(kx):
+        return jnp.real(gfem.solve(model, _bloch_eigenmode(kx)).omega[0])
+
+    jax.make_jaxpr(jax.grad(objective))(math.pi / (pc.C3_A * pc.MM))
+
+
+def _out_bloch_eigenmode_on_bddc(request):
+    # two-sided refinement solves the transposed system on the shift's
+    # factors: a Bloch eigenmode solve refuses BDDC + GMRES before assembly
+    model = request.getfixturevalue("bragg_cell")
+    options = gfem.SolverOptions(linear_solver="bddc_gmres")
+    k = math.pi / (pc.C3_A * pc.MM)
+    gfem.solve(model, _bloch_eigenmode(k), options=options)
+
+
 # (row, raising call, error, message): DegenerateModeError on one mode of a
 # degenerate eigenmode cluster is in tests/verification/test_gradient_matrix.py.
 HOST = jax.errors.JaxRuntimeError  # a gfem error raised in the backward pass
@@ -661,6 +695,19 @@ OUT_OF_SCOPE = [
         _out_probe_in_the_node_coordinates,
         gfem.NonDifferentiableError,
         r"mesh node coordinates.*stop_gradient",
+    ),
+    # periodic eigenmode rows
+    (
+        "eigenmode x traced wave_vector",
+        _out_eigenmode_traced_wave_vector,
+        gfem.NonDifferentiableError,
+        "wave_vector must be fixed",
+    ),
+    (
+        "Bloch eigenmode on bddc_gmres",
+        _out_bloch_eigenmode_on_bddc,
+        ValueError,
+        "linear_solver='direct'",
     ),
 ]
 

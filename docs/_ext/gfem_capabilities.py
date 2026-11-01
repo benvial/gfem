@@ -85,6 +85,8 @@ PROBLEMS = {
     "driven_adaptive": Problem("driven", "s.values", "lumped"),
     "eigenmode": Problem("eigenmode", "omega"),
     "eigenmode_sheet": Problem("eigenmode", "omega"),
+    "eigenmode_periodic_plain": Problem("eigenmode", "omega"),
+    "eigenmode_periodic_bloch": Problem("eigenmode", "omega"),
     "electrostatic": Problem("electrostatic", "capacitance"),
     "port_mode": Problem("port_mode", "gamma"),
     "port_mode_sheet": Problem("port_mode", "gamma"),
