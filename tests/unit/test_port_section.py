@@ -146,9 +146,9 @@ def test_edge_admittance_is_the_3d_face_admittance_on_the_edge():
             et[None], np.array([en]), nt[None], np.array([nn]), m[None, :2], where="x"
         )[0]
         want = np.array([tau @ y3 @ tau, z @ y3 @ z])
-        # measured 1e-15 / 2e-16 (round-off)
-        np.testing.assert_allclose(got, want, rtol=1e-12)
-        assert abs(tau @ y3 @ z) <= 1e-12 * np.abs(want).max()
+        # measured 7.8e-16 and 1.6e-16 (round-off)
+        np.testing.assert_allclose(got, want, rtol=3e-15)
+        assert abs(tau @ y3 @ z) <= 5e-16 * np.abs(want).max()
 
 
 def test_edge_admittance_of_diagonal_tensors_pairs_the_plane_wave_components():

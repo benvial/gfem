@@ -470,7 +470,9 @@ def test_an_old_port_section_reads_its_scalar_conductivity_and_admittance(tmp_pa
 
     back = gfem.load_result(tmp_path / "results").e_field._section
     np.testing.assert_array_equal(back.sigma_nn, new.sigma_nn)
-    np.testing.assert_array_equal(back.sigma_tt, new.sigma_tt)
-    np.testing.assert_array_equal(back.sigma_tt[:, 0, 0], 0.01)
-    np.testing.assert_array_equal(back.sigma_tt[:, 0, 1], 0.0)
+    # sigma I_2; the new section's block carries the frame's round-off
+    np.testing.assert_array_equal(
+        back.sigma_tt, back.sigma_nn[:, None, None] * np.eye(2)
+    )
+    np.testing.assert_allclose(back.sigma_tt, new.sigma_tt, rtol=0, atol=1e-16)
     np.testing.assert_array_equal(back.absorbing_admittance, new.absorbing_admittance)

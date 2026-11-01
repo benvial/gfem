@@ -424,7 +424,7 @@ def test_a_uniaxial_tensor_turned_inside_its_degenerate_plane_is_accepted(
 def test_te10_of_a_biaxial_guide_sees_the_permittivity_along_its_field(wr28_mesh):
     # Palace issue #835: E along y, so beta^2 = 4 k0^2 - (pi / a)^2
     gamma = _wr28_gamma(wr28_mesh, gfem.Material(eps_r=(2.0, 4.0, 3.0)))
-    np.testing.assert_allclose(gamma.imag, BETA_EPS4, rtol=1e-4)
+    np.testing.assert_allclose(gamma.imag, BETA_EPS4, rtol=1.5e-9)  # measured 4.4e-10
 
 
 def test_a_tensor_turned_about_the_guide_axis_keeps_a_propagating_mode(wr28_mesh):
@@ -432,7 +432,7 @@ def test_a_tensor_turned_about_the_guide_axis_keeps_a_propagating_mode(wr28_mesh
     material = gfem.Material(eps_r=(2.0, 4.0, 3.0), axes=_axes(2, 30.0))
     gamma = _wr28_gamma(wr28_mesh, material)
     assert BETA_EPS2 < gamma.imag < BETA_EPS4
-    assert abs(gamma.real) <= 1e-8 * abs(gamma)
+    assert abs(gamma.real) <= 1e-14 * abs(gamma)  # measured 1.3e-18 (round-off)
 
 
 def test_te10_reads_the_conductivity_along_its_field(wr28_mesh):
@@ -443,24 +443,24 @@ def test_te10_reads_the_conductivity_along_its_field(wr28_mesh):
     reference = gamma((0.2, 0.05, 0.1))
     # TE10 with eps_y (1 - i sigma_y / (omega eps0)), research note
     np.testing.assert_allclose(
-        reference, 5.540510958349465 + 712.541098151911j, rtol=1e-4
-    )
+        reference, 5.540510958349465 + 712.541098151911j, rtol=1.5e-9
+    )  # measured 4.4e-10 (2.8e-9 on the real part alone)
     swap_xz, swap_xy = gamma((0.1, 0.05, 0.2)), gamma((0.05, 0.2, 0.1))
-    assert abs(swap_xz - reference) < 1e-3 * abs(swap_xy - reference)
+    # measured ratio 6.7e-10
+    assert abs(swap_xz - reference) < 2e-9 * abs(swap_xy - reference)
 
 
-def test_a_mode_above_the_mean_diagonal_index_is_found():
-    # eps_tt = diag(1, 4) turned 45 degrees about the guide axis: its diagonal
-    # entries are 2.5, but the first mode has 2.5 < n_eff^2 < 4
-    model = gfem.Model(
-        gfem.Mesh.from_gmsh(DATA / "square_waveguide.msh", length_unit="mm"),
-        materials={"air": gfem.Material(eps_r=(1.0, 4.0, 1.0), axes=_axes(2, 45.0))},
-        boundaries=[gfem.PEC("walls")],
-        ports=[gfem.WavePort("p1", "port1")],
-    )
-    result = gfem.solve(model, gfem.PortMode("p1", 30e9))
-    n2 = complex(np.asarray(result.n_eff)[0] ** 2)
-    assert 2.5 < n2.real < 4.0
+def test_a_mode_above_the_mean_diagonal_index_is_found(wr28_mesh):
+    # eps_tt = diag(1, 4) turned 45 degrees about the guide axis: in the port
+    # frame (along the guide's sides) its diagonal entries are 2.5, but the
+    # first mode has 2.5 < n_eff^2 < 4. A bound from the diagonal dropped it
+    # and took the second mode (n_eff^2 = 1.28). A square guide would not
+    # show this: its port frame can lie along the diagonals.
+    material = gfem.Material(eps_r=(1.0, 4.0, 1.0), axes=_axes(2, 45.0))
+    frequency = 30e9
+    gamma = _wr28_gamma(wr28_mesh, material, frequency)
+    n2 = (gamma / (2j * np.pi * frequency / C0)) ** 2
+    assert 2.5 < n2.real < 4.0  # measured 2.678
 
 
 # --- errors ---------------------------------------------------------------------
