@@ -3,8 +3,9 @@
 One cell per problem type x input kind x linear solver x frequency sweep:
 
 - problems: electrostatic capacitance (and a potential functional), driven
-  S on lumped ports and on wave ports (lossless and lossy), eigenfrequency
-  (frequency and loss of a simple mode);
+  S on lumped ports and on wave ports (lossless and lossy), driven S (and
+  probed fields) on a periodic cell with plain and Bloch periodicity,
+  eigenfrequency (frequency and loss of a simple mode);
 - inputs: per-element permittivity ``eps_r`` and conductivity, the fill of a
   `gfem.SheetField`, and the mesh node coordinates (through
   `gfem.shape.boundary_morph`);
@@ -44,6 +45,7 @@ from collections.abc import Callable
 import jax
 import jax.numpy as jnp
 import numpy as np
+import periodic_cases as pc
 import pytest
 from finite_differences import (
     assert_gradient_matches,
@@ -143,7 +145,31 @@ def _cells() -> list[Cell]:
     return cells
 
 
-CELLS = _cells()
+def _driven_periodic_cells() -> list[Cell]:
+    """The driven cells of a periodic model (the gradient cell G).
+
+    Plain and Bloch periodicity on the uniform sweep for every input kind,
+    plain periodicity on the adaptive sweep (Bloch raises in its forward)
+    in the permittivity and the nodes (conductivity and fill take the
+    permittivity's code path), and a probed Bloch field (a field cotangent,
+    loaded as P^T g on the transposed system).
+    """
+    cells = []
+    for solver in SOLVERS:
+        cells += [
+            Cell(problem, name, solver, "uniform")
+            for problem in ("driven_periodic_plain", "driven_periodic_bloch")
+            for name in ("eps_r", "conductivity", "fill", "nodes")
+        ]
+        cells += [
+            Cell("driven_periodic_plain", name, solver, "adaptive")
+            for name in ("eps_r", "nodes")
+        ]
+    cells.append(Cell("driven_periodic_bloch", "eps_r", "direct", "uniform", "field"))
+    return cells
+
+
+CELLS = [*_cells(), *_driven_periodic_cells()]
 #: The PETSc stack's cells, one per path its solves take: electrostatic,
 #: driven on both sweeps, the adjoint through a wave port operator's
 #: Woodbury update, and the eigenmode seed on SLEPc.
@@ -153,6 +179,8 @@ PETSC_CELLS = [
     Cell("driven", "eps_r", "petsc", "adaptive"),
     Cell("driven_wave", "eps_r", "petsc", "uniform", "lossy"),
     Cell("eigenmode", "eps_r", "petsc"),
+    # plain periodicity keeps every backend (Bloch on PETSc raises)
+    Cell("driven_periodic_plain", "eps_r", "petsc", "uniform"),
 ]
 PETSC_PARAMS = [
     pytest.param(
@@ -237,6 +265,10 @@ class Designs:
     @functools.cached_property
     def mirrored_cavity(self):
         return mirrored_cavity(self._dir("mirrored"))
+
+    @functools.cached_property
+    def periodic(self):
+        return pc.g_mesh(self._dir("periodic"))
 
 
 @pytest.fixture(scope="module")
@@ -498,6 +530,105 @@ def _eigen_nodes(d: Designs, _cell: Cell, options, seed: int) -> Case:
     )
 
 
+# --- driven on a periodic model (the gradient cell G) ------------------------------
+
+#: The adaptive grid and samples of the periodic cells.
+PERIODIC_GRID = tuple(float(f) for f in np.linspace(16e9, 32e9, 9))
+PERIODIC_SAMPLES = (PERIODIC_GRID[0], PERIODIC_GRID[8], PERIODIC_GRID[4])
+#: Probe points of the field cell, m (inside the cell, off the seams).
+PERIODIC_PROBES = np.array([[1.3, 0.7, 0.5], [2.6, 4.2, 1.6], [3.4, 2.5, 2.4]]) * 1e-3
+
+
+def _periodic_sweep(cell: Cell):
+    """The periodic cell's problem and the grid rows its objective reads.
+
+    ``wave_vector``: `pc.G_K` for the Bloch problem, (0, 0, 0) for its
+    variant ``"k0"`` (the general path at the plain field), none for the
+    plain one.
+    """
+    wave_vector = None
+    if cell.problem == "driven_periodic_bloch":
+        wave_vector = (0.0, 0.0, 0.0) if cell.variant == "k0" else pc.G_K
+    if cell.sweep == "uniform":
+        problem = gfem.Driven(
+            frequency=pc.G_FREQUENCIES,
+            wave_vector=wave_vector,
+            keep_fields=pc.G_FREQUENCIES[1] if cell.variant == "field" else False,
+        )
+        return problem, list(range(len(pc.G_FREQUENCIES)))
+    problem = gfem.Driven(
+        frequency=PERIODIC_GRID, sweep="adaptive", samples=PERIODIC_SAMPLES
+    )
+    return problem, [PERIODIC_GRID.index(f) for f in PERIODIC_SAMPLES]
+
+
+def _periodic_value(cell: Cell, result, rows):
+    """S at ``rows``, or for the ``"field"`` variant a functional of probed E."""
+    if cell.variant != "field":
+        return s_functional(result.s.values[jnp.asarray(rows)])
+    weights = np.array([[1.0, 0.5, -0.8], [0.3, 1.2, 0.7], [-0.4, 0.9, 1.1]])
+    value = 0.0
+    for port in ("p1", "p2"):
+        e = result.e_field(pc.G_FREQUENCIES[1], port).at(PERIODIC_PROBES)
+        value = value + jnp.sum(weights * jnp.abs(e) ** 2) / 1e4
+        value = value + jnp.real((0.6 - 0.4j) * e[1, 2]) / 1e2
+    return value
+
+
+def _periodic_material(d: Designs, cell: Cell, options, seed: int) -> Case:
+    """S (or probed E) of G in the per-element eps_r or conductivity of its floor."""
+    mesh = d.periodic
+    rng = np.random.default_rng(10 + seed)
+    n = len(mesh.elements("core")) + len(mesh.elements("sub"))
+    values = {
+        "eps_r": jnp.asarray(rng.uniform(2.0, 6.0, n) * (1 - 0.02j)),
+        "conductivity": jnp.asarray(rng.uniform(0.5, 2.0, n)),
+    }
+    problem, rows = _periodic_sweep(cell)
+    name = cell.input
+
+    def objective(p):
+        model = pc.g(mesh, **{**values, name: p})
+        return _periodic_value(cell, gfem.solve(model, problem, options=options), rows)
+
+    taylor = {"eps_r": 1e-1, "conductivity": 1.0}[name]
+    return Case(objective, values[name], rng, step=STEPS[name], taylor=taylor)
+
+
+def _periodic_fill(d: Designs, cell: Cell, options, seed: int) -> Case:
+    """S of G in the per-face fill of its sheet, which touches both pairs."""
+    mesh = d.periodic
+    rng = np.random.default_rng(20 + seed)
+    fill = jnp.asarray(rng.uniform(0.2, 0.8, len(mesh.elements("sheet"))))
+    problem, rows = _periodic_sweep(cell)
+
+    def objective(p):
+        model = pc.g(mesh, fill=p)
+        return _periodic_value(cell, gfem.solve(model, problem, options=options), rows)
+
+    return Case(objective, fill, rng, step=5e-3, taylor=5e-2)
+
+
+def _periodic_nodes(d: Designs, cell: Cell, options, seed: int) -> Case:
+    """S of G; its sidewall, across the x seam, moves (tied motion)."""
+    model = pc.g(d.periodic)
+    morph = boundary_morph(model, "wall", grows="core")
+    problem, rows = _periodic_sweep(cell)
+
+    def objective(t):
+        result = gfem.solve(model.replace(mesh=morph(t)), problem, options=options)
+        return _periodic_value(cell, result, rows)
+
+    return Case(
+        objective,
+        jnp.zeros(morph.n_params),
+        np.random.default_rng(seed),
+        step=STEPS["nodes"],
+        taylor=4e-5,
+        taylor_at=jnp.full(morph.n_params, 1e-5),
+    )
+
+
 BUILDERS = {
     ("electrostatic", "eps_r"): _electrostatic_eps,
     ("electrostatic", "nodes"): _electrostatic_nodes,
@@ -512,6 +643,16 @@ BUILDERS = {
     ("eigenmode", "conductivity"): _eigen_material,
     ("eigenmode", "fill"): _eigen_fill,
     ("eigenmode", "nodes"): _eigen_nodes,
+    **{
+        (problem, name): builder
+        for problem in ("driven_periodic_plain", "driven_periodic_bloch")
+        for name, builder in (
+            ("eps_r", _periodic_material),
+            ("conductivity", _periodic_material),
+            ("fill", _periodic_fill),
+            ("nodes", _periodic_nodes),
+        )
+    },
 }
 
 
@@ -558,6 +699,7 @@ FAMILIES = [
     Cell("eigenmode", "conductivity", "direct"),
     Cell("eigenmode", "fill", "direct"),
     Cell("eigenmode", "nodes", "direct"),
+    Cell("driven_periodic_bloch", "eps_r", "direct", "uniform"),
 ]
 #: Two solves of one design agree to about 1 ulp (threaded assembly), so do
 #: their gradients. An eigenmode gradient is only as reproducible as the
@@ -643,6 +785,61 @@ def test_gradient_matrix_adaptive_equals_the_full_solve_at_the_samples(
     full_value, full_grad = jax.value_and_grad(full)(p)
     assert float(value) == pytest.approx(float(full_value), rel=1e-9)
     assert float(jnp.linalg.norm(grad - full_grad) / jnp.linalg.norm(full_grad)) <= 1e-7
+
+
+# --- consistency on a periodic model (the gradient cell G) -------------------------
+
+
+@pytest.mark.parametrize("name", ["eps_r", "nodes"])
+def test_gradient_matrix_bloch_at_zero_wave_vector_equals_plain(designs, name):
+    # k = 0 takes the general path (LU, the transposed system, no reciprocity
+    # shortcut) to the plain periodic field
+    plain_cell = Cell("driven_periodic_plain", name, "direct", "uniform")
+    bloch_cell = Cell("driven_periodic_bloch", name, "direct", "uniform", "k0")
+    plain = _case(designs, plain_cell, production=False)
+    bloch = _case(designs, bloch_cell, production=False)
+    want = np.asarray(jax.grad(plain.objective)(plain.p))
+    got = np.asarray(jax.grad(bloch.objective)(plain.p))
+    assert np.abs(want).max() > 0
+    assert np.linalg.norm(got - want) <= 1e-8 * np.linalg.norm(want)
+
+
+def _periodic_nodes_objective(model):
+    """The Bloch S objective of ``model`` as a function of its raw node coordinates."""
+    problem = gfem.Driven(frequency=pc.G_FREQUENCIES, wave_vector=pc.G_K)
+    treedef = jax.tree_util.tree_structure(model.mesh)
+
+    def objective(nodes):
+        mesh = jax.tree_util.tree_unflatten(treedef, [nodes])
+        result = gfem.solve(model.replace(mesh=mesh), problem, options=tight("direct"))
+        return s_functional(result.s.values)
+
+    return objective
+
+
+def test_gradient_matrix_rigid_translation_of_a_periodic_cell_is_free(designs):
+    # every term is invariant under a rigid move of the whole mesh, twins and
+    # all: the raw node gradient has no component along it
+    model = pc.g(designs.periodic)
+    nodes = jnp.asarray(model.mesh.nodes)
+    grad = np.asarray(jax.grad(_periodic_nodes_objective(model))(nodes))
+    t = np.broadcast_to(np.array([0.3, -0.5, 0.8]), grad.shape)
+    assert np.abs(grad).max() > 0
+    assert abs(np.sum(grad * t)) <= 1e-10 * np.linalg.norm(grad) * np.linalg.norm(t)
+
+
+def test_gradient_matrix_tied_morph_gradient_is_its_transpose_on_the_raw_one(designs):
+    # the morph's shared columns sum each tie class's raw cotangents
+    model = pc.g(designs.periodic)
+    morph = boundary_morph(model, "wall", grows="core")
+    objective = _periodic_nodes_objective(model)
+    t = jnp.zeros(morph.n_params)
+    tied = np.asarray(jax.grad(lambda t: objective(morph(t).nodes))(t))
+    raw = np.asarray(jax.grad(objective)(jnp.asarray(model.mesh.nodes)))
+    jacobian = np.asarray(jax.jacfwd(lambda t: morph(t).nodes)(t))  # (n, 3, p)
+    want = np.einsum("nip,ni->p", jacobian, raw)
+    assert np.abs(want).max() > 0
+    np.testing.assert_allclose(tied, want, rtol=0, atol=1e-12 * np.abs(want).max())
 
 
 # --- degenerate eigenmode clusters -------------------------------------------------

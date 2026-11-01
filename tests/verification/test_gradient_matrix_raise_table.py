@@ -22,6 +22,7 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import numpy as np
+import periodic_cases as pc
 import pytest
 import structured_meshes as sm
 
@@ -29,6 +30,7 @@ import gfem
 from gfem._adjoint import solve_vjp
 from gfem._adjoint.solve_vjp import input_kind
 from gfem._engine.electrostatic import ElectrostaticRule
+from gfem.shape import boundary_morph
 
 DATA = Path(__file__).parents[1] / "unit" / "data"
 GRADIENT, ZERO, RAISES = "gradient", "zero", "raises"
@@ -129,6 +131,20 @@ EXPECTED |= {
         ),
     )
     for kind in [("nodes",)] + [("material", "dielectric", p) for p in ALL_PROPERTIES]
+}
+
+
+# Driven on a periodic model (the C1 line, plain and Bloch): as the
+# non-periodic line, region "cell".
+def _in_cell(kind: tuple) -> tuple:
+    return kind if kind == ("nodes",) else ("material", "cell", kind[2])
+
+
+EXPECTED |= {
+    (problem, out, _in_cell(kind)): outcome
+    for problem in ("driven_periodic_plain", "driven_periodic_bloch")
+    for (name, out, kind), outcome in list(EXPECTED.items())
+    if name == "driven"
 }
 # Adaptive sweep (frozen samples, so it traces): S and the kept fields'
 # reduced coordinates differentiate like the uniform sweep's S and fields.
@@ -384,7 +400,24 @@ def sheet_cases(sheet_mesh):
 
 
 @pytest.fixture(scope="module")
-def cases(model, driven_model, eigen_model, wave_model, sheet_cases):
+def driven_periodic_cases(tmp_path_factory):
+    # the C1 line (periodic along x), a material field over its cell
+    mesh = pc.c1_mesh(tmp_path_factory.mktemp("c1"))
+    model = pc.c1(mesh).with_material("cell", _field(mesh, "cell"))
+    return {
+        "driven_periodic_plain": (
+            model,
+            gfem.Driven(frequency=5e9, keep_fields=True),
+        ),
+        "driven_periodic_bloch": (
+            model,
+            gfem.Driven(frequency=5e9, keep_fields=True, wave_vector=pc.C1_K),
+        ),
+    }
+
+
+@pytest.fixture(scope="module")
+def cases(model, driven_model, eigen_model, wave_model, request):
     mesh = gfem.Mesh.from_gmsh(DATA / "parallel_plate.msh", length_unit="um")
     port_model = gfem.Model(
         mesh,
@@ -399,7 +432,8 @@ def cases(model, driven_model, eigen_model, wave_model, sheet_cases):
         "driven_adaptive": (driven_model, ADAPTIVE),
         "driven_wave": (wave_model, gfem.Driven(frequency=20e9)),
         "eigenmode": (eigen_model, gfem.Eigenmode(target=17e9)),
-        **sheet_cases,
+        **request.getfixturevalue("sheet_cases"),
+        **request.getfixturevalue("driven_periodic_cases"),
     }
 
 
@@ -615,6 +649,56 @@ def _out_probe_in_the_node_coordinates(request):
     jax.make_jaxpr(jax.grad(objective))(jnp.asarray(model.mesh.nodes))
 
 
+def _out_driven_traced_wave_vector(request):
+    # the wave vector is static: a Bloch phase is not a design variable
+    model, _ = request.getfixturevalue("driven_periodic_cases")["driven_periodic_bloch"]
+
+    def objective(kx):
+        problem = gfem.Driven(frequency=5e9, wave_vector=(kx, 0.0, 0.0))
+        return jnp.sum(jnp.abs(gfem.solve(model, problem).s.values) ** 2)
+
+    jax.grad(objective)(pc.C1_K[0])
+
+
+def _out_periodic_pair_broken(request):
+    # a node move that breaks a pair has no forward: raised on the host
+    model, problem = request.getfixturevalue("driven_periodic_cases")[
+        "driven_periodic_plain"
+    ]
+    mesh = model.mesh
+    node = int(model._periodic[0].minion[0])
+
+    def objective(dy):
+        x = jnp.asarray(mesh.nodes).at[node, 1].add(dy)
+        moved = jax.tree_util.tree_unflatten(jax.tree_util.tree_structure(mesh), [x])
+        s = gfem.solve(model.replace(mesh=moved), problem).s.values
+        return jnp.sum(jnp.abs(s) ** 2)
+
+    jax.grad(objective)(1e-5)
+
+
+def _out_morph_of_a_paired_surface(request):
+    model, _ = request.getfixturevalue("driven_periodic_cases")["driven_periodic_plain"]
+    boundary_morph(model, "x_max")
+
+
+def _out_bloch_adaptive_sweep(request):
+    model, _ = request.getfixturevalue("driven_periodic_cases")["driven_periodic_bloch"]
+    problem = gfem.Driven(
+        frequency=(4e9, 5e9, 6e9),
+        sweep="adaptive",
+        samples=(4e9, 6e9),
+        wave_vector=pc.C1_K,
+    )
+    eps = model.materials["cell"].eps_r
+
+    def objective(e):
+        m = model.with_material("cell", gfem.MaterialField(eps_r=e))
+        return jnp.sum(jnp.abs(gfem.solve(m, problem).s.values) ** 2)
+
+    jax.grad(objective)(eps)
+
+
 # (row, raising call, error, message): DegenerateModeError on one mode of a
 # degenerate eigenmode cluster is in tests/verification/test_gradient_matrix.py.
 HOST = jax.errors.JaxRuntimeError  # a gfem error raised in the backward pass
@@ -661,6 +745,31 @@ OUT_OF_SCOPE = [
         _out_probe_in_the_node_coordinates,
         gfem.NonDifferentiableError,
         r"mesh node coordinates.*stop_gradient",
+    ),
+    # driven on a periodic model
+    (
+        "driven x traced wave_vector",
+        _out_driven_traced_wave_vector,
+        gfem.NonDifferentiableError,
+        "wave_vector must be fixed",
+    ),
+    (
+        "periodic x moved mesh that breaks a pair",
+        _out_periodic_pair_broken,
+        HOST,
+        r"ValueError.*breaks Periodic\(",
+    ),
+    (
+        "boundary_morph moving a paired surface",
+        _out_morph_of_a_paired_surface,
+        ValueError,
+        "cannot be the moving surface",
+    ),
+    (
+        "Bloch adaptive sweep",
+        _out_bloch_adaptive_sweep,
+        NotImplementedError,
+        "sweep='uniform'",
     ),
 ]
 
