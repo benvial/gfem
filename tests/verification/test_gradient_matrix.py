@@ -773,6 +773,44 @@ def test_gradient_matrix_conductor_cluster_cut_by_n_modes_raises(designs):
         jax.grad(objective)(_uniform(cavity))
 
 
+def test_gradient_matrix_conductor_cluster_cut_with_split_ritz_values_raises(
+    designs, monkeypatch
+):
+    # the frozen seed's Ritz values of the pair split by 3e-8 (relative, at
+    # seed tolerance 1e-3: CI run 41300599403) and its vectors were nearly
+    # parallel: both seeds refined to one mode, and the guard showed no cut
+    import gfem._eigen.rule as eigen_rule
+
+    shift_invert = eigen_rule.shift_invert
+
+    def split_and_parallel(*args, **kwargs):
+        k, vectors = shift_invert(*args, **kwargs)
+        i, j = np.argsort(np.where(k.real > 0, k.real, np.inf))[:2]
+        assert abs(k[i] - k[j]) <= 1e-6 * abs(k[i])  # the pair
+        k = k.copy()
+        k[j] = k[i] * (1 + 3e-8)
+        q = np.linalg.qr(vectors[:, [i, j]])[0]
+        vectors = vectors.copy()
+        vectors[:, i] = q[:, 0]
+        vectors[:, j] = 0.95 * q[:, 0] + np.sqrt(1 - 0.95**2) * q[:, 1]
+        return k, vectors
+
+    monkeypatch.setattr(eigen_rule, "shift_invert", split_and_parallel)
+    cavity = designs.mirrored_cavity
+
+    def objective(eps):
+        model = gfem.Model(
+            cavity,
+            materials={"fill": gfem.MaterialField(eps_r=eps)},
+            boundaries=[gfem.Conductor("wall", 5.8e7)],
+        )
+        problem = gfem.Eigenmode(target=MIRRORED_TARGET, n_modes=1)
+        return jnp.real(gfem.solve(model, problem, options=CLUSTER_OPTIONS).omega[0])
+
+    with pytest.raises(DEGENERATE, match=r"DegenerateModeError.*n_modes"):
+        jax.grad(objective)(_uniform(cavity))
+
+
 def test_gradient_matrix_simple_mode_beside_a_cluster_differentiates(designs):
     # TM110 alone: no cotangent reaches the pair
     cavity = designs.mirrored_cavity
