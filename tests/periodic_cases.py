@@ -15,6 +15,10 @@ read without NGSolve. Meshes are in mm, wave vectors in rad/m.
   transfer-matrix roots, `tmm_frequency`.
 - C4, `c4`: an empty vacuum cube periodic along x, y and z (no other
   boundary); its lowest band is a doublet at `empty_lattice`.
+- G, `g`: the gradient cell, periodic along x and y, with two lumped
+  ports, a PEC ground, an absorbing top, a resistive `gfem.Impedance` sheet
+  touching both pairs and a sidewall "wall" crossing the x seam (the
+  periodic cells of the gradient verification matrix).
 
 The tolerances are about 10-50x the error measured on each cell at its
 order and mesh.
@@ -264,4 +268,95 @@ def c4(mesh: gfem.Mesh) -> gfem.Model:
         mesh,
         materials={"cell": gfem.Material()},
         boundaries=[gfem.Periodic((f"{a}_min", f"{a}_max")) for a in "xyz"],
+    )
+
+
+# --- G: the gradient cell ---------------------------------------------------------
+
+G_A, G_B, G_H = 4.0, 5.0, 3.0  # mm
+G_CELLS = (4, 5, 3)  # 1 mm cells
+G_SHEET_Z = 2.0  # the Impedance sheet, mm
+G_WALL_Y = 2.0  # the sidewall between "core" and "sub", mm
+G_FREQUENCIES = (20e9, 28e9)
+#: The Bloch wave vector of G, rad/m.
+G_K = (0.3 * math.pi / (G_A * MM), -0.2 * math.pi / (G_B * MM), 0.0)
+
+
+def g_mesh(directory: Path) -> gfem.Mesh:
+    """G's mesh: a 4 x 5 x 3 mm cell periodic along x and y.
+
+    Volumes "core" (y < 2, z < 1), "sub" (y > 2, z < 1) and "cover" (z >
+    1); surfaces the box faces, "sheet" (the plane z = 2, which touches
+    both pairs along edges), "wall" (y = 2 between "core" and "sub", which
+    crosses the x seam) and the lumped-port faces "port1" (x = 1) and
+    "port2" (x = 3), both on 3 < y < 4, z < 1, away from the pairs.
+    """
+    edges = _edges((G_A, G_B, G_H), G_CELLS)
+    tol = 1e-9 * G_B
+
+    def volume(c):
+        name = "cover" if c[2] > 1 else "core" if c[1] < G_WALL_Y else "sub"
+        # cut at the interior planes, so their faces are offered to `named`
+        return f"{name}\0{int(c[0] > 1)}{int(c[0] > 3)}{int(c[2] > G_SHEET_Z)}"
+
+    def named(c):
+        for axis, a in enumerate("xyz"):
+            hi = (G_A, G_B, G_H)[axis]
+            if abs(c[axis]) < tol:
+                return f"{a}_min"
+            if abs(c[axis] - hi) < tol:
+                return f"{a}_max"
+        if abs(c[2] - G_SHEET_Z) < tol:
+            return "sheet"
+        for x, port in ((1.0, "port1"), (3.0, "port2")):
+            if abs(c[0] - x) < tol:
+                return port if 3 < c[1] < 4 and c[2] < 1 else ""
+        if abs(c[1] - G_WALL_Y) < tol and c[2] < 1:
+            return "wall"
+        return ""
+
+    nodes, tets, names, tris, tri_names = sm.structured(edges, volume, named)
+    cell = (nodes, tets, [n.split("\0")[0] for n in names], tris, tri_names)
+    return _mesh(directory, "g", cell)
+
+
+def g(
+    mesh: gfem.Mesh,
+    *,
+    eps_r=None,
+    conductivity=None,
+    fill=None,
+) -> gfem.Model:
+    """G: lumped ports, PEC ground, absorbing top, a resistive sheet across the seams.
+
+    ``eps_r`` and ``conductivity``: per-element values over "core" then
+    "sub" (mesh order of each), lossy constants by default; ``fill``: the
+    sheet's per-face `gfem.SheetField` fill (solid by default).
+    """
+    n_core = len(mesh.elements("core"))
+    n = n_core + len(mesh.elements("sub"))
+    eps = np.full(n, 3.0 * (1 - 0.02j)) if eps_r is None else eps_r
+    sigma = np.full(n, 0.2) if conductivity is None else conductivity
+    split = {"core": slice(0, n_core), "sub": slice(n_core, n)}
+    sheet = None if fill is None else gfem.SheetField(fill=fill)
+    return gfem.Model(
+        mesh,
+        materials={
+            **{
+                r: gfem.MaterialField(eps_r=eps[s], conductivity=sigma[s])
+                for r, s in split.items()
+            },
+            "cover": gfem.Material(),
+        },
+        boundaries=[
+            gfem.Periodic(("x_min", "x_max")),
+            gfem.Periodic(("y_min", "y_max")),
+            gfem.PEC("z_min"),
+            gfem.Absorbing("z_max"),
+            gfem.Impedance("sheet", resistance=300.0, fill=sheet),
+        ],
+        ports=[
+            gfem.LumpedPort("p1", "port1", "+z", impedance=50.0),
+            gfem.LumpedPort("p2", "port2", "+z", impedance=50.0),
+        ],
     )

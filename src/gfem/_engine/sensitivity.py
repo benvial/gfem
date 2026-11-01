@@ -240,7 +240,9 @@ class FieldPair:
     ``right`` (or ``left``) so a backward pass needs few pairs.
 
     Attributes:
-        space: The NGSolve space of both fields.
+        space: The NGSolve space of both fields: the solve space, or the
+            unpaired space on a periodic model (the rule expands both
+            sides, the left one with conj(P)).
         left: DOF vectors, shape ``(ndof,)`` or ``(ndof, k)``.
         right: DOF vectors of the same shape.
         weights: ``theta_t`` per form term in this problem.

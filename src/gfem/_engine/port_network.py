@@ -14,7 +14,11 @@ columns (`split_cotangent`).
 Reciprocity: with ``A`` complex symmetric and port i's S functional
 ``f_i`` parallel to its excitation ``b_i`` (every lumped port; a wave port
 whose mode is real up to one phase), ``A^-1 f_i`` is port i's own solution
-scaled, so its row needs no adjoint solve. A port without a resistance
+scaled, so its row needs no adjoint solve. With a Bloch wave vector
+``A(k)^T = A(-k)``: port i's adjoint is its own solution at -k, which a
+sweep at k does not have, so the network takes no shortcut there
+(`PortNetwork.reciprocal`) and every row with a cotangent is an adjoint
+load. A port without a resistance
 has no reference impedance: its S row and ``z_ref`` are NaN, and a
 cotangent on that row makes the gradient NaN like the value (ADR 0011).
 
@@ -175,6 +179,9 @@ class PortNetwork:
         waves: The wave ports' couplings.
         columns: The excited ports' indices.
         z_ref: ``(n_freq, n_ports)`` reference impedances, ohm.
+        reciprocal: Whether the operator is complex symmetric (no Bloch
+            wave vector), so that `pullback` may take S rows from the
+            solutions by reciprocity.
         deembedding: ``(n_freq, n_ports)``: S_ij is scaled by ``d_i d_j``
             (1 for lumped; a wave port's ``exp(gamma offset)`` moves its
             reference plane).
@@ -185,6 +192,7 @@ class PortNetwork:
     waves: list[WavePortCoupling]
     columns: list[int]
     z_ref: np.ndarray
+    reciprocal: bool = True
     deembedding: np.ndarray = dataclasses.field(init=False)
 
     def __post_init__(self) -> None:
@@ -263,7 +271,14 @@ class PortNetwork:
             z_ref[:, i] = resistance(model.ports[i])
         for c in waves:
             z_ref[:, c.index] = c.z_ref
-        return cls(excitation, outputs, list(waves), columns, z_ref)
+        return cls(
+            excitation,
+            outputs,
+            list(waves),
+            columns,
+            z_ref,
+            reciprocal=operator.symmetric,
+        )
 
     def rhs(self, omega: float) -> np.ndarray:
         """The right-hand sides at ω, ``(N, width)``."""
@@ -341,14 +356,15 @@ class PortNetwork:
     ) -> CotangentSplit:
         """Split the S cotangent ``ct`` at frequency ``n``, with reciprocity.
 
-        ``x`` ``(N, width)`` holds the excited ports' solutions at ω.
+        ``x`` ``(N, width)`` holds the excited ports' solutions at ω. Without
+        `reciprocal` (a Bloch wave vector) every row is an adjoint load.
         """
         return split_cotangent(
             ct,
             self.deembedding[n],
             self.columns,
             self.functional(omega),
-            own=(self.rhs(omega), x),
+            own=(self.rhs(omega), x) if self.reciprocal else None,
         )
 
     @property

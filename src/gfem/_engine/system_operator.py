@@ -12,7 +12,11 @@ assembled once (the piece sum, `gfem._linalg.pieces`), kept until `free`.
 A `SystemOperator` answers two questions: a forward sweep's right-hand
 sides at each ω, warm-started, through one base handle (`SystemSweep`), and
 a backward pass's adjoint loads at frequency ``n`` (`solve_adjoint`), at the
-adjoint tolerance. On the CPU an adjoint solve keeps one handle per
+adjoint tolerance. The adjoint solve is a solve with ``(A + W)^T``: the
+operator itself when it is complex symmetric, and under a Bloch wave vector
+k the transposed system, the system operator at -k (``A(k)^T = A(-k)`` on
+the same DOFs, and ``W`` is symmetric and off every pair), built on the
+first adjoint solve. On the CPU an adjoint solve keeps one handle per
 frequency for later backward passes; on a GPU one base handle refactorized
 at each frequency, so device memory holds one factorization whatever the
 number of frequencies.
@@ -48,8 +52,9 @@ class SystemOperator:
 
     Owns the wave ports' Robin pieces, the piece sum, the modal corrections
     ``W``, the adjoint handles (one per frequency on the CPU, one
-    refactorized base on a GPU) and their memory. A forward sweep's base
-    handle lives in its `SystemSweep`.
+    refactorized base on a GPU), the transposed system under a Bloch wave
+    vector, and their memory. A forward sweep's base handle lives in its
+    `SystemSweep`.
 
     Attributes:
         operator: The driven operator, wave-port Robin pieces included.
@@ -64,6 +69,7 @@ class SystemOperator:
         *,
         width: int,
         adjoint_tolerance: float,
+        transposed: Callable[[], DrivenOperator] | None = None,
     ) -> None:
         """Add each wave port's Robin piece to ``operator``.
 
@@ -73,6 +79,10 @@ class SystemOperator:
             linear: The rule's linear solver.
             width: The right-hand sides per solve (the excited ports).
             adjoint_tolerance: The relative residual of adjoint solves.
+            transposed: Builds the driven operator of ``operator``'s
+                transpose (the operator at -k under a Bloch wave vector), for
+                the adjoint solves; ``None`` when ``operator`` is complex
+                symmetric.
         """
         if waves:
             operator = dataclasses.replace(
@@ -92,6 +102,8 @@ class SystemOperator:
         )
         self._handles: dict[int, Handle] = {}
         self._adjoint_sweep: SystemSweep | None = None
+        self._transposed = transposed
+        self._transposed_system: SystemOperator | None = None
 
     def sweep(
         self,
@@ -124,28 +136,33 @@ class SystemOperator:
     def solve_adjoint(self, n: int, omega: float, loads: np.ndarray) -> np.ndarray:
         """Solve the adjoint loads ``(ndof, q)`` of frequency ``n`` at ``ω``.
 
-        At the adjoint tolerance; ``A + W`` is complex symmetric, so the
-        adjoint solve is a forward solve.
+        At the adjoint tolerance, with ``(A + W)^T``: ``A + W`` itself when
+        complex symmetric (the adjoint solve is a forward solve), else the
+        transposed system's.
 
         Raises:
             gfem.LinearSolverConvergenceError: The linear solve did not
                 converge.
         """
-        handle = self._adjoint_handle(n, omega)
+        handle = self._adjoint_system()._adjoint_handle(n, omega)  # noqa: SLF001
         return handle.solve(loads, tolerance=self._adjoint_tolerance)
 
     @property
     def nbytes(self) -> int:
-        """Host memory held by the adjoint handles, the pieces and ``W``, in bytes."""
-        held = sum(int(h.nbytes) for h in self._handles.values())
-        if self._adjoint_sweep is not None:  # the GPU adjoint base
-            base = self._adjoint_sweep._base  # noqa: SLF001
-            held += 0 if base is None else int(base.nbytes)
-        held += sum(int(c.vectors.nbytes) for c in self.waves)
-        return held + self._pieces.nbytes
+        """Host memory held by the adjoint handles, the pieces and ``W``, in bytes.
+
+        The transposed system's handles and pieces included.
+        """
+        held = self._held_nbytes()
+        if self._transposed_system is not None:
+            held += self._transposed_system._held_nbytes()  # noqa: SLF001
+        return held + sum(int(c.vectors.nbytes) for c in self.waves)
 
     def free(self) -> None:
-        """Release the adjoint handles and the pieces (a prepare reassembles them)."""
+        """Release the adjoint handles and the pieces (a prepare reassembles them).
+
+        The transposed system goes too (the next adjoint solve builds it).
+        """
         for handle in self._handles.values():
             handle.free()
         self._handles = {}
@@ -153,6 +170,36 @@ class SystemOperator:
             self._adjoint_sweep.free()
         self._adjoint_sweep = None
         self._pieces.free()
+        if self._transposed_system is not None:
+            self._transposed_system.free()
+        self._transposed_system = None
+
+    def _held_nbytes(self) -> int:
+        """The adjoint handles' and the pieces' bytes (not ``W``'s)."""
+        held = sum(int(h.nbytes) for h in self._handles.values())
+        if self._adjoint_sweep is not None:  # the GPU adjoint base
+            base = self._adjoint_sweep._base  # noqa: SLF001
+            held += 0 if base is None else int(base.nbytes)
+        return held + self._pieces.nbytes
+
+    def _adjoint_system(self) -> SystemOperator:
+        """The system whose handles solve with ``(A + W)^T``.
+
+        ``self`` without a transposed operator; otherwise the transposed
+        system, built on first use with the same wave ports, solver and
+        tolerances.
+        """
+        if self._transposed is None:
+            return self
+        if self._transposed_system is None:
+            self._transposed_system = SystemOperator(
+                self._transposed(),
+                self.waves,
+                self._linear,
+                width=self._width,
+                adjoint_tolerance=self._adjoint_tolerance,
+            )
+        return self._transposed_system
 
     def operator_at(self, omega: float) -> Operator:
         """``A(ω)``, the operator without the modal corrections, to prepare.

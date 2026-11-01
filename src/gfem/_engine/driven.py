@@ -32,15 +32,21 @@ columns as they are.
 Gradients (`DrivenRule.backward`): with ``A x_j = b_j`` and port i's S
 functional ``f_i`` parallel to its excitation ``b_i`` (every lumped port; a
 wave port whose mode is real up to one phase), port i's solution is (a
-multiple of) the adjoint of its own S row, ``A^-1 f_i = c x_i`` (A^T = A,
-no transpose, no conjugate). An S cotangent therefore needs no solve when
-every port it reads is excited and parallel: per frequency it folds into
-one pair ``(-sum_i W_ij A^-1 f_i, x_j)``. A kept-field cotangent, an S row
-of a port that was not excited, or of a lossy wave port (its S functional
-projects on the conjugated mode), takes one multi-column adjoint solve per
-frequency with the system operator (wave-port modal corrections
-included); that frequency's operator is prepared on first use at the
-adjoint tolerance and kept in the cache entry for later pullbacks. Wave
+multiple of) the adjoint of its own S row, ``A^-T f_i = A^-1 f_i = c x_i``
+(A^T = A, no transpose, no conjugate). An S cotangent therefore needs no
+solve when every port it reads is excited and parallel: per frequency it
+folds into one pair ``(-sum_i W_ij A^-T f_i, x_j)``. A kept-field
+cotangent, an S row of a port that was not excited, or of a lossy wave
+port (its S functional projects on the conjugated mode), takes one
+multi-column adjoint solve per frequency with the system operator
+(wave-port modal corrections included); that frequency's operator is
+prepared on first use at the adjoint tolerance and kept in the cache entry
+for later pullbacks. With a Bloch wave vector A(k)^T = A(-k): there is no
+reciprocity shortcut, and every adjoint load is solved on the transposed
+system, the system operator at -k (`SystemOperator.solve_adjoint`). On a
+periodic model the pairs go to the sensitivity kernel on the unpaired
+space (`DrivenOperator.pair`): ``A = P^H A_plain P``, so ``lambda^T (dA)
+x = (conj(P) lambda)^T (dA_plain) (P x)``. Wave
 ports' modes are constants of the solve: a design may not touch a wave
 port face (`gfem.PortGeometryError`), so the excitations, the S
 functionals and the modal corrections have no design derivative.
@@ -62,6 +68,7 @@ import dataclasses
 import functools
 import math
 import warnings
+from collections.abc import Mapping
 from typing import Any, NoReturn
 
 import jax
@@ -149,6 +156,9 @@ class DrivenOperator:
         symmetry: ``"general"`` on a Bloch-phased space (A^T != A),
             ``"complex_symmetric"`` otherwise: declared by the problem's
             wave vector, never read from its value.
+        unpaired: For a model with periodic pairs, the complex unpaired
+            space (P's rows), where the backward pass's field pairs live;
+            ``None`` without pairs.
     """
 
     built: EngineMesh
@@ -158,10 +168,49 @@ class DrivenOperator:
     order: int
     expansion: scipy.sparse.csr_matrix | None = None
     symmetry: Symmetry = "complex_symmetric"
+    unpaired: ngs.FESpace | None = None
 
     def expand(self, x: np.ndarray) -> np.ndarray:
         """``P x``: solve-space coefficients ``(ndof, ...)`` on the unpaired space."""
         return x if self.expansion is None else self.expansion @ x
+
+    def pair(
+        self,
+        left: np.ndarray,
+        right: np.ndarray,
+        *,
+        weights: Mapping[str, complex],
+        domain: ngs.Region,
+    ) -> FieldPair:
+        """The `FieldPair` of solve-space columns ``(left, right)``.
+
+        ``left`` holds adjoints (on the transposed system's space under a
+        Bloch wave vector), ``right`` solutions. Without periodic pairs both
+        stay on the solve space. With pairs both go to the unpaired space,
+        ``(conj(P) left, P right)``: the periodic operator is ``P^H A_plain
+        P`` and ``conj(P(k)) = P(-k)``, so ``left^T (dA) right`` is the
+        plain form of the expanded fields, which the kernel contracts as it
+        does without pairs (and a real space can hold under a Bloch phase,
+        `real_space`).
+        """
+        if self.expansion is None or self.unpaired is None:
+            return FieldPair(
+                space=self.space,
+                left=left,
+                right=right,
+                weights=weights,
+                order=self.order,
+                domain=domain,
+            )
+        p = self.expansion
+        return FieldPair(
+            space=self.unpaired,
+            left=p.conj() @ left,
+            right=p @ right,
+            weights=weights,
+            order=self.order,
+            domain=domain,
+        )
 
     def form(self, omega: float) -> ngs.BilinearForm:
         """``Σ θ_k(ω) a_k``, not assembled (a backend assembles it)."""
@@ -247,10 +296,13 @@ def driven_operator(
     built = disc.built
     pec = pec_surfaces(model)
     key = (domain_key(model), "hcurl", order, pec)
-    expansion = None
+    expansion = unpaired = None
     if periodic:
         phases = bloch_phases(model, wave_vector)
         pairs = tuple((p.first, p.second) for p in periodic)
+        unpaired = disc.space(
+            key, lambda: hcurl_space(model, built, order, dirichlet=pec)
+        )
         key = (*key, pairs, phases)
         space = disc.space(
             key,
@@ -260,21 +312,16 @@ def driven_operator(
         )
         expansion = disc.space(
             (*key, "expansion"),
-            lambda: expansion_matrix(
-                space,
-                disc.space(
-                    (domain_key(model), "hcurl", order, pec),
-                    lambda: hcurl_space(model, built, order, dirichlet=pec),
-                ),
-                real=phases is None,
-            ),
+            lambda: expansion_matrix(space, unpaired, real=phases is None),
         )
     else:
         space = disc.space(key, lambda: hcurl_space(model, built, order, dirichlet=pec))
     ports = terms.lumped_ports(model, built.scale)
     pieces = terms.pieces(model, built, order, ports, elements=elements, faces=faces)
     symmetry: Symmetry = "complex_symmetric" if wave_vector is None else "general"
-    return DrivenOperator(built, space, pieces, ports, order, expansion, symmetry)
+    return DrivenOperator(
+        built, space, pieces, ports, order, expansion, symmetry, unpaired
+    )
 
 
 #: Entries of the expansion P below this are the round-off of NGSolve's
@@ -638,12 +685,20 @@ class DrivenRule:
             frequency=self.problem.frequency,
             tolerance=self.options.port_mode_tolerance,
         )
+        transposed = None
+        if self.problem.wave_vector is not None:
+            # A(k)^T = A(-k): the adjoint solves' operator
+            minus_k = tuple(-v for v in self.problem.wave_vector)
+            transposed = functools.partial(
+                driven_operator, model, op.order, wave_vector=minus_k
+            )
         system = SystemOperator(
             op,
             couplings,
             self.linear,
             width=len(columns),
             adjoint_tolerance=adjoint_tolerance(self.options),
+            transposed=transposed,
         )
         ports = PortNetwork.build(
             model,
@@ -831,7 +886,7 @@ class DrivenRule:
         return operator_terms(model, self.operator(model), nodes=nodes)
 
     def real_space(self, model: Model) -> ngs.FESpace:
-        """A real H(curl) space with the solve's DOF numbering (for ``DiffShape``)."""
+        """A real H(curl) space with the field pairs' DOF numbering (``DiffShape``)."""
         return real_space(model, self.operator(model))
 
     def unsupported_input(self, kind: tuple) -> str | None:
@@ -893,17 +948,22 @@ class DrivenRule:
         At frequency n, with ``X`` the excited ports' solutions, ``f_i`` port
         i's S functional (``S_ij = f_iᵀ x_j``, de-embedding aside) and ``W``
         the S cotangent, the pair is ``(-Lambda, X)`` with ``Lambda_j =
-        sum_i W_ij A^-1 f_i + A^-1 g_j``, ``g_j`` the cotangent of a kept
-        field of port j and ``A`` the system operator (wave-port Robin terms
-        and modal corrections included, complex symmetric): ``sum ct dy/dp
-        = -sum_j Lambda_j^T (dA/dp) x_j`` (the excitations and the modal
-        corrections depend on the port modes only). When ``f_i`` is parallel
+        sum_i W_ij A^-T f_i + A^-T g_j``, ``g_j`` the cotangent of a kept
+        field of port j (on the solve space: ``P^T`` times the field's
+        cotangent on a periodic model) and ``A`` the system operator
+        (wave-port Robin terms and modal corrections included): ``sum ct
+        dy/dp = -sum_j Lambda_j^T (dA/dp) x_j`` (the excitations and the
+        modal corrections depend on the port modes only). Without a Bloch
+        wave vector ``A`` is complex symmetric, and when ``f_i`` is parallel
         to port i's excitation (every lumped port, a wave port whose mode is
-        real up to a phase), ``A^-1 f_i`` is port i's own solution scaled
+        real up to a phase), ``A^-T f_i`` is port i's own solution scaled
         (no solve). The remaining loads (kept-field cotangents, rows of
         ports that were not excited, lossy wave ports, whose S functional
-        projects on the conjugated mode) take one multi-column adjoint
-        solve. ``z_ref`` contributes nothing.
+        projects on the conjugated mode, and every row under a Bloch wave
+        vector) take one multi-column adjoint solve, on the transposed
+        system (-k) under a Bloch wave vector. On a periodic model the pair
+        is on the unpaired space (`DrivenOperator.pair`). ``z_ref``
+        contributes nothing.
         """
         if self.adaptive:
             return self._backward_adaptive(model, entry, cotangents)
@@ -940,14 +1000,7 @@ class DrivenRule:
                         raise _adjoint_error(f, err) from err
                 adjoint[:, undefined] = np.nan
                 pairs.append(
-                    FieldPair(
-                        space=op.space,
-                        left=-adjoint,
-                        right=x,
-                        weights=op.weights(omega),
-                        order=op.order,
-                        domain=domain,
-                    )
+                    op.pair(-adjoint, x, weights=op.weights(omega), domain=domain)
                 )
         return pairs
 
@@ -965,8 +1018,9 @@ class DrivenRule:
         (n x n) and ``sum ct dy/dp = -Σ_t Σ_ab G_t,ab a_t'(V_a, V_b)`` with
         ``G_t = Σ_ω θ_t(ω) Λ(ω) Y(ω)ᵀ``. Each ``G_t`` (n x n) factors by
         SVD into at most n pairs ``(V a, V b)``, so the element passes do
-        not grow with the number of frequencies. A cotangent on the basis
-        itself is refused by the wrapper.
+        not grow with the number of frequencies (on the unpaired space on a
+        periodic model, `DrivenOperator.pair`: plain periodicity only, P is
+        real). A cotangent on the basis itself is refused by the wrapper.
         """
         fields = entry.fields
         basis, matrices = fields["basis"], fields["matrices"]
@@ -1001,12 +1055,10 @@ class DrivenRule:
             for term, g in accumulated.items():
                 left, right = _factor(g)
                 pairs.append(
-                    FieldPair(
-                        space=op.space,
-                        left=-(basis @ left),
-                        right=basis @ right,
+                    op.pair(
+                        -(basis @ left),
+                        basis @ right,
                         weights={term: 1.0},
-                        order=op.order,
                         domain=domain,
                     )
                 )
@@ -1190,7 +1242,14 @@ def operator_terms(model: Model, op: DrivenOperator, *, nodes: bool) -> list[Ter
 
 
 def real_space(model: Model, op: DrivenOperator) -> ngs.FESpace:
-    """A real H(curl) space with ``op``'s DOF numbering (for ``DiffShape``)."""
+    """A real H(curl) space with the DOF numbering of ``op``'s field pairs.
+
+    For ``DiffShape``: ``op``'s solve space's numbering without periodic
+    pairs; with them the real unpaired space (on the identified mesh), where
+    `DrivenOperator.pair` puts the fields, since no real periodic space can
+    hold a Bloch phase (the kernel splits complex fields into real and
+    imaginary parts).
+    """
     pec = pec_surfaces(model)
     return discretization(model.mesh, model._periodic).space(  # noqa: SLF001
         (domain_key(model), "hcurl", op.order, pec, "real"),
