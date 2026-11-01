@@ -9,15 +9,17 @@ first-kind Nédélec x H1 elements of the same order, it solves
     A = [ (nu_nn curl e_t, curl v_t) - k0^2 (eps_tt e_t, v_t), 0 ; 0, 0 ]
     B = [ (nu_tt (e_t + grad e_n), v_t + grad v_n) - k0^2 (eps_nn e_n, v_n) ]
 
-(``B`` holds the whole second row and column), where ``eps`` includes
-``-i conductivity / (omega eps0)`` and an absorbing edge adds
-``i k0 Y (E_T, V_T)`` to both diagonal blocks. A `Conductor` or `Impedance`
-edge adds its admittance the same way, as the driven problem's face term
-(`gfem._engine.terms`): ``i k0 eta0 / Z_s(omega)`` for a conductor, ``i k0
-eta0 / R``, ``mu0 scale / L`` and ``-k0^2 C / (eps0 scale)`` for an
-impedance. Both matrices are affine: each is a sum of fixed matrices times
-1, -k0^2, i k0 or a conductor's own scalar, assembled once. Coordinates are
-in the mesh file's unit, so ``k0`` is per local unit.
+(``B`` holds the whole second row and column), where ``eps_tt`` and
+``eps_nn`` include ``-i sigma_tt / (omega eps0)`` and ``-i sigma_nn /
+(omega eps0)`` (the conductivity tensor split like the permittivity), and
+an absorbing edge adds ``i k0 Y_tau (E_T, V_T)`` to the first diagonal
+block and ``i k0 Y_n (E_T, V_T)`` to the second (`edge_admittance`). A
+`Conductor` or `Impedance` edge adds its admittance to both, as the driven
+problem's face term (`gfem._engine.terms`): ``i k0 eta0 / Z_s(omega)`` for a
+conductor, ``i k0 eta0 / R``, ``mu0 scale / L`` and ``-k0^2 C / (eps0
+scale)`` for an impedance. Both matrices are affine: each is a sum of fixed
+matrices times 1, -k0^2, i k0 or a conductor's own scalar, assembled once.
+Coordinates are in the mesh file's unit, so ``k0`` is per local unit.
 """
 
 from __future__ import annotations
@@ -114,17 +116,17 @@ class PortModeSpace:
         wt = et + ngs.grad(en)
         wv = vt + ngs.grad(vn)
         has_abc = len(self.section.absorbing_edges) > 0
-        abc_t = c["Y"] * et.Trace() * vt.Trace() * ds_abc if has_abc else None
-        abc_n = c["Y"] * en.Trace() * vn.Trace() * ds_abc if has_abc else None
+        abc_t = c["Y_tau"] * et.Trace() * vt.Trace() * ds_abc if has_abc else None
+        abc_n = c["Y_n"] * en.Trace() * vn.Trace() * ds_abc if has_abc else None
         forms_a = [
             [c["nu_nn"] * ngs.curl(et) * ngs.curl(vt) * dx],
             [(c["eps_tt"] * et) * vt * dx],
-            [sigma_scale * c["sigma"] * et * vt * dx, abc_t],
+            [sigma_scale * (c["sigma_tt"] * et) * vt * dx, abc_t],
         ]
         forms_b = [
             [(c["nu_tt"] * wt) * wv * dx],
             [c["eps_nn"] * en * vn * dx],
-            [sigma_scale * c["sigma"] * en * vn * dx, abc_n],
+            [sigma_scale * c["sigma_nn"] * en * vn * dx, abc_n],
         ]
         extra = []
         fill = _edge_fill(self.mesh, self.section)
@@ -401,10 +403,15 @@ def _edge_fill(mesh: ngs.Mesh, section: PortSection) -> ngs.CoefficientFunction:
     return gf
 
 
-def _admittance_groups(section: PortSection) -> list[tuple[float, np.ndarray]]:
-    values, inverse = np.unique(section.absorbing_admittance, return_inverse=True)
+def _admittance_groups(
+    section: PortSection,
+) -> list[tuple[tuple[float, float], np.ndarray]]:
+    """The absorbing edges grouped by their ``(Y_tau, Y_n)``."""
+    values, inverse = np.unique(
+        section.absorbing_admittance.reshape(-1, 2), axis=0, return_inverse=True
+    )
     return [
-        (float(v), section.absorbing_edges[inverse.ravel() == g])
+        ((float(v[0]), float(v[1])), section.absorbing_edges[inverse.ravel() == g])
         for g, v in enumerate(values)
     ]
 
@@ -425,15 +432,20 @@ def _coefficients(mesh: ngs.Mesh, s: PortSection) -> dict[str, ngs.CoefficientFu
         return ngs.CF(tuple(parts), dims=(2, 2))
 
     groups = _admittance_groups(s)
-    y = mesh.BoundaryCF(
-        {f"absorbing{g}": v for g, (v, _) in enumerate(groups)},
-        default=ngs.CF(0.0),
+    y_tau, y_n = (
+        mesh.BoundaryCF(
+            {f"absorbing{g}": v[k] for g, (v, _) in enumerate(groups)},
+            default=ngs.CF(0.0),
+        )
+        for k in (0, 1)
     )
     return {
         "eps_tt": matrix(s.eps_tt),
         "eps_nn": _p0(mesh, s.eps_nn),
         "nu_tt": matrix(s.nu_tt),
         "nu_nn": _p0(mesh, s.nu_nn),
-        "sigma": _p0(mesh, s.sigma.astype(complex)),
-        "Y": y,
+        "sigma_tt": matrix(s.sigma_tt.astype(complex)),
+        "sigma_nn": _p0(mesh, s.sigma_nn.astype(complex)),
+        "Y_tau": y_tau,
+        "Y_n": y_n,
     }

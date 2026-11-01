@@ -357,6 +357,19 @@ def _port_mode_field_from_args(args: dict[str, Any], _: _codec.Context) -> Any:
     return PortModeField(space, args["basis"], args["coords"])
 
 
+def _port_section_from_args(args: dict[str, Any], _: _codec.Context) -> PortSection:
+    # Sections saved by 0.1.0 hold one conductivity per triangle and one
+    # admittance per absorbing edge: an isotropic medium's values.
+    if "sigma" in args:
+        sigma = np.asarray(args.pop("sigma"), float)
+        args["sigma_tt"] = sigma[:, None, None] * np.eye(2)
+        args["sigma_nn"] = sigma
+    admittance = np.asarray(args["absorbing_admittance"], float)
+    if admittance.ndim == 1:
+        args["absorbing_admittance"] = np.repeat(admittance[:, None], 2, axis=1)
+    return PortSection(**args)
+
+
 def _options_args(options: SolverOptions, _: _codec.Context) -> dict[str, Any]:
     args = {f.name: getattr(options, f.name) for f in dataclasses.fields(options)}
     # a JSON object, as a user writes it; the constructor sorts it back
@@ -389,7 +402,6 @@ for _cls in (
     Driven,
     DrivenResult,
     NetworkParameters,
-    PortSection,
     SweepInfo,
     ReducedFields,
     Eigenmode,
@@ -398,6 +410,7 @@ for _cls in (
 ):
     _codec.register(_cls)
 _codec.register(SolverOptions, to_args=_options_args)
+_codec.register(PortSection, from_args=_port_section_from_args)
 _codec.register(Electrostatic, to_args=_electrostatic_args)
 _codec.register(
     PortModeField, to_args=_port_mode_field_args, from_args=_port_mode_field_from_args

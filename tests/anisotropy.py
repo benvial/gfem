@@ -61,3 +61,40 @@ def admittance(eps, mu, n):
         [t @ (-n_eff[k] * (nn @ inv_mu @ (nn @ e[:, k]))) for k in range(2)]
     )
     return t.T @ (g @ np.linalg.inv(t @ e)) @ t
+
+
+# --- the WR-28 guide ------------------------------------------------------------
+
+#: WR-28 inner width and height, mm (Palace issue #835's guide).
+WR28 = (7.112, 3.556)
+
+
+def wr28(directory, length=1.0, cells=(12, 6, 1)):
+    """A WR-28 guide along z, 0 < z < ``length`` mm, as a `gfem.Mesh`.
+
+    Volume "fill"; surfaces "port1" (z = 0), "port2" (z = length) and
+    "walls". ``cells`` along x, y and z.
+    """
+    from pathlib import Path
+
+    import structured_meshes as sm
+
+    import gfem
+
+    a, b = WR28
+    edges = tuple(
+        np.linspace(0, s, n + 1) for s, n in zip((a, b, length), cells, strict=True)
+    )
+    tol = 1e-9 * a
+
+    def surface(c):
+        if abs(c[2]) < tol:
+            return "port1"
+        if abs(c[2] - length) < tol:
+            return "port2"
+        return "walls"
+
+    path = sm.write_msh22(
+        Path(directory) / "wr28.msh", sm.structured(edges, lambda _: "fill", surface)
+    )
+    return gfem.Mesh.from_gmsh(path, length_unit="mm")

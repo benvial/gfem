@@ -1,12 +1,14 @@
 """The planar cross-section the port mode problem solves on."""
 
+import math
 from pathlib import Path
 
+import anisotropy
 import numpy as np
 import pytest
 
 import gfem
-from gfem._port_section import port_section
+from gfem._port_section import edge_admittance, port_section
 
 DATA = Path(__file__).parent / "data"
 
@@ -55,8 +57,14 @@ def test_materials_come_from_the_volume_behind_each_triangle(slab_model):
     assert (~in_slab).any()
     np.testing.assert_allclose(s.eps_nn[in_slab], 4.0 * (1 - 0.01j))
     np.testing.assert_allclose(s.eps_nn[~in_slab], 1.0)
-    np.testing.assert_allclose(s.sigma[in_slab], 2.0)
-    np.testing.assert_allclose(s.sigma[~in_slab], 0.0)
+    np.testing.assert_allclose(s.sigma_nn[in_slab], 2.0)
+    np.testing.assert_allclose(s.sigma_nn[~in_slab], 0.0)
+    np.testing.assert_allclose(
+        s.sigma_tt[in_slab],
+        np.broadcast_to(2 * np.eye(2), (in_slab.sum(), 2, 2)),
+        atol=1e-15,
+    )
+    np.testing.assert_allclose(s.sigma_tt[~in_slab], 0.0)
     np.testing.assert_allclose(
         s.nu_tt, np.broadcast_to(np.eye(2), s.nu_tt.shape), atol=1e-15
     )
@@ -85,3 +93,150 @@ def test_every_outer_edge_is_on_the_pec_walls(slab_model):
     pec = np.unique(np.sort(s.pec_edges, axis=1), axis=0)
     np.testing.assert_array_equal(pec, outer)
     assert len(s.absorbing_edges) == 0
+
+
+# --- anisotropic sections --------------------------------------------------------
+
+# Principal axes turned 45 degrees about z, the port normal.
+_C = math.sqrt(0.5)
+DIAGONAL = ((_C, _C, 0.0), (-_C, _C, 0.0), (0.0, 0.0, 1.0))
+
+
+def test_index_bounds_use_the_principal_values_of_turned_tensors(slab_model):
+    # eps_tt = diag(1, 4) at 45 degrees has the diagonal (2.5, 2.5); a mode
+    # can see up to 4. sigma_tt = diag(0.1, 0.5) likewise has 0.3 on its
+    # diagonal and sigma_nn = 0.2.
+    turned = gfem.Material(
+        eps_r=(1.0, 4.0, 1.0), conductivity=(0.1, 0.5, 0.2), axes=DIAGONAL
+    )
+    model = slab_model.replace(materials={"slab": turned, "air": turned})
+    s = port_section(model, model.ports[0])
+    n2_shift, n2_max = s.index_squared()
+    assert n2_shift >= 4.0 * (1 - 1e-12)
+    assert n2_max >= 4.0 * (1 - 1e-12)
+    np.testing.assert_allclose(s.max_conductivity, 0.5, rtol=1e-12)
+
+
+def _transverse(rng, lo, hi):
+    """A random tensor with z principal, turned about z."""
+    t = rng.uniform(0, 2 * np.pi)
+    c, s = np.cos(t), np.sin(t)
+    r = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+    return r @ np.diag(rng.uniform(lo, hi, 3)) @ r.T
+
+
+def _in_section(eps, mu):
+    """``eps_tt, eps_nn, nu_tt, nu_nn`` of 3x3 tensors, frame (u, v, n) = (x, y, z)."""
+    rot = np.array([[0.0, 1.0], [-1.0, 0.0]])  # R a = a x n
+    nu_tt = rot.T @ np.linalg.inv(mu[:2, :2]) @ rot
+    return eps[:2, :2], eps[2, 2], nu_tt, 1 / mu[2, 2]
+
+
+def test_edge_admittance_is_the_3d_face_admittance_on_the_edge():
+    rng = np.random.default_rng(0)
+    z = np.array([0.0, 0.0, 1.0])
+    for _ in range(20):
+        eps, mu = _transverse(rng, 1.0, 12.0), _transverse(rng, 0.5, 3.0)
+        phi = rng.uniform(0, 2 * np.pi)
+        m = np.array([np.cos(phi), np.sin(phi), 0.0])  # in-plane edge normal
+        tau = np.cross(z, m)
+        y3 = anisotropy.admittance(eps, mu, m)
+        et, en, nt, nn = _in_section(eps, mu)
+        got = edge_admittance(
+            et[None], np.array([en]), nt[None], np.array([nn]), m[None, :2], where="x"
+        )[0]
+        want = np.array([tau @ y3 @ tau, z @ y3 @ z])
+        # measured 7.8e-16 and 1.6e-16 (round-off)
+        np.testing.assert_allclose(got, want, rtol=3e-15)
+        assert abs(tau @ y3 @ z) <= 5e-16 * np.abs(want).max()
+
+
+def test_edge_admittance_of_diagonal_tensors_pairs_the_plane_wave_components():
+    eps, mu = np.diag([2.0, 3.0, 5.0]), np.diag([1.5, 1.2, 1.1])
+    et, en, nt, nn = _in_section(eps, mu)
+    got = edge_admittance(
+        et[None],
+        np.array([en]),
+        nt[None],
+        np.array([nn]),
+        np.array([[1.0, 0.0]]),
+        where="x",
+    )[0]
+    # edge normal x, tangent y: E along y with H along z; E along z with H along y
+    np.testing.assert_allclose(
+        got, [np.sqrt(3.0 / 1.1), np.sqrt(5.0 / 1.2)], rtol=1e-15
+    )
+
+
+def test_edge_admittance_refuses_a_medium_with_no_real_admittance():
+    eps, mu = np.diag([2.0, -3.0, 5.0]), np.eye(3)
+    et, en, nt, nn = _in_section(eps, mu)
+    with pytest.raises(ValueError, match="Absorbing 'side'"):
+        edge_admittance(
+            et[None],
+            np.array([en]),
+            nt[None],
+            np.array([nn]),
+            np.array([[1.0, 0.0]]),
+            where="Absorbing 'side'",
+        )
+
+
+def _guide_with_absorbing_walls(materials):
+    mesh = gfem.Mesh.from_gmsh(DATA / "slab_waveguide.msh", length_unit="mm")
+    return gfem.Model(
+        mesh,
+        materials=materials,
+        boundaries=[gfem.Absorbing("walls")],
+        ports=[gfem.WavePort("p1", "port1"), gfem.WavePort("p2", "port2")],
+    )
+
+
+def test_isotropic_absorbing_edges_keep_their_scalar_admittance():
+    model = _guide_with_absorbing_walls(
+        {"slab": gfem.Material(eps_r=4.0, mu_r=2.0), "air": gfem.Material()}
+    )
+    s = port_section(model, model.ports[0])
+    y = s.absorbing_admittance
+    assert y.shape == (len(s.absorbing_edges), 2)
+    # bit for bit the mean-diagonal value of the isotropic medium beside the edge
+    owner = _edge_owners(s)
+    eps = np.trace(s.eps_tt[owner], axis1=1, axis2=2).real / 2
+    mu = 2 / np.trace(s.nu_tt[owner], axis1=1, axis2=2).real
+    np.testing.assert_array_equal(y[:, 0], np.sqrt(eps / mu))
+    np.testing.assert_array_equal(y[:, 1], y[:, 0])
+    assert set(np.round(y[:, 0], 12)) <= {1.0, round(np.sqrt(2.0), 12)}
+
+
+def test_anisotropic_absorbing_edges_take_the_admittance_along_each_edge():
+    # the walls are at x = const and y = const; eps and mu diagonal
+    eps, mu = (2.0, 3.0, 5.0), (1.5, 1.2, 1.1)
+    model = _guide_with_absorbing_walls(
+        {
+            "slab": gfem.Material(eps_r=eps, mu_r=mu),
+            "air": gfem.Material(eps_r=eps, mu_r=mu),
+        }
+    )
+    s = port_section(model, model.ports[0])
+    p = s.to_global(s.points[s.absorbing_edges])
+    along_y = np.abs(p[:, 0, 0] - p[:, 1, 0]) < 1e-12  # edge normal x
+    assert along_y.any()
+    assert (~along_y).any()
+    y = s.absorbing_admittance
+    np.testing.assert_allclose(
+        y[along_y],
+        np.broadcast_to([np.sqrt(3.0 / 1.1), np.sqrt(5.0 / 1.2)], y[along_y].shape),
+        rtol=1e-12,
+    )
+    np.testing.assert_allclose(
+        y[~along_y],
+        np.broadcast_to([np.sqrt(2.0 / 1.1), np.sqrt(5.0 / 1.5)], y[~along_y].shape),
+        rtol=1e-12,
+    )
+
+
+def _edge_owners(s):
+    """The triangle beside each absorbing edge."""
+    keys = np.sort(s.triangles[:, [[0, 1], [1, 2], [2, 0]]].reshape(-1, 2), axis=1)
+    want = np.sort(s.absorbing_edges, axis=1)
+    return np.array([np.flatnonzero((keys == e).all(axis=1))[0] // 3 for e in want])

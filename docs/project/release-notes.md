@@ -13,11 +13,19 @@
     13 % at normal incidence next to a uniaxial dielectric (ADR 0051).
   - S, fields and Q of such models change; faces next to isotropic materials
     are bit for bit unchanged.
+  - The port mode problem's absorbing edges change the same way: each edge
+    next to an anisotropic material takes its exact admittance for the two
+    polarizations.
   - A second-order surface touching an anisotropic material now raises
     `NotImplementedError`.
   - Node-coordinate gradients of a model whose absorbing face has an
     anisotropic material behind it now raise `NonDifferentiableError`; 0.1.0
     differentiated the approximate coefficient.
+- **Behaviour change: port modes of rotated transverse tensors.** A port
+  cross-section holding a tensor rotated about the port normal no longer drops
+  its propagating modes (or raises `PortModeError`): the effective-index bound
+  now uses the tensor's largest principal value, not its largest diagonal
+  entry. Models without such a tensor are unchanged.
 
 ## 0.1.0 (2026-11-01)
 
