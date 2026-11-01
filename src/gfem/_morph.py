@@ -81,20 +81,30 @@ def free_directions(
     slide_tris: np.ndarray,
     slide_normals: np.ndarray,
     constrained: np.ndarray,
+    ties: np.ndarray | None = None,
 ) -> sp.csr_array:
     """The map from free coordinates to node displacements, ``(3 n_nodes, k)``.
 
     Nodes flagged in ``constrained`` (held or prescribed) get no free
     coordinate. A node on sliding triangles keeps the orthogonal complement of
     their normals: a plane, a line, or nothing. Every other node moves freely.
+
+    ``ties`` (`gfem._periodic.tie_classes`, the representative of each
+    node) makes each tie class move as one: it is constrained if any member
+    is, its sliding constraint stacks the normals of every member's sliding
+    triangles, and its columns are written into every member's rows.
     """
-    free = np.flatnonzero(~constrained)
+    ties = np.arange(n_nodes) if ties is None else np.asarray(ties)
+    class_constrained = np.zeros(n_nodes, dtype=bool)
+    np.logical_or.at(class_constrained, ties, constrained)
+    # the representatives of the free classes
+    free = np.flatnonzero(~class_constrained & (ties == np.arange(n_nodes)))
     on_slide = np.zeros(n_nodes, dtype=bool)
-    on_slide[slide_tris.ravel()] = True
-    # Interior nodes: three unit columns each.
+    on_slide[ties[slide_tris.ravel()]] = True
+    # Interior classes: three unit columns each.
     interior = free[~on_slide[free]]
-    # Sliding nodes: group the incident triangle normals per node.
-    corner_node = slide_tris.ravel()
+    # Sliding classes: group the incident triangle normals per class.
+    corner_node = ties[slide_tris.ravel()]
     corner_normal = np.repeat(slide_normals, 3, axis=0)
     order = np.argsort(corner_node, kind="stable")
     corner_node, corner_normal = corner_node[order], corner_normal[order]
@@ -106,14 +116,21 @@ def free_directions(
         rank = int((s > _RANK_TOL * s[0]).sum())
         if rank < 3:
             basis[int(v)] = vt[rank:].T  # (3, 3 - rank), orthonormal
-    rows = [(3 * interior[:, None] + np.arange(3)).ravel()]
-    cols = [np.arange(3 * len(interior))]
-    vals = [np.ones(3 * len(interior))]
+    # the members of each class, by representative
+    by_class = np.argsort(ties, kind="stable")
+    first = np.searchsorted(ties[by_class], np.arange(n_nodes + 1))
+    base = np.full(n_nodes, -1)
+    base[interior] = 3 * np.arange(len(interior))
+    members = np.flatnonzero(base[ties] >= 0)
+    rows = [(3 * members[:, None] + np.arange(3)).ravel()]
+    cols = [(base[ties[members]][:, None] + np.arange(3)).ravel()]
+    vals = [np.ones(3 * len(members))]
     k = 3 * len(interior)
     for v, b in basis.items():
-        rows.append(np.repeat(3 * v + np.arange(3), b.shape[1]))
-        cols.append(np.tile(k + np.arange(b.shape[1]), 3))
-        vals.append(b.ravel())
+        for m in by_class[first[v] : first[v + 1]]:
+            rows.append(np.repeat(3 * m + np.arange(3), b.shape[1]))
+            cols.append(np.tile(k + np.arange(b.shape[1]), 3))
+            vals.append(b.ravel())
         k += b.shape[1]
     return sp.csr_array(
         (np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
@@ -121,9 +138,27 @@ def free_directions(
     )
 
 
-def prescribed(n_nodes: int, nodes: np.ndarray, normals: np.ndarray) -> sp.csr_array:
-    """The map from normal displacements to node displacements, ``(3 n, p)``."""
+def prescribed(
+    n_nodes: int,
+    nodes: np.ndarray,
+    normals: np.ndarray,
+    ties: np.ndarray | None = None,
+) -> sp.csr_array:
+    """The map from normal displacements to node displacements, ``(3 n, p)``.
+
+    With ``ties`` (the representative of each node, ``nodes`` being
+    representatives) parameter p moves every member of its node's tie class
+    by ``normals[p]``.
+    """
     p = len(nodes)
-    rows = (3 * nodes[:, None] + np.arange(3)).ravel()
-    cols = np.repeat(np.arange(p), 3)
-    return sp.csr_array((normals.ravel(), (rows, cols)), shape=(3 * n_nodes, p))
+    if ties is None:
+        members, column = np.asarray(nodes), np.arange(p)
+    else:
+        param = np.full(n_nodes, -1)
+        param[nodes] = np.arange(p)
+        members = np.flatnonzero(param[ties] >= 0)
+        column = param[ties[members]]
+    rows = (3 * members[:, None] + np.arange(3)).ravel()
+    cols = np.repeat(column, 3)
+    values = normals[column].ravel()
+    return sp.csr_array((values, (rows, cols)), shape=(3 * n_nodes, p))

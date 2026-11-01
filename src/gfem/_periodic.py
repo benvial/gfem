@@ -14,6 +14,8 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 import numpy as np
+import scipy.sparse
+import scipy.sparse.csgraph
 from scipy.spatial import KDTree
 
 from gfem._domain import EMDomain
@@ -284,6 +286,36 @@ def check_nodes(nodes: np.ndarray, pairings: Iterable[Pairing]) -> None:
                 "displacement: build the shape with gfem.boundary_morph on this "
                 "periodic model, which ties them."
             )
+
+
+def tie_classes(n_nodes: int, pairings: Iterable[Pairing]) -> np.ndarray:
+    """The tie class of every node: the representative node it moves with.
+
+    Nodes joined by any pair's ``(master, minion)``, directly or through a
+    chain, form one class (a corner of a 3-pair cell is a class of 8, a cell
+    edge one of 4, a face node one of 2); every other node is its own class.
+    The representative is the class's lowest node that is no pair's minion,
+    which lies on the first surface of every pair it is in.
+
+    Returns:
+        ``(n_nodes,)`` int: the representative of each node's class (the
+        node itself for an unpaired node).
+    """
+    pairs = list(pairings)
+    if not pairs:
+        return np.arange(n_nodes)
+    master = np.concatenate([p.master for p in pairs])
+    minion = np.concatenate([p.minion for p in pairs])
+    graph = scipy.sparse.coo_array(
+        (np.ones(len(master)), (master, minion)), shape=(n_nodes, n_nodes)
+    )
+    n_classes, labels = scipy.sparse.csgraph.connected_components(graph, directed=False)
+    # prefer the nodes that are no minion, then the lowest index
+    key = np.arange(n_nodes)
+    key[minion] += n_nodes
+    lowest = np.full(n_classes, 2 * n_nodes)
+    np.minimum.at(lowest, labels, key)
+    return lowest[labels] % n_nodes
 
 
 def bloch_phases(
