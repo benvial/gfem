@@ -166,6 +166,33 @@ def test_a_paired_surface_cannot_be_a_port(tmp_path):
         _model(mesh, [_x_pair()], ports=[port])
 
 
+def _patch(x0, x1):
+    """Rename the z_min faces with x0 < x < x1 (centroid) "port"."""
+
+    def surface(c):
+        return "port" if abs(c[2]) < 1e-9 and x0 < c[0] < x1 else ""
+
+    return surface
+
+
+def test_a_wave_port_may_not_share_a_node_with_a_pair(tmp_path):
+    # x grid 0, 2.5, ..., 10 mm: the port's nodes reach x = 0 on four nodes
+    mesh = _cell(tmp_path, _box(cells=(4, 3, 1), surface=_patch(0, 2.5)), "edge")
+    with pytest.raises(
+        NotImplementedError,
+        match=r"WavePort 'w' touches periodic pair \('x_min', 'x_max'\) at 4 nodes: "
+        r"a wave port's mode solve cannot be periodic\. Move the port off the "
+        r"pair's surfaces \(Floquet ports are not supported\)\.",
+    ):
+        _model(mesh, [_x_pair()], ports=[gfem.WavePort("w", "port")])
+
+
+def test_a_wave_port_off_the_pairs_is_allowed(tmp_path):
+    # nodes from x = 2.5 to 7.5 mm: none on x_min or x_max
+    mesh = _cell(tmp_path, _box(cells=(4, 3, 1), surface=_patch(2.5, 7.5)), "off")
+    _model(mesh, [_x_pair()], ports=[gfem.WavePort("w", "port")])
+
+
 # --- mesh checks (ticket 04) -------------------------------------------------------
 
 
@@ -398,6 +425,19 @@ def test_a_traced_wave_vector_is_not_differentiable(problem, transform):
 def test_the_bloch_phase_convention_is_stated():
     assert gfem.conventions.BLOCH_PHASE == "E(r + a) = exp(-i k·a) E(r)"
     assert "BLOCH_PHASE" in gfem.conventions.__all__
+
+
+def test_bloch_phases_follow_the_convention(c2_mesh):
+    from gfem._periodic import bloch_phases
+
+    model = pc.c2(c2_mesh)
+    assert bloch_phases(model, None) is None
+    phases = bloch_phases(model, pc.C2_K)
+    # E(r + a) = exp(-i k·a) E(r): k_x a_x = 0.4 pi, k_y a_y = -0.25 pi
+    np.testing.assert_allclose(
+        phases, [np.exp(-0.4j * np.pi), np.exp(0.25j * np.pi)], rtol=0, atol=1e-15
+    )
+    assert all(type(p) is complex for p in phases)
 
 
 # --- job files ----------------------------------------------------------------------

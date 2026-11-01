@@ -182,6 +182,8 @@ class Model:
             material, two conditions on one surface, an absorbing boundary on
             an interior surface, ...); the message gives the remedy.
         TypeError: An argument has the wrong type.
+        NotImplementedError: A `WavePort` shares a mesh node with a surface
+            of a `Periodic` pair.
     """
 
     mesh: Mesh
@@ -317,9 +319,31 @@ class Model:
             check_pec(self.mesh, p, pec)
             out.append(p)
         _check_independent(out)
+        self._check_wave_ports(out)
         if out and not is_traced(self.mesh.nodes):
             check_nodes(self.mesh.nodes, out)
         return tuple(out)
+
+    def _check_wave_ports(self, pairs: list[Pairing]) -> None:
+        """No wave port shares a mesh node with a surface of a periodic pair.
+
+        Raises:
+            NotImplementedError: A wave port touches a pair, even at one node.
+        """
+        mesh = self.mesh
+        for port in self.ports:
+            if not isinstance(port, WavePort):
+                continue
+            nodes = np.unique(mesh.triangles[mesh.elements(port.surface)])
+            for p in pairs:
+                shared = np.intersect1d(nodes, np.concatenate([p.master, p.minion]))
+                if shared.size:
+                    raise NotImplementedError(
+                        f"WavePort {port.name!r} touches periodic pair "
+                        f"{(p.first, p.second)!r} at {shared.size} nodes: a wave "
+                        "port's mode solve cannot be periodic. Move the port off "
+                        "the pair's surfaces (Floquet ports are not supported)."
+                    )
 
     def _check_sheet(self, what: str, surface: str, field: SheetField) -> None:
         """A sheet field: on an interior surface, one fill value per face."""
