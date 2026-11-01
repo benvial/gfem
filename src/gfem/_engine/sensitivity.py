@@ -131,9 +131,9 @@ class Derivative:
     def evaluated(self) -> np.ndarray | float | complex:
         """``dc_t / dp`` (`declared`, evaluated if it is a function)."""
         declared = self.declared
-        if callable(declared):
-            return declared()
-        return declared
+        if isinstance(declared, int | float | complex):
+            return declared
+        return declared()
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
