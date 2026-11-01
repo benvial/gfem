@@ -5,6 +5,8 @@ The meshes are the periodic cells of tests/periodic_cases.py (mm), or
 periodic pair each.
 """
 
+import json
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -355,7 +357,7 @@ def test_the_pairs_survive_flattening(c2_mesh):
     assert back.periodic_translations == model.periodic_translations
 
 
-# --- the Bloch wave vector on problems -------------------------------------------------
+# --- the Bloch wave vector on problems --------------------------------------------
 
 PROBLEMS = {
     "Driven": lambda **kw: gfem.Driven(5e9, **kw),
@@ -396,3 +398,66 @@ def test_a_traced_wave_vector_is_not_differentiable(problem, transform):
 def test_the_bloch_phase_convention_is_stated():
     assert gfem.conventions.BLOCH_PHASE == "E(r + a) = exp(-i k·a) E(r)"
     assert "BLOCH_PHASE" in gfem.conventions.__all__
+
+
+# --- job files ----------------------------------------------------------------------
+
+
+def _round_trip(job, tmp_path):
+    return gfem.Job.from_json(job.to_json(tmp_path / "job.json"))
+
+
+@pytest.mark.parametrize(
+    "problem",
+    [
+        gfem.Driven(pc.C1_FREQUENCY),
+        gfem.Driven(pc.C1_FREQUENCY, wave_vector=pc.C1_K),
+        gfem.Eigenmode(5e9, n_modes=2),
+        gfem.Eigenmode(5e9, n_modes=2, wave_vector=pc.C1_K),
+    ],
+)
+def test_one_pair_and_a_wave_vector_round_trip(tmp_path, problem):
+    model = pc.c1(pc.c1_mesh(tmp_path))
+    back = _round_trip(gfem.Job(model, problem), tmp_path)
+    assert back.model.boundaries == model.boundaries
+    assert back.model.periodic_translations == model.periodic_translations
+    assert back.problem == problem
+
+
+def test_three_pairs_round_trip(tmp_path, c4_mesh):
+    model = pc.c4(c4_mesh)
+    problem = gfem.Eigenmode(5e9, wave_vector=pc.C4_K)
+    back = _round_trip(gfem.Job(model, problem), tmp_path)
+    assert back.model.boundaries == model.boundaries
+    assert back.model.periodic_translations == model.periodic_translations
+    assert back.problem.wave_vector == pc.C4_K
+
+
+def test_the_job_file_lists_the_pair_surfaces(tmp_path, c4_mesh):
+    job = gfem.Job(pc.c4(c4_mesh), gfem.Eigenmode(5e9))
+    doc = json.loads(job.to_json(tmp_path / "job.json").read_text())
+    boundaries = doc["job"]["model"]["boundaries"]
+    assert boundaries[0] == {"$type": "Periodic", "surfaces": ["x_min", "x_max"]}
+    assert doc["job"]["problem"]["wave_vector"] is None
+
+
+@pytest.mark.parametrize(
+    "problem", [gfem.Driven(pc.C1_FREQUENCY), gfem.Eigenmode(5e9, n_modes=2)]
+)
+def test_a_job_written_before_wave_vectors_reads_plain(tmp_path, problem):
+    model = pc.c1(pc.c1_mesh(tmp_path))
+    path = gfem.Job(model, problem).to_json(tmp_path / "job.json")
+    doc = json.loads(path.read_text())
+    del doc["job"]["problem"]["wave_vector"]
+    path.write_text(json.dumps(doc))
+    assert gfem.Job.from_json(path).problem.wave_vector is None
+
+
+# --- the test mesh tool -------------------------------------------------------------
+
+
+def test_periodic_cell_refuses_mirror_on_a_paired_axis():
+    with pytest.raises(ValueError, match="mirror on the paired axis 'y'"):
+        _box(cells=(4, 4, 1), mirror=(False, True, False))
+    nodes, *_ = _box(cells=(4, 4, 1), paired="xz", mirror=(False, True, False))
+    assert len(nodes) == 5 * 5 * 2
