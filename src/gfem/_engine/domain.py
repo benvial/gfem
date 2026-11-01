@@ -89,19 +89,30 @@ def domain_key(model: Model) -> tuple:
 
 
 def h1_space(
-    model: Model, built: EngineMesh, order: int, dirichlet: tuple[str, ...] = ()
+    model: Model,
+    built: EngineMesh,
+    order: int,
+    dirichlet: tuple[str, ...] = (),
+    *,
+    periodic: bool = False,
+    phases: tuple[complex, ...] | None = None,
 ) -> ngs.FESpace:
     """Real H1 space of ``order`` on the electromagnetic domain, compressed.
 
     The DOFs on the ``dirichlet`` surfaces (exact names) are fixed: they are
-    left out of ``FreeDofs()``, which BDDC reads.
+    left out of ``FreeDofs()``, which BDDC reads. With ``periodic``, periodic
+    over the model's pairs as `hcurl_space`; Bloch ``phases`` make it
+    complex.
     """
     space = ngs.H1(
         built.mesh,
         order=order,
+        complex=phases is not None,
         definedon=em_region(model, built),
         dirichlet=_bc_numbers(built, dirichlet),
     )
+    if periodic:
+        space = ngs.Periodic(space, phase=None if phases is None else list(phases))
     return ngs.Compress(space)
 
 

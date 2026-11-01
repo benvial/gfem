@@ -23,7 +23,10 @@ the refinement on the true ``T(k)`` gives the mode.
 
 ``T(k)`` is complex symmetric (``T^T = T``), so the two-sided Rayleigh
 functional ``x^T T(k) x = 0`` gives the eigenvalue of an approximate
-eigenvector ``x`` to second order in its error.
+eigenvector ``x`` to second order in its error. Under a Bloch wave vector
+``T(k)`` is general (`EigenOperator.symmetry`): its left eigenvector ``y``
+(``T(k)^T y = 0``) is not ``x``, and the functional is ``y^T T(k) x = 0``
+(`gfem._eigen.refine` carries ``y``); every matrix then has its transpose.
 
 The matrices are NumPy linear maps (`LinearMap`): `gfem._engine.eigen`
 assembles them from the NGSolve forms.
@@ -34,7 +37,7 @@ from __future__ import annotations
 import dataclasses
 import math
 from collections.abc import Callable
-from typing import Protocol
+from typing import Literal, Protocol
 
 import numpy as np
 import scipy.constants as const
@@ -45,15 +48,29 @@ from gfem._linalg import Handle, Operator, refactorize_or_prepare
 __all__ = [
     "RESHIFT_SOLVES",
     "EigenOperator",
+    "EigenSymmetry",
     "LinearMap",
     "NonPolynomial",
     "Split",
     "split",
 ]
 
-#: A matrix of the H(curl) space as ``x -> A x`` on NumPy vectors over all its
-#: DOFs (`gfem._engine.eigen` builds them from the NGSolve forms).
-LinearMap = Callable[[np.ndarray], np.ndarray]
+
+class LinearMap(Protocol):
+    """A matrix of the H(curl) space: ``x -> A x``, or ``A^T x`` with ``transpose``.
+
+    On NumPy vectors over all its DOFs (`gfem._engine.eigen` builds them from
+    the NGSolve forms).
+    """
+
+    def __call__(self, x: np.ndarray, /, *, transpose: bool = False) -> np.ndarray:
+        """``A x``, or ``A^T x``."""
+        ...
+
+
+#: Whether ``T(k)^T = T(k)`` (no Bloch phase) or not: the symmetry the shift
+#: is prepared with, read from the driven operator.
+EigenSymmetry = Literal["complex_symmetric", "general"]
 
 #: Relative mismatch above which a θ is not a polynomial of degree <= 2.
 _POLYNOMIAL_RTOL = 1e-9
@@ -170,7 +187,10 @@ class EigenOperator:
 
     ``T(sigma)`` is prepared. Vectors are NumPy arrays over all DOFs of the
     space, zero on the fixed (`PEC`) DOFs. ``K`` is never stored: ``K x =
-    T(sigma) x - sigma D x - sigma^2 M x - Σ θ_p(sigma) A_p x``.
+    T(sigma) x - sigma D x - sigma^2 M x - Σ θ_p(sigma) A_p x``. A
+    ``"general"`` operator applies and solves its transpose too
+    (``transpose=True``: the transposed maps, the prepared handle's
+    transposed apply and solve on the same factors).
 
     Attributes:
         shift: ``sigma``, the wavenumber per file unit of the prepared
@@ -184,6 +204,8 @@ class EigenOperator:
         free: Free-DOF mask.
         scale: Metres per mesh file unit.
         nonpolynomial: The nonpolynomial terms ``θ_p(k) A_p``.
+        symmetry: ``"complex_symmetric"``, or ``"general"`` under a Bloch
+            wave vector (the driven operator's).
         shifts: How many times `reshift` refactorized.
     """
 
@@ -195,6 +217,7 @@ class EigenOperator:
     free: np.ndarray
     scale: float
     nonpolynomial: tuple[NonPolynomial, ...] = ()
+    symmetry: EigenSymmetry = "complex_symmetric"
     shifts: int = 0
     _norms: tuple[float, ...] | None = None
     _handle: Handle | None = None
@@ -233,44 +256,66 @@ class EigenOperator:
         self.shift = k
         self.shifts += 1
 
+    @property
+    def general(self) -> bool:
+        """Whether ``T^T != T``: the left eigenvector is not the right one."""
+        return self.symmetry == "general"
+
     def free_handle(self) -> None:
         """Release the prepared operator."""
         if self._handle is not None:
             self._handle.free()
             self._handle = None
 
-    def solve(self, b: np.ndarray) -> np.ndarray:
-        """``T(sigma)^-1 b`` on the free DOFs."""
-        return self.handle.solve(np.where(self.free, b, 0))
+    def solve(self, b: np.ndarray, *, transpose: bool = False) -> np.ndarray:
+        """``T(sigma)^-1 b`` on the free DOFs (``transpose``: ``T(sigma)^-T b``)."""
+        b = np.where(self.free, b, 0)
+        if not transpose or not self.general:
+            return self.handle.solve(b)
+        return self.handle.solve(b, transpose=True)
 
-    def _matvec(self, matrix: LinearMap, x: np.ndarray) -> np.ndarray:
-        """A matrix on the free DOFs (zero on the fixed rows)."""
-        return np.where(self.free, matrix(np.where(self.free, x, 0)), 0)
+    def _matvec(
+        self, matrix: LinearMap, x: np.ndarray, *, transpose: bool = False
+    ) -> np.ndarray:
+        """A matrix (or its transpose) on the free DOFs (zero on the fixed rows)."""
+        x = np.where(self.free, x, 0)
+        y = matrix(x, transpose=True) if transpose and self.general else matrix(x)
+        return np.where(self.free, y, 0)
 
     def _parts(
-        self, x: np.ndarray
+        self, x: np.ndarray, *, transpose: bool = False
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[np.ndarray]]:
-        """``(K x, D x, M x, [A_p x])`` on the free rows."""
+        """``(K x, D x, M x, [A_p x])`` on the free rows (or the transposes)."""
+        transpose = transpose and self.general
         x = np.where(self.free, x, 0)
-        mx = self._matvec(self.mass, x)
+        mx = self._matvec(self.mass, x, transpose=transpose)
         dx = (
-            np.zeros_like(mx) if self.damping is None else self._matvec(self.damping, x)
+            np.zeros_like(mx)
+            if self.damping is None
+            else self._matvec(self.damping, x, transpose=transpose)
         )
-        ax = [self._matvec(t.matrix, x) for t in self.nonpolynomial]
+        ax = [
+            self._matvec(t.matrix, x, transpose=transpose) for t in self.nonpolynomial
+        ]
         s = self.shift
-        kx = np.where(self.free, self.handle.apply(x), 0) - s * dx - s * s * mx
+        tx = self.handle.apply(x, transpose=True) if transpose else self.handle.apply(x)
+        kx = np.where(self.free, tx, 0) - s * dx - s * s * mx
         for t, a in zip(self.nonpolynomial, ax, strict=True):
             kx = kx - t.value(s) * a
         return kx, dx, mx, ax
 
-    def parts(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """``(K x, D x, M x)`` on the free rows."""
-        kx, dx, mx, _ = self._parts(x)
+    def parts(
+        self, x: np.ndarray, *, transpose: bool = False
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """``(K x, D x, M x)`` on the free rows (``transpose``: of ``K^T``, ...)."""
+        kx, dx, mx, _ = self._parts(x, transpose=transpose)
         return kx, dx, mx
 
-    def apply(self, k: complex, x: np.ndarray) -> np.ndarray:
-        """``T(k) x``."""
-        kx, dx, mx, ax = self._parts(x)
+    def apply(
+        self, k: complex, x: np.ndarray, *, transpose: bool = False
+    ) -> np.ndarray:
+        """``T(k) x`` (``transpose``: ``T(k)^T x``)."""
+        kx, dx, mx, ax = self._parts(x, transpose=transpose)
         out = kx + k * dx + k * k * mx
         for t, a in zip(self.nonpolynomial, ax, strict=True):
             out = out + t.value(k) * a
@@ -279,8 +324,9 @@ class EigenOperator:
     def derivative(self, k: complex, x: np.ndarray) -> np.ndarray:
         """``T'(k) x = D x + 2 k M x + Σ θ_p'(k) A_p x``, ``'`` = ``d/dk``.
 
-        The denominator of the eigenvalue derivative ``dk/dp = -x^T (dT/dp)
-        x / x^T T'(k) x`` (and of the Rayleigh functional's Newton step).
+        The denominator of the eigenvalue derivative ``dk/dp = -y^T (dT/dp)
+        x / y^T T'(k) x`` (``y`` the left eigenvector, ``x`` when complex
+        symmetric; and of the Rayleigh functional's Newton step).
         """
         x = np.where(self.free, x, 0)
         out = 2 * k * self._matvec(self.mass, x)
@@ -317,8 +363,10 @@ class EigenOperator:
 
     # --- the Rayleigh functional and the backward error -----------------------------
 
-    def rayleigh(self, x: np.ndarray, k: complex) -> complex:
-        """The root of ``x^T T(k) x = 0`` nearest ``k``.
+    def rayleigh(
+        self, x: np.ndarray, k: complex, *, left: np.ndarray | None = None
+    ) -> complex:
+        """The root of ``y^T T(k) x = 0`` nearest ``k``, ``y`` = ``left`` or ``x``.
 
         A quadratic's root in closed form. With nonpolynomial terms, a
         Newton iteration that keeps the quadratic exact: each step takes the
@@ -326,11 +374,12 @@ class EigenOperator:
         linearized around ``k`` (`NonPolynomial.linear`), so it stays on the
         branch of the start and converges quadratically.
         """
+        y = x if left is None else np.where(self.free, left, 0)
         kx, dx, mx, ax = self._parts(x)
-        a, b, c = x @ kx, x @ dx, x @ mx
+        a, b, c = y @ kx, y @ dx, y @ mx
         if not self.nonpolynomial:
             return _nearest_root((a, b, c), k)
-        pairs = [(t, x @ y) for t, y in zip(self.nonpolynomial, ax, strict=True)]
+        pairs = [(t, y @ v) for t, v in zip(self.nonpolynomial, ax, strict=True)]
         k = complex(k)
         for _ in range(_NEWTON_STEPS):
             linear = [a, b, c]
@@ -347,31 +396,44 @@ class EigenOperator:
 
     @property
     def norms(self) -> tuple[float, ...]:
-        """2-norm estimates of ``K``, ``D``, ``M`` and each ``A_p``."""
+        """2-norm estimates of ``K``, ``D``, ``M`` and each ``A_p``.
+
+        Those of their transposes too: ``|A^T|_2 = |A|_2``.
+        """
         if self._norms is None:
             rng = np.random.default_rng(0)
             start = np.where(self.free, rng.standard_normal(len(self.free)), 0)
 
-            def k_op(x):
-                return self.parts(x)[0]
+            def k_op(x, *, transpose=False):
+                return self.parts(x, transpose=transpose)[0]
 
             def matrix_op(matrix):
                 if matrix is None:
-                    return np.zeros_like
-                return lambda x: self._matvec(matrix, x)
+                    return lambda x, **_: np.zeros_like(x)
+                return lambda x, *, transpose=False: self._matvec(
+                    matrix, x, transpose=transpose
+                )
+
+            def norm(op):
+                return _norm2(op, start, general=self.general)
 
             self._norms = (
-                _norm2(k_op, start),
-                _norm2(matrix_op(self.damping), start),
-                _norm2(matrix_op(self.mass), start),
-                *(_norm2(matrix_op(t.matrix), start) for t in self.nonpolynomial),
+                norm(k_op),
+                norm(matrix_op(self.damping)),
+                norm(matrix_op(self.mass)),
+                *(norm(matrix_op(t.matrix)) for t in self.nonpolynomial),
             )
         return self._norms
 
-    def backward_error(self, k: complex, x: np.ndarray) -> float:
-        """``|T(k) x| / ((|K| + |k| |D| + |k|^2 |M| + Σ |θ_p(k)| |A_p|) |x|)``."""
+    def backward_error(
+        self, k: complex, x: np.ndarray, *, transpose: bool = False
+    ) -> float:
+        """``|T(k) x| / ((|K| + |k| |D| + |k|^2 |M| + Σ |θ_p(k)| |A_p|) |x|)``.
+
+        ``transpose``: of ``T(k)^T x``, a left eigenvector's.
+        """
         nk, nd, nm, *na = self.norms
-        r = np.linalg.norm(self.apply(k, x))
+        r = np.linalg.norm(self.apply(k, x, transpose=transpose))
         den = nk + abs(k) * nd + abs(k) ** 2 * nm
         den += sum(
             abs(t.value(k)) * a for t, a in zip(self.nonpolynomial, na, strict=True)
@@ -387,13 +449,17 @@ def _nearest_root(coefficients, k: complex) -> complex:
     return complex(roots[np.argmin(np.abs(roots - k))])
 
 
-def _norm2(op, start: np.ndarray) -> float:
-    """``|A|_2`` of a complex symmetric operator: power iteration on ``A^H A``."""
+def _norm2(op, start: np.ndarray, *, general: bool = False) -> float:
+    """``|A|_2``: power iteration on ``A^H A``.
+
+    ``A^H y = conj(A^T conj(y))``, with ``A^T = A`` for a complex symmetric
+    operator, and ``op(x, transpose=True)`` for a ``general`` one.
+    """
     x = start / np.linalg.norm(start)
     value = 0.0
     for _ in range(_NORM_ITERATIONS):
         y = op(x)
-        z = np.conj(op(np.conj(y)))  # A^H y, with A^T = A
+        z = np.conj(op(np.conj(y), transpose=general))  # A^H y
         n = np.linalg.norm(z)
         if n == 0:
             return 0.0

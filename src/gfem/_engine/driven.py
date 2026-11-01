@@ -1263,6 +1263,22 @@ def real_space(model: Model, op: DrivenOperator) -> ngs.FESpace:
     )
 
 
+def unpaired_space(model: Model, op: DrivenOperator) -> ngs.FESpace:
+    """The complex H(curl) space of ``op``'s expanded fields (``P x``).
+
+    ``op.space`` itself without periodic pairs; with them, the unpaired
+    space ``op.expansion`` maps onto (the space of result fields and of a
+    periodic model's gradient pairs).
+    """
+    if op.expansion is None:
+        return op.space
+    pec = pec_surfaces(model)
+    return discretization(model.mesh, model._periodic).space(  # noqa: SLF001
+        (domain_key(model), "hcurl", op.order, pec),
+        lambda: hcurl_space(model, op.built, op.order, dirichlet=pec),
+    )
+
+
 def check_ports_held(model: Model) -> None:
     """Raise unless every port surface's nodes sit at their imported positions.
 

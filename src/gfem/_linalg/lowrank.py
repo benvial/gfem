@@ -132,13 +132,17 @@ class LowRankUpdate:
         X = Y - Z @ np.linalg.solve(small, C @ (U.T @ Y))
         return (X[:, 0] if flat else X), its[:k]
 
-    def apply(self, X: np.ndarray) -> np.ndarray:
-        """``(A + U C Uᵀ) X`` with the base handle's full matrix."""
+    def apply(self, X: np.ndarray, *, transpose: bool = False) -> np.ndarray:
+        """``(A + U C Uᵀ) X`` with the base handle's full matrix.
+
+        ``transpose``: ``(Aᵀ + U Cᵀ Uᵀ) X``.
+        """
         if self._base is None:
             raise RuntimeError("This solver handle was freed.")
         X = np.asarray(X)
-        return self._base.apply(X) + self.vectors @ (
-            self.coefficients @ (self.vectors.T @ X)
+        C = self.coefficients.T if transpose else self.coefficients
+        return self._base.apply(X, transpose=transpose) + self.vectors @ (
+            C @ (self.vectors.T @ X)
         )
 
     def free(self) -> None:

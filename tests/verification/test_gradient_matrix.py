@@ -27,6 +27,14 @@ that the Taylor remainder falls at second order at production tolerance
 (`gfem.SolverOptions` defaults: iterative solves to 1e-6, eigenpairs to
 1e-10), with gradient and differences both carrying that solver error.
 
+The periodic eigenmode cells (``eigenmode_periodic_plain`` and
+``eigenmode_periodic_bloch``, `_eigen_periodic_cells`) solve a damped,
+lossy cell periodic along x and y (tests/periodic_cases.py, `eigen_cell`):
+plain on both solvers, Bloch on ``direct`` (the only linear solver of a
+Bloch eigenmode solve), where the left eigenvectors carry the gradient. Its
+node direction moves the twins of every pair together (a periodic
+direction, the raw node gradient).
+
 Then the consistency checks (JAX transformations and evicted cache entries
 per input kind, reciprocity against an explicit adjoint, adaptive against
 uniform at the samples) and the degenerate eigenmode clusters. Pairs this
@@ -84,6 +92,20 @@ from gradient_cases import (
     wave_line,
     wave_mesh,
     with_fields,
+)
+from periodic_cases import (
+    EG_A,
+    EG_B,
+    EG_BLOCH_TARGET,
+    EG_H,
+    EG_K,
+    EG_PLAIN_TARGET,
+    EG_TAN_DELTA,
+    MM,
+    eigen_cell,
+    eigen_cell_design,
+    eigen_cell_mesh,
+    tie_classes,
 )
 
 import gfem
@@ -169,7 +191,25 @@ def _driven_periodic_cells() -> list[Cell]:
     return cells
 
 
-CELLS = [*_cells(), *_driven_periodic_cells()]
+# --- periodic eigenmode cells ------------------------------------------------------
+
+
+def _eigen_periodic_cells() -> list[Cell]:
+    """The periodic eigenmode cells: plain on both solvers, Bloch on ``direct``.
+
+    Bloch: the damped cell in every input, and a linear lossy one (``tan
+    delta``, no damping) in the permittivity.
+    """
+    inputs = ("eps_r", "conductivity", "fill", "nodes")
+    return [
+        *(Cell("eigenmode_periodic_plain", name, "direct") for name in inputs),
+        Cell("eigenmode_periodic_plain", "eps_r", "bddc_gmres"),
+        *(Cell("eigenmode_periodic_bloch", name, "direct") for name in inputs),
+        Cell("eigenmode_periodic_bloch", "eps_r", "direct", variant="linear"),
+    ]
+
+
+CELLS = [*_cells(), *_driven_periodic_cells(), *_eigen_periodic_cells()]
 #: The PETSc stack's cells, one per path its solves take: electrostatic,
 #: driven on both sweeps, the adjoint through a wave port operator's
 #: Woodbury update, and the eigenmode seed on SLEPc.
@@ -270,6 +310,10 @@ class Designs:
     def periodic(self):
         return pc.g_mesh(self._dir("periodic"))
 
+    @functools.cached_property
+    def eigen_cell(self):
+        return eigen_cell_mesh(self._dir("eigen_cell"))
+
 
 @pytest.fixture(scope="module")
 def designs(tmp_path_factory):
@@ -282,7 +326,7 @@ def _options(cell: Cell, *, production: bool) -> gfem.SolverOptions:
         extra["eigen_solver"] = "slepc"  # a PETSc cell runs the whole PETSc stack
     if production:
         return gfem.SolverOptions(order=2, linear_solver=cell.solver, **extra)
-    if cell.problem == "eigenmode":
+    if cell.problem.startswith("eigenmode"):
         extra["eigen_tolerance"] = 1e-12
     return tight(cell.solver, **extra)
 
@@ -629,6 +673,82 @@ def _periodic_nodes(d: Designs, cell: Cell, options, seed: int) -> Case:
     )
 
 
+# --- the periodic eigenmode cells' objectives ---------------------------------------
+
+#: The design inputs of the periodic eigen cell, by cell input.
+EIGEN_CELL_INPUTS = {"eps_r": "eps", "conductivity": "sigma", "fill": "fill"}
+
+
+def _eigen_periodic(
+    d: Designs, cell: Cell, options, seed: int, *, wave_vector=None
+) -> Case:
+    """omega of the periodic eigen cell (plain or Bloch) in one input.
+
+    ``wave_vector`` solves the plain cell's mode with that wave vector.
+    """
+    mesh = d.eigen_cell
+    design = eigen_cell_design(mesh)
+    bloch = cell.problem == "eigenmode_periodic_bloch"
+    problem = gfem.Eigenmode(
+        target=EG_BLOCH_TARGET if bloch else EG_PLAIN_TARGET,
+        wave_vector=EG_K if bloch else wave_vector,
+    )
+
+    def omega(**changes):
+        values = design | changes
+        if cell.variant == "linear":
+            model = eigen_cell(values["mesh"], values["eps"], tan_delta=EG_TAN_DELTA)
+        else:
+            model = eigen_cell(
+                values["mesh"], values["eps"], values["sigma"], values["fill"]
+            )
+        result = gfem.solve(model, problem, options=options)
+        return jnp.real(result.omega[0] * OMEGA_WEIGHT)
+
+    design["mesh"] = mesh
+    rng = np.random.default_rng(seed)
+    if cell.input == "nodes":
+        # the mid-plane nodes move along z, each tie class (twins across
+        # the pairs, the corners of both) as one: a periodic direction
+        nodes = np.asarray(mesh.imported_nodes)
+        mid = np.isclose(nodes[:, 2], 0.5 * EG_H * MM)
+        labels = tie_classes(mesh, (EG_A * MM, EG_B * MM, None))
+        classes = np.unique(labels[mid])
+        tied = jnp.asarray((labels[:, None] == classes[None, :]) & mid[:, None], float)
+        x0 = jnp.asarray(nodes)
+        tree = jax.tree_util.tree_structure(mesh)
+
+        def objective(t):
+            moved = x0.at[:, 2].add(tied @ t)
+            return omega(mesh=jax.tree_util.tree_unflatten(tree, [moved]))
+
+        return Case(
+            objective,
+            jnp.zeros(len(classes)),
+            rng,
+            step=STEPS["nodes"],
+            # smaller steps' remainders reach the eigen tolerance's error (1e-9)
+            taylor=2e-4,
+            taylor_ratio=2.0,
+            taylor_at=jnp.full(len(classes), 1e-5),
+        )
+    name = EIGEN_CELL_INPUTS[cell.input]
+
+    def objective(p):
+        return omega(**{name: p})
+
+    step = {"eps": STEPS["eps_r"], "sigma": STEPS["conductivity"], "fill": 5e-3}
+    # a unit step in the 0.02-0.06 S/m ramp would make it negative
+    taylor = {"eps": 1e-1, "sigma": 3e-2, "fill": 5e-2}
+    return Case(
+        objective,
+        jnp.asarray(design[name]),
+        rng,
+        step=step[name],
+        taylor=taylor[name],
+    )
+
+
 BUILDERS = {
     ("electrostatic", "eps_r"): _electrostatic_eps,
     ("electrostatic", "nodes"): _electrostatic_nodes,
@@ -652,6 +772,11 @@ BUILDERS = {
             ("fill", _periodic_fill),
             ("nodes", _periodic_nodes),
         )
+    },
+    **{
+        (problem, name): _eigen_periodic
+        for problem in ("eigenmode_periodic_plain", "eigenmode_periodic_bloch")
+        for name in ("eps_r", "conductivity", "fill", "nodes")
     },
 }
 
@@ -700,13 +825,18 @@ FAMILIES = [
     Cell("eigenmode", "fill", "direct"),
     Cell("eigenmode", "nodes", "direct"),
     Cell("driven_periodic_bloch", "eps_r", "direct", "uniform"),
+    Cell("eigenmode_periodic_bloch", "eps_r", "direct"),
 ]
 #: Two solves of one design agree to about 1 ulp (threaded assembly), so do
 #: their gradients. An eigenmode gradient is only as reproducible as the
 #: refined eigenvector, to the eigen tolerance (1e-12) times the operator's
 #: condition: each solve's Arnoldi run starts from a random vector, so two
 #: solves' gradients differ by up to ~1e-7 (the value by 1e-15).
-RTOL = {"eigenmode": 1e-6}
+RTOL = {
+    "eigenmode": 1e-6,
+    "eigenmode_periodic_plain": 1e-6,
+    "eigenmode_periodic_bloch": 1e-6,
+}
 
 
 def _assert_same(got, want, cell):
@@ -1055,3 +1185,20 @@ def test_gradient_matrix_cluster_sum_in_the_node_coordinates(designs):
     rng = np.random.default_rng(6)
     directions = unit_directions(rng, t.shape, 2)
     assert_gradient_matches(objective, t, directions, step=STEPS["nodes"])
+
+
+# --- periodic eigenmodes: Bloch at k = 0 is plain periodicity ----------------------
+
+
+@pytest.mark.parametrize("name", ["eps_r", "nodes"])
+def test_gradient_matrix_bloch_eigen_at_k_zero_equals_plain(designs, name):
+    # the general path (LU, two-sided refinement, complex projection) at
+    # k = 0 and the plain one solve one operator; their gradients agree to
+    # the eigen gradients' reproducibility (`RTOL`)
+    cell = Cell("eigenmode_periodic_plain", name, "direct")
+    options = _options(cell, production=False)
+    plain = _eigen_periodic(designs, cell, options, 0)
+    at_zero = _eigen_periodic(designs, cell, options, 0, wave_vector=(0.0, 0.0, 0.0))
+    want = jax.grad(plain.objective)(plain.p)
+    assert np.abs(np.asarray(want)).max() > 0
+    _assert_same(jax.grad(at_zero.objective)(plain.p), want, cell)

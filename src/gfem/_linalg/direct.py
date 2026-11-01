@@ -6,10 +6,12 @@ about a third less than NGSolve's sparse Cholesky (minimum degree) and
 factors several times faster. Without it, NGSolve's sparse Cholesky. Both
 give the same answers to the direct solve's accuracy.
 
-A general operator (a Bloch phase, A^T != A) is factored by LU: PARDISO's
-unsymmetric matrix type with the ``mkl`` extra, NGSolve's UMFPACK (built
-into the NGSolve wheels) without it. Sparse Cholesky is never given one: it
-factors A = L D L^T whatever the matrix, silently wrong when A^T != A.
+A general operator (a Bloch phase, A^T != A) or a complex Hermitian one is
+factored by LU: PARDISO's unsymmetric matrix type with the ``mkl`` extra,
+NGSolve's UMFPACK (built into the NGSolve wheels) without it. Sparse
+Cholesky is never given one: it factors A = L D L^T whatever the matrix,
+silently wrong when A^T != A. The same LU factors solve the transposed
+system A^T X = B (``solve(..., transpose=True)``).
 
 Installing ``mkl`` switches NGSolve's process-wide default inverse to PARDISO
 (an LU with minimum degree), so every inverse gfem creates names its type.
@@ -103,9 +105,10 @@ class DirectHandle(PlannedHandle):
     MKL PARDISO when the ``mkl`` extra is installed, NGSolve's sparse
     Cholesky otherwise (see the module docstring), factor ``A = L D L^T``
     when ``A^T = A``: a real symmetric operator (``"hermitian"`` on a real
-    space) or a complex symmetric one. A general operator is factored by LU:
-    PARDISO's unsymmetric type, or UMFPACK without MKL (`GENERAL_INVERSE`).
-    Complex Hermitian operators are refused.
+    space) or a complex symmetric one. A general or a complex Hermitian
+    operator is factored by LU: PARDISO's unsymmetric type, or UMFPACK
+    without MKL (`GENERAL_INVERSE`); a transposed solve of a general operator
+    runs on the same factors.
 
     An operator with a piece sum (``Operator.piece_sum``) is summed, never
     assembled: into a new matrix at creation, into the handle's own matrix at
@@ -127,6 +130,7 @@ class DirectHandle(PlannedHandle):
 
     kind = "direct"
     sums_pieces = True
+    transposes_general = True
 
     def __init__(
         self,
@@ -203,14 +207,7 @@ class DirectHandle(PlannedHandle):
 
     @classmethod
     def _admit(cls, symmetry: Symmetry, *, is_complex: bool) -> None:
-        if symmetry != "general" and not equals_its_transpose(
-            symmetry, is_complex=is_complex
-        ):
-            raise ValueError(
-                "The direct solver factors A = L D L^T when A^T = A, or LU for a "
-                "general operator: a real symmetric, complex symmetric or general "
-                f"operator, not {symmetry!r}."
-            )
+        """Every symmetry: L D L^T when A^T = A, LU otherwise (`_factor`)."""
 
     @property
     def _inverse(self):
