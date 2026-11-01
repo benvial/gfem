@@ -688,7 +688,8 @@ class DrivenRule:
         transposed = None
         if self.problem.wave_vector is not None:
             # A(k)^T = A(-k): the adjoint solves' operator
-            minus_k = tuple(-v for v in self.problem.wave_vector)
+            kx, ky, kz = self.problem.wave_vector
+            minus_k = (-kx, -ky, -kz)
             transposed = functools.partial(
                 driven_operator, model, op.order, wave_vector=minus_k
             )
