@@ -36,7 +36,7 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.constants as const
 
-from gfem import _probe
+from gfem import _periodic, _probe
 from gfem._checks import check_fixed, is_traced
 from gfem._materials import Material
 from gfem._pytree import register_fields
@@ -166,8 +166,10 @@ def interface_participation(
     Raises:
         TypeError: ``modes`` is not a `gfem.EigenmodeResult`.
         RegionNotFoundError: The mesh has no region of that name.
-        ValueError: A name is a volume region, a number is out of range, or
-            the result does not carry its materials (saved by an older gfem).
+        ValueError: A name is a volume region or a surface of a
+            `gfem.Periodic` pair (interior to the periodic cell), a number is
+            out of range, or the result does not carry its materials (saved
+            by an older gfem).
     """
     from gfem.results import EigenmodeResult
 
@@ -225,6 +227,13 @@ class _SurfaceGeometry:
                 raise ValueError(
                     f"{name!r} is a volume region; interface_participation needs "
                     "a surface region."
+                )
+            pair = _periodic.pair_of_surface(mesh, name)
+            if pair is not None:
+                raise ValueError(
+                    f"{name!r} is a surface of periodic pair "
+                    f"{(pair.first, pair.second)!r}, which is interior to the "
+                    "periodic cell: it holds no interface layer."
                 )
             triangles.append(mesh.elements(name))
         engine = _probe.engine()

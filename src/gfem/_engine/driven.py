@@ -230,6 +230,7 @@ def driven_operator(
     wave_vector: tuple[float, float, float] | None = None,
     elements: np.ndarray | None = None,
     faces: np.ndarray | None = None,
+    paired: bool = True,
 ) -> DrivenOperator:
     """The driven operator of ``model`` at its current node positions.
 
@@ -240,7 +241,9 @@ def driven_operator(
     unrestricted one. A model with `gfem.Periodic` pairs solves on the
     periodic space, Bloch-phased by ``wave_vector`` (rad/m; ``None``: plain
     periodicity), with its `expansion`; a wave vector makes the operator
-    ``"general"`` (`DrivenOperator.symmetry`).
+    ``"general"`` (`DrivenOperator.symmetry`). With ``paired=False`` it
+    acts on the unpaired space instead, where result fields live (no
+    expansion).
     """
     periodic = model._periodic  # noqa: SLF001
     disc = discretization(model.mesh, periodic)
@@ -248,7 +251,7 @@ def driven_operator(
     pec = pec_surfaces(model)
     key = (domain_key(model), "hcurl", order, pec)
     expansion = None
-    if periodic:
+    if periodic and paired:
         phases = bloch_phases(model, wave_vector)
         pairs = tuple((p.first, p.second) for p in periodic)
         key = (*key, pairs, phases)
