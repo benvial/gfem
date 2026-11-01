@@ -82,6 +82,7 @@ from gfem._boundaries import Conductor, Impedance
 from gfem._engine import quadrature
 from gfem._engine.cache import discretization
 from gfem._engine.domain import boundary_region
+from gfem.errors import NonDifferentiableError
 from gfem.model import Model
 
 __all__ = [
@@ -156,7 +157,8 @@ class Term:
         coefficient: For a volume kind, ``C``: an element-wise constant
             NGSolve coefficient, scalar or 3 x 3, real or complex, the same
             the forward form reads; for a trace kind, the face-wise
-            constant scalar ``c``.
+            constant ``c``: a scalar, or 3 x 3 for an absorbing face next
+            to an anisotropic material (no node pass).
         region: For a trace kind, the boundary region it is integrated on.
         integrand: For ``"surface"``: ``(u, v) -> integrals`` of the form
             with its coefficient and pinned quadrature (real coefficients),
@@ -477,7 +479,20 @@ def _trace_shape(terms: Sequence[tuple[Term, complex]], pair: FieldPair, w: Any)
       Gs v_t - v_t . Gs u_t)``;
     - ``int c (n . curl u)(n . curl v)`` (a surface density) by
       ``-int c (n . curl u)(n . curl v) tr Gs``.
+
+    Raises:
+        NonDifferentiableError: A trace term has a tensor coefficient (an
+            absorbing face next to an anisotropic material).
     """
+    for term, _ in terms:
+        # the rules refuse the node coordinates first (unsupported_input)
+        tensor = getattr(term.coefficient, "dim", 1) != 1
+        if term.kind == "trace" and tensor:  # pragma: no cover
+            msg = (
+                f"The trace term {term.name!r} has a tensor coefficient, whose "
+                "shape derivative is not available in this version."
+            )
+            raise NonDifferentiableError(msg)
     gs = ngs.grad(w).Trace()
     divergence = ngs.Trace(gs)
     out = None

@@ -312,6 +312,8 @@ class DrivenRule:
         #: Per sheet field (index into ``model.boundaries``), the wave ports
         #: whose face shares an edge with the sheet: the port mode reads it.
         self.sheet_ports = _sheet_ports(model)
+        #: Why the node coordinates cannot be differentiated, or None.
+        self.nodes_unsupported = terms.absorbing_shape_unsupported(model)
         # The fields live on the mesh as given (traced or not).
         self._mesh = model.mesh
         self._excluded = model._domain.excluded  # noqa: SLF001
@@ -754,6 +756,9 @@ class DrivenRule:
         A sheet field whose surface shares an edge with a wave port face
         raises likewise: the port mode reads the sheet on that edge.
 
+        The node coordinates cannot be differentiated next to a tensor
+        absorbing admittance (`terms.absorbing_shape_unsupported`).
+
         Raises:
             PortGeometryError: ``kind`` is the material of a region that
                 touches a wave port face, or the fill of a sheet beside one.
@@ -771,6 +776,8 @@ class DrivenRule:
                     "wrap the fill in jax.lax.stop_gradient."
                 )
             return None
+        if kind == ("nodes",):
+            return self.nodes_unsupported
         if kind[0] != "material":
             return None
         region, prop = kind[1], kind[2]
@@ -1357,7 +1364,8 @@ def _port_regions(model: Model) -> dict[str, tuple[str, ...]]:
 
 
 def _check_supported(model: Model) -> None:
-    """Raise for ports this version cannot solve."""
+    """Raise for ports and absorbing boundaries this version cannot solve."""
     for port in model.ports:
         if not isinstance(port, (LumpedPort, WavePort)):  # pragma: no cover
             raise TypeError(f"Unknown port {port!r}.")
+    terms.check_absorbing(model)

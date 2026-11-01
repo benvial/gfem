@@ -21,12 +21,14 @@ from gfem._materials import (
 from gfem.model import Model
 
 __all__ = [
+    "anisotropic_elements",
     "coefficient",
     "element_tensors",
     "element_values",
     "lossy_eps",
     "p0",
     "permittivity",
+    "surface_coefficient",
     "surface_p0",
 ]
 
@@ -111,6 +113,22 @@ def element_tensors(model: Model, name: str) -> np.ndarray:
     return tensor
 
 
+def anisotropic_elements(model: Model) -> np.ndarray:
+    """Whether each tetrahedron has an anisotropic real ``eps_r`` or ``mu_r``.
+
+    Structural: the tetrahedra of a `Material` with three principal values
+    of ``eps_r`` or ``mu_r``, whatever the values. A per-axis ``tan_delta``
+    alone does not count (it moves only the imaginary part).
+    """
+    out = np.zeros(len(model.mesh.tetrahedra), bool)
+    for region, material in model.materials.items():
+        if isinstance(material, Material) and (
+            isinstance(material.eps_r, tuple) or isinstance(material.mu_r, tuple)
+        ):
+            out[model.mesh.elements(region)] = True
+    return out
+
+
 def lossy_eps(model: Model) -> np.ndarray:
     """``eps_r (1 - i tan_delta)`` per tetrahedron, ``(n,)`` or ``(n, 3, 3)``.
 
@@ -149,3 +167,13 @@ def surface_p0(built: EngineMesh, values: np.ndarray) -> ngs.GridFunction:
     gf = ngs.GridFunction(ngs.SurfaceL2(built.mesh, order=0, complex=is_complex))
     gf.vec.FV().NumPy()[:] = np.asarray(values)[built.triangle_order]
     return gf
+
+
+def surface_coefficient(
+    built: EngineMesh, values: np.ndarray
+) -> ngs.CoefficientFunction:
+    """Per-triangle values, ``(n,)`` or ``(n, 3, 3)``, as an NGSolve coefficient."""
+    if values.ndim == 1:
+        return surface_p0(built, values)
+    parts = [surface_p0(built, values[:, i, j]) for i in range(3) for j in range(3)]
+    return ngs.CF(tuple(parts), dims=(3, 3))

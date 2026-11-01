@@ -46,10 +46,12 @@ def line(tmp_path_factory):
             "lower": gfem.MaterialField(
                 eps_r=3.9 * (1 - 0.02j) * ramp, mu_r=1.2 * ramp, conductivity=0.5 * ramp
             ),
+            # a tilted mass tensor whose real part stays isotropic: the
+            # second-order absorbing side refuses an anisotropic eps_r
             "upper": gfem.Material(
-                eps_r=(2.0, 3.0, 4.0),
+                eps_r=3.0,
                 axes=((0.6, 0.8, 0.0), (-0.8, 0.6, 0.0), (0.0, 0.0, 1.0)),
-                tan_delta=0.01,
+                tan_delta=(0.01, 0.02, 0.04),
             ),
         },
         boundaries=[

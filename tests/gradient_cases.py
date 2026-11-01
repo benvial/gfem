@@ -152,8 +152,9 @@ def shape_line(directory: Path) -> gfem.Model:
     """The two-layer line with every kind of shape term.
 
     A lossy, conducting lower layer with random per-element permittivity,
-    an anisotropic magnetic cover, a conductor top plate and second-order
-    absorbing side walls.
+    a magnetic cover with a per-axis loss tangent (an anisotropic mass
+    tensor; its real part stays isotropic, as second-order absorbing side
+    walls need), and a conductor top plate.
     """
     mesh = _mesh(
         directory, "line.msh", sm.strip_line(4.0, 2.0, 1.0, (4, 2, 1), layers=LAYERS)
@@ -164,7 +165,7 @@ def shape_line(directory: Path) -> gfem.Model:
         mesh,
         materials={
             "sub": gfem.MaterialField(eps_r=eps, conductivity=np.full(n, 0.5)),
-            "cover": gfem.Material(eps_r=(2.0, 2.5, 3.0), mu_r=1.3),
+            "cover": gfem.Material(eps_r=2.5, tan_delta=(0.0, 0.01, 0.02), mu_r=1.3),
         },
         boundaries=[
             gfem.PEC("bottom"),
