@@ -66,6 +66,7 @@ import jax.numpy as jnp
 import ngsolve as ngs
 import numpy as np
 import scipy.constants
+import scipy.sparse
 
 from gfem._adjoint import adjoint_tolerance
 from gfem._boundaries import (
@@ -86,6 +87,7 @@ from gfem._engine.sweep_outputs import SweepOutputs
 from gfem._engine.system_operator import SystemOperator
 from gfem._engine.wave_ports import wave_port_couplings
 from gfem._linalg import Kind, ResolvedLinearSolver
+from gfem._periodic import bloch_phases, check_wave_vector
 from gfem._sweep.adaptive import AffineSystem, AffineTerm, adaptive_sweep
 from gfem.errors import (
     LinearSolverConvergenceError,
@@ -137,6 +139,10 @@ class DrivenOperator:
         pieces: The affine pieces (`gfem._engine.terms.Piece`).
         ports: Lumped port geometry, in model port order.
         order: Polynomial order.
+        expansion: For a model with periodic pairs, P: the solve space's
+            coefficients x to the unpaired space's, e = P x, where results
+            keep their fields (`expansion`); ``None`` without pairs, where
+            the two spaces are one.
     """
 
     built: EngineMesh
@@ -144,6 +150,11 @@ class DrivenOperator:
     pieces: list[terms.Piece]
     ports: tuple[terms.LumpedPortData, ...]
     order: int
+    expansion: scipy.sparse.csr_matrix | None = None
+
+    def expand(self, x: np.ndarray) -> np.ndarray:
+        """``P x``: solve-space coefficients ``(ndof, ...)`` on the unpaired space."""
+        return x if self.expansion is None else self.expansion @ x
 
     def form(self, omega: float) -> ngs.BilinearForm:
         """``Σ θ_k(ω) a_k``, not assembled (a backend assembles it)."""
@@ -202,6 +213,7 @@ def driven_operator(
     model: Model,
     order: int,
     *,
+    wave_vector: tuple[float, float, float] | None = None,
     elements: np.ndarray | None = None,
     faces: np.ndarray | None = None,
 ) -> DrivenOperator:
@@ -211,18 +223,69 @@ def driven_operator(
     other boundary and lumped port contributes pieces. ``elements`` and
     ``faces`` restrict the pieces to those gfem tetrahedra and triangles
     (boolean masks, ``None`` for all; see `terms.pieces`); the space is the
-    unrestricted one.
+    unrestricted one. A model with `gfem.Periodic` pairs solves on the
+    periodic space, Bloch-phased by ``wave_vector`` (rad/m; ``None``: plain
+    periodicity), with its `expansion`.
     """
-    disc = discretization(model.mesh)
+    periodic = model._periodic  # noqa: SLF001
+    disc = discretization(model.mesh, periodic)
     built = disc.built
     pec = pec_surfaces(model)
-    space = disc.space(
-        (domain_key(model), "hcurl", order, pec),
-        lambda: hcurl_space(model, built, order, dirichlet=pec),
-    )
+    key = (domain_key(model), "hcurl", order, pec)
+    expansion = None
+    if periodic:
+        phases = bloch_phases(model, wave_vector)
+        pairs = tuple((p.first, p.second) for p in periodic)
+        key = (*key, pairs, phases)
+        space = disc.space(
+            key,
+            lambda: hcurl_space(
+                model, built, order, dirichlet=pec, periodic=True, phases=phases
+            ),
+        )
+        expansion = disc.space(
+            (*key, "expansion"),
+            lambda: expansion_matrix(
+                space,
+                disc.space(
+                    (domain_key(model), "hcurl", order, pec),
+                    lambda: hcurl_space(model, built, order, dirichlet=pec),
+                ),
+                real=phases is None,
+            ),
+        )
+    else:
+        space = disc.space(key, lambda: hcurl_space(model, built, order, dirichlet=pec))
     ports = terms.lumped_ports(model, built.scale)
     pieces = terms.pieces(model, built, order, ports, elements=elements, faces=faces)
-    return DrivenOperator(built, space, pieces, ports, order)
+    return DrivenOperator(built, space, pieces, ports, order, expansion)
+
+
+#: Entries of the expansion P below this are the round-off of NGSolve's
+#: local projection (exact entries are 0, ±1 and Bloch phases).
+EXPANSION_FLOOR = 1e-12
+
+
+def expansion_matrix(
+    periodic: ngs.FESpace, unpaired: ngs.FESpace, *, real: bool
+) -> scipy.sparse.csr_matrix:
+    """P, the periodic space's coefficients to the unpaired space's (e = P x).
+
+    From NGSolve's ``ConvertOperator``, exact on every field of the
+    periodic space; entries below `EXPANSION_FLOOR` dropped, real for plain
+    periodicity (``real``).
+    """
+    rows, cols, values = ngs.ConvertOperator(periodic, unpaired).COO()
+    data = np.asarray(values)
+    if real:
+        data = data.real
+    out = scipy.sparse.csr_matrix(
+        (data, (np.asarray(rows), np.asarray(cols))),
+        shape=(unpaired.ndof, periodic.ndof),
+    )
+    out.data[np.abs(out.data) < EXPANSION_FLOOR] = 0
+    out.eliminate_zeros()
+    return out
 
 
 class DrivenRule:
@@ -246,7 +309,9 @@ class DrivenRule:
 
         Raises:
             NotImplementedError: A feature this version cannot solve.
-            ValueError: The problem does not fit the model.
+            ValueError: The problem does not fit the model. (a wave vector without a
+                periodic pair, or outside the span of the pairs'
+                translations, among others).
             gfem.SolverUnavailableError: ``linear_solver="petsc"`` and PETSc
                 cannot be used.
         """
@@ -259,6 +324,7 @@ class DrivenRule:
             options, default=DEFAULT_SOLVER, problem="driven"
         )
         _check_supported(model)
+        check_wave_vector(model, problem.wave_vector, "Driven")
         if not model.ports:
             raise ValueError(
                 "The model has no ports, so a driven problem has nothing to "
@@ -331,7 +397,9 @@ class DrivenRule:
         last = getattr(self, "_last_operator", None)
         if last is not None and last[0] is model:
             return last[1]
-        op = driven_operator(model, self.options.order)
+        op = driven_operator(
+            model, self.options.order, wave_vector=self.problem.wave_vector
+        )
         self._last_operator = (model, op)
         return op
 
@@ -396,7 +464,8 @@ class DrivenRule:
                     if keep:
                         solutions.append(np.array(x, dtype=complex))
                     if n in self.kept:
-                        fields.append(np.array(x, dtype=complex))
+                        # results keep fields on the unpaired space
+                        fields.append(np.array(system.operator.expand(x), complex))
                     s[n] = ports.outgoing(omega, x)
         # no backward pass will prepare from the pieces
         if not keep or miss is not None:
@@ -448,6 +517,7 @@ class DrivenRule:
                 [frequencies[i] for i in block],
                 excite=self.excite,
                 keep_fields=[frequencies[i] for i in block if i in self.kept],
+                wave_vector=self.problem.wave_vector,
             )
             for block in indices
         ]
@@ -637,8 +707,10 @@ class DrivenRule:
             coordinates = sweep.coordinates[list(self.kept)]  # (n_kept, n, n_exc)
             coordinates = np.swapaxes(coordinates, 1, 2).reshape(-1, size)
             width = size if samples is None else self._padded_size()
-            basis = np.zeros((sweep.basis.shape[0], width))
-            basis[:, :size] = sweep.basis
+            # results keep fields on the unpaired space
+            expanded = system.operator.expand(sweep.basis)
+            basis = np.zeros((expanded.shape[0], width))
+            basis[:, :size] = expanded
             padded = np.zeros((len(coordinates), width), complex)
             padded[:, :size] = coordinates
             kept_fields = (basis, padded)
@@ -840,7 +912,9 @@ class DrivenRule:
                     undefined = np.zeros(width, bool)
                 if ct_e is not None and n in self.kept:
                     k = self.kept.index(n)
-                    load += np.asarray(ct_e)[:, k * width : (k + 1) * width]
+                    g = np.asarray(ct_e)[:, k * width : (k + 1) * width]
+                    # the field is P x: its cotangent loads P^T g
+                    load += g if op.expansion is None else op.expansion.T @ g
                 if load.any():
                     try:
                         adjoint += system.solve_adjoint(n, omega, load)
@@ -1100,7 +1174,7 @@ def operator_terms(model: Model, op: DrivenOperator, *, nodes: bool) -> list[Ter
 def real_space(model: Model, op: DrivenOperator) -> ngs.FESpace:
     """A real H(curl) space with ``op``'s DOF numbering (for ``DiffShape``)."""
     pec = pec_surfaces(model)
-    return discretization(model.mesh).space(
+    return discretization(model.mesh, model._periodic).space(  # noqa: SLF001
         (domain_key(model), "hcurl", op.order, pec, "real"),
         lambda: hcurl_space(
             model, op.built, op.order, complex_valued=False, dirichlet=pec

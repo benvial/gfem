@@ -73,6 +73,8 @@ class ElectrostaticRule:
         """Check that the problem fits the model (see `gfem.Electrostatic`).
 
         Raises:
+            NotImplementedError: The model has a periodic pair, or a sheet
+                field.
             gfem.SolverUnavailableError: ``linear_solver="petsc"`` and PETSc
                 cannot be used.
         """
@@ -84,6 +86,15 @@ class ElectrostaticRule:
         self.linear = ResolvedLinearSolver.resolve(
             options, default=DEFAULT_SOLVER, problem="electrostatic"
         )
+        periodic = model._periodic  # noqa: SLF001
+        if periodic:
+            raise NotImplementedError(
+                "Electrostatic does not support periodic pairs in this version "
+                f"of gfem, but the model has {periodic[0].label}: a capacitance "
+                "matrix is between the terminals of one finite structure. Model "
+                "one cell with the terminals as drawn, or use a gfem.Driven "
+                "surrogate."
+            )
         for b in model.boundaries:
             if sheet_of(b) is not None:
                 (surface,) = surfaces_of(b)

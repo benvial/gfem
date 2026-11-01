@@ -38,6 +38,8 @@ def hcurl_space(
     *,
     complex_valued: bool = True,
     dirichlet: tuple[str, ...] = (),
+    periodic: bool = False,
+    phases: tuple[complex, ...] | None = None,
 ) -> ngs.FESpace:
     """First-kind Nédélec space of ``order`` on the electromagnetic domain.
 
@@ -45,6 +47,13 @@ def hcurl_space(
     system size. The tangential DOFs on the ``dirichlet`` surfaces (exact
     names, e.g. `PEC`) are fixed: left out of ``FreeDofs()``, which BDDC
     reads. The DOF numbering does not depend on ``dirichlet``.
+
+    With ``periodic``, the space is periodic over the point identifications
+    of ``built`` (the model's periodic pairs, `to_ngsolve`): each second
+    surface's DOFs are its twins' on the first, times the pair's Bloch
+    phase (``phases``, `gfem._periodic.bloch_phases`; ``None`` for plain
+    periodicity), and are compressed away. Its DOF numbering is not the
+    unpaired space's: map with the expansion P, never by index.
     """
     space = ngs.HCurl(
         built.mesh,
@@ -54,6 +63,8 @@ def hcurl_space(
         definedon=em_region(model, built),
         dirichlet=_bc_numbers(built, dirichlet),
     )
+    if periodic:
+        space = ngs.Periodic(space, phase=None if phases is None else list(phases))
     return ngs.Compress(space)
 
 

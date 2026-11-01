@@ -333,7 +333,7 @@ def _element_pass(
     Times ``scale ** length_power``. A face term's integrals per triangle
     are summed into each triangle's owning tetrahedron (`Term.owner`).
     """
-    built = discretization(model.mesh).built
+    built = discretization(model.mesh, model._periodic).built  # noqa: SLF001
     integrand = INTEGRANDS[term.kind]
     name = term.name
     pairs = [p for p in pairs if name in p.weights]
@@ -384,7 +384,7 @@ def _sheet_pass(
     if not isinstance(boundary, (Conductor, Impedance)):  # pragma: no cover
         msg = f"model.boundaries[{index}] carries no sheet field."
         raise TypeError(msg)
-    built = discretization(model.mesh).built
+    built = discretization(model.mesh, model._periodic).built  # noqa: SLF001
     factors = [
         (t.name, t.sheet[1])
         for t in terms
@@ -551,7 +551,7 @@ def _node_pass(
     model: Model, pairs: list[FieldPair], terms: Sequence[Term]
 ) -> np.ndarray:
     """``sum_pairs sum_t theta_t d a_t(left, right) / dX``, (n_nodes, 3), per m."""
-    built = discretization(model.mesh).built
+    built = discretization(model.mesh, model._periodic).built  # noqa: SLF001
     n_nodes = len(model.mesh.imported_nodes)
     space = ngs.VectorH1(built.mesh, order=1)
     w = space.TestFunction()

@@ -72,6 +72,7 @@ from gfem._engine.fields import fe_space
 from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair, Term
 from gfem._linalg import Kind, ResolvedLinearSolver
+from gfem._periodic import check_wave_vector
 from gfem._sign import largest_entry
 from gfem.conventions import MODE_ENERGY
 from gfem.errors import DegenerateModeError, EigenmodeConvergenceError
@@ -152,6 +153,8 @@ class EigenmodeRule:
 
         Raises:
             NotImplementedError: A feature this version cannot solve.
+            ValueError: ``wave_vector`` is set without a periodic pair, or
+                outside the span of the pairs' translations.
             gfem.SolverUnavailableError: ``linear_solver="petsc"`` or
                 ``eigen_solver="slepc"`` names a library that cannot be used.
         """
@@ -166,6 +169,7 @@ class EigenmodeRule:
         if options.eigen_solver == "slepc":
             _petsc.require_slepc("eigen_solver")
         _check_supported(model)
+        check_wave_vector(model, problem.wave_vector, "Eigenmode")
         lumped = [p for p in model.ports if isinstance(p, LumpedPort)]
         #: Ports with a resistance (coupling Q) and with an inductance
         #: (participation), in model order.

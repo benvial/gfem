@@ -242,9 +242,12 @@ def _rebuild(
 
 
 def _forward(rule: Any, model: Any, *, keep: bool) -> tuple:
+    from gfem._periodic import check_nodes
     from gfem.shape import _check_quality
 
-    # A moved mesh must still be valid on the solve domain.
+    # A moved mesh must keep its periodic pairs and stay valid on the solve
+    # domain.
+    check_nodes(model.mesh.nodes, model._periodic)  # noqa: SLF001
     _check_quality(model.mesh, model._domain.active, stacklevel=2)  # noqa: SLF001
     return rule.forward(model, keep=keep)
 

@@ -866,6 +866,12 @@ def port_vectors(
     the elements of ``(1 / width) ∫ d . E``. The two are parallel, ``b =
     excitation_per_voltage(R) * l``, which makes S reciprocal and lets the
     port solutions serve as their own adjoints.
+
+    On a periodic space NGSolve assembles a linear form as Pᴴ l₀ (test
+    functions take the conjugate Bloch phase), the right load; a functional
+    read off x is l₀ᵀ P x, so ``l`` is the conjugate of the assembled
+    vector: the integrand is real, so conj(Pᴴ l₀) = Pᵀ l₀. Without a Bloch
+    phase the assembled vector is real and the conjugate changes nothing.
     """
     v = space.TestFunction()
     r = data.port.rlc[0]
@@ -884,4 +890,4 @@ def port_vectors(
             excite += weight * d * v.Trace() * ds
     excite.Assemble()
     voltage.Assemble()
-    return excite.vec.FV().NumPy().copy(), voltage.vec.FV().NumPy().copy()
+    return excite.vec.FV().NumPy().copy(), np.conj(voltage.vec.FV().NumPy())

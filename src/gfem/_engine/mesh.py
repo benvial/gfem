@@ -12,6 +12,7 @@ import netgen.meshing as ngm
 import ngsolve as ngs
 import numpy as np
 
+from gfem._periodic import Pairing, check_nodes
 from gfem.mesh import LENGTH_UNITS, Mesh
 
 
@@ -39,8 +40,20 @@ class EngineMesh:
     triangle_order: np.ndarray
 
 
-def to_ngsolve(mesh: Mesh) -> EngineMesh:
-    """Build the NGSolve mesh at the current node coordinates of ``mesh``."""
+def to_ngsolve(mesh: Mesh, periodic: tuple[Pairing, ...] = ()) -> EngineMesh:
+    """Build the NGSolve mesh at the current node coordinates of ``mesh``.
+
+    Each pairing of ``periodic`` (a model's periodic pairs, in order) is
+    replayed as the netgen point identifications number j + 1, first
+    surface's node as the master: NGSolve derives the periodic edges and
+    faces from them, and ``Periodic`` spaces read them. Plain spaces are the
+    same on the identified mesh.
+
+    Raises:
+        ValueError: The nodes have moved so that a pair no longer matches
+            under its translation (NGSolve checks no coordinates).
+    """
+    check_nodes(np.asarray(mesh.nodes, float), periodic)
     scale = LENGTH_UNITS[mesh.length_unit]
     names = {(r.dim, r.tag): r.name for r in mesh.regions}
     ngmesh = ngm.Mesh(dim=3)  # ty: ignore[unresolved-attribute]
@@ -75,6 +88,14 @@ def to_ngsolve(mesh: Mesh) -> EngineMesh:
         ngmesh.Add(fd)
         ngmesh.SetBCName(j - 1, names[2, int(tag)])
         ngmesh.AddElements(dim=2, index=j, data=tris[tri_face == j], base=0)
+
+    # before the wrap: identifications added after it are not seen
+    point = ngm.PointId  # ty: ignore[unresolved-attribute]
+    for j, p in enumerate(periodic, start=1):
+        for master, minion in zip(p.master.tolist(), p.minion.tolist(), strict=True):
+            ngmesh.AddPointIdentification(
+                point(nr0=master), point(nr0=minion), identnr=j, type=2
+            )
 
     return EngineMesh(
         mesh=ngs.Mesh(ngmesh),

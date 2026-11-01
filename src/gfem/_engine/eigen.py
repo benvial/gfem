@@ -145,7 +145,7 @@ def projector(model: Model, op: DrivenOperator) -> DivFreeProjector:
     """
     built, order = op.built, op.order
     pec = pec_surfaces(model)
-    h1 = discretization(model.mesh).space(
+    h1 = discretization(model.mesh, model._periodic).space(  # noqa: SLF001
         (domain_key(model), "h1", order, pec),
         lambda: h1_space(model, built, order, pec),
     )
