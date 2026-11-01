@@ -13,7 +13,7 @@ import weakref
 from collections.abc import Iterable
 
 import numpy as np
-from scipy.spatial import cKDTree
+from scipy.spatial import KDTree
 
 from gfem._domain import EMDomain
 from gfem._pytree import readonly
@@ -113,7 +113,7 @@ def _pair(mesh: Mesh, first: str, second: str) -> Pairing:
     near = np.isin(mesh.tetrahedra, np.concatenate([f, s])).any(axis=1)
     tol = REL_TOL * float(_shortest_edges(mesh)[near].min())
     a0 = x[s].mean(axis=0) - x[f].mean(axis=0)
-    dist, match = cKDTree(x[f]).query(x[s] - a0)
+    dist, match = KDTree(x[f]).query(x[s] - a0)
     far = dist > tol
     if far.any():
         worst = int(np.argmax(dist))

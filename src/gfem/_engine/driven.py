@@ -1322,7 +1322,8 @@ def _sheet_ports(model: Model) -> dict[int, tuple[str, ...]]:
     for i, b in enumerate(model.boundaries):
         if sheet_of(b) is None:
             continue
-        sheet = _edges(mesh.triangles[mesh.elements(b.surface)])
+        (surface,) = surfaces_of(b)
+        sheet = _edges(mesh.triangles[mesh.elements(surface)])
         ports = tuple(
             p.name
             for p in model.ports
