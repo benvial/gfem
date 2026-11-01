@@ -813,7 +813,9 @@ class DrivenResult:
             peak phasor (e^{+iωt}) in V/m for 1 W time-averaged incident
             power at the excited port, every other port terminated in its
             reference impedance ``z_ref``, so time-averaged densities carry
-            a factor 1/2 (see `gfem.conventions`). Quantity ``"E"``, on
+            a factor 1/2 (see `gfem.conventions`). A wave port is
+            terminated by absorbing its mode (matched), including the other
+            modes of the excited port's own surface. Quantity ``"E"``, on
             H(curl) of the solve order, over the solve domain.
             An adaptive sweep's fields are basis-backed (`ReducedFields`):
             the result holds the reduced basis and one short coordinate
