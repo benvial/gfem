@@ -525,14 +525,9 @@ def test_per_axis_conductivity_damps_along_its_axis(mesh):
         axes=((0, 0, 1), (1, 0, 0), (0, 1, 0)),
     )
     omega = complex(gfem.solve(per_axis, problem).omega[0])
-    print(
-        "T07 re:",
-        abs(omega.real / isotropic.real - 1),
-        "im:",
-        abs(omega.imag / isotropic.imag - 1),
-    )
-    np.testing.assert_allclose(omega.real, isotropic.real, rtol=1e-5)
-    np.testing.assert_allclose(omega.imag, isotropic.imag, rtol=1e-3)
+    # measured on MN5: Re omega 1.6e-8, Im omega 5.4e-5 relative
+    np.testing.assert_allclose(omega.real, isotropic.real, rtol=5e-8)
+    np.testing.assert_allclose(omega.imag, isotropic.imag, rtol=2e-4)
 
 
 def test_first_order_absorbing_walls_damp_the_modes(tmp_path):

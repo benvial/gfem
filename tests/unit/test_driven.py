@@ -263,13 +263,8 @@ def test_per_axis_conductivity_is_a_loss_tangent_falling_as_one_over_omega(mesh)
     s = np.asarray(_s(model(conducting), problem).s.values)
     tangent = gfem.Material(eps_r=eps, tan_delta=folded, axes=axes)
     expected = np.asarray(_s(model(tangent), problem).s.values)
-    print(
-        "T06 at f0:",
-        np.abs(s[0] - expected[0]).max(),
-        "at 2 f0:",
-        np.abs(s[1] - expected[1]).max(),
-    )
-    np.testing.assert_allclose(s[0], expected[0], rtol=1e-10, atol=1e-10)
+    # measured on MN5: max |dS| 3.5e-14 at f0, 0.022 at 2 f0
+    np.testing.assert_allclose(s[0], expected[0], rtol=0, atol=1e-13)
     assert np.abs(s[1] - expected[1]).max() > 1e-3
 
 
