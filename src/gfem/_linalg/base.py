@@ -105,6 +105,8 @@ class NgsHandle:
     """
 
     kind: str
+    #: The backend solves ``A^T X = B`` of a general operator on its factors.
+    transposes_general: ClassVar[bool] = False
 
     def __init__(
         self,
@@ -192,7 +194,9 @@ class NgsHandle:
 
         ``transpose`` solves ``A^T X = B``: the same solve for a real or
         complex symmetric operator, the conjugate one for a complex
-        Hermitian operator. ``tolerance`` is the relative residual of this
+        Hermitian operator, and for a general operator the transposed solve
+        on the same factors, where the backend has one
+        (`transposes_general`). ``tolerance`` is the relative residual of this
         solve for iterative backends (an adjoint solve on the forward's
         preconditioner); ``None`` is the prepared tolerance. ``x0``, the
         shape of ``B``, is an initial guess for iterative backends; its fixed
@@ -204,17 +208,20 @@ class NgsHandle:
 
         Raises:
             RuntimeError: The handle was freed.
-            NotImplementedError: ``transpose`` for a general operator.
+            NotImplementedError: ``transpose`` for a general operator on a
+                backend without its transposed solve.
         """
         if self._solver is None:
             raise RuntimeError("This solver handle was freed.")
         B = np.asarray(B)
         conjugate = transpose and self._complex and self.symmetry == "hermitian"
         if transpose and self.symmetry == "general":
-            raise NotImplementedError(
-                f"The {self.kind!r} solver has no transposed solve of a general "
-                "operator."
-            )
+            if not self.transposes_general:
+                raise NotImplementedError(
+                    f"The {self.kind!r} solver has no transposed solve of a "
+                    "general operator."
+                )
+            return self._transposed_solve(B), ()
         if conjugate:
             # the conjugate system, solved in this call: its counts unchanged
             B = np.conj(B)
@@ -241,15 +248,26 @@ class NgsHandle:
         X, its = self._inverse_map(B, tolerance, x0)
         return (np.conj(X), its) if conjugate else (X, its)
 
-    def apply(self, X: np.ndarray) -> np.ndarray:
-        """``A X`` with the full assembled matrix.
+    def _transposed_solve(self, B: np.ndarray) -> np.ndarray:
+        """``A^T X = B`` on the free DOFs, on the factors (``.T`` of the inverse)."""
+        free = self._free if B.ndim == 1 else self._free[:, None]
+        B = np.where(free, B, 0)
+        inverse = self._solver.T
+        if not self._complex and np.iscomplexobj(B):
+            X = self._map(inverse, B.real) + 1j * self._map(inverse, B.imag)
+        else:
+            X = self._map(inverse, B)
+        return np.where(free, X, 0)
+
+    def apply(self, X: np.ndarray, *, transpose: bool = False) -> np.ndarray:
+        """``A X`` with the full assembled matrix (``transpose``: ``A^T X``).
 
         Raises:
             RuntimeError: The handle was freed.
         """
         if self._matrix is None:
             raise RuntimeError("This solver handle was freed.")
-        return self._map(self._matrix, X)
+        return self._map(self._matrix.T if transpose else self._matrix, X)
 
     # the held NGSolve sparse matrix: its stubs do not declare CSR()
     def _live(self) -> Any:

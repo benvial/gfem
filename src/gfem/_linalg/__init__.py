@@ -150,10 +150,11 @@ class Handle(Protocol):
     ) -> tuple[np.ndarray, tuple[int, ...]]:
         """Solve ``A X = B`` on the free DOFs; ``B`` is ``(ndof,)`` or ``(ndof, k)``.
 
-        ``tolerance`` overrides the prepared relative residual of iterative
-        backends for this solve (adjoint solves); ``x0`` (the shape of ``B``)
-        is an initial guess for iterative backends. Direct backends ignore
-        both.
+        ``transpose`` solves ``A^T X = B``; of a general operator, only on the
+        ``direct`` backend (its factors). ``tolerance`` overrides the prepared
+        relative residual of iterative backends for this solve (adjoint
+        solves); ``x0`` (the shape of ``B``) is an initial guess for
+        iterative backends. Direct backends ignore both.
 
         Returns ``X`` and the Krylov iterations of each column of ``B``, in
         order: every iteration the column cost in this call (restarts and
@@ -174,8 +175,11 @@ class Handle(Protocol):
         """``X`` alone: ``solve_counted(B, ...)[0]``."""
         ...
 
-    def apply(self, X: np.ndarray) -> np.ndarray:
-        """``A X`` with the full assembled matrix (fixed rows included)."""
+    def apply(self, X: np.ndarray, *, transpose: bool = False) -> np.ndarray:
+        """``A X`` with the full assembled matrix (fixed rows included).
+
+        ``transpose``: ``A^T X``.
+        """
         ...
 
     def free(self) -> None:

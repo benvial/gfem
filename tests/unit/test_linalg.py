@@ -206,12 +206,6 @@ def test_wrong_shape_raises(built):
         handle.solve(np.ones(handle.ndof + 1))
 
 
-def test_direct_refuses_a_complex_hermitian_operator(built):
-    op, _ = _laplace(built, complex_valued=True)
-    with pytest.raises(ValueError, match="A\\^T = A"):
-        prepare(op, symmetry="hermitian", kind="direct")
-
-
 def _advection(built, shift=1 - 2j):
     """A complex operator with A^T != A: a Laplacian with a drift term."""
     space = ngs.H1(built.mesh, order=2, dirichlet="bottom|top", complex=True)
@@ -243,6 +237,70 @@ def test_direct_factors_a_general_operator_by_lu(built, monkeypatch, mkl):
     A = _dense(handle, space.ndof)
     X = handle.solve(B)
     np.testing.assert_allclose((A @ X)[free], B[free], atol=1e-10 * np.abs(B).max())
+
+
+@pytest.mark.parametrize("mkl", [True, False], ids=["pardiso", "umfpack"])
+def test_direct_solves_the_transpose_of_a_general_operator(built, monkeypatch, mkl):
+    # on the same LU factors (a Bloch eigenmode's left eigenvector)
+    if mkl and not pardiso.pardiso_available():
+        pytest.skip("needs the mkl extra")
+    if not mkl:
+        monkeypatch.setattr(pardiso, "pardiso_available", lambda: False)
+    op, space = _advection(built)
+    handle = prepare(op, symmetry="general", kind="direct")
+    free = np.array(list(space.FreeDofs()))
+    A = _dense(handle, space.ndof)
+    rng = np.random.default_rng(4)
+    B = rng.standard_normal((space.ndof, 2)) + 1j * rng.standard_normal((space.ndof, 2))
+    X = handle.solve(B, transpose=True)
+    np.testing.assert_allclose((A.T @ X)[free], B[free], atol=1e-10 * np.abs(B).max())
+    np.testing.assert_array_equal(X[~free], 0)
+    np.testing.assert_allclose(handle.solve(B[:, 0], transpose=True), X[:, 0])
+    np.testing.assert_allclose(
+        handle.apply(X, transpose=True), A.T @ X, atol=1e-12 * np.abs(A.T @ X).max()
+    )
+
+
+def _hermitian(built):
+    """A complex Hermitian operator (A^T != A): a Laplacian with i times a
+    skew-symmetric drift."""
+    space = ngs.H1(built.mesh, order=2, dirichlet="bottom|top", complex=True)
+    u, v = space.TnT()
+    b = ngs.CF((3.0, 1.0, 0.0))
+    skew = ngs.InnerProduct(b, ngs.grad(u)) * v - u * ngs.InnerProduct(b, ngs.grad(v))
+    # a Hermitian form is not symmetric: PARDISO reads the flag
+    form = ngs.BilinearForm(space, symmetric=False)
+    form += (ngs.grad(u) * ngs.grad(v) + u * v + 0.5j * skew) * quadrature.dx(2)
+    return Operator(form, space.FreeDofs()), space
+
+
+@pytest.mark.parametrize("mkl", [True, False], ids=["pardiso", "umfpack"])
+def test_direct_factors_a_complex_hermitian_operator_by_lu(built, monkeypatch, mkl):
+    # the projection of a Bloch eigenmode solve (sparse Cholesky would be
+    # silently wrong)
+    if mkl and not pardiso.pardiso_available():
+        pytest.skip("needs the mkl extra")
+    if not mkl:
+        monkeypatch.setattr(pardiso, "pardiso_available", lambda: False)
+    op, space = _hermitian(built)
+    handle = prepare(op, symmetry="hermitian", kind="direct")
+    free = np.array(list(space.FreeDofs()))
+    A = _dense(handle, space.ndof)
+    assert np.abs(A - A.conj().T).max() <= 1e-14 * np.abs(A).max()
+    assert np.abs(A - A.T).max() > 0.1 * np.abs(A).max()
+    rng = np.random.default_rng(5)
+    B = rng.standard_normal((space.ndof, 2)) + 1j * rng.standard_normal((space.ndof, 2))
+    X = handle.solve(B)
+    np.testing.assert_allclose((A @ X)[free], B[free], atol=1e-10 * np.abs(B).max())
+    X = handle.solve(B, transpose=True)
+    np.testing.assert_allclose((A.T @ X)[free], B[free], atol=1e-10 * np.abs(B).max())
+
+
+def test_bddc_has_no_transposed_solve_of_a_general_operator(built):
+    op, space = _advection(built)
+    handle = prepare(op, symmetry="general", kind="bddc_gmres", tolerance=1e-10)
+    with pytest.raises(NotImplementedError, match="no transposed solve"):
+        handle.solve(np.ones(space.ndof, complex), transpose=True)
 
 
 def test_unknown_backends_raise(built):
