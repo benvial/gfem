@@ -62,7 +62,9 @@ __all__ = ["PortModeRule", "PortModeSweep", "path_voltage", "port_mode_sweep"]
 
 # The shift is this factor above the largest bulk (Re eps)(Re mu), as in Palace.
 _TARGET = 1.1
-# A Ritz pair propagates when Re beta exceeds this fraction of k0 n_max.
+# A Ritz pair propagates when Re beta exceeds this fraction of k0 n_max, and
+# exceeds |Im beta| (Re beta^2 > 0: above cutoff; below it a lossy mode, or a
+# complex pair of a lossless one, keeps a small Re beta).
 _EVANESCENT = 1e-6
 # Ritz pairs with a larger backward error are unconverged (ARPACK returns some
 # from the formulation's large null space below cutoff); converged ones sit
@@ -484,7 +486,7 @@ class _Greedy:
             )
             k_max = self.k_max[j]
             ok = (
-                (beta.real > _EVANESCENT * k_max)
+                _propagates(beta, k_max)
                 & (beta.real <= k_max * (1 + 1e-6))
                 & (res < _UNCONVERGED)
             )
@@ -626,8 +628,8 @@ class _Greedy:
                 for k, (lam, y, eta) in enumerate(pairs):
                     self.lam[k, i], self.coords[k][i], self.residual[k, i] = lam, y, eta
             passed[i] = (self.residual[:, i] <= self.floor[:, i]).all()
-        beta = np.sqrt(-self.lam + 0j).real
-        gone = passed & ~self.solved & (beta <= _EVANESCENT * self.k_max)
+        beta = np.sqrt(-self.lam + 0j)
+        gone = passed & ~self.solved & ~_propagates(beta, self.k_max)
         if gone.any():
             i = int(np.flatnonzero(gone.any(axis=0))[0])
             raise self._evanescent_error(i, int(np.flatnonzero(gone[:, i])[0]))
@@ -911,6 +913,11 @@ class _Reduced:
                 ax += block
         den = np.linalg.norm(ax) + abs(lam) * np.linalg.norm(bx)
         return float(np.linalg.norm(ax - lam * bx) / den) if den > 0 else math.inf
+
+
+def _propagates(beta: np.ndarray, k_max: float | np.ndarray) -> np.ndarray:
+    """Which propagation constants are of propagating modes (see `_EVANESCENT`)."""
+    return (beta.real > _EVANESCENT * k_max) & (beta.real > np.abs(beta.imag))
 
 
 def _overlaps(mass, x_ref: np.ndarray, vecs: np.ndarray) -> np.ndarray:
