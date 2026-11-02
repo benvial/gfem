@@ -21,6 +21,8 @@ orphan: true
 ## Solving
 
 - {doc}`anisotropic-materials`
+- {doc}`periodic-cell`
+- {doc}`shared-port-surface`
 - {doc}`measurements`
 - {doc}`gpu-direct-solver`
 - {doc}`petsc-slepc`

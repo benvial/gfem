@@ -20,7 +20,7 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as sp
 
-from gfem import _morph
+from gfem import _morph, _periodic
 from gfem._boundaries import surfaces_of
 from gfem._checks import is_traced
 from gfem._pytree import readonly
@@ -209,11 +209,14 @@ class BoundaryMorph:
     ``t`` and differentiable with JAX (``grad``, ``jvp``, ``jit``, ``vmap``).
 
     Attributes:
-        n_params: The number of parameters (moving nodes).
+        n_params: The number of parameters (moving nodes; on a periodic
+            model, tie classes of paired nodes).
         points: Imported coordinates of the moving nodes, metres,
-            shape ``(n_params, 3)``.
+            shape ``(n_params, 3)`` (a tie class's representative, on the
+            first surface of its pairs).
         normals: Unit normal of each moving node, shape ``(n_params, 3)``:
-            parameter ``i`` moves node ``i`` by ``t[i] * normals[i]``.
+            parameter ``i`` moves node ``i`` (and its tie class) by
+            ``t[i] * normals[i]``.
         surface: The moving surface's name.
         extension: ``"elastic"`` or ``"laplace"``.
     """
@@ -244,12 +247,13 @@ class BoundaryMorph:
         normals: np.ndarray,
         free: sp.csr_array,
         stiffness: sp.csr_array,
+        ties: np.ndarray | None = None,
     ) -> None:
         """Internal: use `boundary_morph`."""
         # Imported here so that `import gfem` does not load NGSolve.
         from gfem._linalg import factorize
 
-        prescribed = _morph.prescribed(len(mesh.imported_nodes), nodes, normals)
+        prescribed = _morph.prescribed(len(mesh.imported_nodes), nodes, normals, ties)
         reduced = (free.T @ stiffness @ free).tocoo()
         coupling = (-(free.T @ stiffness @ prescribed)).tocoo()
         factor = factorize(reduced)
@@ -349,6 +353,19 @@ def boundary_morph(
       corner is held;
     - interior nodes, including those inside excluded volumes, follow.
 
+    On a model with `gfem.Periodic` pairs, paired nodes are tied: each tie
+    class (a node and its twins across every pair: 2 on a face, 4 on a cell
+    edge, 8 at a corner of a 3-pair cell) moves by one displacement, so the
+    moved mesh keeps every pair and its translation. A class is held if any
+    member is held (``fixed=["x_min"]`` holds the matching "x_max" nodes
+    too), and is one parameter if any member is a selected, unheld node of
+    the moving surface: a ``where=`` that selects one side of the seam moves
+    both twins. Its normal sums its members' faces. Paired surfaces slide,
+    and may not be the moving surface (that would change the period). The
+    gradient with respect to ``t`` is then exact along the tied motion; a
+    raw gradient with respect to ``mesh.nodes`` is not tied (it is exact
+    along every move that keeps the pairs).
+
     Sign: on a surface that bounds the solve domain on one side (an excluded
     conductor, a void, the mesh exterior), ``t > 0`` moves the surface into
     the domain, so the conductor or void grows. On an interface between two
@@ -381,8 +398,8 @@ def boundary_morph(
     Raises:
         RegionNotFoundError: A surface or volume name is not in the mesh.
         ValueError: The selection is empty or entirely held, ``grows`` is
-            missing where it is needed (or given where it means nothing), or
-            ``extension`` is unknown.
+            missing where it is needed (or given where it means nothing),
+            ``extension`` is unknown, or ``moving`` is a periodic surface.
         TypeError: An argument has the wrong type.
     """
     if not isinstance(model, Model):
@@ -402,22 +419,35 @@ def boundary_morph(
     if moving in fixed:
         msg = f"Surface {moving!r} is both moving and fixed=; remove it from fixed."
         raise ValueError(msg)
+    pairings = model._periodic  # noqa: SLF001
+    for p in pairings:
+        if moving in (p.first, p.second):
+            twin = p.second if moving == p.first else p.first
+            msg = (
+                f"Periodic surface {moving!r} cannot be the moving surface: moving "
+                "it along its normal changes the period. Its nodes slide tied to "
+                f"{twin!r}."
+            )
+            raise ValueError(msg)
     x0 = np.asarray(mesh.imported_nodes)
     n_nodes = len(x0)
+    # paired nodes move together: one displacement per tie class
+    ties = _periodic.tie_classes(n_nodes, pairings)
     held_surfaces = {s for port in model.ports for s in surfaces_of(port)}
     held_surfaces |= set(fixed)
     tag = {r.name: r.tag for r in mesh.regions if r.dim == 2}
     tri_tags = mesh.triangle_tags
     held_tri = np.isin(tri_tags, [tag[s] for s in held_surfaces])
     held = np.zeros(n_nodes, dtype=bool)
-    held[mesh.triangles[held_tri].ravel()] = True
+    held[ties[mesh.triangles[held_tri].ravel()]] = True
+    held = held[ties]  # a class is held if any member is
     in_tet = np.zeros(n_nodes, dtype=bool)
     in_tet[mesh.tetrahedra.ravel()] = True
 
     moving_tri = np.flatnonzero(tri_tags == tag[moving])
     candidates = np.unique(mesh.triangles[moving_tri])
     selected = _select(candidates, x0, where, moving)
-    params = selected[~held[selected]]
+    params = np.unique(ties[selected[~held[selected]]])
     if len(params) == 0:
         msg = (
             f"Every selected node of {moving!r} ({len(selected)}) lies on a held "
@@ -425,13 +455,18 @@ def boundary_morph(
             "pick another surface."
         )
         raise ValueError(msg)
+    # every node of the moving surface in a parameter's class moves with it
+    is_param = np.zeros(n_nodes, dtype=bool)
+    is_param[params] = True
+    movers = candidates[is_param[ties[candidates]]]
     normals = _node_normals(
         model,
         moving_tri=moving_tri,
-        selected=selected,
-        params=params,
+        selected=np.union1d(selected, movers),
+        params=movers,
         grows=grows,
         moving=moving,
+        groups=np.searchsorted(params, ties[movers]),
     )
 
     constrained = held | ~in_tet
@@ -439,7 +474,7 @@ def boundary_morph(
     slide = ~held_tri
     slide_tris = mesh.triangles[slide]
     free = _morph.free_directions(
-        n_nodes, slide_tris, _morph.unit_normals(x0, slide_tris), constrained
+        n_nodes, slide_tris, _morph.unit_normals(x0, slide_tris), constrained, ties
     )
     stiffness = _morph.stiffness(x0, mesh.tetrahedra, extension)
     return BoundaryMorph(
@@ -451,6 +486,7 @@ def boundary_morph(
         normals=normals,
         free=free,
         stiffness=stiffness,
+        ties=ties if pairings else None,
     )
 
 
@@ -490,8 +526,15 @@ def _node_normals(
     params: np.ndarray,
     grows: str | None,
     moving: str,
+    groups: np.ndarray,
 ) -> np.ndarray:
-    """Unit normal per parameter node, oriented by the sign convention."""
+    """Unit normal per parameter, oriented by the sign convention.
+
+    ``params`` are moving nodes, ``groups`` the parameter each moves with
+    (one parameter per tie class): a parameter's normal is the normalized
+    sum of its nodes' area-weighted normals (on a periodic surface, the two
+    half-stars of twins form the full star).
+    """
     mesh = model.mesh
     x0 = mesh.imported_nodes
     tris = mesh.triangles[moving_tri]
@@ -518,11 +561,15 @@ def _node_normals(
                 area[slot], tris[faces, k], np.linalg.norm(weighted[faces], axis=1)
             )
     slot = np.where(covered[params], 0, 1)
-    total, area = total[slot, params], area[slot, params]
+    n_params = int(groups.max()) + 1
+    summed, summed_area = np.zeros((n_params, 3)), np.zeros(n_params)
+    np.add.at(summed, groups, total[slot, params])
+    np.add.at(summed_area, groups, area[slot, params])
+    total, area = summed, summed_area
     length = np.linalg.norm(total, axis=1)
     bad = length <= 1e-8 * area
     if bad.any():
-        node = int(params[np.flatnonzero(bad)[0]])
+        node = int(params[np.flatnonzero(groups == np.flatnonzero(bad)[0])[0]])
         msg = (
             f"The selected faces of {moving!r} around node {node} at "
             f"{x0[node]} m have no mean normal (they face opposite ways). "

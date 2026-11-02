@@ -98,6 +98,33 @@ class PortModeTrackingWarning(UserWarning):
     """
 
 
+class SkippedPortModeWarning(UserWarning):
+    """A port surface skips a port mode below its highest requested mode.
+
+    It fires when no wave port on a surface requests a mode ranked below the
+    highest ``mode`` requested there, for example a lone ``mode=2`` (mode 1
+    is skipped) or modes 1 and 3 (mode 2 is skipped). That mode propagates
+    wherever the higher one does, and the port partly reflects it instead of
+    absorbing it, so S misses the power the device sends into it. Add a
+    `gfem.WavePort` on the surface for each skipped mode. A lone ``mode=1``
+    never warns. Filter it with Python's `warnings` module.
+    """
+
+
+class PortModeProjectionWarning(UserWarning):
+    """Two wave ports of one surface read part of each other's mode.
+
+    Each wave port's S functional projects the field on its conjugated
+    mode, which separates the modes of one surface only when the port line
+    is lossless. It fires when, at some frequency, the normalized
+    projection of one requested mode on another port's functional exceeds
+    ``1e-3``; the S entries between those ports then carry an error of that
+    order. The remedy is a lossless port line near the port (the
+    biorthogonal functional that would remove the error is not implemented
+    in this version of gfem). Filter it with Python's `warnings` module.
+    """
+
+
 class DeviceUnavailableError(RuntimeError):
     """``SolverOptions.device`` names a GPU that this machine cannot use.
 

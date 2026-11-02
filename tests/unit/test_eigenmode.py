@@ -576,6 +576,24 @@ def test_wave_port_raises_from_solve_with_a_remedy(mesh):
         gfem.solve(model, gfem.Eigenmode(target=8e9))
 
 
+def test_shared_port_surface_raises_naming_the_surface_and_its_ports(mesh):
+    # a lumped port stands in for one mode only and cannot share a surface, so
+    # the message drops that advice and points to a driven sweep
+    model = gfem.Model(
+        mesh,
+        materials={"dielectric": gfem.Material(eps_r=EPS)},
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+        ports=[gfem.WavePort("o1", "port1"), gfem.WavePort("o2", "port1", mode=2)],
+    )
+    with pytest.raises(NotImplementedError) as raised:
+        gfem.solve(model, gfem.Eigenmode(target=8e9))
+    message = str(raised.value)
+    assert "shared port surface 'port1'" in message
+    assert "'o1', 'o2'" in message
+    assert "gfem.Driven" in message
+    assert "LumpedPort" not in message
+
+
 def test_conductivity_damps_the_line_exactly(mesh):
     # K x = (k^2 eps_r - i k eta0 sigma) M x for the uniform TEM field: with the
     # lossless k0, k^2 - i a k - k0^2 = 0, a = eta0 sigma / eps_r, in the

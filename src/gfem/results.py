@@ -327,8 +327,9 @@ class PortModeResult:
             problem. It exceeds ``SolverOptions.port_mode_tolerance`` only at
             the formulation's low-frequency accuracy floor, where it is at
             most 10x that of an exact solve.
-        solved: ``(n_freq,)`` bool, True where the mode is an exact port mode
-            solve; elsewhere it comes from the reduced port mode model.
+        solved: ``(n_freq,)`` bool, True where the port's cross-section was
+            solved exactly (shared by the wave ports of a shared port
+            surface); elsewhere it comes from the reduced port mode model.
         e_field: The mode's electric field, normalized to 1 W; ``None`` on a
             driven result that keeps no fields.
     """
@@ -812,7 +813,9 @@ class DrivenResult:
             peak phasor (e^{+iωt}) in V/m for 1 W time-averaged incident
             power at the excited port, every other port terminated in its
             reference impedance ``z_ref``, so time-averaged densities carry
-            a factor 1/2 (see `gfem.conventions`). Quantity ``"E"``, on
+            a factor 1/2 (see `gfem.conventions`). A wave port is
+            terminated by absorbing its mode (matched), including the other
+            modes of the excited port's own surface. Quantity ``"E"``, on
             H(curl) of the solve order, over the solve domain.
             An adaptive sweep's fields are basis-backed (`ReducedFields`):
             the result holds the reduced basis and one short coordinate
@@ -954,7 +957,9 @@ class EigenmodeResult:
             a transmon. Its sign is that of ``Re V``: the field's phase
             makes a lossless mode real, so the sign is the junction's
             polarity along its port direction (not ``Re I``, which is zero
-            for a real field).
+            for a real field). Under a Bloch wave vector the sign is
+            relative to the mode's phase convention (its largest
+            coefficient real).
         bulk_participation: Electric energy participation of each volume
             region of the solve domain, by region name: the fraction of the
             mode's electric energy ``E`` stored in it. For an isotropic

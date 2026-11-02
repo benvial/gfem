@@ -27,6 +27,7 @@ from typing import Any
 import numpy as np
 
 from gfem._engine.mesh import EngineMesh, to_ngsolve
+from gfem._periodic import Pairing, pair_names
 from gfem.mesh import Mesh
 
 __all__ = [
@@ -72,16 +73,21 @@ def _digest(nodes: np.ndarray) -> str:
     ).hexdigest()
 
 
-def discretization(mesh: Mesh) -> Discretization:
-    """The cached discretization of ``mesh`` at its current node coordinates."""
+def discretization(mesh: Mesh, periodic: tuple[Pairing, ...] = ()) -> Discretization:
+    """The cached discretization of ``mesh`` at its current node coordinates.
+
+    With ``periodic`` (a model's periodic pairs) the NGSolve mesh carries
+    their point identifications (`to_ngsolve`); the pairs are part of the
+    key, so a model with pairs and one without do not share a mesh.
+    """
     topology = mesh._topology  # noqa: SLF001
     nodes = np.asarray(mesh.nodes, dtype=float)
-    key = (id(topology), _digest(nodes))
+    key = (id(topology), _digest(nodes), pair_names(periodic))
     found = _DISCRETIZATIONS.get(key)
     if found is not None and found.topology is topology:
         _DISCRETIZATIONS.move_to_end(key)
         return found
-    entry = Discretization(built=to_ngsolve(mesh), topology=topology)
+    entry = Discretization(built=to_ngsolve(mesh, periodic), topology=topology)
     _DISCRETIZATIONS[key] = entry
     while len(_DISCRETIZATIONS) > _MAX_DISCRETIZATIONS:
         _DISCRETIZATIONS.popitem(last=False)

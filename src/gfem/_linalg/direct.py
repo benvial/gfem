@@ -1,10 +1,17 @@
-"""The ``direct`` backend: a symmetric LDL^T factorization on the CPU.
+"""The ``direct`` backend: an LDL^T factorization on the CPU, LU when A^T != A.
 
 With the ``gfem[mkl]`` extra installed, NGSolve's MKL PARDISO factors with a
 METIS nested-dissection ordering and the symmetric matrix type; it fills
 about a third less than NGSolve's sparse Cholesky (minimum degree) and
 factors several times faster. Without it, NGSolve's sparse Cholesky. Both
 give the same answers to the direct solve's accuracy.
+
+A general operator (a Bloch phase, A^T != A) or a complex Hermitian one is
+factored by LU: PARDISO's unsymmetric matrix type with the ``mkl`` extra,
+NGSolve's UMFPACK (built into the NGSolve wheels) without it. Sparse
+Cholesky is never given one: it factors A = L D L^T whatever the matrix,
+silently wrong when A^T != A. The same LU factors solve the transposed
+system A^T X = B (``solve(..., transpose=True)``).
 
 Installing ``mkl`` switches NGSolve's process-wide default inverse to PARDISO
 (an LU with minimum degree), so every inverse gfem creates names its type.
@@ -32,6 +39,9 @@ from gfem._linalg.pardiso import (  # noqa: F401 (the first two re-exported)
 #: NGSolve's sparse Cholesky: the factorization without MKL, also the BDDC
 #: coarse factorization's.
 INVERSE = "sparsecholesky"
+#: NGSolve's UMFPACK (LU): the factorization of a general operator without
+#: MKL, also the BDDC coarse factorization's then.
+GENERAL_INVERSE = "umfpack"
 
 
 @functools.cache
@@ -70,7 +80,7 @@ class Factors(Protocol):
 
 
 class UpdateFactors:
-    """An inverse NGSolve refactorizes itself (``Update()``): sparse Cholesky."""
+    """An inverse NGSolve refactorizes itself (``Update()``): Cholesky, UMFPACK."""
 
     def __init__(self, inverse: ngs.BaseMatrix) -> None:
         """Hold ``inverse``."""
@@ -90,13 +100,15 @@ class UpdateFactors:
 
 
 class DirectHandle(PlannedHandle):
-    """One LDL^T factorization, reused for every right-hand side.
+    """One factorization, reused for every right-hand side: LDL^T, or LU.
 
     MKL PARDISO when the ``mkl`` extra is installed, NGSolve's sparse
-    Cholesky otherwise (see the module docstring). Both factor
-    ``A = L D L^T``, so they need ``A^T = A``: a real symmetric operator
-    (``"hermitian"`` on a real space) or a complex symmetric one. Complex
-    Hermitian and general operators are refused.
+    Cholesky otherwise (see the module docstring), factor ``A = L D L^T``
+    when ``A^T = A``: a real symmetric operator (``"hermitian"`` on a real
+    space) or a complex symmetric one. A general or a complex Hermitian
+    operator is factored by LU: PARDISO's unsymmetric type, or UMFPACK
+    without MKL (`GENERAL_INVERSE`); a transposed solve of a general operator
+    runs on the same factors.
 
     An operator with a piece sum (``Operator.piece_sum``) is summed, never
     assembled: into a new matrix at creation, into the handle's own matrix at
@@ -118,6 +130,7 @@ class DirectHandle(PlannedHandle):
 
     kind = "direct"
     sums_pieces = True
+    transposes_general = True
 
     def __init__(
         self,
@@ -146,7 +159,12 @@ class DirectHandle(PlannedHandle):
             if free > 0
             else None
         )
-        inverse = pardiso or INVERSE
+        if pardiso is not None:
+            inverse = pardiso
+        elif equals_its_transpose(self.symmetry, is_complex=self._complex):
+            inverse = INVERSE
+        else:
+            inverse = GENERAL_INVERSE
         if freedofs is None or free == matrix.height:
             # every DOF free: NGSolve factors the matrix itself instead of
             # projecting it on the free DOFs first
@@ -189,11 +207,7 @@ class DirectHandle(PlannedHandle):
 
     @classmethod
     def _admit(cls, symmetry: Symmetry, *, is_complex: bool) -> None:
-        if not equals_its_transpose(symmetry, is_complex=is_complex):
-            raise ValueError(
-                "The direct solver (A = L D L^T) needs A^T = A: a "
-                f"real symmetric or complex symmetric operator, not {symmetry!r}."
-            )
+        """Every symmetry: L D L^T when A^T = A, LU otherwise (`_factor`)."""
 
     @property
     def _inverse(self):

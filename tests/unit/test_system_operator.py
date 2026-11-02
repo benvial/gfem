@@ -5,10 +5,13 @@ operator, without wave ports and without a rule: its adjoint handles, its
 pieces and its sweeps' base handles.
 """
 
+import dataclasses
 import math
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import scipy.linalg
 import structured_meshes as sm
 from solver_misses import cannot_converge_at
 
@@ -144,3 +147,31 @@ def test_a_sweep_frees_its_base_when_it_raises(line, monkeypatch):
     with pytest.raises(gfem.LinearSolverConvergenceError):
         sweep()
     assert any(h is bases[-1] for h in freed)
+
+
+def test_corrections_are_block_diagonal_over_wave_port_surfaces(line):
+    linear = ResolvedLinearSolver.resolve(
+        gfem.SolverOptions(), default="direct", problem="driven"
+    )
+    op = driven.driven_operator(line, 1)
+    rng = np.random.default_rng(1)
+    ndof = op.space.ndof
+    pairs = (
+        (rng.standard_normal((ndof, 6)), rng.standard_normal((6, 4))),  # n = 2
+        (rng.standard_normal((ndof, 4)), rng.standard_normal((4, 2))),  # n = 1
+    )
+    blocks = [rng.standard_normal((4, 4)), rng.standard_normal((2, 2))]
+    surfaces = [
+        SimpleNamespace(
+            piece=dataclasses.replace(op.pieces[0], name=f"waveport s{k}"),
+            vectors=v,
+            correction=lambda _, p=p, d=d: (p, d),
+        )
+        for k, ((v, p), d) in enumerate(zip(pairs, blocks, strict=True))
+    ]
+    system = SystemOperator(
+        op, surfaces, linear, width=1, adjoint_tolerance=ADJOINT_TOLERANCE
+    )
+    u, c = system.corrections(OMEGAS[0])
+    np.testing.assert_array_equal(u, np.concatenate([v @ p for v, p in pairs], 1))
+    np.testing.assert_array_equal(c, scipy.linalg.block_diag(*blocks))

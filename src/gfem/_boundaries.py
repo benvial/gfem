@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Iterable, Sequence
 from typing import Any, ClassVar, Literal
 
 import jax
@@ -192,6 +193,62 @@ class Impedance:
         _check_fill(self.fill, "Impedance")
 
 
+@dataclasses.dataclass(frozen=True)
+class Periodic:
+    """A periodic pair: two exterior surfaces related by a translation.
+
+    The fields on the two surfaces are identified node for node. The
+    translation a runs from ``surfaces[0]`` to ``surfaces[1]`` and is
+    measured from the mesh (`Model.periodic_translations`); the two surface
+    meshes must be identical up to it (gmsh: ``setPeriodic``). A model takes
+    one to three pairs, along independent directions. With no Bloch wave
+    vector on the problem the fields are equal on both surfaces (plain
+    periodicity); with ``wave_vector=k`` (rad/m) on `gfem.Driven` or
+    `gfem.Eigenmode`, E(r + a) = exp(-i k·a) E(r) (`gfem.conventions`,
+    Bloch periodicity). The order of the two surfaces is not physical:
+    swapping them flips a and gives the same field.
+
+    `gfem.Eigenmode` and `gfem.Driven` solve periodic models: a driven
+    problem with a wave vector on the uniform sweep only, without one on
+    both sweeps. `gfem.Electrostatic` raises on a periodic model. A paired
+    surface takes no other boundary or port, and the default PMC skips it.
+    The two meshes are checked when the `gfem.Model` is built. See the
+    "Solve a periodic cell" recipe.
+
+    Attributes:
+        surfaces: The two surface region names (first, second).
+
+    Raises:
+        TypeError: ``surfaces`` is not two surface names.
+        ValueError: The same name is given twice.
+
+    Example:
+        ``gfem.Periodic(("x_min", "x_max"))``
+    """
+
+    surfaces: tuple[str, str]
+    _physics: ClassVar[str] = "em"
+
+    def __post_init__(self) -> None:
+        value = self.surfaces
+        if (
+            isinstance(value, str)
+            or not isinstance(value, (list, tuple))
+            or len(value) != 2
+            or not all(isinstance(s, str) for s in value)
+        ):
+            raise TypeError(
+                "Periodic: surfaces must be two surface names (first, second), "
+                f"got {value!r}."
+            )
+        if value[0] == value[1]:
+            raise ValueError(
+                f"Periodic: the two surfaces must differ, got {value[0]!r} twice; "
+                "a periodic pair joins two opposite surfaces of the cell."
+            )
+        object.__setattr__(self, "surfaces", (value[0], value[1]))
+
+
 def _set_rlc(obj: Any, owner: str) -> None:
     for name, unit in (
         ("resistance", "ohm"),
@@ -202,12 +259,12 @@ def _set_rlc(obj: Any, owner: str) -> None:
         object.__setattr__(obj, name, value)
 
 
-for _cls in (PEC, PMC, Absorbing):
+for _cls in (PEC, PMC, Absorbing, Periodic):
     jax.tree_util.register_static(_cls)
 register_fields(Conductor, ("fill",))
 register_fields(Impedance, ("fill",))
 
-Boundary = PEC | PMC | Absorbing | Conductor | Impedance
+Boundary = PEC | PMC | Absorbing | Conductor | Impedance | Periodic
 
 
 # --- ports ----------------------------------------------------------------------
@@ -354,6 +411,10 @@ class LumpedPort:
 class WavePort:
     """A wave port on an exterior surface, fed by its port mode.
 
+    Several wave ports on one surface each request a different mode (a
+    shared port surface). A propagating mode no port on the surface requests
+    is partly reflected, not converted.
+
     The cross-section may contain anisotropic materials when every tensor
     has a principal axis along the port normal (any orientation in the port
     plane); off-axis tensors would make forward and backward port modes
@@ -364,7 +425,9 @@ class WavePort:
         name: The port's name; ports index S-parameters by name, in the
             order of the model's ``ports``.
         surface: The port's surface region.
-        mode: Which port mode excites the port, 1 = the first.
+        mode: Which port mode excites the port: its rank at the lowest
+            frequency among the modes the model admits (a symmetry plane
+            halves them), 1 = the most confined.
         offset: De-embedding distance in m, >= 0.
         voltage_path: Points (m) of a path across the port; it fixes the
             mode's polarity and defines a voltage, hence a reference
@@ -434,6 +497,47 @@ def sheet_of(item: Boundary | Port) -> SheetField | None:
 
 def surfaces_of(item: Boundary | Port) -> tuple[str, ...]:
     """The surfaces a boundary condition or port occupies."""
-    if isinstance(item, LumpedPort):
+    if isinstance(item, (LumpedPort, Periodic)):
         return item.surfaces
     return (item.surface,)
+
+
+def wave_port_surfaces(ports: Iterable[Port]) -> dict[str, tuple[WavePort, ...]]:
+    """The wave ports among ``ports`` by surface, in model order.
+
+    Surfaces come in the order of their first wave port; a surface with
+    several wave ports is a shared port surface.
+    """
+    surfaces: dict[str, list[WavePort]] = {}
+    for port in ports:
+        if isinstance(port, WavePort):
+            surfaces.setdefault(port.surface, []).append(port)
+    return {surface: tuple(group) for surface, group in surfaces.items()}
+
+
+def lead_port(group: Sequence[WavePort]) -> WavePort:
+    """The wave port with the smallest ``mode`` on a surface.
+
+    Its propagation constant is the surface's Robin ``gamma_0``.
+    """
+    return min(group, key=lambda p: p.mode)
+
+
+def wave_port_label(
+    group: Sequence[WavePort], *, lone_surface: bool = False, modes: bool = False
+) -> str:
+    """``WavePorts 'a', 'b' on surface 's'`` for a surface's wave ports.
+
+    Args:
+        group: The wave ports of one surface.
+        lone_surface: Name the surface of a lone wave port too
+            (``WavePort 'a' on surface 's'``); else ``WavePort 'a'``.
+        modes: Follow each name with its mode (``'a' (mode 1)``).
+    """
+    names = ", ".join(
+        f"{p.name!r} (mode {p.mode})" if modes else repr(p.name) for p in group
+    )
+    surface = f" on surface {group[0].surface!r}"
+    if len(group) == 1:
+        return f"WavePort {names}{surface if lone_surface else ''}"
+    return f"WavePorts {names}{surface}"

@@ -36,7 +36,7 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.constants as const
 
-from gfem import _probe
+from gfem import _periodic, _probe
 from gfem._checks import check_fixed, is_traced
 from gfem._materials import Material, field_principal_values
 from gfem._pytree import register_fields
@@ -170,8 +170,10 @@ def interface_participation(
     Raises:
         TypeError: ``modes`` is not a `gfem.EigenmodeResult`.
         RegionNotFoundError: The mesh has no region of that name.
-        ValueError: A name is a volume region, a number is out of range, or
-            the result does not carry its materials (saved by an older gfem).
+        ValueError: A name is a volume region or a surface of a
+            `gfem.Periodic` pair (interior to the periodic cell), a number is
+            out of range, or the result does not carry its materials (saved
+            by an older gfem).
     """
     from gfem.results import EigenmodeResult
 
@@ -229,6 +231,13 @@ class _SurfaceGeometry:
                 raise ValueError(
                     f"{name!r} is a volume region; interface_participation needs "
                     "a surface region."
+                )
+            pair = _periodic.pair_of_surface(mesh, name)
+            if pair is not None:
+                raise ValueError(
+                    f"{name!r} is a surface of periodic pair "
+                    f"{(pair.first, pair.second)!r}, which is interior to the "
+                    "periodic cell: it holds no interface layer."
                 )
             triangles.append(mesh.elements(name))
         engine = _probe.engine()
@@ -452,7 +461,13 @@ def characteristic_impedance(mode: PortModeResult, voltage_path: Any) -> jax.Arr
             "keeps its wave ports' mode fields only with Driven(keep_fields=...). "
             "Solve with keep_fields, or solve gfem.PortMode for the port."
         )
-    volts = path_voltage(field._space, field._basis, field._coords, path)  # noqa: SLF001
+    volts = path_voltage(
+        field._space,  # noqa: SLF001
+        field._basis,  # noqa: SLF001
+        field._coords,  # noqa: SLF001
+        path,
+        mode.port,
+    )
     return jnp.asarray(np.abs(volts) ** 2 / 2.0)
 
 
@@ -488,6 +503,7 @@ def power_flow(
     conductivity, `Conductor` and `Impedance` sheets, its absorbing faces).
     A face term belongs to ``side`` only when every solve-domain element
     beside it does, so a sheet lying on the surface counts as outside.
+    A side may cross or touch a `gfem.Periodic` pair.
 
     A field of an adaptive sweep (`gfem.ReducedFields`) is exact at the
     solved frequencies and accurate to the sweep's tolerance in between.

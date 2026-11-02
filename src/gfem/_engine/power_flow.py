@@ -14,6 +14,14 @@ A's boundary exactly for the discrete field, with no point evaluation:
 to A only when every solve-domain element beside it is in A. A port's
 term needs its excitation, which a field does not record, so an outside
 port face that shares an edge with A raises.
+
+On a model with `gfem.Periodic` pairs the field holds e = P x on the
+unpaired space, Bloch phases included, and the identity holds there with
+the unpaired operator, once "shares an edge" and "the DOFs of A" are read
+across the pairs: edges are keyed by the tie classes of their nodes, so an
+edge and its images are one, and χ_A also keeps the DOFs of the images of
+A's edges and faces (the test function ``conj(χ_A x)`` of the periodic
+space, expanded). No wave vector is needed.
 """
 
 from __future__ import annotations
@@ -28,6 +36,7 @@ import scipy.constants as const
 from gfem._boundaries import surfaces_of
 from gfem._engine import probe
 from gfem._engine.driven import DrivenOperator, driven_operator
+from gfem._periodic import tie_classes
 from gfem.mesh import _TET_EDGES, Mesh
 
 if TYPE_CHECKING:
@@ -75,11 +84,12 @@ def power_flow(
             "The side selects every element of the field's support, so it has "
             "no surface: the side holds the whole solve domain."
         )
-    tet_edges = _edge_keys(mesh, mesh.tetrahedra, np.array(_TET_EDGES))
+    tie = tie_classes(len(mesh.nodes), model._periodic)  # noqa: SLF001
+    tet_edges = _edge_keys(tie, mesh.tetrahedra, np.array(_TET_EDGES))
     closure = np.unique(tet_edges[inside])
     layer = outside & np.isin(tet_edges, closure).any(axis=1)
     rim = inside & np.isin(tet_edges, np.unique(tet_edges[outside])).any(axis=1)
-    faces = _outside_faces(mesh, inside, support, closure)
+    faces = _outside_faces(mesh, tie, inside, support, closure)
     for port in model.ports:
         for surface in surfaces_of(port):
             if faces[mesh.elements(surface)].any():
@@ -91,7 +101,7 @@ def power_flow(
                     "inside the side."
                 )
 
-    op = driven_operator(model, field.order, elements=layer, faces=faces)
+    op = driven_operator(model, field.order, elements=layer, faces=faces, paired=False)
     e = np.asarray(field.coefficients)
     if e.shape[0] != op.space.ndof:
         raise ValueError(
@@ -99,7 +109,7 @@ def power_flow(
             f"{field.order} driven space has {op.space.ndof} DOFs: the field "
             "was not solved on this model."
         )
-    w = np.where(_dofs(op, rim), e, 0.0)
+    w = np.where(_dofs(op, tie, rim, rim | layer), e, 0.0)
     omega = float(np.asarray(field.omega).real)
     total = sum(
         piece.theta(omega) * np.vdot(w, op.apply(k, e))
@@ -180,14 +190,22 @@ def _selection(
     return out
 
 
-def _edge_keys(mesh: Mesh, cells: np.ndarray, pairs: np.ndarray) -> np.ndarray:
-    """One integer per edge of each cell, the same for the same edge."""
-    ends = np.sort(cells[:, pairs], axis=-1)
-    return ends[..., 0].astype(np.int64) * len(mesh.nodes) + ends[..., 1]
+def _edge_keys(tie: np.ndarray, cells: np.ndarray, pairs: np.ndarray) -> np.ndarray:
+    """One integer per edge of each cell, the same for the same edge.
+
+    Nodes are read as their tie class representatives (`tie_classes`), so
+    an edge and its images across the periodic pairs share a key.
+    """
+    ends = np.sort(tie[cells[:, pairs]], axis=-1)
+    return ends[..., 0].astype(np.int64) * len(tie) + ends[..., 1]
 
 
 def _outside_faces(
-    mesh: Mesh, inside: np.ndarray, support: np.ndarray, closure: np.ndarray
+    mesh: Mesh,
+    tie: np.ndarray,
+    inside: np.ndarray,
+    support: np.ndarray,
+    closure: np.ndarray,
 ) -> np.ndarray:
     """Triangles whose terms belong to the outside and reach A's DOFs.
 
@@ -199,16 +217,39 @@ def _outside_faces(
     tet = np.maximum(nb, 0)
     beside = (nb >= 0) & support[tet]
     owned = beside.any(axis=1) & ~(~beside | inside[tet]).all(axis=1)
-    touching = np.isin(_edge_keys(mesh, mesh.triangles, _TRI_EDGES), closure)
+    touching = np.isin(_edge_keys(tie, mesh.triangles, _TRI_EDGES), closure)
     return owned & touching.any(axis=1)
 
 
-def _dofs(op: DrivenOperator, elements: np.ndarray) -> np.ndarray:
-    """The DOFs of the edges, faces and cells of the given gfem tetrahedra."""
-    space, built = op.space, op.built
-    ngs_index = np.argsort(built.tetrahedron_order)
+def _dofs(
+    op: DrivenOperator, tie: np.ndarray, elements: np.ndarray, near: np.ndarray
+) -> np.ndarray:
+    """The DOFs of the cells, edges and faces of the given gfem tetrahedra.
+
+    With the images of those edges and faces across the periodic pairs
+    (same `tie_classes` key), looked up on the ``near`` tetrahedra, which
+    hold every image the operator reaches. Without pairs the images are
+    the edges and faces themselves.
+    """
+    space, ngmesh = op.space, op.built.mesh
+    ngs_index = np.argsort(op.built.tetrahedron_order)
     out = np.zeros(space.ndof, bool)
-    for t in ngs_index[np.flatnonzero(elements)]:
-        dofs = np.asarray(space.GetDofNrs(ngs.ElementId(ngs.VOL, int(t))))
+
+    def mark(node: ngs.NodeId) -> None:
+        dofs = np.asarray(space.GetDofNrs(node), dtype=np.int64)
         out[dofs[dofs >= 0]] = True
+
+    def key(node: ngs.NodeId) -> tuple[int, ...]:
+        return tuple(sorted(int(tie[v.nr]) for v in ngmesh[node].vertices))
+
+    keys = set()
+    for t in ngs_index[np.flatnonzero(elements)]:
+        element = ngmesh[ngs.ElementId(ngs.VOL, int(t))]
+        keys.update(key(n) for n in (*element.edges, *element.faces))
+        mark(ngs.NodeId(ngs.CELL, int(t)))
+    for t in ngs_index[np.flatnonzero(near)]:
+        element = ngmesh[ngs.ElementId(ngs.VOL, int(t))]
+        for n in (*element.edges, *element.faces):
+            if key(n) in keys:
+                mark(n)
     return out

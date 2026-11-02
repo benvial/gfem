@@ -51,7 +51,8 @@ Port mode problem
 Port mode sweep
   The {term}`port mode problem` solved over a driven problem's output
   frequencies before the 3D solve, giving each wave port's propagation constant
-  and mode profile at every output frequency.
+  and mode profile at every output frequency. The wave ports of a
+  {term}`shared port surface` share one sweep.
 
 Gradient verification matrix
   The set of cells (problem type × gradient input × linear solver × sweep)
@@ -125,6 +126,26 @@ Port
   A named excitation and measurement surface, lumped or wave, whose order in the
   {term}`model` fixes the order of the network parameters.
 
+Shared port surface
+  An exterior surface that carries several wave ports, each requesting a
+  different mode of one {term}`port mode problem`; together they form one
+  boundary.
+
+Requested mode
+  The port mode, by rank at the lowest frequency, that a wave port excites and
+  reports, with its own row and column of the network parameters. Wave ports
+  that share a surface request different modes.
+
+Skipped port mode
+  A propagating mode of a surface's {term}`port mode problem`, ranked below the
+  highest mode requested on that surface, that no wave port on the surface
+  requests.
+
+Mode cross-projection
+  The conjugated S functional of one {term}`requested mode` applied to another
+  requested mode of the same {term}`shared port surface`; zero for a lossless
+  cross-section, otherwise the error it puts into S.
+
 Terminal
   A conductor, given as one or more regions (volumes or surfaces), whose
   potential is set in an electrostatic problem; terminals index the capacitance
@@ -148,6 +169,25 @@ PETSc stack
   Complex PETSc and SLEPc with their Python bindings, built without MPI as
   {doc}`recipes/petsc-slepc` describes: what `linear_solver="petsc"` and
   `eigen_solver="slepc"` need.
+
+Periodic pair
+  Two exterior surfaces of a {term}`model` related by a translation, whose
+  fields are identified; one to three pairs make a 1D, 2D or 3D periodic cell
+  (`gfem.Periodic`).
+
+Plain periodicity
+  A {term}`periodic pair` whose fields are equal on both surfaces: a problem
+  with no {term}`Bloch wave vector`.
+
+Bloch wave vector
+  The wave vector k (rad/m) set on an eigenmode or driven problem
+  (`wave_vector=`) that gives each {term}`periodic pair` its
+  {term}`Bloch phase`.
+
+Bloch phase
+  The factor exp(−i k·a) between the fields of a {term}`periodic pair`,
+  E(r + a) = exp(−i k·a) E(r) under e^{+iωt}, with a the translation from the
+  pair's first surface to its second.
 
 Job
   A self-contained run, {term}`model` plus problem type plus
@@ -202,6 +242,10 @@ Power flow
   Measured by `gfem.power_flow` from the residual of the discrete equations, so
   exact for the solved field. Poynting flux is kept for the pointwise integral
   of ½Re(E × H*).
+
+Bloch reciprocity
+  S(k)ᵀ = S(−k): a Bloch cell's S matrix is not symmetric, but swapping two
+  ports is the same as reversing the {term}`Bloch wave vector`.
 ```
 
 ## Materials and optimization
@@ -282,7 +326,8 @@ Moving surface
 
 Sliding surface
   A surface whose nodes may move only within their own facet plane during a
-  {term}`boundary morph`.
+  {term}`boundary morph`. On a {term}`periodic pair`, a node and its partner
+  move together.
 
 Mesh extension
   The elastic or harmonic solve that carries boundary motion into the mesh

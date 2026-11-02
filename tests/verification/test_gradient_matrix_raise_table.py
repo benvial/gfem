@@ -17,18 +17,22 @@ v0.1's gradients (``pytest -m verification -k gradient_matrix``).
 """
 
 import dataclasses
+import math
 from pathlib import Path
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import periodic_cases as pc
 import pytest
 import structured_meshes as sm
+from gradient_cases import HYBRID_PORTS, hybrid_line, hybrid_mesh
 
 import gfem
 from gfem._adjoint import solve_vjp
 from gfem._adjoint.solve_vjp import input_kind
 from gfem._engine.electrostatic import ElectrostaticRule
+from gfem.shape import boundary_morph
 
 DATA = Path(__file__).parents[1] / "unit" / "data"
 GRADIENT, ZERO, RAISES = "gradient", "zero", "raises"
@@ -130,6 +134,20 @@ EXPECTED |= {
     )
     for kind in [("nodes",)] + [("material", "dielectric", p) for p in ALL_PROPERTIES]
 }
+
+
+# Driven on a periodic model (the C1 line, plain and Bloch): as the
+# non-periodic line, region "cell".
+def _in_cell(kind: tuple) -> tuple:
+    return kind if kind == ("nodes",) else ("material", "cell", kind[2])
+
+
+EXPECTED |= {
+    (problem, out, _in_cell(kind)): outcome
+    for problem in ("driven_periodic_plain", "driven_periodic_bloch")
+    for (name, out, kind), outcome in list(EXPECTED.items())
+    if name == "driven"
+}
 # Adaptive sweep (frozen samples, so it traces): S and the kept fields'
 # reduced coordinates differentiate like the uniform sweep's S and fields.
 # The reduced basis is frozen by definition of the gradient, so a cotangent
@@ -192,6 +210,25 @@ EXPECTED |= {
     for kind in [("nodes",)] + [("material", "core", p) for p in ALL_PROPERTIES]
 }
 
+# A shared port surface (two requested modes at each end of a hybrid line):
+# S, cross-mode entries included, differentiates like a lone wave port's;
+# every port's mode is a constant of the solve. The core carries only a
+# permittivity: each cell costs a 4-port solve, and the other properties'
+# outcomes are the lone wave ports' above.
+EXPECTED |= {
+    ("driven_wave_shared", out, kind): GRADIENT if out == "s.values" else ZERO
+    for out in (
+        "s.values",
+        "s.z_ref",
+        *(
+            f"port_modes.{p}.{leaf}"
+            for p in HYBRID_PORTS
+            for leaf in WAVE_PORT_MODE_OUTPUTS
+        ),
+    )
+    for kind in [("nodes",), ("material", "core", "eps_r")]
+}
+
 # Eigenmode: the eigenvalues (omega, also as each mode field's omega)
 # differentiate with respect to every electromagnetic property and the node
 # coordinates; quantities of the mode fields (backward error, port Q,
@@ -236,6 +273,38 @@ EXPECTED |= {
     )
     for out in ALL_PROPERTIES
     for kind in [("nodes",)] + [("material", "dielectric", p) for p in ALL_PROPERTIES]
+}
+
+# Eigenmode on a periodic model (the C3 Bragg line, plain at Γ and Bloch at
+# the zone edge; no ports): as the non-periodic resonator, region "low".
+# Its material field carries only the permittivity and the conductivity
+# (the properties above are covered by "eigenmode"): each cell is an
+# eigenmode solve and its gradient.
+PERIODIC_EIGEN_PROPERTIES = ("eps_r", "conductivity")
+EXPECTED |= {
+    (problem, out, kind): (
+        (
+            ZERO
+            if kind == ("nodes",)
+            else GRADIENT
+            if kind[2] == out.removeprefix("materials.low.")
+            else ZERO
+        )
+        if out.startswith("materials.low.")
+        else _eigen_outcome(out, kind)
+    )
+    for problem in ("eigenmode_periodic_plain", "eigenmode_periodic_bloch")
+    for out in (
+        "omega",
+        "error",
+        "bulk_participation.low",
+        "bulk_participation.high",
+        "cluster",
+        *(f"e_fields.0.{leaf}" for leaf in ("coefficients", "mesh.nodes", "omega")),
+        *(f"materials.low.{p}" for p in PERIODIC_EIGEN_PROPERTIES),
+    )
+    for kind in [("nodes",)]
+    + [("material", "low", p) for p in PERIODIC_EIGEN_PROPERTIES]
 }
 
 # Sheet fields: the fill of a sheet on the glued line (model.boundaries[2],
@@ -339,6 +408,15 @@ def wave_model(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
+def shared_surface_model(tmp_path_factory):
+    # the gradient matrix's hybrid line on the coarsest grid that keeps its
+    # quadrant: modes 1 and 2 of each lead on one shared port surface
+    mesh = hybrid_mesh(tmp_path_factory.mktemp("hybrid"), cells=(4, 2, 2))
+    eps = 3.0 * np.linspace(1.0, 1.5, len(mesh.elements("core")))
+    return hybrid_line(mesh).with_material("core", gfem.MaterialField(eps_r=eps))
+
+
+@pytest.fixture(scope="module")
 def sheet_mesh(tmp_path_factory):
     path = tmp_path_factory.mktemp("sheet") / "sheet.msh"
     sm.write_msh22(path, sm.sheet_line(4.0, 2.0, 1.0, (4, 1, 1)))
@@ -384,7 +462,60 @@ def sheet_cases(sheet_mesh):
 
 
 @pytest.fixture(scope="module")
-def cases(model, driven_model, eigen_model, wave_model, sheet_cases):
+def wave_cases(wave_model, shared_surface_model):
+    return {
+        "driven_wave": (wave_model, gfem.Driven(frequency=20e9)),
+        "driven_wave_shared": (shared_surface_model, SHARED_SURFACE_PROBLEM),
+    }
+
+
+@pytest.fixture(scope="module")
+def driven_periodic_cases(tmp_path_factory):
+    # the C1 line (periodic along x) on 3 cells, its port sheets the inner
+    # grid planes, a material field over its cell
+    path = tmp_path_factory.mktemp("c1") / "c1.msh"
+    edges = ((0.0, pc.C1_X1, pc.C1_X2, pc.C1_A), (0.0, pc.C1_W), (0.0, pc.C1_H))
+    sheets = (("sheet1", pc.C1_X1), ("sheet2", pc.C1_X2))
+    sm.write_msh22(path, sm.periodic_cell(tuple(map(np.asarray, edges)), sheets=sheets))
+    mesh = gfem.Mesh.from_gmsh(path, length_unit="mm")
+    model = pc.c1(mesh).with_material("cell", _field(mesh, "cell"))
+    return {
+        "driven_periodic_plain": (
+            model,
+            gfem.Driven(frequency=5e9, keep_fields=True),
+        ),
+        "driven_periodic_bloch": (
+            model,
+            gfem.Driven(frequency=5e9, keep_fields=True, wave_vector=pc.C1_K),
+        ),
+    }
+
+
+@pytest.fixture(scope="module")
+def eigen_periodic_cases(tmp_path_factory):
+    # the C3 Bragg line (periodic along x), weakly lossy: a material field
+    # over its low layer, the high layer a constant material
+    mesh = pc.c3_mesh(tmp_path_factory.mktemp("c3"), (5, 1, 1))
+    ramp = np.linspace(1.0, 1.5, len(mesh.elements("low")))
+    low = gfem.MaterialField(
+        eps_r=ALL_PROPERTIES["eps_r"] * ramp, conductivity=1e-3 * ramp
+    )
+    model = pc.c3(mesh).with_material("low", low)
+    zone_edge = (math.pi / (pc.C3_A * pc.MM), 0.0, 0.0)
+    return {
+        "eigenmode_periodic_plain": (
+            model,
+            gfem.Eigenmode(target=pc.C3_PLAIN_TARGET),
+        ),
+        "eigenmode_periodic_bloch": (
+            model,
+            gfem.Eigenmode(target=5e9, wave_vector=zone_edge),
+        ),
+    }
+
+
+@pytest.fixture(scope="module")
+def cases(model, driven_model, eigen_model, wave_cases, request):
     mesh = gfem.Mesh.from_gmsh(DATA / "parallel_plate.msh", length_unit="um")
     port_model = gfem.Model(
         mesh,
@@ -397,12 +528,17 @@ def cases(model, driven_model, eigen_model, wave_model, sheet_cases):
         "port_mode": (port_model, gfem.PortMode("p1", 10e9)),
         "driven": (driven_model, gfem.Driven(frequency=5e9, keep_fields=True)),
         "driven_adaptive": (driven_model, ADAPTIVE),
-        "driven_wave": (wave_model, gfem.Driven(frequency=20e9)),
+        **wave_cases,
         "eigenmode": (eigen_model, gfem.Eigenmode(target=17e9)),
-        **sheet_cases,
+        **request.getfixturevalue("sheet_cases"),
+        **request.getfixturevalue("driven_periodic_cases"),
+        **request.getfixturevalue("eigen_periodic_cases"),
     }
 
 
+#: Both modes of the hybrid line propagate (mode 2 from about 48 GHz). One
+#: excitation: S's other rows (cross-mode included) take adjoint loads.
+SHARED_SURFACE_PROBLEM = gfem.Driven(frequency=60e9, excite="p1_m1")
 PROBLEMS = {
     "electrostatic": gfem.Electrostatic(terminals={"top": "top"}, ground="bottom"),
 }
@@ -602,6 +738,19 @@ def _out_nodes_beside_a_tensor_absorbing_face(request):
     jax.make_jaxpr(jax.grad(objective))(jnp.asarray(model.mesh.nodes))
 
 
+def _out_material_on_a_shared_wave_port_face(request):
+    # the error names the shared port surface and every port on it
+    model = request.getfixturevalue("shared_surface_model")
+    n = len(model.mesh.elements("fill"))
+
+    def objective(eps):
+        m = model.with_material("fill", gfem.MaterialField(eps_r=eps))
+        m = m.replace(mesh=jax.lax.stop_gradient(m.mesh))
+        return jnp.sum(jnp.abs(gfem.solve(m, SHARED_SURFACE_PROBLEM).s.values) ** 2)
+
+    jax.make_jaxpr(jax.grad(objective))(jnp.full(n, 2.0))
+
+
 def _moved_port_objective(model, value):
     """``value(result)`` with one node of port1 moved by ``dx`` along x."""
     mesh = model.mesh
@@ -678,6 +827,88 @@ def _out_probe_in_the_node_coordinates(request):
     jax.make_jaxpr(jax.grad(objective))(jnp.asarray(model.mesh.nodes))
 
 
+def _out_driven_traced_wave_vector(request):
+    # the wave vector is static: a Bloch phase is not a design variable
+    model, _ = request.getfixturevalue("driven_periodic_cases")["driven_periodic_bloch"]
+
+    def objective(kx):
+        problem = gfem.Driven(frequency=5e9, wave_vector=(kx, 0.0, 0.0))
+        return jnp.sum(jnp.abs(gfem.solve(model, problem).s.values) ** 2)
+
+    jax.grad(objective)(pc.C1_K[0])
+
+
+def _out_periodic_pair_broken(request):
+    # a node move that breaks a pair has no forward: raised on the host
+    model, problem = request.getfixturevalue("driven_periodic_cases")[
+        "driven_periodic_plain"
+    ]
+    mesh = model.mesh
+    node = int(model._periodic[0].second_nodes[0])
+
+    def objective(dy):
+        x = jnp.asarray(mesh.nodes).at[node, 1].add(dy)
+        moved = jax.tree_util.tree_unflatten(jax.tree_util.tree_structure(mesh), [x])
+        s = gfem.solve(model.replace(mesh=moved), problem).s.values
+        return jnp.sum(jnp.abs(s) ** 2)
+
+    jax.grad(objective)(1e-5)
+
+
+def _out_morph_of_a_paired_surface(request):
+    model, _ = request.getfixturevalue("driven_periodic_cases")["driven_periodic_plain"]
+    boundary_morph(model, "x_max")
+
+
+def _out_bloch_adaptive_sweep(request):
+    model, _ = request.getfixturevalue("driven_periodic_cases")["driven_periodic_bloch"]
+    problem = gfem.Driven(
+        frequency=(4e9, 5e9, 6e9),
+        sweep="adaptive",
+        samples=(4e9, 6e9),
+        wave_vector=pc.C1_K,
+    )
+    eps = model.materials["cell"].eps_r
+
+    def objective(e):
+        m = model.with_material("cell", gfem.MaterialField(eps_r=e))
+        return jnp.sum(jnp.abs(gfem.solve(m, problem).s.values) ** 2)
+
+    jax.grad(objective)(eps)
+
+
+# --- periodic eigenmode rows ----------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def bragg_cell(tmp_path_factory):
+    """The C3 Bragg line (tests/periodic_cases.py): one periodic pair."""
+    return pc.c3(pc.c3_mesh(tmp_path_factory.mktemp("bragg")))
+
+
+def _bloch_eigenmode(kx):
+    return gfem.Eigenmode(target=5e9, wave_vector=(kx, 0.0, 0.0))
+
+
+def _out_eigenmode_traced_wave_vector(request):
+    # the wave vector is a static problem field, never a leaf
+    model = request.getfixturevalue("bragg_cell")
+
+    def objective(kx):
+        return jnp.real(gfem.solve(model, _bloch_eigenmode(kx)).omega[0])
+
+    jax.make_jaxpr(jax.grad(objective))(math.pi / (pc.C3_A * pc.MM))
+
+
+def _out_bloch_eigenmode_on_bddc(request):
+    # two-sided refinement solves the transposed system on the shift's
+    # factors: a Bloch eigenmode solve refuses BDDC + GMRES before assembly
+    model = request.getfixturevalue("bragg_cell")
+    options = gfem.SolverOptions(linear_solver="bddc_gmres")
+    k = math.pi / (pc.C3_A * pc.MM)
+    gfem.solve(model, _bloch_eigenmode(k), options=options)
+
+
 # (row, raising call, error, message): DegenerateModeError on one mode of a
 # degenerate eigenmode cluster is in tests/verification/test_gradient_matrix.py.
 HOST = jax.errors.JaxRuntimeError  # a gfem error raised in the backward pass
@@ -725,6 +956,15 @@ OUT_OF_SCOPE = [
         r"Absorbing surface 'side' has an anisotropic material.*stop_gradient",
     ),
     (
+        "driven x material on a shared wave port face",
+        _out_material_on_a_shared_wave_port_face,
+        gfem.PortGeometryError,
+        (
+            r"^WavePorts 'p1_m1', 'p1_m2' on surface 'port1': region 'fill' has "
+            "elements on the port face"
+        ),
+    ),
+    (
         "driven x nodes of a port surface",
         _out_driven_port_nodes_moved,
         HOST,
@@ -748,6 +988,44 @@ OUT_OF_SCOPE = [
         _out_probe_in_the_node_coordinates,
         gfem.NonDifferentiableError,
         r"mesh node coordinates.*stop_gradient",
+    ),
+    # driven on a periodic model
+    (
+        "driven x wave_vector",
+        _out_driven_traced_wave_vector,
+        gfem.NonDifferentiableError,
+        "wave_vector must be fixed",
+    ),
+    (
+        "periodic model x node move that breaks a pair",
+        _out_periodic_pair_broken,
+        HOST,
+        r"ValueError.*breaks Periodic\(",
+    ),
+    (
+        "boundary_morph x paired moving surface",
+        _out_morph_of_a_paired_surface,
+        ValueError,
+        "cannot be the moving surface",
+    ),
+    (
+        "Bloch driven x adaptive sweep",
+        _out_bloch_adaptive_sweep,
+        NotImplementedError,
+        "sweep='uniform'",
+    ),
+    # periodic eigenmode rows
+    (
+        "eigenmode x wave_vector",
+        _out_eigenmode_traced_wave_vector,
+        gfem.NonDifferentiableError,
+        "wave_vector must be fixed",
+    ),
+    (
+        "Bloch eigenmode x bddc_gmres",
+        _out_bloch_eigenmode_on_bddc,
+        ValueError,
+        "linear_solver='direct'",
     ),
 ]
 

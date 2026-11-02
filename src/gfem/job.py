@@ -31,6 +31,7 @@ from gfem._boundaries import (
     Conductor,
     Impedance,
     LumpedPort,
+    Periodic,
     WavePort,
 )
 from gfem._checks import is_traced
@@ -393,6 +394,7 @@ for _cls in (
     Absorbing,
     Conductor,
     Impedance,
+    Periodic,
     LumpedPort,
     WavePort,
     PortMode,

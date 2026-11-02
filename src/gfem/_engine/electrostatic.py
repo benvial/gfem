@@ -28,7 +28,7 @@ import numpy as np
 import scipy.constants
 
 from gfem._adjoint import adjoint_tolerance
-from gfem._boundaries import PEC, Conductor, sheet_of
+from gfem._boundaries import PEC, Conductor, sheet_of, surfaces_of
 from gfem._engine import quadrature
 from gfem._engine.cache import Entry, discretization
 from gfem._engine.coefficients import permittivity
@@ -73,6 +73,8 @@ class ElectrostaticRule:
         """Check that the problem fits the model (see `gfem.Electrostatic`).
 
         Raises:
+            NotImplementedError: The model has a periodic pair, or a sheet
+                field.
             gfem.SolverUnavailableError: ``linear_solver="petsc"`` and PETSc
                 cannot be used.
         """
@@ -84,10 +86,20 @@ class ElectrostaticRule:
         self.linear = ResolvedLinearSolver.resolve(
             options, default=DEFAULT_SOLVER, problem="electrostatic"
         )
+        periodic = model._periodic  # noqa: SLF001
+        if periodic:
+            raise NotImplementedError(
+                "Electrostatic does not support periodic pairs in this version "
+                f"of gfem, but the model has {periodic[0].label}: a capacitance "
+                "matrix is between the terminals of one finite structure. Model "
+                "one cell with the terminals as drawn, or use a gfem.Driven "
+                "surrogate."
+            )
         for b in model.boundaries:
             if sheet_of(b) is not None:
+                (surface,) = surfaces_of(b)
                 raise NotImplementedError(
-                    f"{type(b).__name__} on {b.surface!r} carries a sheet field "
+                    f"{type(b).__name__} on {surface!r} carries a sheet field "
                     "(fill=), but a partly filled conducting sheet is not an "
                     "electrostatic object: electrostatic conductors are terminals "
                     "at a fixed potential. Fix the metal pattern (a PEC or "

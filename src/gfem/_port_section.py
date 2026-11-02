@@ -540,9 +540,10 @@ def _sheet_fill_by_edge(model: Model) -> dict[str, dict[tuple[int, int], float]]
         if sheet is None:
             continue
         fill = np.asarray(sheet.fill, float)
-        keys = _edge_keys(mesh.triangles[mesh.elements(b.surface)])
+        (surface,) = surfaces_of(b)
+        keys = _edge_keys(mesh.triangles[mesh.elements(surface)])
         values = np.repeat(fill, 3)
-        out[b.surface] = {
+        out[surface] = {
             (int(a), int(c)): float(w) for (a, c), w in zip(keys, values, strict=True)
         }
     return out

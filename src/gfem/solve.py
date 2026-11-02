@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, overload
 
 from gfem._adjoint import solve_vjp
 from gfem._checks import is_traced
+from gfem._periodic import check_nodes
 from gfem.errors import LinearSolverConvergenceError
 from gfem.model import Model
 from gfem.options import SolverOptions
@@ -90,7 +91,9 @@ def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -
     rule = _rule_class(problem)(model, problem, options)
     if is_traced((model, problem)):
         return rule.result(solve_vjp(rule, model, problem))
-    # A moved mesh must still be valid on the solve domain.
+    # A moved mesh must keep its periodic pairs and stay valid on the solve
+    # domain.
+    check_nodes(model.mesh.nodes, model._periodic)  # noqa: SLF001
     _check_quality(model.mesh, model._domain.active, stacklevel=3)  # noqa: SLF001
     # a uniform sweep's partial result, built here: never in a JAX callback
     partial_result = getattr(rule, "partial_result", None)

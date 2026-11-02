@@ -73,6 +73,57 @@
   `eps_r` × largest `mu_r` equal to 1). A side such as `eps_r = (1, 1, 4)` was
   taken as vacuum, and `"MA"`/`"SA"` read its normal field with ε0 (a 4×
   error); it no longer is. Isotropic sides are unchanged.
+- **Several modes on one wave port surface.** Several
+  {py:obj}`gfem.WavePort`s on one surface, one `mode` each, form a
+  {term}`shared port surface`: each mode is its own port, with its own row
+  and column of S, so S holds the coupling between modes (for example TE0 to
+  TM0 conversion in a silicon strip). Gradients and adaptive sweeps work as
+  for one mode per port, and {py:obj}`gfem.PortMode` on such a port runs the
+  surface's sweep, so it gives the mode the driven solve uses. See
+  {doc}`../recipes/shared-port-surface`.
+- **New warnings.** {py:obj}`gfem.SkippedPortModeWarning`: a surface leaves
+  out a port mode ranked below a requested one (a lone `mode=2`, or modes 1
+  and 3), which the port then partly reflects. A lone `mode=1` never warns.
+  {py:obj}`gfem.PortModeProjectionWarning`: on a shared port surface with
+  loss in the cross-section, one port's S reads part of another port's mode
+  above 1e-3.
+- **New errors at `gfem.Model`.** Two wave ports on one surface that request
+  the same `mode`, or give different `pec_edges`, raise `ValueError`. A lumped
+  port or a boundary condition beside a wave port on one surface still does.
+- **Behaviour change for a lone wave port.** A port mode whose reaction or
+  Gram matrix on the port face is singular now raises
+  {py:obj}`gfem.PortModeError` before the 3D solve, where 0.1.0 silently
+  dropped the port's modal correction. Lone-port S is otherwise unchanged.
+- **Behaviour change: lossy modes below cutoff.** A requested port mode whose
+  attenuation is at least its phase constant (Re β ≤ |Im β|, for example an
+  RC-like line at low frequency) now counts as below cutoff: the solve raises
+  the port mode sweep's cutoff {py:obj}`gfem.PortModeError`, naming the port
+  (and its surface when shared), lone wave ports included, where 0.1.0
+  accepted it as a propagating mode.
+- **`gfem.Eigenmode`'s message** for a wave port on a shared port surface
+  names the surface and its wave ports and points to a `gfem.Driven` sweep.
+
+Periodic cells: `gfem.Periodic` pairs two surfaces of a model related by a
+translation (one to three pairs). Eigenmode and uniform driven problems take a
+Bloch wave vector, `wave_vector=(kx, ky, kz)` in rad/m, with
+E(r + a) = exp(−i k·a) E(r); without one the fields are plain periodic. See
+{doc}`../recipes/periodic-cell`.
+
+- **Gradients.** Permittivity, conductivity, sheet fill and node coordinates
+  differentiate on periodic models, plain and Bloch, and are checked against
+  finite differences (four new rows on {doc}`../capabilities`). A boundary
+  morph moves the two nodes of a pair together. `wave_vector` is not
+  differentiable.
+- **Solvers under a Bloch wave vector.** The operator is no longer complex
+  symmetric: the direct solver factors it with MKL PARDISO LU (with the `mkl`
+  extra) or UMFPACK, and BDDC factors its coarse problem likewise. Eigenmode
+  problems need the direct solver. PETSc, cuDSS and the adaptive sweep refuse
+  a wave vector. Models without a periodic pair are unchanged.
+- **Results.** Fields of a periodic model hold values on both surfaces of
+  every pair. `gfem.power_flow` works on sides that cross a pair.
+  `gfem.interface_participation` refuses a paired surface.
+- **Job files** carry `Periodic` and `wave_vector`; older job files read
+  unchanged.
 
 ## 0.1.0 (2026-11-01)
 

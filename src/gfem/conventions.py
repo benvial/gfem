@@ -33,8 +33,10 @@ Phasors are peak values, not RMS: ``|E|`` is the amplitude of the
 oscillation. A driven field (``Driven(keep_fields=...)``) is the field
 for 1 W time-averaged incident power at the excited port, with every other
 port terminated in its reference impedance ``z_ref`` (a lumped port's L
-and C, if any, belong to the network and load it in parallel). It is the
-field behind one column of S: the excited port's incident wave is
+and C, if any, belong to the network and load it in parallel). A wave
+port is terminated by absorbing its mode (matched), including the other
+modes of the excited port's own surface. It is the field behind one
+column of S: the excited port's incident wave is
 ``a = 1`` (√W), every other port's is 0.
 Eigenmode fields store 1 J (see Eigenmodes). A port mode field is
 normalized to 1 W time-averaged power through the port.
@@ -60,13 +62,25 @@ real, power waves and pseudo-waves coincide.
   port mode, with the mode's magnetic field taken at its complex
   wavenumber, and the mode scaled so that this projection of the mode
   itself carries 1 W; for a lossless mode this is the modal
-  power wave. ``WavePort(offset=d)`` refers S to a plane ``d`` inside the
+  power wave. The conjugated projection separates the requested modes of
+  a shared port surface only for a lossless port line.
+  ``WavePort(offset=d)`` refers S to a plane ``d`` inside the
   domain: ``S_ij`` times ``exp(gamma_i d_i) exp(gamma_j d_j)``.
+  Without a ``voltage_path``, the sign of a wave port's row and column of
+  S is fixed by a mesh-dependent rule; every ``|S|`` and power is
+  unaffected.
 - ``NetworkParameters.y()``, ``.z()`` and ``.renormalize(z_new)`` use the
   power-wave formulas; ``to_touchstone`` labels a file with ``z_ref`` only
   when it is one real value, and otherwise needs ``z0=`` to renormalize
   first. gfem never labels a port 50 Ω unless S was computed or
-  renormalized for 50 Ω.
+  renormalized for 50 Ω. On a shared port surface each mode is its own
+  port, so ``y()``, ``z()`` and ``renormalize()`` act on modal voltages
+  and currents, not on the conductors' terminal ones.
+- Under a Bloch wave vector (see Bloch periodicity), S is referenced to the
+  field E. A solver that reports the periodic envelope
+  ``u = E exp(+i k·r)`` (Palace) gives
+  ``S_ij exp(+i k·(r_i - r_j))``, with i the output port, j the excited
+  port and r_p a point of port p, when k·r is constant over each port.
 
 Time-averaged densities
 -----------------------
@@ -129,11 +143,30 @@ and positive, which makes a lossless mode's field real; the remaining sign
 puts the largest coefficient's real part positive (among coefficients equal
 to the largest within a relative 1e-12, the lowest index). Participation ratios
 and coupling Q are ratios to ``E_elec`` and do not depend on this scale.
+
+Bloch periodicity
+-----------------
+A `gfem.Periodic` pair relates two surfaces by the translation a, from its
+first surface to its second (`Model.periodic_translations`, m). With a Bloch
+wave vector k (rad/m, ``wave_vector=`` on `gfem.Driven` and
+`gfem.Eigenmode`), the fields obey `BLOCH_PHASE`::
+
+    E(r + a) = exp(-i k·a) E(r)
+
+so, under e^{+iωt}, the phase of a Bloch wave travels along +k (as Palace's
+``FloquetWaveVector``). Without a wave vector the fields are equal on both
+surfaces (plain periodicity). Swapping a pair's surfaces flips a and gives
+the same field.
+
+Under a Bloch wave vector, ``∫ D · E dV`` over the cell can vanish, so an
+eigenmode field is phased to make its largest coefficient real and positive
+instead (still scaled to `MODE_ENERGY`).
 """
 
 from __future__ import annotations
 
 __all__ = [
+    "BLOCH_PHASE",
     "EXTERIOR_THICKNESS_FACTOR",
     "INCIDENT_POWER",
     "INTERIOR_SHEET_ADMITTANCE",
@@ -160,3 +193,6 @@ INTERIOR_SHEET_ADMITTANCE = 0.5
 EXTERIOR_THICKNESS_FACTOR = 2.0
 #: Electric energy of every eigenmode field (see Eigenmodes), J.
 MODE_ENERGY = 1.0
+#: The Bloch phase across a periodic pair of translation a (see Bloch
+#: periodicity).
+BLOCH_PHASE = "E(r + a) = exp(-i k·a) E(r)"

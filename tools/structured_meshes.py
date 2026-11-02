@@ -322,3 +322,67 @@ def sheet_line(
         return "side"
 
     return structured(edges, volume, surface)
+
+
+def periodic_cell(
+    edges: tuple[np.ndarray, np.ndarray, np.ndarray],
+    volume: Classify = lambda _: "cell",
+    *,
+    sheets: tuple[tuple[str, float], ...] = (),
+    surface: Classify | None = None,
+    paired: str = "xyz",
+    mirror: tuple[bool, bool, bool] = (False, False, False),
+):
+    """A box cell whose opposite faces match under translation, for periodic pairs.
+
+    The Kuhn split makes every pair of opposite faces identical up to the
+    translation across the box, so they can be paired by `gfem.Periodic`.
+
+    Args:
+        edges: Grid coordinates along x, y and z.
+        volume: Region name of a tetrahedron from its centroid.
+        sheets: ``(name, x)`` interior surfaces on the grid planes x
+            (lumped-port sheets): the volume is split at each plane, so
+            every face of the plane is named, whatever the regions on its
+            two sides (the tetrahedra keep the names ``volume`` gives).
+        surface: Renames boundary faces: a name from the face centroid, or
+            ``""`` to keep the default name.
+        paired: The axes whose opposite faces are meant to be paired.
+        mirror: As in `structured`; refused on a paired axis.
+
+    Surfaces: "x_min", "x_max", "y_min", "y_max", "z_min", "z_max" (the box
+    faces, unless ``surface`` renames them) and the ``sheets``.
+
+    Raises:
+        ValueError: ``mirror`` on a paired axis.
+    """
+    for axis, flipped in zip("xyz", mirror, strict=True):
+        if flipped and axis in paired:
+            raise ValueError(
+                f"periodic_cell: mirror on the paired axis {axis!r} is not "
+                "supported; a periodic cell needs the plain Kuhn split along "
+                "every paired axis."
+            )
+    lo = np.array([e[0] for e in edges], dtype=float)
+    hi = np.array([e[-1] for e in edges], dtype=float)
+    eps = 1e-9 * float(np.max(hi - lo))
+    planes = np.sort([x for _, x in sheets])
+
+    def split(c):
+        return f"{volume(c)}\0{int(np.searchsorted(planes, c[0]))}"
+
+    def named(c):
+        for name, x in sheets:
+            if abs(c[0] - x) < eps:
+                return name
+        for axis, a in enumerate("xyz"):
+            if abs(c[axis] - lo[axis]) < eps or abs(c[axis] - hi[axis]) < eps:
+                side = "min" if abs(c[axis] - lo[axis]) < eps else "max"
+                renamed = surface(c) if surface is not None else ""
+                return renamed or f"{a}_{side}"
+        return ""
+
+    nodes, tets, tet_names, tris, tri_names = structured(
+        edges, split, named, mirror=mirror
+    )
+    return nodes, tets, [n.split("\0")[0] for n in tet_names], tris, tri_names

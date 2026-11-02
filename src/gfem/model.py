@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import dataclasses
+import itertools
 import types
 from collections.abc import Iterable, Mapping
 from typing import Any
 
 import jax
+import numpy as np
 
 from gfem._boundaries import (
     PEC,
@@ -17,13 +19,16 @@ from gfem._boundaries import (
     Conductor,
     Impedance,
     LumpedPort,
+    Periodic,
     Port,
     WavePort,
     sheet_of,
     surfaces_of,
 )
+from gfem._checks import is_traced
 from gfem._domain import EMDomain, em_domain, enclosed_entities
 from gfem._materials import Material, MaterialField
+from gfem._periodic import Pairing, check_domain, check_nodes, check_pec, pairing
 from gfem._sheet import SheetField
 from gfem.errors import RegionNotFoundError
 from gfem.mesh import Mesh
@@ -40,13 +45,18 @@ __all__ = [
     "Material",
     "MaterialField",
     "Model",
+    "Periodic",
     "Port",
     "SheetField",
     "WavePort",
     "enclosed_by",
 ]
 
-_BOUNDARY_TYPES = (PEC, PMC, Absorbing, Conductor, Impedance)
+_BOUNDARY_TYPES = (PEC, PMC, Absorbing, Conductor, Impedance, Periodic)
+#: The most periodic pairs a model takes (a 3D cell).
+_MAX_PERIODIC_PAIRS = 3
+#: Sine of the angle below which two translations count as parallel.
+_PARALLEL_SINE = 1e-6
 _PORT_TYPES = (LumpedPort, WavePort)
 _PHYSICS_NAMES = {"em": "electromagnetic"}
 
@@ -156,8 +166,9 @@ class Model:
         mesh: The mesh.
         materials: A `Material` or `MaterialField` per volume region name.
         boundaries: Boundary conditions (`PEC`, `PMC`, `Absorbing`,
-            `Conductor`, `Impedance`). At most one electromagnetic condition
-            per surface.
+            `Conductor`, `Impedance`) and periodic pairs (`Periodic`, one to
+            three). At most one electromagnetic condition or port per surface,
+            except several `WavePort`s, one mode each (a shared port surface).
         ports: `LumpedPort` and `WavePort` values; their order is the order
             of the network parameters.
         excluded: Volumes removed from the solve domain of electromagnetic
@@ -169,9 +180,14 @@ class Model:
     Raises:
         RegionNotFoundError: A name is not a region of the mesh.
         ValueError: The model is physically inconsistent (a volume without a
-            material, two conditions on one surface, an absorbing boundary on
-            an interior surface, ...); the message gives the remedy.
+            material, two conditions on one surface (except several wave
+            ports, one mode each), an absorbing boundary on an interior
+            surface, ...), or a `Periodic` pair's two meshes do not match
+            under a translation, there are more than three pairs, or two
+            translations are parallel; the message gives the remedy.
         TypeError: An argument has the wrong type.
+        NotImplementedError: A `WavePort` shares a mesh node with a surface
+            of a `Periodic` pair.
     """
 
     mesh: Mesh
@@ -180,6 +196,7 @@ class Model:
     ports: tuple[Port, ...]
     excluded: tuple[Excluded, ...]
     _domain: EMDomain
+    _periodic: tuple[Pairing, ...]
 
     def __init__(
         self,
@@ -222,6 +239,7 @@ class Model:
         set_(self, "boundaries", _items(boundaries, _BOUNDARY_TYPES, "boundaries"))
         set_(self, "ports", _items(ports, _PORT_TYPES, "ports"))
         self._check_surfaces()
+        set_(self, "_periodic", self._check_periodic())
 
     # --- validation -----------------------------------------------------------
 
@@ -270,13 +288,62 @@ class Model:
             if isinstance(item, WavePort):
                 for edge in item.pec_edges:
                     check_surface(mesh, edge, f"WavePort {item.name!r} pec_edges")
-        for (physics, surface), items in taken.items():
-            if len(items) > 1:
-                raise ValueError(
-                    f"Surface {surface!r} has more than one "
-                    f"{_PHYSICS_NAMES[physics]} boundary condition or port: "
-                    f"{', '.join(repr(i) for i in items)}. Keep one."
+        _check_one_per_surface(taken)
+
+    def _check_periodic(self) -> tuple[Pairing, ...]:
+        """Pair the nodes of every `Periodic` and check the pairs (ADR 0041)."""
+        pairs = [b for b in self.boundaries if isinstance(b, Periodic)]
+        if len(pairs) > _MAX_PERIODIC_PAIRS:
+            raise ValueError(
+                f"A cell has at most three periodic pairs, got {len(pairs)}: "
+                f"{', '.join(repr(p) for p in pairs)}."
+            )
+        pec = tuple(
+            dict.fromkeys(b.surface for b in self.boundaries if isinstance(b, PEC))
+        )
+        for item in pairs:
+            for surface in item.surfaces:
+                if self._domain.interior(surface):
+                    raise ValueError(
+                        f"Periodic on {surface!r}: this surface is interior (it has "
+                        "the solve domain on both sides), but a periodic pair "
+                        "joins two exterior surfaces of the electromagnetic solve "
+                        "domain."
+                    )
+        out = []
+        for item in pairs:
+            p = pairing(self.mesh, *item.surfaces)
+            check_domain(self.mesh, p, self._domain)
+            check_pec(self.mesh, p, pec)
+            out.append(p)
+        _check_independent(out)
+        self._check_wave_ports(out)
+        if out and not is_traced(self.mesh.nodes):
+            check_nodes(self.mesh.nodes, out)
+        return tuple(out)
+
+    def _check_wave_ports(self, pairs: list[Pairing]) -> None:
+        """No wave port shares a mesh node with a surface of a periodic pair.
+
+        Raises:
+            NotImplementedError: A wave port touches a pair, even at one node.
+        """
+        mesh = self.mesh
+        for port in self.ports:
+            if not isinstance(port, WavePort):
+                continue
+            nodes = np.unique(mesh.triangles[mesh.elements(port.surface)])
+            for p in pairs:
+                shared = np.intersect1d(
+                    nodes, np.concatenate([p.first_nodes, p.second_nodes])
                 )
+                if shared.size:
+                    raise NotImplementedError(
+                        f"WavePort {port.name!r} touches {p.label} at {shared.size} "
+                        "nodes: a wave port's mode solve cannot be periodic. Move "
+                        "the port off the pair's surfaces (Floquet ports are not "
+                        "supported)."
+                    )
 
     def _check_sheet(self, what: str, surface: str, field: SheetField) -> None:
         """A sheet field: on an interior surface, one fill value per face."""
@@ -309,6 +376,17 @@ class Model:
     def port_names(self) -> tuple[str, ...]:
         """Port names, in network-parameter order."""
         return tuple(p.name for p in self.ports)
+
+    @property
+    def periodic_translations(self) -> tuple[tuple[float, float, float], ...]:
+        """The translation a of each `Periodic`, in m, in ``boundaries`` order.
+
+        Measured from the imported mesh, from the pair's first surface
+        (``surfaces[0]``) to its second; it stays fixed when the nodes move.
+        A Bloch wave vector k (rad/m) gives the pair the phase exp(-i k·a).
+        Empty without a periodic pair.
+        """
+        return tuple(p.translation for p in self._periodic)
 
     @property
     def excluded_entities(self) -> tuple[tuple[str, int], ...]:
@@ -379,7 +457,8 @@ class Model:
             (key("boundaries"), self.boundaries),
             (key("ports"), self.ports),
         )
-        return children, (tuple(self.materials), self.excluded, self._domain)
+        aux = (tuple(self.materials), self.excluded, self._domain, self._periodic)
+        return children, aux
 
     def tree_flatten(self):
         """JAX pytree protocol."""
@@ -389,7 +468,7 @@ class Model:
     @classmethod
     def tree_unflatten(cls, aux, children) -> Model:
         """JAX pytree protocol (no validation: the structure is unchanged)."""
-        order, excluded, domain = aux
+        order, excluded, domain, periodic = aux
         mesh, materials, boundaries, ports = children
         new = object.__new__(cls)
         set_ = object.__setattr__
@@ -399,6 +478,7 @@ class Model:
         set_(new, "ports", ports)
         set_(new, "excluded", excluded)
         set_(new, "_domain", domain)
+        set_(new, "_periodic", periodic)
         return new
 
     def __setattr__(self, name: str, value: Any) -> None:
@@ -426,6 +506,30 @@ class Model:
                 + ", ".join(self.default_pmc)
             )
         return "\n".join(lines) + ")"
+
+
+def _check_independent(pairs: list[Pairing]) -> None:
+    """The translations of a cell's pairs are linearly independent."""
+    a = [np.asarray(p.translation) for p in pairs]
+    for i, j in itertools.combinations(range(len(a)), 2):
+        sine = np.linalg.norm(np.cross(a[i], a[j])) / (
+            np.linalg.norm(a[i]) * np.linalg.norm(a[j])
+        )
+        if sine < _PARALLEL_SINE:
+            raise ValueError(
+                f"Pairs {pairs[i].label} and {pairs[j].label} are translated along "
+                "parallel directions; a cell has one pair per lattice direction."
+            )
+    if len(a) == _MAX_PERIODIC_PAIRS:
+        volume = abs(np.linalg.det(np.stack(a))) / np.prod(
+            [np.linalg.norm(v) for v in a]
+        )
+        if volume < _PARALLEL_SINE:
+            raise ValueError(
+                f"Pairs {', '.join(p.label for p in pairs)} are translated along "
+                "coplanar directions; a cell has one pair per lattice direction, "
+                "along independent directions."
+            )
 
 
 def _excluded_entities(mesh: Mesh, excluded: tuple) -> set[tuple[int, int]]:
@@ -520,3 +624,41 @@ def _items(values: Any, kinds: tuple[type, ...], what: str) -> tuple:
             names = ", ".join(k.__name__ for k in kinds)
             raise TypeError(f"{what} takes {names}; got {item!r}.")
     return items
+
+
+def _check_one_per_surface(taken: dict[tuple[str, str], list]) -> None:
+    """One condition or port per surface, or only wave ports (a shared surface).
+
+    The mixed-kinds error comes first on every surface, then each shared
+    port surface's rules.
+    """
+    for (physics, surface), items in taken.items():
+        if len(items) > 1 and not all(isinstance(i, WavePort) for i in items):
+            raise ValueError(
+                f"Surface {surface!r} has more than one "
+                f"{_PHYSICS_NAMES[physics]} boundary condition or port: "
+                f"{', '.join(repr(i) for i in items)}. Keep one."
+            )
+    for (_, surface), items in taken.items():
+        if len(items) > 1:
+            _check_shared_port_surface(surface, items)
+
+
+def _check_shared_port_surface(surface: str, ports: list) -> None:
+    """Several wave ports on one surface: distinct modes, equal ``pec_edges``."""
+    for k, b in enumerate(ports):
+        for a in ports[:k]:
+            if a.mode == b.mode:
+                raise ValueError(
+                    f"WavePorts {a.name!r} and {b.name!r} on surface {surface!r} "
+                    f"both request mode {a.mode}; give each wave port on a surface "
+                    "a different mode."
+                )
+    first = ports[0]
+    for other in ports[1:]:
+        if set(other.pec_edges) != set(first.pec_edges):
+            raise ValueError(
+                f"WavePorts {first.name!r} and {other.name!r} on surface "
+                f"{surface!r} share one port mode problem, so they need the same "
+                f"pec_edges; got {first.pec_edges!r} and {other.pec_edges!r}."
+            )

@@ -11,6 +11,7 @@ import ngsolve as ngs
 
 from gfem._boundaries import PEC
 from gfem._engine.mesh import EngineMesh
+from gfem._periodic import pair_names
 from gfem.model import Model
 
 
@@ -38,6 +39,8 @@ def hcurl_space(
     *,
     complex_valued: bool = True,
     dirichlet: tuple[str, ...] = (),
+    periodic: bool = False,
+    phases: tuple[complex, ...] | None = None,
 ) -> ngs.FESpace:
     """First-kind Nédélec space of ``order`` on the electromagnetic domain.
 
@@ -45,6 +48,13 @@ def hcurl_space(
     system size. The tangential DOFs on the ``dirichlet`` surfaces (exact
     names, e.g. `PEC`) are fixed: left out of ``FreeDofs()``, which BDDC
     reads. The DOF numbering does not depend on ``dirichlet``.
+
+    With ``periodic``, the space is periodic over the point identifications
+    of ``built`` (the model's periodic pairs, `to_ngsolve`): each second
+    surface's DOFs are its twins' on the first, times the pair's Bloch
+    phase (``phases``, `gfem._periodic.bloch_phases`; ``None`` for plain
+    periodicity), and are compressed away. Its DOF numbering is not the
+    unpaired space's: map with the expansion P, never by index.
     """
     space = ngs.HCurl(
         built.mesh,
@@ -54,6 +64,15 @@ def hcurl_space(
         definedon=em_region(model, built),
         dirichlet=_bc_numbers(built, dirichlet),
     )
+    return _compressed(space, periodic=periodic, phases=phases)
+
+
+def _compressed(
+    space: ngs.FESpace, *, periodic: bool, phases: tuple[complex, ...] | None
+) -> ngs.FESpace:
+    """``space`` compressed, periodic first with ``periodic`` (Bloch ``phases``)."""
+    if periodic:
+        space = ngs.Periodic(space, phase=None if phases is None else list(phases))
     return ngs.Compress(space)
 
 
@@ -77,21 +96,53 @@ def domain_key(model: Model) -> tuple:
     return ("em", model._domain.excluded)  # noqa: SLF001
 
 
+def space_key(
+    model: Model,
+    kind: str,
+    order: int,
+    *,
+    periodic: bool = False,
+    phases: tuple[complex, ...] | None = None,
+    real: bool = False,
+) -> tuple:
+    """The cache key of a ``kind`` space (``"hcurl"``, ``"h1"``) of ``order``.
+
+    Its `PEC` surfaces fixed (`pec_surfaces`); with ``periodic``, periodic
+    over the model's pairs with Bloch ``phases`` (``None``: plain
+    periodicity); ``real`` for a real-valued space. The one key builder of
+    `gfem._engine.cache.Discretization.space` for these spaces, so a paired
+    and an unpaired space never share a key.
+    """
+    key = (domain_key(model), kind, order, pec_surfaces(model))
+    if periodic:
+        key = (*key, pair_names(model._periodic), phases)  # noqa: SLF001
+    return (*key, "real") if real else key
+
+
 def h1_space(
-    model: Model, built: EngineMesh, order: int, dirichlet: tuple[str, ...] = ()
+    model: Model,
+    built: EngineMesh,
+    order: int,
+    dirichlet: tuple[str, ...] = (),
+    *,
+    periodic: bool = False,
+    phases: tuple[complex, ...] | None = None,
 ) -> ngs.FESpace:
     """Real H1 space of ``order`` on the electromagnetic domain, compressed.
 
     The DOFs on the ``dirichlet`` surfaces (exact names) are fixed: they are
-    left out of ``FreeDofs()``, which BDDC reads.
+    left out of ``FreeDofs()``, which BDDC reads. With ``periodic``, periodic
+    over the model's pairs as `hcurl_space`; Bloch ``phases`` make it
+    complex.
     """
     space = ngs.H1(
         built.mesh,
         order=order,
+        complex=phases is not None,
         definedon=em_region(model, built),
         dirichlet=_bc_numbers(built, dirichlet),
     )
-    return ngs.Compress(space)
+    return _compressed(space, periodic=periodic, phases=phases)
 
 
 def boundary_region(built: EngineMesh, surfaces: tuple[str, ...]) -> ngs.Region:

@@ -93,7 +93,7 @@
         <table class="matrix">
           <thead><tr><th scope="col">Problem</th>{% for col in caps.columns %}<th scope="col">{{ col.label }}</th>{% endfor %}</tr></thead>
           <tbody>
-            {%- for row in caps.rows %}
+            {%- for row in caps.rows|selectattr("front") %}
             <tr><th scope="row">{{ row.label }}<span>{{ row.detail }}</span></th>
               {%- for col in caps.columns %}{% set cell = row.cells|selectattr("column", "equalto", col.key)|first %}
               <td data-h="{{ col.label }}"><span class="mark gfem-{{ cell.status }}"><span class="gfem-glyph"></span>{{ cell.label }}</span></td>

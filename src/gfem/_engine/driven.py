@@ -15,9 +15,12 @@ it.
 With ``SolverOptions.frequency_workers`` above 1, a uniform sweep splits
 into contiguous blocks of frequencies, each swept the same way in a
 frequency worker (`gfem._engine.workers`), joined in frequency order; the
-backward pass stays in this process. ``A`` is complex
-symmetric (A^T = A), and a port's excitation vector is proportional to its
-voltage functional, so S is symmetric to solver precision.
+backward pass stays in this process. Without a Bloch wave vector ``A``
+is complex symmetric (A^T = A), and a port's excitation vector is
+proportional to its voltage functional, so S is symmetric to solver
+precision. With one (``Driven.wave_vector``) the operator is general:
+A(k)^T = A(-k), so S(k)^T = S(-k), and the direct solver factors it by LU
+(MKL PARDISO, or NGSolve's UMFPACK without the ``mkl`` extra).
 
 S is read from the port voltages: with the excited port fed 1 W incident
 power (incident voltage sqrt(2 R)), ``S_ij = V_i / sqrt(2 R_i) - δ_ij``,
@@ -29,15 +32,21 @@ columns as they are.
 Gradients (`DrivenRule.backward`): with ``A x_j = b_j`` and port i's S
 functional ``f_i`` parallel to its excitation ``b_i`` (every lumped port; a
 wave port whose mode is real up to one phase), port i's solution is (a
-multiple of) the adjoint of its own S row, ``A^-1 f_i = c x_i`` (A^T = A,
-no transpose, no conjugate). An S cotangent therefore needs no solve when
-every port it reads is excited and parallel: per frequency it folds into
-one pair ``(-sum_i W_ij A^-1 f_i, x_j)``. A kept-field cotangent, an S row
-of a port that was not excited, or of a lossy wave port (its S functional
-projects on the conjugated mode), takes one multi-column adjoint solve per
-frequency with the system operator (wave-port modal corrections
-included); that frequency's operator is prepared on first use at the
-adjoint tolerance and kept in the cache entry for later pullbacks. Wave
+multiple of) the adjoint of its own S row, ``A^-T f_i = A^-1 f_i = c x_i``
+(A^T = A, no transpose, no conjugate). An S cotangent therefore needs no
+solve when every port it reads is excited and parallel: per frequency it
+folds into one pair ``(-sum_i W_ij A^-T f_i, x_j)``. A kept-field
+cotangent, an S row of a port that was not excited, or of a lossy wave
+port (its S functional projects on the conjugated mode), takes one
+multi-column adjoint solve per frequency with the system operator
+(wave-port modal corrections included); that frequency's operator is
+prepared on first use at the adjoint tolerance and kept in the cache entry
+for later pullbacks. With a Bloch wave vector A(k)^T = A(-k): there is no
+reciprocity shortcut, and every adjoint load is solved on the transposed
+system, the system operator at -k (`SystemOperator.solve_adjoint`). On a
+periodic model the pairs go to the sensitivity kernel on the unpaired
+space (`DrivenOperator.pair`): ``A = P^H A_plain P``, so ``lambda^T (dA)
+x = (conj(P) lambda)^T (dA_plain) (P x)``. Wave
 ports' modes are constants of the solve: a design may not touch a wave
 port face (`gfem.PortGeometryError`), so the excitations, the S
 functionals and the modal corrections have no design derivative.
@@ -59,13 +68,15 @@ import dataclasses
 import functools
 import math
 import warnings
-from typing import Any, NoReturn
+from collections.abc import Mapping
+from typing import Any, Literal, NoReturn
 
 import jax
 import jax.numpy as jnp
 import ngsolve as ngs
 import numpy as np
 import scipy.constants
+import scipy.sparse
 
 from gfem._adjoint import adjoint_tolerance
 from gfem._boundaries import (
@@ -73,10 +84,12 @@ from gfem._boundaries import (
     WavePort,
     sheet_of,
     surfaces_of,
+    wave_port_label,
+    wave_port_surfaces,
 )
 from gfem._engine import sweep_outputs, terms, workers
 from gfem._engine.cache import Entry, discretization
-from gfem._engine.domain import domain_key, em_region, hcurl_space, pec_surfaces
+from gfem._engine.domain import em_region, hcurl_space, pec_surfaces, space_key
 from gfem._engine.fields import fe_space
 from gfem._engine.mesh import EngineMesh
 from gfem._engine.port_network import PortNetwork, resistance, split_cotangent
@@ -84,13 +97,16 @@ from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair, Term, is_sheet
 from gfem._engine.sweep_outputs import SweepOutputs
 from gfem._engine.system_operator import SystemOperator
-from gfem._engine.wave_ports import wave_port_couplings
+from gfem._engine.wave_ports import PortSurfaceCoupling, wave_port_couplings
 from gfem._linalg import Kind, ResolvedLinearSolver
+from gfem._periodic import bloch_phases, check_bloch, check_wave_vector
 from gfem._sweep.adaptive import AffineSystem, AffineTerm, adaptive_sweep
 from gfem.errors import (
     LinearSolverConvergenceError,
     LowFrequencyWarning,
     PortGeometryError,
+    PortModeProjectionWarning,
+    SkippedPortModeWarning,
 )
 from gfem.mesh import Mesh, _shortest_edges
 from gfem.model import Model
@@ -108,23 +124,48 @@ from gfem.results import (
 __all__ = [
     "DEFAULT_SOLVER",
     "LOW_FREQUENCY_FLOOR",
+    "PORT_MODE_PROJECTION_FLOOR",
     "DrivenOperator",
     "DrivenRule",
+    "Expansion",
     "check_ports_held",
     "driven_operator",
     "operator_terms",
     "real_space",
 ]
 
+#: Whether A^T = A (no Bloch phase) or not: a driven operator is never
+#: Hermitian.
+DrivenSymmetry = Literal["complex_symmetric", "general"]
+
 #: The linear solver for ``linear_solver="auto"``: GMRES + BDDC.
 DEFAULT_SOLVER: Kind = "bddc_gmres"
 
 #: k0 * h_min below which a driven solve warns (gfem.LowFrequencyWarning).
 LOW_FREQUENCY_FLOOR = 1e-6
+#: The normalized cross-projection between two wave ports of one surface
+#: above which a driven solve warns (gfem.PortModeProjectionWarning): the
+#: default S error target, ``SolverOptions.adaptive_tolerance``.
+PORT_MODE_PROJECTION_FLOOR = 1e-3
 #: k0 * h_min below which MKL PARDISO becomes unreliable (with iparm(10) =
 #: 16; MUMPS and NGSolve's sparse Cholesky hold to 1e-8, the lowest point
 #: measured), named in the low-frequency warning.
 _PARDISO_FLOOR = 3e-8
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class Expansion:
+    """A periodic space's fields on its unpaired space: e = P x.
+
+    Attributes:
+        matrix: P, the periodic space's coefficients to the unpaired
+            space's (`expansion_matrix`).
+        space: The complex unpaired space (P's rows): where results keep
+            their fields and the backward pass's field pairs live.
+    """
+
+    matrix: scipy.sparse.csr_matrix
+    space: ngs.FESpace
 
 
 @dataclasses.dataclass(eq=False)
@@ -137,6 +178,12 @@ class DrivenOperator:
         pieces: The affine pieces (`gfem._engine.terms.Piece`).
         ports: Lumped port geometry, in model port order.
         order: Polynomial order.
+        expansion: For a model with periodic pairs, the `Expansion` of
+            the solve space onto the unpaired space; ``None`` without pairs,
+            where the two spaces are one.
+        symmetry: ``"general"`` on a Bloch-phased space (A^T != A),
+            ``"complex_symmetric"`` otherwise: declared by the problem's
+            wave vector, never read from its value.
     """
 
     built: EngineMesh
@@ -144,14 +191,63 @@ class DrivenOperator:
     pieces: list[terms.Piece]
     ports: tuple[terms.LumpedPortData, ...]
     order: int
+    expansion: Expansion | None = None
+    symmetry: DrivenSymmetry = "complex_symmetric"
+
+    def expand(self, x: np.ndarray) -> np.ndarray:
+        """``P x``: solve-space coefficients ``(ndof, ...)`` on the unpaired space."""
+        return x if self.expansion is None else self.expansion.matrix @ x
+
+    def pair(
+        self,
+        left: np.ndarray,
+        right: np.ndarray,
+        *,
+        weights: Mapping[str, complex],
+        domain: ngs.Region,
+    ) -> FieldPair:
+        """The `FieldPair` of solve-space columns ``(left, right)``.
+
+        ``left`` holds adjoints (on the transposed system's space under a
+        Bloch wave vector), ``right`` solutions. Without periodic pairs both
+        stay on the solve space. With pairs both go to the unpaired space,
+        ``(conj(P) left, P right)``: the periodic operator is ``P^H A_plain
+        P`` and ``conj(P(k)) = P(-k)``, so ``left^T (dA) right`` is the
+        plain form of the expanded fields, which the kernel contracts as it
+        does without pairs (and a real space can hold under a Bloch phase,
+        `real_space`).
+        """
+        if self.expansion is None:
+            return FieldPair(
+                space=self.space,
+                left=left,
+                right=right,
+                weights=weights,
+                order=self.order,
+                domain=domain,
+            )
+        p = self.expansion.matrix
+        return FieldPair(
+            space=self.expansion.space,
+            left=p.conj() @ left,
+            right=p @ right,
+            weights=weights,
+            order=self.order,
+            domain=domain,
+        )
 
     def form(self, omega: float) -> ngs.BilinearForm:
         """``Σ θ_k(ω) a_k``, not assembled (a backend assembles it)."""
         u, v = self.space.TnT()
-        form = ngs.BilinearForm(self.space, symmetric=True)
+        form = ngs.BilinearForm(self.space, symmetric=self.symmetric)
         for piece in self.pieces:
             form += complex(piece.theta(omega)) * piece.integrand(u, v)
         return form
+
+    @property
+    def symmetric(self) -> bool:
+        """Whether A^T = A (no Bloch phase): the forms' ``symmetric`` flag."""
+        return self.symmetry != "general"
 
     def weights(self, omega: complex) -> dict[str, complex]:
         """θ(ω) of each piece but the ports', by piece name (`gfem._engine.terms`).
@@ -176,7 +272,9 @@ class DrivenOperator:
         u, v = self.space.TnT()
         forms = []
         for piece in self.pieces:
-            form = ngs.BilinearForm(self.space, symmetric=True, nonassemble=True)
+            form = ngs.BilinearForm(
+                self.space, symmetric=self.symmetric, nonassemble=True
+            )
             form += piece.integrand(u, v)
             forms.append(form)
         return forms
@@ -202,8 +300,10 @@ def driven_operator(
     model: Model,
     order: int,
     *,
+    wave_vector: tuple[float, float, float] | None = None,
     elements: np.ndarray | None = None,
     faces: np.ndarray | None = None,
+    paired: bool = True,
 ) -> DrivenOperator:
     """The driven operator of ``model`` at its current node positions.
 
@@ -211,18 +311,67 @@ def driven_operator(
     other boundary and lumped port contributes pieces. ``elements`` and
     ``faces`` restrict the pieces to those gfem tetrahedra and triangles
     (boolean masks, ``None`` for all; see `terms.pieces`); the space is the
-    unrestricted one.
+    unrestricted one. A model with `gfem.Periodic` pairs solves on the
+    periodic space, Bloch-phased by ``wave_vector`` (rad/m; ``None``: plain
+    periodicity), with its `expansion`; a wave vector makes the operator
+    ``"general"`` (`DrivenOperator.symmetry`). With ``paired=False`` it
+    acts on the unpaired space instead, where result fields live (no
+    expansion).
     """
-    disc = discretization(model.mesh)
+    periodic = model._periodic  # noqa: SLF001
+    disc = discretization(model.mesh, periodic)
     built = disc.built
     pec = pec_surfaces(model)
-    space = disc.space(
-        (domain_key(model), "hcurl", order, pec),
+    unpaired = disc.space(
+        space_key(model, "hcurl", order),
         lambda: hcurl_space(model, built, order, dirichlet=pec),
     )
+    space, expansion = unpaired, None
+    if periodic and paired:
+        phases = bloch_phases(model, wave_vector)
+        key = space_key(model, "hcurl", order, periodic=True, phases=phases)
+        space = disc.space(
+            key,
+            lambda: hcurl_space(
+                model, built, order, dirichlet=pec, periodic=True, phases=phases
+            ),
+        )
+        matrix = disc.space(
+            (*key, "expansion"),
+            lambda: expansion_matrix(space, unpaired, real=phases is None),
+        )
+        expansion = Expansion(matrix, unpaired)
     ports = terms.lumped_ports(model, built.scale)
     pieces = terms.pieces(model, built, order, ports, elements=elements, faces=faces)
-    return DrivenOperator(built, space, pieces, ports, order)
+    symmetry: DrivenSymmetry = "complex_symmetric" if wave_vector is None else "general"
+    return DrivenOperator(built, space, pieces, ports, order, expansion, symmetry)
+
+
+#: Entries of the expansion P below this are the round-off of NGSolve's
+#: local projection (exact entries are 0, ±1 and Bloch phases).
+EXPANSION_FLOOR = 1e-12
+
+
+def expansion_matrix(
+    periodic: ngs.FESpace, unpaired: ngs.FESpace, *, real: bool
+) -> scipy.sparse.csr_matrix:
+    """P, the periodic space's coefficients to the unpaired space's (e = P x).
+
+    From NGSolve's ``ConvertOperator``, exact on every field of the
+    periodic space; entries below `EXPANSION_FLOOR` dropped, real for plain
+    periodicity (``real``).
+    """
+    rows, cols, values = ngs.ConvertOperator(periodic, unpaired).COO()
+    data = np.asarray(values)
+    if real:
+        data = data.real
+    out = scipy.sparse.csr_matrix(
+        (data, (np.asarray(rows), np.asarray(cols))),
+        shape=(unpaired.ndof, periodic.ndof),
+    )
+    out.data[np.abs(out.data) < EXPANSION_FLOOR] = 0
+    out.eliminate_zeros()
+    return out
 
 
 class DrivenRule:
@@ -246,7 +395,9 @@ class DrivenRule:
 
         Raises:
             NotImplementedError: A feature this version cannot solve.
-            ValueError: The problem does not fit the model.
+            ValueError: The problem does not fit the model (among others, a
+                wave vector without a periodic pair, or outside the span of
+                the pairs' translations).
             gfem.SolverUnavailableError: ``linear_solver="petsc"`` and PETSc
                 cannot be used.
         """
@@ -254,6 +405,18 @@ class DrivenRule:
             raise TypeError(f"Expected gfem.Driven, got {problem!r}.")
         self.problem = problem
         self.options = options
+        # before the Bloch refusals: a wave vector without a pair is the
+        # first thing to fix
+        check_wave_vector(model, problem.wave_vector, "Driven")
+        if problem.wave_vector is not None:
+            check_bloch(
+                "Driven",
+                device=options.device,
+                linear_solver=options.linear_solver,
+                solvers=("direct", "bddc_gmres"),
+                reason="factors symmetric operators only",
+                sweep=problem.sweep,
+            )
         # before any assembly, and before any worker
         self.linear = ResolvedLinearSolver.resolve(
             options, default=DEFAULT_SOLVER, problem="driven"
@@ -309,6 +472,13 @@ class DrivenRule:
         #: Per wave port, the volume regions with an element on its face:
         #: the port mode reads their materials.
         self.port_regions = _port_regions(model)
+        #: Per wave port, the wave ports of its surface (several on a shared
+        #: port surface).
+        self.port_groups = {
+            p.name: group
+            for group in wave_port_surfaces(model.ports).values()
+            for p in group
+        }
         #: Per sheet field (index into ``model.boundaries``), the wave ports
         #: whose face shares an edge with the sheet: the port mode reads it.
         self.sheet_ports = _sheet_ports(model)
@@ -323,6 +493,7 @@ class DrivenRule:
         #: JAX, where no caller reads it.
         self.keeps_partial = False
         _check_low_frequency(model, problem.frequency, stacklevel=3)
+        _check_skipped_port_modes(model, stacklevel=3)
 
     def operator(self, model: Model) -> DrivenOperator:
         """The model's driven operator at its current node positions.
@@ -333,7 +504,9 @@ class DrivenRule:
         last = getattr(self, "_last_operator", None)
         if last is not None and last[0] is model:
             return last[1]
-        op = driven_operator(model, self.options.order)
+        op = driven_operator(
+            model, self.options.order, wave_vector=self.problem.wave_vector
+        )
         self._last_operator = (model, op)
         return op
 
@@ -398,7 +571,8 @@ class DrivenRule:
                     if keep:
                         solutions.append(np.array(x, dtype=complex))
                     if n in self.kept:
-                        fields.append(np.array(x, dtype=complex))
+                        # results keep fields on the unpaired space
+                        fields.append(np.array(system.operator.expand(x), complex))
                     s[n] = ports.outgoing(omega, x)
         # no backward pass will prepare from the pieces
         if not keep or miss is not None:
@@ -450,6 +624,7 @@ class DrivenRule:
                 [frequencies[i] for i in block],
                 excite=self.excite,
                 keep_fields=[frequencies[i] for i in block if i in self.kept],
+                wave_vector=self.problem.wave_vector,
             )
             for block in indices
         ]
@@ -533,13 +708,16 @@ class DrivenRule:
             return None
         return self._uniform_result(partial.outputs)
 
-    def _ports(self, model: Model) -> tuple[SystemOperator, PortNetwork]:
+    def _ports(
+        self, model: Model, *, warn: bool = True
+    ) -> tuple[SystemOperator, PortNetwork]:
         """The system operator and the port network of one driven solve.
 
         Both from one set of wave port couplings: the system operator adds
         their Robin pieces and modal corrections, and the port network holds
-        the excitations and S functionals. Runs each wave port's port mode
-        sweep over the output grid.
+        the excitations and S functionals. Runs each wave port surface's
+        port mode sweep over the output grid and, with ``warn`` (a forward
+        pass), warns about cross-projections on shared port surfaces.
         """
         op = self.operator(model)
         names = self.port_names
@@ -552,12 +730,23 @@ class DrivenRule:
             frequency=self.problem.frequency,
             tolerance=self.options.port_mode_tolerance,
         )
+        if warn:
+            _check_port_mode_projection(couplings, stacklevel=4)
+        transposed = None
+        if self.problem.wave_vector is not None:
+            # A(k)^T = A(-k): the adjoint solves' operator
+            kx, ky, kz = self.problem.wave_vector
+            minus_k = (-kx, -ky, -kz)
+            transposed = functools.partial(
+                driven_operator, model, op.order, wave_vector=minus_k
+            )
         system = SystemOperator(
             op,
             couplings,
             self.linear,
             width=len(columns),
             adjoint_tolerance=adjoint_tolerance(self.options),
+            transposed=transposed,
         )
         ports = PortNetwork.build(
             model,
@@ -617,7 +806,7 @@ class DrivenRule:
                     solve=solve,
                     corrections=[
                         AffineTerm(c.vectors, c.correction_coefficients)
-                        for c in ports.waves
+                        for c in system.surfaces
                     ],
                     adjoint_loads=ports.adjoint_loads,
                 )
@@ -639,8 +828,10 @@ class DrivenRule:
             coordinates = sweep.coordinates[list(self.kept)]  # (n_kept, n, n_exc)
             coordinates = np.swapaxes(coordinates, 1, 2).reshape(-1, size)
             width = size if samples is None else self._padded_size()
-            basis = np.zeros((sweep.basis.shape[0], width))
-            basis[:, :size] = sweep.basis
+            # results keep fields on the unpaired space
+            expanded = system.operator.expand(sweep.basis)
+            basis = np.zeros((expanded.shape[0], width))
+            basis[:, :size] = expanded
             padded = np.zeros((len(coordinates), width), complex)
             padded[:, :size] = coordinates
             kept_fields = (basis, padded)
@@ -743,7 +934,7 @@ class DrivenRule:
         return operator_terms(model, self.operator(model), nodes=nodes)
 
     def real_space(self, model: Model) -> ngs.FESpace:
-        """A real H(curl) space with the solve's DOF numbering (for ``DiffShape``)."""
+        """A real H(curl) space with the field pairs' DOF numbering (``DiffShape``)."""
         return real_space(model, self.operator(model))
 
     def unsupported_input(self, kind: tuple) -> str | None:
@@ -767,7 +958,7 @@ class DrivenRule:
             ports = self.sheet_ports.get(kind[1], ())
             if ports:
                 raise PortGeometryError(
-                    f"WavePort {ports[0]!r}: the sheet field of model.boundaries"
+                    f"{self._port_label(ports[0])}: the sheet field of model.boundaries"
                     f"[{kind[1]}] shares an edge with the port face, so gfem cannot "
                     "differentiate with respect to its fill: the port mode reads "
                     "the sheet there and is a constant of the solve. Keep the "
@@ -784,8 +975,8 @@ class DrivenRule:
         touched = [p for p, regions in self.port_regions.items() if region in regions]
         if touched:
             raise PortGeometryError(
-                f"WavePort {touched[0]!r}: region {region!r} has elements on the "
-                f"port face, so gfem cannot differentiate with respect to "
+                f"{self._port_label(touched[0])}: region {region!r} has elements "
+                f"on the port face, so gfem cannot differentiate with respect to "
                 f"model.materials[{region!r}].{prop}: the port mode reads that "
                 "material and is a constant of the solve. Keep the design away "
                 "from wave port faces (give the elements beside the port a "
@@ -793,6 +984,10 @@ class DrivenRule:
                 "the value in jax.lax.stop_gradient."
             )
         return None
+
+    def _port_label(self, port: str) -> str:
+        """``WavePort 'p1'``, or a shared port surface's ports and surface."""
+        return wave_port_label(self.port_groups[port])
 
     def nondifferentiable_output(self, name: str) -> str:
         """The error message for a cotangent on output ``name``."""
@@ -810,17 +1005,22 @@ class DrivenRule:
         At frequency n, with ``X`` the excited ports' solutions, ``f_i`` port
         i's S functional (``S_ij = f_iᵀ x_j``, de-embedding aside) and ``W``
         the S cotangent, the pair is ``(-Lambda, X)`` with ``Lambda_j =
-        sum_i W_ij A^-1 f_i + A^-1 g_j``, ``g_j`` the cotangent of a kept
-        field of port j and ``A`` the system operator (wave-port Robin terms
-        and modal corrections included, complex symmetric): ``sum ct dy/dp
-        = -sum_j Lambda_j^T (dA/dp) x_j`` (the excitations and the modal
-        corrections depend on the port modes only). When ``f_i`` is parallel
+        sum_i W_ij A^-T f_i + A^-T g_j``, ``g_j`` the cotangent of a kept
+        field of port j (on the solve space: ``P^T`` times the field's
+        cotangent on a periodic model) and ``A`` the system operator
+        (wave-port Robin terms and modal corrections included): ``sum ct
+        dy/dp = -sum_j Lambda_j^T (dA/dp) x_j`` (the excitations and the
+        modal corrections depend on the port modes only). Without a Bloch
+        wave vector ``A`` is complex symmetric, and when ``f_i`` is parallel
         to port i's excitation (every lumped port, a wave port whose mode is
-        real up to a phase), ``A^-1 f_i`` is port i's own solution scaled
+        real up to a phase), ``A^-T f_i`` is port i's own solution scaled
         (no solve). The remaining loads (kept-field cotangents, rows of
         ports that were not excited, lossy wave ports, whose S functional
-        projects on the conjugated mode) take one multi-column adjoint
-        solve. ``z_ref`` contributes nothing.
+        projects on the conjugated mode, and every row under a Bloch wave
+        vector) take one multi-column adjoint solve, on the transposed
+        system (-k) under a Bloch wave vector. On a periodic model the pair
+        is on the unpaired space (`DrivenOperator.pair`). ``z_ref``
+        contributes nothing.
         """
         if self.adaptive:
             return self._backward_adaptive(model, entry, cotangents)
@@ -831,7 +1031,7 @@ class DrivenRule:
         pairs = []
         with task_manager(self.options.threads):
             if not isinstance(entry.handle, _Kept):  # frequency workers keep none
-                entry.handle = _Kept(*self._ports(model))
+                entry.handle = _Kept(*self._ports(model, warn=False))
             system, ports = entry.handle.system, entry.handle.ports
             op = system.operator
             domain = em_region(model, op.built)
@@ -847,7 +1047,9 @@ class DrivenRule:
                     undefined = np.zeros(width, bool)
                 if ct_e is not None and n in self.kept:
                     k = self.kept.index(n)
-                    load += np.asarray(ct_e)[:, k * width : (k + 1) * width]
+                    g = np.asarray(ct_e)[:, k * width : (k + 1) * width]
+                    # the field is P x: its cotangent loads P^T g
+                    load += g if op.expansion is None else op.expansion.matrix.T @ g
                 if load.any():
                     try:
                         adjoint += system.solve_adjoint(n, omega, load)
@@ -855,14 +1057,7 @@ class DrivenRule:
                         raise _adjoint_error(f, err) from err
                 adjoint[:, undefined] = np.nan
                 pairs.append(
-                    FieldPair(
-                        space=op.space,
-                        left=-adjoint,
-                        right=x,
-                        weights=op.weights(omega),
-                        order=op.order,
-                        domain=domain,
-                    )
+                    op.pair(-adjoint, x, weights=op.weights(omega), domain=domain)
                 )
         return pairs
 
@@ -880,8 +1075,9 @@ class DrivenRule:
         (n x n) and ``sum ct dy/dp = -Σ_t Σ_ab G_t,ab a_t'(V_a, V_b)`` with
         ``G_t = Σ_ω θ_t(ω) Λ(ω) Y(ω)ᵀ``. Each ``G_t`` (n x n) factors by
         SVD into at most n pairs ``(V a, V b)``, so the element passes do
-        not grow with the number of frequencies. A cotangent on the basis
-        itself is refused by the wrapper.
+        not grow with the number of frequencies (on the unpaired space on a
+        periodic model, `DrivenOperator.pair`: plain periodicity only, P is
+        real). A cotangent on the basis itself is refused by the wrapper.
         """
         fields = entry.fields
         basis, matrices = fields["basis"], fields["matrices"]
@@ -916,12 +1112,10 @@ class DrivenRule:
             for term, g in accumulated.items():
                 left, right = _factor(g)
                 pairs.append(
-                    FieldPair(
-                        space=op.space,
-                        left=-(basis @ left),
-                        right=basis @ right,
+                    op.pair(
+                        -(basis @ left),
+                        basis @ right,
                         weights={term: 1.0},
-                        order=op.order,
                         domain=domain,
                     )
                 )
@@ -1105,10 +1299,17 @@ def operator_terms(model: Model, op: DrivenOperator, *, nodes: bool) -> list[Ter
 
 
 def real_space(model: Model, op: DrivenOperator) -> ngs.FESpace:
-    """A real H(curl) space with ``op``'s DOF numbering (for ``DiffShape``)."""
+    """A real H(curl) space with the DOF numbering of ``op``'s field pairs.
+
+    For ``DiffShape``: ``op``'s solve space's numbering without periodic
+    pairs; with them the real unpaired space (on the identified mesh), where
+    `DrivenOperator.pair` puts the fields, since no real periodic space can
+    hold a Bloch phase (the kernel splits complex fields into real and
+    imaginary parts).
+    """
     pec = pec_surfaces(model)
-    return discretization(model.mesh).space(
-        (domain_key(model), "hcurl", op.order, pec, "real"),
+    return discretization(model.mesh, model._periodic).space(  # noqa: SLF001
+        space_key(model, "hcurl", op.order, real=True),
         lambda: hcurl_space(
             model, op.built, op.order, complex_valued=False, dirichlet=pec
         ),
@@ -1187,6 +1388,83 @@ def _check_low_frequency(
     warnings.warn(msg, LowFrequencyWarning, stacklevel=stacklevel + 1)
 
 
+def _modes(ranks: list[int]) -> str:
+    """``"mode 2"`` or ``"modes 1 and 2"``."""
+    if len(ranks) == 1:
+        return f"mode {ranks[0]}"
+    return f"modes {', '.join(map(str, ranks[:-1]))} and {ranks[-1]}"
+
+
+def _check_skipped_port_modes(model: Model, *, stacklevel: int) -> None:
+    """Warn once per wave port surface that skips a mode below its highest.
+
+    A rank below the surface's highest requested ``mode`` propagates
+    wherever that mode does (the port mode sweep raises otherwise), so the
+    check needs no numerics. Ranks count the modes the surface's port mode
+    problem admits: on a symmetry plane, those of the plane's parity.
+
+    Args:
+        model: The model and its wave ports.
+        stacklevel: Passed on to `warnings.warn`, counted from the caller.
+    """
+    for surface, ports in wave_port_surfaces(model.ports).items():
+        requested = {p.mode for p in ports}
+        skipped = [k for k in range(1, max(requested)) if k not in requested]
+        if not skipped:
+            continue
+        label = wave_port_label(ports, lone_surface=True, modes=True)
+        msg = (
+            f"{label}: the surface skips {_modes(skipped)}, which no wave port "
+            "on it requests. A skipped port mode propagates wherever the highest "
+            "requested mode does, and it is partly reflected at the port instead "
+            "of absorbed, so S misses the power the device sends into it. Add a "
+            f"WavePort on surface {surface!r} for each skipped mode, or filter "
+            "this warning if the reflection is acceptable."
+        )
+        warnings.warn(msg, SkippedPortModeWarning, stacklevel=stacklevel + 1)
+
+
+def _check_port_mode_projection(
+    surfaces: list[PortSurfaceCoupling], *, stacklevel: int
+) -> None:
+    """Warn once per shared port surface whose modes project on each other.
+
+    The largest normalized cross-projection (`PortSurfaceCoupling.
+    cross_projection`) over the output grid and the surface's pairs of
+    ports is compared with `PORT_MODE_PROJECTION_FLOOR`. A lone wave port
+    is never checked.
+
+    Args:
+        surfaces: The wave port surfaces' couplings.
+        stacklevel: Passed on to `warnings.warn`, counted from the caller.
+    """
+    for surface in surfaces:
+        n = len(surface.ports)
+        if n < 2:
+            continue
+        q = surface.cross_projection()
+        q[:, np.arange(n), np.arange(n)] = 0.0
+        # q[k, l, j]: port j's S functional on port l's mode at frequency k
+        k, l, j = np.unravel_index(int(np.argmax(q)), q.shape)
+        value = float(q[k, l, j])
+        if not value > PORT_MODE_PROJECTION_FLOOR:
+            continue
+        a, b = surface.ports[l].port, surface.ports[j].port
+        f = surface.lead.omegas[k] / (2 * math.pi)
+        msg = (
+            f"WavePorts {a.name!r} and {b.name!r} on surface {a.surface!r}: the S "
+            f"functional of {b.name!r} reads the mode of {a.name!r} with a "
+            f"cross-projection of {value:.3g} at {f / 1e9:.6g} GHz (above "
+            f"{PORT_MODE_PROJECTION_FLOOR:g}), so the S entries between these "
+            "ports carry an error of that order. The conjugated S functional "
+            "separates the modes of a lossless port line only; the biorthogonal "
+            "functional that would remove the error is not implemented in this "
+            "version of gfem. Make the port line lossless near the port, or "
+            "filter this warning if the error is acceptable."
+        )
+        warnings.warn(msg, PortModeProjectionWarning, stacklevel=stacklevel + 1)
+
+
 def _solve_block(
     aux: Any, children: Any, problem: Driven, options: SolverOptions, keep: bool
 ) -> tuple[SweepOutputs, np.ndarray | None, str | None]:
@@ -1202,16 +1480,21 @@ def _solve_block(
     model = workers.model_from_parts(aux, children)
     with warnings.catch_warnings():
         # the parent's rule already warned for the whole sweep
-        warnings.simplefilter("ignore", LowFrequencyWarning)
+        for category in (
+            LowFrequencyWarning,
+            SkippedPortModeWarning,
+            PortModeProjectionWarning,
+        ):
+            warnings.simplefilter("ignore", category)
         rule = DrivenRule(model, problem, options)
-    rule.keeps_partial = True
-    try:
-        outputs, entry = rule.forward(model, keep=keep)
-    except LinearSolverConvergenceError as err:
-        partial = vars(err).get("_partial")
-        if partial is None:  # pragma: no cover - a uniform sweep always sets it
-            raise
-        return partial.outputs, None, partial.reason
+        rule.keeps_partial = True
+        try:
+            outputs, entry = rule.forward(model, keep=keep)
+        except LinearSolverConvergenceError as err:
+            partial = vars(err).get("_partial")
+            if partial is None:  # pragma: no cover - a uniform sweep always sets it
+                raise
+            return partial.outputs, None, partial.reason
     solution = None
     if entry is not None:
         solution = entry.fields["solution"]
@@ -1329,7 +1612,8 @@ def _sheet_ports(model: Model) -> dict[int, tuple[str, ...]]:
     for i, b in enumerate(model.boundaries):
         if sheet_of(b) is None:
             continue
-        sheet = _edges(mesh.triangles[mesh.elements(b.surface)])
+        (surface,) = surfaces_of(b)
+        sheet = _edges(mesh.triangles[mesh.elements(surface)])
         ports = tuple(
             p.name
             for p in model.ports
