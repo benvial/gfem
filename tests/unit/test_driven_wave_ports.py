@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import structured_meshes as sm
+from gradient_cases import HYBRID_PORTS, hybrid_leads_core, hybrid_line, hybrid_mesh
 from solver_misses import cannot_converge_at
 
 import gfem
@@ -560,20 +561,31 @@ def test_a_shared_hybrid_guide_transmits_both_modes(shared_hybrid_result):
     assert np.abs(unitarity).max() < 3e-5  # measured 7.8e-6
 
 
+def _port1_surface(model, frequencies, order):
+    """The engine's operator and port 1 surface coupling of a driven solve."""
+    from gfem._engine.driven import DrivenRule
+
+    problem = gfem.Driven(frequencies)
+    rule = DrivenRule(model, problem, gfem.SolverOptions(order=order))
+    system, _ = rule._ports(model)
+    return system.operator, system.surfaces[0]
+
+
+def _gram_coupling(surface, k):
+    """``|G12| / sqrt(G11 G22)`` of a two-mode surface at output frequency k."""
+    _, _, g = surface._blocks(k)  # gamma_0 G: the ratio is the same
+    return abs(g[0, 1]) / math.sqrt(abs(g[0, 0] * g[1, 1]))
+
+
 @pytest.fixture(scope="module")
 def hybrid_couplings(hybrid_guide):
     """The engine's port 1 surface of the shared and of the lone hybrid guide."""
-    from gfem._engine.driven import DrivenRule
-
     out = {}
     for name, model in (
         ("shared", shared_hybrid(hybrid_guide)),
         ("lone", hybrid_guide),
     ):
-        problem = gfem.Driven(HYBRID_SHARED_F)
-        rule = DrivenRule(model, problem, gfem.SolverOptions(order=3))
-        system, _ = rule._ports(model)
-        out[name] = (model, system.operator, system.surfaces[0])
+        out[name] = (model, *_port1_surface(model, HYBRID_SHARED_F, order=3))
     return out
 
 
@@ -624,18 +636,6 @@ def test_a_shared_hybrid_surface_imposes_each_requested_mode(hybrid_couplings):
         assert np.linalg.norm((imposed - h)[free]) <= 1e-14 * np.linalg.norm(h[free])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="measured |G12| / sqrt(G11 G22) = 2.6e-5 on this guide at 16 GHz: its "
-    "modes 1 and 2 are nearly orthogonal in the Robin product (spec U2 premise)",
-)
-def test_a_shared_hybrid_surface_has_a_non_diagonal_gram_matrix(hybrid_couplings):
-    # the modes are not orthogonal on the port: G is used in full
-    _, _, surface = hybrid_couplings["shared"]
-    _, _, g = surface._blocks(0)
-    assert abs(g[0, 1]) / math.sqrt(abs(g[0, 0] * g[1, 1])) > 0.05
-
-
 def test_the_shared_hybrid_correction_is_symmetric_of_rank_2n(hybrid_couplings):
     _, _, surface = hybrid_couplings["shared"]
     c = surface.correction_coefficients(2 * math.pi * HYBRID_SHARED_F[0])
@@ -668,3 +668,52 @@ def test_a_lone_hybrid_port_correction_is_the_closed_form(hybrid_couplings):
     w = u @ (c @ (u.T @ x))
     # measured 1.7e-15
     assert np.linalg.norm(w - closed) <= 1e-14 * np.linalg.norm(closed)
+
+
+# --- a shared port surface whose modes overlap on the port face -----------------
+# The gradient matrix's hybrid line (tests/gradient_cases.py): a quadrant
+# block in the leads makes modes 1 and 2 hybrid in both y and z, so they are
+# not orthogonal in the port face's mass product and the Gram matrix G of the
+# modal correction is used in full. (On the hybrid guide above G is diagonal
+# to 2.6e-5.) Its core carries the leads' quadrant: a uniform line.
+
+HYBRID_LINE_F = (55e9, 65e9)
+HYBRID_LINE_LENGTH = 4e-3
+
+
+@pytest.fixture(scope="module")
+def hybrid_line_model(tmp_path_factory):
+    mesh = hybrid_mesh(tmp_path_factory.mktemp("hybrid_line"))
+    core = gfem.MaterialField(eps_r=hybrid_leads_core(mesh))
+    return hybrid_line(mesh).with_material("core", core)
+
+
+def test_a_shared_surface_of_overlapping_modes_has_a_full_gram_matrix(
+    hybrid_line_model,
+):
+    _, surface = _port1_surface(hybrid_line_model, HYBRID_LINE_F, order=2)
+    assert [c.port.name for c in surface.ports] == ["p1_m1", "p1_m2"]
+    coupling = [_gram_coupling(surface, k) for k in range(len(HYBRID_LINE_F))]
+    # measured 0.043 (55 GHz), 0.035 (65 GHz), the same at order 3: three
+    # orders above the hybrid guide's, far above the reflection floor (6e-4)
+    assert min(coupling) > 0.02
+
+
+def test_a_shared_surface_of_overlapping_modes_is_reflectionless(hybrid_line_model):
+    options = gfem.SolverOptions(linear_solver="direct")
+    result = gfem.solve(hybrid_line_model, gfem.Driven(HYBRID_LINE_F), options=options)
+    s = np.asarray(result.s.values)
+    pairs = [(2, 0), (0, 2), (3, 1), (1, 3)]
+    transmitted, rest = _entries(s, pairs)
+    errors = []
+    for (_, j), t in zip(pairs, transmitted, strict=True):
+        gamma = np.asarray(result.port_modes[HYBRID_PORTS[j]].gamma)
+        expected = np.exp(-gamma * HYBRID_LINE_LENGTH)
+        # no voltage path: the sign of each mode is a mesh-dependent rule
+        errors.append(np.minimum(np.abs(t - expected), np.abs(t + expected)).max())
+    reciprocity = np.abs(s - np.swapaxes(s, 1, 2)).max()
+    # measured (order 2, 8 x 8 x 4 cells): mode 1 2.2e-3, mode 2 1.4e-3 (at
+    # 65 GHz; 2.2e-5 and 9.1e-6 at order 3: the mesh's error)
+    assert max(errors) < 6e-3
+    assert rest < 2e-3  # reflections and cross-mode entries, measured 6.2e-4
+    assert reciprocity < 1e-8  # measured 2.3e-15

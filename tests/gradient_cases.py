@@ -14,6 +14,8 @@ pytest ``tmp_path_factory.mktemp`` directory).
   conducting lower layer (driven shape gradients).
 - `wave_mesh` / `wave_line`: a two-layer line between wave ports with a
   design "core" away from the port faces.
+- `hybrid_mesh` / `hybrid_line`: a line whose leads carry two hybrid modes,
+  both requested at each end (a shared port surface), with the same "core".
 - `sheet_mesh` / `sheet_line`: a parallel-plate line glued at mid-height,
   the interior surface "sheet" carrying a `gfem.SheetField`.
 - `sheet_cavity` / `cavity_model`: a PEC cavity with a resistive sheet where
@@ -221,6 +223,89 @@ def wave_line(mesh: gfem.Mesh, port: str) -> gfem.Model:
             gfem.WavePort("p2", "port2", offset=d2),
         ],
     )
+
+
+#: The hybrid line's two requested modes on each end (a shared port surface).
+HYBRID_PORTS = ("p1_m1", "p1_m2", "p2_m1", "p2_m2")
+#: Its permittivities: the leads' quadrant "block" and the rest, "fill".
+HYBRID_EPS = {"block": 4.0, "fill": 2.0}
+
+
+def hybrid_mesh(directory: Path, cells: tuple[int, int, int] = (8, 8, 4)) -> gfem.Mesh:
+    """A 4 x 2 x 1 mm line, "block" in the quadrant y < 1, z < 0.5 of its leads.
+
+    Plates "bottom" (z = 0) and "top" (z = 1), "side" walls (y = 0, 2),
+    ports "port1" (x = 0) and "port2" (x = 4); the "core" between x = 1 and
+    3 mm spans the cross-section. ``cells`` along x, y and z: multiples of
+    4, 2 and 2 align the grid with the core and the quadrant.
+    """
+    length, width, height = 4.0, 2.0, 1.0
+    edges = tuple(
+        np.linspace(0, size, n + 1)
+        for size, n in zip((length, width, height), cells, strict=True)
+    )
+    eps = 1e-9
+
+    def volume(c):
+        if 1.0 < c[0] < 3.0:
+            return "core"
+        return "block" if c[1] < width / 2 and c[2] < height / 2 else "fill"
+
+    def surface(c):
+        for x, name in ((0.0, "port1"), (length, "port2")):
+            if abs(c[0] - x) < eps:
+                return name
+        if abs(c[2]) < eps:
+            return "bottom"
+        if abs(c[2] - height) < eps:
+            return "top"
+        if abs(c[1]) < eps or abs(c[1] - width) < eps:
+            return "side"
+        return ""  # the interfaces between the volumes
+
+    return _mesh(directory, "hybrid.msh", sm.structured(edges, volume, surface))
+
+
+def hybrid_line(mesh: gfem.Mesh) -> gfem.Model:
+    """Modes 1 and 2 at both ends of the hybrid line; a uniform eps 3 core.
+
+    The quadrant block makes the leads asymmetric in y and z, so their two
+    propagating modes (from about 48 GHz) are hybrid and not orthogonal in
+    the port face's mass product: the shared surface's Gram matrix is full.
+    """
+    return gfem.Model(
+        mesh,
+        materials={
+            **{name: gfem.Material(eps_r=eps) for name, eps in HYBRID_EPS.items()},
+            "core": gfem.Material(eps_r=3.0),
+        },
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top")],
+        ports=[
+            gfem.WavePort(name, f"port{name[1]}", mode=int(name[-1]))
+            for name in HYBRID_PORTS
+        ],
+    )
+
+
+def hybrid_leads_core(mesh: gfem.Mesh) -> np.ndarray:
+    """Per core element, the leads' permittivity there: a uniform line."""
+    nodes = np.asarray(mesh.nodes) / 1e-3  # mm
+    c = nodes[mesh.tetrahedra[mesh.elements("core")]].mean(axis=1)
+    block = (c[:, 1] < 1.0) & (c[:, 2] < 0.5)
+    return np.where(block, HYBRID_EPS["block"], HYBRID_EPS["fill"])
+
+
+def multimode_functional(s, rows):
+    """Weighted S of excited port p1_m1 at ``rows``: co-mode and cross-mode.
+
+    ``|S|^2`` of the transmitted co-mode entry ``S[p2_m1, p1_m1]`` and of
+    the cross-mode entries ``S[p1_m2, p1_m1]`` and ``S[p2_m2, p1_m1]``, plus
+    ``Re(c S[p2_m2, p1_m1])``; ``s`` a `gfem.NetworkParameters`.
+    """
+    co, back, cross = (s[out, "p1_m1"][rows] for out in ("p2_m1", "p1_m2", "p2_m2"))
+    return jnp.sum(
+        jnp.abs(co) ** 2 + 1.5 * jnp.abs(back) ** 2 - 0.8 * jnp.abs(cross) ** 2
+    ) + jnp.sum(jnp.real((0.3 - 0.7j) * cross))
 
 
 def core_design(mesh: gfem.Mesh, seed: int = 0):
