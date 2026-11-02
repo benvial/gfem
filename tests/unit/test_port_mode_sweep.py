@@ -277,6 +277,24 @@ def test_an_exact_tie_of_two_modes_raises_naming_both_ports_and_the_surface(join
     assert greedy._closest(1, one, 0, certain=False) == [0, 0]
 
 
+def test_a_lost_candidate_names_the_mode_that_lost_it_not_the_highest_rank(
+    joint, monkeypatch
+):
+    greedy, first = joint
+    # only the candidate of mode 2 is left (as after a crossing): mode 1 is
+    # the one that stopped propagating
+    left = _Candidates(
+        lam=first.lam[1:2], vecs=first.vecs[:, 1:2], residual=first.residual[1:2]
+    )
+    monkeypatch.setattr(greedy, "_solve", lambda _j: left)
+    with pytest.raises(
+        gfem.PortModeError,
+        match=r"^WavePort 'in_TE0' on surface 'port1' \(shared with 'in_TM0'\): the "
+        r"tracked mode 1 stops propagating at 16\.5714 GHz",
+    ):
+        greedy._exact(1, 0, certain=True)
+
+
 def test_a_joint_sweep_of_one_surface_shares_its_solves_and_basis(slab_mesh):
     model = slab(slab_mesh)
     space = PortModeSpace(port_section(model, model.ports[0]), 2)
