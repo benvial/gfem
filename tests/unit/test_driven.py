@@ -726,7 +726,9 @@ def _every_piece_kind(tmp):
 
 def test_a_direct_handle_sums_the_pieces_into_the_assembled_operator(tmp_path):
     model = _every_piece_kind(tmp_path)
-    frequencies = (4e9, 5e9)
+    # above the wave port's cutoff (about 22 GHz): at 4 GHz its first mode
+    # is evanescent, beta = 0.11 - 0.80j 1/mm
+    frequencies = (40e9, 50e9)
     options = gfem.SolverOptions(linear_solver="direct")
     rule = DrivenRule(model, gfem.Driven(frequencies), options)
     system, _ = rule._ports(model)
