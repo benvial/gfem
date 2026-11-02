@@ -480,9 +480,10 @@ class Eigenmode:
 
     `gfem.solve` raises `gfem.EigenmodeConvergenceError` when fewer than
     ``n_modes`` modes converge (never a partial result), and
-    NotImplementedError for a `WavePort` (its propagation constant would
-    have to be solved at the complex eigenfrequency): replace it with a
-    `LumpedPort` of the line impedance, or use a `gfem.Driven` sweep.
+    NotImplementedError for a `WavePort` or a shared port surface (its
+    propagation constants would have to be solved at the complex
+    eigenfrequency): replace a lone wave port with a `LumpedPort` of the
+    line impedance, or use a `gfem.Driven` sweep.
 
     Example:
         ``gfem.Eigenmode(target=5e9, n_modes=2)``
