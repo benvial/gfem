@@ -49,17 +49,17 @@ class Pairing:
     Attributes:
         first: The first surface's name.
         second: The second surface's name.
-        master: Per node pair, the node on ``first``.
-        minion: Per node pair, the node on ``second``; x[minion] =
-            x[master] + translation.
+        first_nodes: Per node pair, the node on ``first``.
+        second_nodes: Per node pair, the node on ``second``;
+            x[second_nodes] = x[first_nodes] + translation.
         translation: a, from ``first`` to ``second``, m.
         tol: The node match tolerance, m.
     """
 
     first: str
     second: str
-    master: np.ndarray
-    minion: np.ndarray
+    first_nodes: np.ndarray
+    second_nodes: np.ndarray
     translation: tuple[float, float, float]
     tol: float
 
@@ -67,6 +67,17 @@ class Pairing:
     def label(self) -> str:
         """``Periodic(('first', 'second'))``, opening error messages."""
         return f"Periodic({(self.first, self.second)!r})"
+
+    def to_first(self, n_nodes: int) -> np.ndarray:
+        """Per node: its twin on ``first`` if it is on ``second``, else itself."""
+        out = np.arange(n_nodes)
+        out[self.second_nodes] = self.first_nodes
+        return out
+
+
+def pair_names(pairings: Iterable[Pairing]) -> tuple[tuple[str, str], ...]:
+    """The ``(first, second)`` surface names of each pair: pairs in cache keys."""
+    return tuple((p.first, p.second) for p in pairings)
 
 
 # Per mesh topology, the pairings by (first, second).
@@ -111,29 +122,6 @@ def pair_of_surface(mesh: Mesh, name: str) -> Pairing | None:
     return None
 
 
-def tie_roots(n_nodes: int, pairings: Iterable[Pairing]) -> np.ndarray:
-    """Per node, the smallest node of its tie class.
-
-    A tie class is a set of nodes the periodic pairs identify (a corner of a
-    3-pair cell is a class of 8 nodes, a node of one surface a class of 2,
-    an unpaired node a class of its own). Keys built from the roots are the
-    same for an edge or face and its images across the pairs.
-    """
-    pairs = list(pairings)
-    root = np.arange(n_nodes)
-    if not pairs:
-        return root
-    rows = np.concatenate([p.master for p in pairs])
-    cols = np.concatenate([p.minion for p in pairs])
-    graph = scipy.sparse.coo_matrix(
-        (np.ones(len(rows)), (rows, cols)), shape=(n_nodes, n_nodes)
-    )
-    _, label = scipy.sparse.csgraph.connected_components(graph, directed=False)
-    smallest = np.full(label.max() + 1, n_nodes)
-    np.minimum.at(smallest, label, root)
-    return smallest[label]
-
-
 def _surface_triangles(mesh: Mesh, name: str) -> np.ndarray:
     return mesh.triangles[mesh.triangle_tags == mesh.region(name).tag]
 
@@ -168,15 +156,15 @@ def _pair(mesh: Mesh, first: str, second: str) -> Pairing:
             f"{tol:.3g} m from any node of {first!r} (worst {dist[worst]:.3g} m at "
             f"{_vec(x[s[worst]])} m). " + _SETPERIODIC
         )
-    master = f[match]
-    if len(np.unique(master)) != len(master):
+    first_nodes = f[match]
+    if len(np.unique(first_nodes)) != len(first_nodes):
         raise ValueError(
             f"{label}: two nodes of {second!r} match the same node of {first!r} "
             f"within {tol:.3g} m, so the match is not one to one. " + _SETPERIODIC
         )
-    a = (x[s] - x[master]).mean(axis=0)
+    a = (x[s] - x[first_nodes]).mean(axis=0)
     to_first = np.full(len(x), -1, dtype=np.int64)
-    to_first[s] = master
+    to_first[s] = first_nodes
     twins = {tuple(t) for t in np.sort(to_first[ts], axis=1).tolist()}
     missing = len(twins - {tuple(t) for t in np.sort(tf, axis=1).tolist()})
     if missing or len(tf) != len(ts):
@@ -198,8 +186,8 @@ def _pair(mesh: Mesh, first: str, second: str) -> Pairing:
     return Pairing(
         first=first,
         second=second,
-        master=readonly(master.astype(np.int64)),
-        minion=readonly(s.astype(np.int64)),
+        first_nodes=readonly(first_nodes.astype(np.int64)),
+        second_nodes=readonly(s.astype(np.int64)),
         translation=(float(a[0]), float(a[1]), float(a[2])),
         tol=tol,
     )
@@ -224,8 +212,7 @@ def twin_faces(mesh: Mesh, p: Pairing) -> tuple[np.ndarray, np.ndarray]:
     """Triangle indices of ``first`` and of their twins on ``second``, aligned."""
     tri_f = np.flatnonzero(mesh.triangle_tags == mesh.region(p.first).tag)
     tri_s = np.flatnonzero(mesh.triangle_tags == mesh.region(p.second).tag)
-    to_first = np.arange(len(mesh.imported_nodes))
-    to_first[p.minion] = p.master
+    to_first = p.to_first(len(mesh.imported_nodes))
     index = {
         tuple(t): i
         for i, t in zip(
@@ -276,9 +263,8 @@ def check_pec(mesh: Mesh, p: Pairing, pec: Iterable[str]) -> None:
     """
     n = len(mesh.imported_nodes)
     side = np.zeros(n, dtype=np.int8)
-    side[p.master], side[p.minion] = 1, 2
-    to_first = np.arange(n)
-    to_first[p.minion] = p.master
+    side[p.first_nodes], side[p.second_nodes] = 1, 2
+    to_first = p.to_first(n)
     edges: dict[str, dict[int, set[tuple[int, int]]]] = {}
     for name in pec:
         tris = _surface_triangles(mesh, name)
@@ -310,7 +296,7 @@ def check_nodes(nodes: np.ndarray, pairings: Iterable[Pairing]) -> None:
     """
     x = np.asarray(nodes, dtype=float)
     for p in pairings:
-        d = np.linalg.norm(x[p.minion] - x[p.master] - p.translation, axis=1)
+        d = np.linalg.norm(x[p.second_nodes] - x[p.first_nodes] - p.translation, axis=1)
         far = d > p.tol
         if far.any():
             worst = int(np.argmax(d))
@@ -318,7 +304,7 @@ def check_nodes(nodes: np.ndarray, pairings: Iterable[Pairing]) -> None:
                 f"The moved mesh breaks {p.label}: {int(far.sum())} node pairs "
                 f"are no longer related by the translation a = "
                 f"{_vec(p.translation)} m (worst {d[worst]:.3g} m at "
-                f"{_vec(x[p.minion[worst]])} m). Move paired nodes by the same "
+                f"{_vec(x[p.second_nodes[worst]])} m). Move paired nodes by the same "
                 "displacement: build the shape with gfem.boundary_morph on this "
                 "periodic model, which ties them."
             )
@@ -327,24 +313,34 @@ def check_nodes(nodes: np.ndarray, pairings: Iterable[Pairing]) -> None:
 def tie_classes(n_nodes: int, pairings: Iterable[Pairing]) -> np.ndarray:
     """The tie class of every node, by its representative: the node it moves with.
 
-    The classes of `tie_roots`; the representative is the class's lowest
-    node that is no pair's minion, which lies on the first surface of every
-    pair it is in (for `gfem.shape.boundary_morph`'s tied motion).
+    A tie class is a set of nodes the periodic pairs identify (a corner of a
+    3-pair cell is a class of 8 nodes, a node of one surface a class of 2,
+    an unpaired node a class of its own). The representative is the class's
+    lowest node that is on no pair's second surface, so it lies on the first
+    surface of every pair it is in (`gfem.shape.boundary_morph`'s tied
+    motion). Keys built from the representatives are the same for an edge
+    or face and its images across the pairs (`gfem.power_flow`).
 
     Returns:
         ``(n_nodes,)`` int: the representative of each node's class (the
         node itself for an unpaired node).
     """
     pairs = list(pairings)
-    roots = tie_roots(n_nodes, pairs)
+    nodes = np.arange(n_nodes)
     if not pairs:
-        return roots
-    # prefer the nodes that are no minion, then the lowest index
-    key = np.arange(n_nodes)
-    key[np.concatenate([p.minion for p in pairs])] += n_nodes
-    lowest = np.full(n_nodes, 2 * n_nodes)
-    np.minimum.at(lowest, roots, key)
-    return lowest[roots] % n_nodes
+        return nodes
+    rows = np.concatenate([p.first_nodes for p in pairs])
+    cols = np.concatenate([p.second_nodes for p in pairs])
+    graph = scipy.sparse.coo_matrix(
+        (np.ones(len(rows)), (rows, cols)), shape=(n_nodes, n_nodes)
+    )
+    _, label = scipy.sparse.csgraph.connected_components(graph, directed=False)
+    # prefer the nodes on no second surface, then the lowest index
+    key = nodes.copy()
+    key[cols] += n_nodes
+    lowest = np.full(label.max() + 1, 2 * n_nodes)
+    np.minimum.at(lowest, label, key)
+    return lowest[label] % n_nodes
 
 
 def bloch_phases(
@@ -396,4 +392,46 @@ def check_wave_vector(
             f"{', '.join(_vec(a) for a in translations)} m, which no pair's phase "
             "reads, so it would be ignored. Give the wave vector in that span, "
             f"e.g. {_vec(projected)} rad/m."
+        )
+
+
+def check_bloch(
+    owner: str,
+    *,
+    device: str,
+    linear_solver: str,
+    solvers: tuple[str, ...],
+    reason: str,
+    sweep: str = "uniform",
+) -> None:
+    """Raise for what a Bloch solve cannot use, before any assembly.
+
+    A Bloch phase makes the operator general (A^T != A): the adaptive
+    sweep's reduced model is a symmetric projection, the GPU solver factors
+    symmetric operators only, and only ``solvers`` (or ``"auto"``, which
+    picks one of them) can solve it; ``reason`` says why another linear
+    solver cannot. Checked on the CPU and before the linear solver is
+    resolved, so the refusal does not depend on what is installed.
+
+    Raises:
+        NotImplementedError: ``sweep`` is ``"adaptive"``, or ``device`` is
+            not ``"cpu"``.
+        ValueError: ``linear_solver`` is not one of ``solvers``.
+    """
+    lead = f"{owner}.wave_vector sets a Bloch phase, so the operator is not symmetric"
+    if sweep == "adaptive":
+        raise NotImplementedError(
+            f"{lead}, and the adaptive sweep cannot solve it in this version of "
+            "gfem (its reduced model is a symmetric projection): use "
+            "sweep='uniform'."
+        )
+    if device != "cpu":
+        raise NotImplementedError(
+            f"{lead}, and the GPU solver (device={device!r}, cuDSS) factors "
+            "symmetric operators only: use device='cpu'."
+        )
+    if linear_solver not in (*solvers, "auto"):
+        raise ValueError(
+            f"{lead}, and linear_solver={linear_solver!r} {reason}: use "
+            f"linear_solver={' or '.join(map(repr, solvers))}."
         )

@@ -11,6 +11,7 @@ import ngsolve as ngs
 
 from gfem._boundaries import PEC
 from gfem._engine.mesh import EngineMesh
+from gfem._periodic import pair_names
 from gfem.model import Model
 
 
@@ -63,6 +64,13 @@ def hcurl_space(
         definedon=em_region(model, built),
         dirichlet=_bc_numbers(built, dirichlet),
     )
+    return _compressed(space, periodic=periodic, phases=phases)
+
+
+def _compressed(
+    space: ngs.FESpace, *, periodic: bool, phases: tuple[complex, ...] | None
+) -> ngs.FESpace:
+    """``space`` compressed, periodic first with ``periodic`` (Bloch ``phases``)."""
     if periodic:
         space = ngs.Periodic(space, phase=None if phases is None else list(phases))
     return ngs.Compress(space)
@@ -88,6 +96,29 @@ def domain_key(model: Model) -> tuple:
     return ("em", model._domain.excluded)  # noqa: SLF001
 
 
+def space_key(
+    model: Model,
+    kind: str,
+    order: int,
+    *,
+    periodic: bool = False,
+    phases: tuple[complex, ...] | None = None,
+    real: bool = False,
+) -> tuple:
+    """The cache key of a ``kind`` space (``"hcurl"``, ``"h1"``) of ``order``.
+
+    Its `PEC` surfaces fixed (`pec_surfaces`); with ``periodic``, periodic
+    over the model's pairs with Bloch ``phases`` (``None``: plain
+    periodicity); ``real`` for a real-valued space. The one key builder of
+    `gfem._engine.cache.Discretization.space` for these spaces, so a paired
+    and an unpaired space never share a key.
+    """
+    key = (domain_key(model), kind, order, pec_surfaces(model))
+    if periodic:
+        key = (*key, pair_names(model._periodic), phases)  # noqa: SLF001
+    return (*key, "real") if real else key
+
+
 def h1_space(
     model: Model,
     built: EngineMesh,
@@ -111,9 +142,7 @@ def h1_space(
         definedon=em_region(model, built),
         dirichlet=_bc_numbers(built, dirichlet),
     )
-    if periodic:
-        space = ngs.Periodic(space, phase=None if phases is None else list(phases))
-    return ngs.Compress(space)
+    return _compressed(space, periodic=periodic, phases=phases)
 
 
 def boundary_region(built: EngineMesh, surfaces: tuple[str, ...]) -> ngs.Region:

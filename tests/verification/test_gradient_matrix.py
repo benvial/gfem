@@ -102,10 +102,10 @@ from periodic_cases import (
     EG_PLAIN_TARGET,
     EG_TAN_DELTA,
     MM,
+    coordinate_classes,
     eigen_cell,
     eigen_cell_design,
     eigen_cell_mesh,
-    tie_classes,
 )
 
 import gfem
@@ -721,7 +721,7 @@ def _eigen_periodic(
         # the pairs, the corners of both) as one: a periodic direction
         nodes = np.asarray(mesh.imported_nodes)
         mid = np.isclose(nodes[:, 2], 0.5 * EG_H * MM)
-        labels = tie_classes(mesh, (EG_A * MM, EG_B * MM, None))
+        labels = coordinate_classes(mesh, (EG_A * MM, EG_B * MM, None))
         classes = np.unique(labels[mid])
         tied = jnp.asarray((labels[:, None] == classes[None, :]) & mid[:, None], float)
         x0 = jnp.asarray(nodes)

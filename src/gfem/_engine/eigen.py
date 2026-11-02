@@ -31,7 +31,7 @@ from gfem._eigen.seed import MIN_SUBSPACE
 from gfem._engine import quadrature, terms
 from gfem._engine.cache import discretization
 from gfem._engine.coefficients import coefficient, element_tensors
-from gfem._engine.domain import domain_key, h1_space, hcurl_space, pec_surfaces
+from gfem._engine.domain import h1_space, hcurl_space, pec_surfaces, space_key
 from gfem._engine.driven import DrivenOperator, real_space
 from gfem._linalg import Handle, Operator, ResolvedLinearSolver
 from gfem._linalg.base import free_mask
@@ -69,8 +69,7 @@ def eigen_operator(
     classes = split(op.pieces, scale, sigma)
     powers = classes.powers
     free = free_mask(space.FreeDofs(), space.ndof)
-    symmetry = "general" if op.symmetry == "general" else "complex_symmetric"
-    matrix_free = symmetry != "general"
+    symmetry, matrix_free = op.symmetry, op.symmetric
 
     def operator(k: complex) -> Operator:
         return Operator(op.form(k * const.c / scale), space.FreeDofs())
@@ -183,20 +182,20 @@ def projector(
     periodic = model._periodic  # noqa: SLF001
     disc = discretization(model.mesh, periodic)
     pec = pec_surfaces(model)
-    key = (domain_key(model), "h1", order, pec)
     if not periodic:
         hcurl = real_space(model, op)
-        h1 = disc.space(key, lambda: h1_space(model, built, order, pec))
+        h1 = disc.space(
+            space_key(model, "h1", order), lambda: h1_space(model, built, order, pec)
+        )
     else:
         phases = bloch_phases(model, wave_vector)
-        pairs = tuple((p.first, p.second) for p in periodic)
         h1 = disc.space(
-            (*key, pairs, phases),
+            space_key(model, "h1", order, periodic=True, phases=phases),
             lambda: h1_space(model, built, order, pec, periodic=True, phases=phases),
         )
         if phases is None:
             hcurl = disc.space(
-                (domain_key(model), "hcurl", order, pec, pairs, None, "real"),
+                space_key(model, "hcurl", order, periodic=True, real=True),
                 lambda: hcurl_space(
                     model,
                     built,

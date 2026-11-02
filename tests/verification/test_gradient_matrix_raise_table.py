@@ -728,7 +728,7 @@ def _out_periodic_pair_broken(request):
         "driven_periodic_plain"
     ]
     mesh = model.mesh
-    node = int(model._periodic[0].minion[0])
+    node = int(model._periodic[0].second_nodes[0])
 
     def objective(dy):
         x = jnp.asarray(mesh.nodes).at[node, 1].add(dy)

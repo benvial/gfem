@@ -27,7 +27,7 @@ from typing import Any
 import numpy as np
 
 from gfem._engine.mesh import EngineMesh, to_ngsolve
-from gfem._periodic import Pairing
+from gfem._periodic import Pairing, pair_names
 from gfem.mesh import Mesh
 
 __all__ = [
@@ -82,8 +82,7 @@ def discretization(mesh: Mesh, periodic: tuple[Pairing, ...] = ()) -> Discretiza
     """
     topology = mesh._topology  # noqa: SLF001
     nodes = np.asarray(mesh.nodes, dtype=float)
-    pairs = tuple((p.first, p.second) for p in periodic)
-    key = (id(topology), _digest(nodes), pairs)
+    key = (id(topology), _digest(nodes), pair_names(periodic))
     found = _DISCRETIZATIONS.get(key)
     if found is not None and found.topology is topology:
         _DISCRETIZATIONS.move_to_end(key)

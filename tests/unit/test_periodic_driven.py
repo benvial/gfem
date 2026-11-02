@@ -200,6 +200,19 @@ def test_a_wave_vector_needs_a_periodic_pair(c1_mesh):
         gfem.solve(model, gfem.Driven(pc.C1_FREQUENCY, wave_vector=pc.C1_K))
 
 
+def test_a_missing_pair_is_reported_before_the_bloch_refusals(c1_mesh):
+    # a wave vector on a pair-less model with an adaptive sweep: the missing
+    # pair is the first thing to fix, so it is reported, not the sweep
+    model = pc.c1(c1_mesh).replace(boundaries=[gfem.PEC("z_min"), gfem.PEC("z_max")])
+    problem = gfem.Driven(
+        [pc.C1_FREQUENCY, 1.1 * pc.C1_FREQUENCY],
+        wave_vector=pc.C1_K,
+        sweep="adaptive",
+    )
+    with pytest.raises(ValueError, match=r"but the model has no gfem\.Periodic pair"):
+        gfem.solve(model, problem, options=gfem.SolverOptions(linear_solver="petsc"))
+
+
 def test_a_wave_vector_off_the_translations_is_refused(c1_mesh):
     with pytest.raises(
         ValueError,
@@ -282,7 +295,7 @@ def _edge_port_c1(directory):
 
 def test_bloch_s_transposed_is_s_at_minus_k(tmp_path):
     # p1's edges on x_max are the pair's second surface: its voltage is read
-    # through the Bloch phase of the minion DOFs
+    # through the Bloch phase of the second surface's DOFs
     model = _edge_port_c1(tmp_path)
     plus = _bloch_s(model, pc.C1_K)
     minus = _bloch_s(model, tuple(-v for v in pc.C1_K))
@@ -310,7 +323,7 @@ BLOCH_REFUSALS = {
         ValueError,
         (
             r"linear_solver='petsc' factors symmetric operators only: use "
-            r"linear_solver='direct' or 'bddc_gmres'"
+            r"linear_solver='direct' or 'bddc_gmres'\.$"
         ),
     ),
     "adaptive": (
@@ -318,8 +331,10 @@ BLOCH_REFUSALS = {
         "adaptive",
         NotImplementedError,
         (
-            r"Driven\.wave_vector sets a Bloch phase, which the adaptive sweep "
-            r"cannot solve in this version of gfem: use sweep='uniform'"
+            r"Driven\.wave_vector sets a Bloch phase, so the operator is not "
+            r"symmetric, and the adaptive sweep cannot solve it in this version "
+            r"of gfem \(its reduced model is a symmetric projection\): use "
+            r"sweep='uniform'\."
         ),
     ),
 }

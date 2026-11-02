@@ -180,7 +180,7 @@ def test_a_wave_port_may_not_share_a_node_with_a_pair(tmp_path):
     mesh = _cell(tmp_path, _box(cells=(4, 3, 1), surface=_patch(0, 2.5)), "edge")
     with pytest.raises(
         NotImplementedError,
-        match=r"WavePort 'w' touches periodic pair \('x_min', 'x_max'\) at 4 nodes: "
+        match=r"WavePort 'w' touches Periodic\(\('x_min', 'x_max'\)\) at 4 nodes: "
         r"a wave port's mode solve cannot be periodic\. Move the port off the "
         r"pair's surfaces \(Floquet ports are not supported\)\.",
     ):

@@ -69,7 +69,7 @@ import functools
 import math
 import warnings
 from collections.abc import Mapping
-from typing import Any, NoReturn
+from typing import Any, Literal, NoReturn
 
 import jax
 import jax.numpy as jnp
@@ -87,7 +87,7 @@ from gfem._boundaries import (
 )
 from gfem._engine import sweep_outputs, terms, workers
 from gfem._engine.cache import Entry, discretization
-from gfem._engine.domain import domain_key, em_region, hcurl_space, pec_surfaces
+from gfem._engine.domain import em_region, hcurl_space, pec_surfaces, space_key
 from gfem._engine.fields import fe_space
 from gfem._engine.mesh import EngineMesh
 from gfem._engine.port_network import PortNetwork, resistance, split_cotangent
@@ -96,8 +96,8 @@ from gfem._engine.sensitivity import FieldPair, Term, is_sheet
 from gfem._engine.sweep_outputs import SweepOutputs
 from gfem._engine.system_operator import SystemOperator
 from gfem._engine.wave_ports import wave_port_couplings
-from gfem._linalg import Kind, ResolvedLinearSolver, Symmetry
-from gfem._periodic import bloch_phases, check_wave_vector
+from gfem._linalg import Kind, ResolvedLinearSolver
+from gfem._periodic import bloch_phases, check_bloch, check_wave_vector
 from gfem._sweep.adaptive import AffineSystem, AffineTerm, adaptive_sweep
 from gfem.errors import (
     LinearSolverConvergenceError,
@@ -122,11 +122,16 @@ __all__ = [
     "LOW_FREQUENCY_FLOOR",
     "DrivenOperator",
     "DrivenRule",
+    "Expansion",
     "check_ports_held",
     "driven_operator",
     "operator_terms",
     "real_space",
 ]
+
+#: Whether A^T = A (no Bloch phase) or not: a driven operator is never
+#: Hermitian.
+DrivenSymmetry = Literal["complex_symmetric", "general"]
 
 #: The linear solver for ``linear_solver="auto"``: GMRES + BDDC.
 DEFAULT_SOLVER: Kind = "bddc_gmres"
@@ -139,6 +144,21 @@ LOW_FREQUENCY_FLOOR = 1e-6
 _PARDISO_FLOOR = 3e-8
 
 
+@dataclasses.dataclass(frozen=True, eq=False)
+class Expansion:
+    """A periodic space's fields on its unpaired space: e = P x.
+
+    Attributes:
+        matrix: P, the periodic space's coefficients to the unpaired
+            space's (`expansion_matrix`).
+        space: The complex unpaired space (P's rows): where results keep
+            their fields and the backward pass's field pairs live.
+    """
+
+    matrix: scipy.sparse.csr_matrix
+    space: ngs.FESpace
+
+
 @dataclasses.dataclass(eq=False)
 class DrivenOperator:
     """The driven operator of a model, as pieces over one H(curl) space.
@@ -149,16 +169,12 @@ class DrivenOperator:
         pieces: The affine pieces (`gfem._engine.terms.Piece`).
         ports: Lumped port geometry, in model port order.
         order: Polynomial order.
-        expansion: For a model with periodic pairs, P: the solve space's
-            coefficients x to the unpaired space's, e = P x, where results
-            keep their fields (`expansion`); ``None`` without pairs, where
-            the two spaces are one.
+        expansion: For a model with periodic pairs, the `Expansion` of
+            the solve space onto the unpaired space; ``None`` without pairs,
+            where the two spaces are one.
         symmetry: ``"general"`` on a Bloch-phased space (A^T != A),
             ``"complex_symmetric"`` otherwise: declared by the problem's
             wave vector, never read from its value.
-        unpaired: For a model with periodic pairs, the complex unpaired
-            space (P's rows), where the backward pass's field pairs live;
-            ``None`` without pairs.
     """
 
     built: EngineMesh
@@ -166,13 +182,12 @@ class DrivenOperator:
     pieces: list[terms.Piece]
     ports: tuple[terms.LumpedPortData, ...]
     order: int
-    expansion: scipy.sparse.csr_matrix | None = None
-    symmetry: Symmetry = "complex_symmetric"
-    unpaired: ngs.FESpace | None = None
+    expansion: Expansion | None = None
+    symmetry: DrivenSymmetry = "complex_symmetric"
 
     def expand(self, x: np.ndarray) -> np.ndarray:
         """``P x``: solve-space coefficients ``(ndof, ...)`` on the unpaired space."""
-        return x if self.expansion is None else self.expansion @ x
+        return x if self.expansion is None else self.expansion.matrix @ x
 
     def pair(
         self,
@@ -193,7 +208,7 @@ class DrivenOperator:
         does without pairs (and a real space can hold under a Bloch phase,
         `real_space`).
         """
-        if self.expansion is None or self.unpaired is None:
+        if self.expansion is None:
             return FieldPair(
                 space=self.space,
                 left=left,
@@ -202,9 +217,9 @@ class DrivenOperator:
                 order=self.order,
                 domain=domain,
             )
-        p = self.expansion
+        p = self.expansion.matrix
         return FieldPair(
-            space=self.unpaired,
+            space=self.expansion.space,
             left=p.conj() @ left,
             right=p @ right,
             weights=weights,
@@ -298,33 +313,29 @@ def driven_operator(
     disc = discretization(model.mesh, periodic)
     built = disc.built
     pec = pec_surfaces(model)
-    key = (domain_key(model), "hcurl", order, pec)
-    expansion = unpaired = None
+    unpaired = disc.space(
+        space_key(model, "hcurl", order),
+        lambda: hcurl_space(model, built, order, dirichlet=pec),
+    )
+    space, expansion = unpaired, None
     if periodic and paired:
         phases = bloch_phases(model, wave_vector)
-        pairs = tuple((p.first, p.second) for p in periodic)
-        unpaired = disc.space(
-            key, lambda: hcurl_space(model, built, order, dirichlet=pec)
-        )
-        key = (*key, pairs, phases)
+        key = space_key(model, "hcurl", order, periodic=True, phases=phases)
         space = disc.space(
             key,
             lambda: hcurl_space(
                 model, built, order, dirichlet=pec, periodic=True, phases=phases
             ),
         )
-        expansion = disc.space(
+        matrix = disc.space(
             (*key, "expansion"),
             lambda: expansion_matrix(space, unpaired, real=phases is None),
         )
-    else:
-        space = disc.space(key, lambda: hcurl_space(model, built, order, dirichlet=pec))
+        expansion = Expansion(matrix, unpaired)
     ports = terms.lumped_ports(model, built.scale)
     pieces = terms.pieces(model, built, order, ports, elements=elements, faces=faces)
-    symmetry: Symmetry = "complex_symmetric" if wave_vector is None else "general"
-    return DrivenOperator(
-        built, space, pieces, ports, order, expansion, symmetry, unpaired
-    )
+    symmetry: DrivenSymmetry = "complex_symmetric" if wave_vector is None else "general"
+    return DrivenOperator(built, space, pieces, ports, order, expansion, symmetry)
 
 
 #: Entries of the expansion P below this are the round-off of NGSolve's
@@ -375,9 +386,9 @@ class DrivenRule:
 
         Raises:
             NotImplementedError: A feature this version cannot solve.
-            ValueError: The problem does not fit the model. (a wave vector without a
-                periodic pair, or outside the span of the pairs'
-                translations, among others).
+            ValueError: The problem does not fit the model (among others, a
+                wave vector without a periodic pair, or outside the span of
+                the pairs' translations).
             gfem.SolverUnavailableError: ``linear_solver="petsc"`` and PETSc
                 cannot be used.
         """
@@ -385,14 +396,23 @@ class DrivenRule:
             raise TypeError(f"Expected gfem.Driven, got {problem!r}.")
         self.problem = problem
         self.options = options
+        # before the Bloch refusals: a wave vector without a pair is the
+        # first thing to fix
+        check_wave_vector(model, problem.wave_vector, "Driven")
         if problem.wave_vector is not None:
-            _check_bloch(problem, options)
+            check_bloch(
+                "Driven",
+                device=options.device,
+                linear_solver=options.linear_solver,
+                solvers=("direct", "bddc_gmres"),
+                reason="factors symmetric operators only",
+                sweep=problem.sweep,
+            )
         # before any assembly, and before any worker
         self.linear = ResolvedLinearSolver.resolve(
             options, default=DEFAULT_SOLVER, problem="driven"
         )
         _check_supported(model)
-        check_wave_vector(model, problem.wave_vector, "Driven")
         if not model.ports:
             raise ValueError(
                 "The model has no ports, so a driven problem has nothing to "
@@ -996,7 +1016,7 @@ class DrivenRule:
                     k = self.kept.index(n)
                     g = np.asarray(ct_e)[:, k * width : (k + 1) * width]
                     # the field is P x: its cotangent loads P^T g
-                    load += g if op.expansion is None else op.expansion.T @ g
+                    load += g if op.expansion is None else op.expansion.matrix.T @ g
                 if load.any():
                     try:
                         adjoint += system.solve_adjoint(n, omega, load)
@@ -1256,26 +1276,10 @@ def real_space(model: Model, op: DrivenOperator) -> ngs.FESpace:
     """
     pec = pec_surfaces(model)
     return discretization(model.mesh, model._periodic).space(  # noqa: SLF001
-        (domain_key(model), "hcurl", op.order, pec, "real"),
+        space_key(model, "hcurl", op.order, real=True),
         lambda: hcurl_space(
             model, op.built, op.order, complex_valued=False, dirichlet=pec
         ),
-    )
-
-
-def unpaired_space(model: Model, op: DrivenOperator) -> ngs.FESpace:
-    """The complex H(curl) space of ``op``'s expanded fields (``P x``).
-
-    ``op.space`` itself without periodic pairs; with them, the unpaired
-    space ``op.expansion`` maps onto (the space of result fields and of a
-    periodic model's gradient pairs).
-    """
-    if op.expansion is None:
-        return op.space
-    pec = pec_surfaces(model)
-    return discretization(model.mesh, model._periodic).space(  # noqa: SLF001
-        (domain_key(model), "hcurl", op.order, pec),
-        lambda: hcurl_space(model, op.built, op.order, dirichlet=pec),
     )
 
 
@@ -1526,32 +1530,6 @@ def _port_regions(model: Model) -> dict[str, tuple[str, ...]]:
         tags = np.unique(mesh.tetrahedron_tags[tets[active[tets]]])
         out[port.name] = tuple(names[int(t)] for t in tags)
     return out
-
-
-def _check_bloch(problem: Driven, options: SolverOptions) -> None:
-    """Raise for what a Bloch driven solve cannot use (before any assembly).
-
-    A Bloch phase makes the operator general (A^T != A): the GPU solver and
-    PETSc factor A^T = A only, and the adaptive sweep's reduced model is a
-    symmetric projection.
-    """
-    if problem.sweep == "adaptive":
-        raise NotImplementedError(
-            "Driven.wave_vector sets a Bloch phase, which the adaptive sweep cannot "
-            "solve in this version of gfem: use sweep='uniform'."
-        )
-    if options.device != "cpu":
-        raise NotImplementedError(
-            "Driven.wave_vector sets a Bloch phase, so the driven operator is not "
-            f"symmetric, and the GPU solver (device={options.device!r}, cuDSS) "
-            "factors symmetric operators only: use device='cpu'."
-        )
-    if options.linear_solver == "petsc":
-        raise ValueError(
-            "Driven.wave_vector sets a Bloch phase, so the driven operator is not "
-            "symmetric, and linear_solver='petsc' factors symmetric operators only: "
-            "use linear_solver='direct' or 'bddc_gmres'."
-        )
 
 
 def _check_supported(model: Model) -> None:

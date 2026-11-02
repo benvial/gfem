@@ -45,7 +45,7 @@ def to_ngsolve(mesh: Mesh, periodic: tuple[Pairing, ...] = ()) -> EngineMesh:
 
     Each pairing of ``periodic`` (a model's periodic pairs, in order) is
     replayed as the netgen point identifications number j + 1, first
-    surface's node as the master: NGSolve derives the periodic edges and
+    surface's node as netgen's master: NGSolve derives the periodic edges and
     faces from them, and ``Periodic`` spaces read them. Plain spaces are the
     same on the identified mesh.
 
@@ -92,9 +92,11 @@ def to_ngsolve(mesh: Mesh, periodic: tuple[Pairing, ...] = ()) -> EngineMesh:
     # before the wrap: identifications added after it are not seen
     point = ngm.PointId  # ty: ignore[unresolved-attribute]
     for j, p in enumerate(periodic, start=1):
-        for master, minion in zip(p.master.tolist(), p.minion.tolist(), strict=True):
+        for first, second in zip(
+            p.first_nodes.tolist(), p.second_nodes.tolist(), strict=True
+        ):
             ngmesh.AddPointIdentification(
-                point(nr0=master), point(nr0=minion), identnr=j, type=2
+                point(nr0=first), point(nr0=second), identnr=j, type=2
             )
 
     return EngineMesh(

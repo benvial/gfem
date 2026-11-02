@@ -67,7 +67,9 @@ def test_bloch_mode_phase_fixes_its_largest_solve_coefficient(c2_mesh):
     assert largest.imag == 0
     assert largest.real > 0
     op = driven_operator(model, options.order, wave_vector=pc.C2_K)
-    np.testing.assert_allclose(outputs["e_field"][:, 0], op.expansion @ x, rtol=1e-14)
+    np.testing.assert_allclose(
+        outputs["e_field"][:, 0], op.expansion.matrix @ x, rtol=1e-14
+    )
     # scaled to the mode energy: the bulk participations sum to one
     assert outputs["bulk"].sum() == pytest.approx(1.0, rel=1e-12)
 
@@ -123,7 +125,15 @@ def test_bloch_eigen_at_k_zero_is_plain_periodicity(c3_mesh):
 @pytest.mark.parametrize(
     ("options", "error", "message"),
     [
-        ({"linear_solver": "bddc_gmres"}, ValueError, "linear_solver='direct'"),
+        (
+            {"linear_solver": "bddc_gmres"},
+            ValueError,
+            (
+                r"Eigenmode\.wave_vector sets a Bloch phase, so the operator is "
+                r"not symmetric, and linear_solver='bddc_gmres' cannot solve the "
+                r"transposed system .*: use linear_solver='direct'\.$"
+            ),
+        ),
         (
             {"linear_solver": "direct", "device": "cuda"},
             NotImplementedError,

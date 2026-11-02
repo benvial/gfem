@@ -459,7 +459,9 @@ def eigen_cell_design(mesh: gfem.Mesh, seed: int = 0) -> dict:
     }
 
 
-def tie_classes(mesh: gfem.Mesh, periods: tuple[float | None, ...]) -> np.ndarray:
+def coordinate_classes(
+    mesh: gfem.Mesh, periods: tuple[float | None, ...]
+) -> np.ndarray:
     """A class label per node: nodes equal modulo the ``periods`` (m) share one.
 
     Twins of every pair (and the corners of several) move together in a

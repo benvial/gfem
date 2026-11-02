@@ -61,7 +61,9 @@ def test_twins_move_together_and_keep_every_pair(model):
     t = np.random.default_rng(0).uniform(-1, 1, 16) * 1e-4
     u = _displacement(morph, model, t)
     for p in model._periodic:
-        np.testing.assert_allclose(u[p.minion], u[p.master], rtol=0, atol=1e-18)
+        np.testing.assert_allclose(
+            u[p.second_nodes], u[p.first_nodes], rtol=0, atol=1e-18
+        )
     # the moved mesh still pairs (checked at the build)
     model.replace(mesh=morph(t))
 

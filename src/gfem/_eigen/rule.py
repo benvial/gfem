@@ -69,12 +69,7 @@ from gfem._eigen.seed import MIN_SUBSPACE
 from gfem._engine import terms
 from gfem._engine.cache import Entry
 from gfem._engine.domain import em_region
-from gfem._engine.driven import (
-    DrivenOperator,
-    driven_operator,
-    operator_terms,
-    unpaired_space,
-)
+from gfem._engine.driven import DrivenOperator, driven_operator, operator_terms
 from gfem._engine.eigen import (
     DivFreeProjector,
     eigen_operator,
@@ -85,7 +80,7 @@ from gfem._engine.fields import fe_space
 from gfem._engine.runtime import task_manager
 from gfem._engine.sensitivity import FieldPair, Term
 from gfem._linalg import Kind, ResolvedLinearSolver
-from gfem._periodic import check_wave_vector
+from gfem._periodic import check_bloch, check_wave_vector
 from gfem._sign import largest_entry
 from gfem.conventions import MODE_ENERGY
 from gfem.errors import DegenerateModeError, EigenmodeConvergenceError
@@ -173,7 +168,8 @@ class EigenmodeRule:
         Raises:
             NotImplementedError: A feature this version cannot solve.
             ValueError: ``wave_vector`` is set without a periodic pair, or
-                outside the span of the pairs' translations.
+                outside the span of the pairs' translations, or with a
+                linear solver other than ``"direct"``.
             gfem.SolverUnavailableError: ``linear_solver="petsc"`` or
                 ``eigen_solver="slepc"`` names a library that cannot be used.
         """
@@ -181,6 +177,20 @@ class EigenmodeRule:
             raise TypeError(f"Expected gfem.Eigenmode, got {problem!r}.")
         self.problem = problem
         self.options = options
+        # before the Bloch refusals: a wave vector without a pair is the
+        # first thing to fix
+        check_wave_vector(model, problem.wave_vector, "Eigenmode")
+        if problem.wave_vector is not None:
+            check_bloch(
+                "Eigenmode",
+                device=options.device,
+                linear_solver=options.linear_solver,
+                solvers=("direct",),
+                reason=(
+                    "cannot solve the transposed system that two-sided "
+                    "refinement solves on the shift's factors"
+                ),
+            )
         # before any assembly
         self.linear = ResolvedLinearSolver.resolve(
             options, default=DEFAULT_SOLVER, problem="eigenmode"
@@ -188,9 +198,6 @@ class EigenmodeRule:
         if options.eigen_solver == "slepc":
             _petsc.require_slepc("eigen_solver")
         _check_supported(model)
-        check_wave_vector(model, problem.wave_vector, "Eigenmode")
-        if problem.wave_vector is not None:
-            _check_bloch(self.linear)
         lumped = [p for p in model.ports if isinstance(p, LumpedPort)]
         #: Ports with a resistance (coupling Q) and with an inductance
         #: (participation), in model order.
@@ -609,7 +616,7 @@ class EigenmodeRule:
         at ``k_c``. A simple mode is a cluster of one (``G = y^T T' x``). No
         solve. On a periodic model the pair is expanded to the unpaired
         space, ``(conj(P) Y, P X G^-1)``: ``y^T P^H a P x = (conj(P) y)^T a
-        (P x)`` for the unpaired forms ``a``.
+        (P x)`` for the unpaired forms ``a`` (`DrivenOperator.pair`).
 
         Raises:
             DegenerateModeError: The cotangents on a cluster's modes differ
@@ -629,8 +636,6 @@ class EigenmodeRule:
         with task_manager(self.options.threads):
             op = self.driven(model)
             domain = em_region(model, op.built)
-            space = unpaired_space(model, op)
-            expansion = op.expansion
             per_k = const.c / op.built.scale
             for label in np.unique(labels):
                 members = np.flatnonzero(labels == label)
@@ -648,18 +653,11 @@ class EigenmodeRule:
                     raise DegenerateModeError(
                         self._defective_message(k, members, g, per_k)
                     )
-                left = y[:, members]
-                right = x[:, members] @ np.linalg.inv(g)
-                if expansion is not None:
-                    left = expansion.conj() @ left
-                    right = expansion @ right
                 pairs.append(
-                    FieldPair(
-                        space=space,
-                        left=-per_k * c.mean() * left,
-                        right=right,
+                    op.pair(
+                        -per_k * c.mean() * y[:, members],
+                        x[:, members] @ np.linalg.inv(g),
                         weights=op.weights(k[members].mean() * per_k),
-                        order=op.order,
                         domain=domain,
                     )
                 )
@@ -903,27 +901,6 @@ def _is_hermitian(op: EigenOperator) -> bool:
         abs(np.vdot(v, au) - np.conj(np.vdot(u, av))) <= _HERMITIAN * norm * size
         for au, av, norm in ((ku, kv, nk), (mu, mv, nm))
     )
-
-
-def _check_bloch(linear: ResolvedLinearSolver) -> None:
-    """Raise for what a Bloch eigenmode solve cannot use (before any assembly).
-
-    Two-sided refinement solves the transposed system on the shift's
-    factors: only the ``direct`` linear solver on the CPU has them.
-    """
-    if linear.kind != "direct":
-        raise ValueError(
-            "Eigenmode.wave_vector sets a Bloch phase, so the eigenmode operator "
-            "is not symmetric and its refinement solves the transposed system, "
-            f"which linear_solver={linear.kind!r} cannot: use "
-            "linear_solver='direct'."
-        )
-    if linear.device != "cpu":
-        raise NotImplementedError(
-            "Eigenmode.wave_vector sets a Bloch phase, so the eigenmode operator "
-            f"is not symmetric, and the GPU solver (device={linear.device!r}, "
-            "cuDSS) factors symmetric operators only: use device='cpu'."
-        )
 
 
 def _check_supported(model: Model) -> None:

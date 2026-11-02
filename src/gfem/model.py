@@ -338,13 +338,15 @@ class Model:
                 continue
             nodes = np.unique(mesh.triangles[mesh.elements(port.surface)])
             for p in pairs:
-                shared = np.intersect1d(nodes, np.concatenate([p.master, p.minion]))
+                shared = np.intersect1d(
+                    nodes, np.concatenate([p.first_nodes, p.second_nodes])
+                )
                 if shared.size:
                     raise NotImplementedError(
-                        f"WavePort {port.name!r} touches periodic pair "
-                        f"{(p.first, p.second)!r} at {shared.size} nodes: a wave "
-                        "port's mode solve cannot be periodic. Move the port off "
-                        "the pair's surfaces (Floquet ports are not supported)."
+                        f"WavePort {port.name!r} touches {p.label} at {shared.size} "
+                        "nodes: a wave port's mode solve cannot be periodic. Move "
+                        "the port off the pair's surfaces (Floquet ports are not "
+                        "supported)."
                     )
 
     def _check_sheet(self, what: str, surface: str, field: SheetField) -> None:
