@@ -7,6 +7,7 @@ the verification tier.
 """
 
 import math
+import re
 import warnings
 from pathlib import Path
 
@@ -163,8 +164,14 @@ def test_two_requested_modes_of_a_shared_surface_cross_cleanly(slab_mesh):
         m4 = gfem.solve(model, gfem.PortMode("p1_m4", grid))
     texts = [str(w.message) for w in caught]
     assert all(w.category is gfem.PortModeTrackingWarning for w in caught)
-    # each port whose rank changes warns
-    assert any("WavePort 'p1_m4': the tracked mode 4 is mode 5" in t for t in texts)
+    # each port whose rank changes warns, with its rank at the first exact
+    # solve past the crossing: mode 4 crosses mode 6 too by 20 GHz, and where
+    # the sweep enriches varies with rounding between runs (measured: mode 5
+    # at 18.03 GHz, or mode 6 at 20.07 GHz in 1 run of 5)
+    assert any(
+        re.search(r"WavePort 'p1_m4': the tracked mode 4 is mode [56] ", t)
+        for t in texts
+    )
     assert any("WavePort 'p1_m5': the tracked mode 5 is mode 4" in t for t in texts)
     with pytest.warns(gfem.PortModeTrackingWarning):
         m5 = gfem.solve(model, gfem.PortMode("p1_m5", grid))
