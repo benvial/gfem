@@ -549,7 +549,7 @@ def test_element_values_refuse_a_property_held_as_principal_values(tmp_path):
     # an anisotropic Material has no one value either: no mean of its
     # principal values, the same placeholder or error as a field
     crystal = gfem.Material(eps_r=(2.0, 3.0, 5.0), tan_delta=1e-3)
-    with_crystal = model.replace(materials={"a": field, "b": crystal})
+    with_crystal = model.replace(materials={"a": gfem.Material(), "b": crystal})
     with pytest.raises(ValueError, match=r"'b'.*eps_r.*principal values"):
         coefficients.element_values(with_crystal, "eps_r")
     placeholder = coefficients.element_values(with_crystal, "eps_r", per_axis=7.0)
