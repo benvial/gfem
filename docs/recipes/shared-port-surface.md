@@ -8,13 +8,14 @@ S-matrix in which each guided mode at each end has its own row and column:
 that leaves as TM0. In gfem, several {py:obj}`gfem.WavePort`s on one surface,
 one `mode` each, form a {term}`shared port surface`: one boundary that
 absorbs and launches each {term}`requested mode` and one
-{term}`port mode sweep` that solves the cross-section once for all of them.
+{term}`port mode sweep` that solves the cross-section for all of them
+together.
 
 The page assumes a model meshed with gmsh: two leads of the strip ending on
 the exterior surfaces `port1` and `port2`, a `core` and a `cladding` region,
-an outer surface `outer`, and the device between the leads. Each lead is
-uniform near its port face, so the port mode problem of the face describes
-the guided modes of the lead.
+an outer surface `outer`, and the device, a region `design`, between the
+leads. Each lead is uniform near its port face, so the port mode problem of
+the face describes the guided modes of the lead.
 
 ## Set up the ports
 
@@ -31,6 +32,7 @@ model = gfem.Model(
     materials={
         "cladding": gfem.Material(eps_r=1.444**2),
         "core": gfem.Material(eps_r=3.476**2),
+        "design": gfem.Material(eps_r=1.444**2),
     },
     boundaries=[gfem.Absorbing("outer", order=2)],
     ports=[
