@@ -20,6 +20,7 @@ orphan: true
 
 ## Solving
 
+- {doc}`periodic-cell`
 - {doc}`measurements`
 - {doc}`gpu-direct-solver`
 - {doc}`petsc-slepc`
