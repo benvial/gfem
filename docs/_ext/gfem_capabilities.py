@@ -14,7 +14,8 @@ conflicting ones, and a missing ``OUT_OF_SCOPE`` row the grid needs.
 `derive` returns one plain dict (lists, dicts, strings and numbers). The
 two directives on docs/capabilities.md render it, and every page template
 gets it as ``gfem_capabilities`` (the template context, as if set in
-``html_context``) for the front page's compact matrix. Only
+``html_context``) for the front page's compact matrix, which shows the rows
+marked ``front`` only. Only
 `setup` imports Sphinx, so the derivation runs (and is unit-tested) without
 it.
 """
@@ -47,6 +48,7 @@ class Row:
     label: str
     detail: str  # the headline result, as the row header's second line
     recipe: str = ""  # docname of the recipe that backs the row
+    front: bool = True  # also a row of the front page's compact matrix
 
 
 @dataclasses.dataclass(frozen=True)
@@ -71,6 +73,32 @@ ROWS = {
         "Electrostatic", "capacitance", recipe="recipes/capacitance-gradient"
     ),
     "port_mode": Row("Port mode problem", "2D, wave-port modes"),
+    # periodic models: one path per row, so each row lists its own solvers
+    # and sweeps (Capabilities page only)
+    "driven_periodic_plain": Row(
+        "Driven, plain periodic",
+        "S-parameters",
+        recipe="recipes/periodic-cell",
+        front=False,
+    ),
+    "driven_periodic_bloch": Row(
+        "Driven, Bloch",
+        "S-parameters at a Bloch wave vector",
+        recipe="recipes/periodic-cell",
+        front=False,
+    ),
+    "eigenmode_periodic_plain": Row(
+        "Eigenmode, plain periodic",
+        "frequency and Q",
+        recipe="recipes/periodic-cell",
+        front=False,
+    ),
+    "eigenmode_periodic_bloch": Row(
+        "Eigenmode, Bloch",
+        "band frequencies and Q",
+        recipe="recipes/periodic-cell",
+        front=False,
+    ),
 }
 COLUMNS = {
     "eps_r": Row("Permittivity", ""),
@@ -83,12 +111,12 @@ PROBLEMS = {
     "driven_wave": Problem("driven", "s.values", "wave"),
     "driven_sheet": Problem("driven", "s.values", "lumped"),
     "driven_adaptive": Problem("driven", "s.values", "lumped"),
-    "driven_periodic_plain": Problem("driven", "s.values", "lumped"),
-    "driven_periodic_bloch": Problem("driven", "s.values", "lumped"),
+    "driven_periodic_plain": Problem("driven_periodic_plain", "s.values", "lumped"),
+    "driven_periodic_bloch": Problem("driven_periodic_bloch", "s.values", "lumped"),
     "eigenmode": Problem("eigenmode", "omega"),
     "eigenmode_sheet": Problem("eigenmode", "omega"),
-    "eigenmode_periodic_plain": Problem("eigenmode", "omega"),
-    "eigenmode_periodic_bloch": Problem("eigenmode", "omega"),
+    "eigenmode_periodic_plain": Problem("eigenmode_periodic_plain", "omega"),
+    "eigenmode_periodic_bloch": Problem("eigenmode_periodic_bloch", "omega"),
     "electrostatic": Problem("electrostatic", "capacitance"),
     "port_mode": Problem("port_mode", "gamma"),
     "port_mode_sheet": Problem("port_mode", "gamma"),
@@ -228,6 +256,7 @@ def gradient_matrix(cells, expected, out_of_scope) -> dict:
                 "label": row.label,
                 "detail": row.detail,
                 "recipe": row.recipe,
+                "front": row.front,
                 "cells": out,
             }
         )

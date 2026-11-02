@@ -22,14 +22,20 @@ _spec.loader.exec_module(caps)
 V, Z, R = "verified", "zero", "raises"
 
 # The grid as reviewed by hand against the tests:
-# rows driven, eigenmode, electrostatic, port mode; columns permittivity,
+# rows driven, eigenmode, electrostatic, port mode, then the periodic rows
+# (plain and Bloch, driven and eigenmode); columns permittivity,
 # conductivity, sheet fill, node coordinates.
 GRID = {
     "driven": (V, V, V, V),
     "eigenmode": (V, V, V, V),
     "electrostatic": (V, Z, R, V),
     "port_mode": (R, R, R, R),
+    "driven_periodic_plain": (V, V, V, V),
+    "driven_periodic_bloch": (V, V, V, V),
+    "eigenmode_periodic_plain": (V, V, V, V),
+    "eigenmode_periodic_bloch": (V, V, V, V),
 }
+FRONT = ("driven", "eigenmode", "electrostatic", "port_mode")
 
 
 @pytest.fixture(scope="module")
@@ -78,6 +84,34 @@ def test_verified_cells_list_their_solvers_and_sweeps(derived):
     assert cell["source"] == "tests/verification/test_gradient_matrix.py"
 
 
+def test_periodic_rows_carry_their_own_solvers_and_sweeps(derived):
+    # one path per row: Bloch eigenmode solves on the direct solver only,
+    # a Bloch driven solve on the uniform sweep only
+    rows = {r["key"]: r for r in derived["rows"]}
+    assert rows["eigenmode_periodic_bloch"]["label"] == "Eigenmode, Bloch"
+    for cell in rows["eigenmode_periodic_bloch"]["cells"]:
+        assert cell["solvers"] == ["direct solver"]
+    assert _cell(derived, "eigenmode_periodic_plain", "eps_r")["solvers"] == [
+        "direct solver",
+        "BDDC + GMRES",
+    ]
+    assert _cell(derived, "driven_periodic_plain", "nodes")["sweeps"] == [
+        "uniform",
+        "adaptive",
+    ]
+    for cell in rows["driven_periodic_bloch"]["cells"]:
+        assert cell["sweeps"] == ["uniform"]
+    assert {r["recipe"] for k, r in rows.items() if k not in FRONT} == {
+        "recipes/periodic-cell"
+    }
+
+
+def test_only_the_four_problem_types_are_front_page_rows(derived):
+    front = [r["key"] for r in derived["rows"] if r["front"]]
+    assert front == list(FRONT)
+    assert all(not r["front"] for r in derived["rows"] if r["key"] not in FRONT)
+
+
 def test_raising_cells_name_their_error(derived):
     sheet = _cell(derived, "electrostatic", "fill")
     assert sheet["label"] == "raises NotImplementedError"
@@ -101,6 +135,24 @@ def test_raises_list_is_the_out_of_scope_rows_off_the_grid(derived):
     }
 
 
+#: The periodic rows of the raises list as published, with their errors.
+PERIODIC_RAISES = {
+    "driven \N{MULTIPLICATION SIGN} wave_vector": "NonDifferentiableError",
+    "eigenmode \N{MULTIPLICATION SIGN} wave_vector": "NonDifferentiableError",
+    "periodic model \N{MULTIPLICATION SIGN} node move that breaks a pair": (
+        "ValueError"
+    ),
+    "boundary_morph \N{MULTIPLICATION SIGN} paired moving surface": "ValueError",
+    "Bloch driven \N{MULTIPLICATION SIGN} adaptive sweep": "NotImplementedError",
+    "Bloch eigenmode \N{MULTIPLICATION SIGN} bddc_gmres": "ValueError",
+}
+
+
+def test_periodic_raises_rows_publish_their_labels_and_errors(derived):
+    rows = {r["label"]: r["error"] for r in derived["raises"]}
+    assert {k: rows.get(k) for k in PERIODIC_RAISES} == PERIODIC_RAISES
+
+
 # --- drift guards: each broken input fails the derivation ----------------------
 
 
@@ -119,7 +171,7 @@ def _derive(data, cells=None, expected=None, out_of_scope=None):
 
 
 def test_unchanged_data_derives(data):
-    assert len(_derive(data)["rows"]) == 4
+    assert len(_derive(data)["rows"]) == 8
 
 
 def test_a_new_problem_in_the_cells_fails(data):
