@@ -961,16 +961,13 @@ def _voltage_functional(
 
 
 def _voltage_rule(
-    section: PortSection, path: np.ndarray | None = None, name: str | None = None
+    section: PortSection, path: np.ndarray, name: str
 ) -> tuple[np.ndarray, np.ndarray]:
     """Plane points and weights (local direction x length, m) of a path.
 
-    ``path`` defaults to the section's wave port's ``voltage_path``; ``name``
-    (the port the path belongs to, for messages) to that port's name, which
-    on a shared port surface is the smallest-mode port's.
+    ``name`` is the wave port the path belongs to, for messages.
     """
-    path = np.asarray(section.port.voltage_path if path is None else path, float)
-    name = section.port.name if name is None else name
+    path = np.asarray(path, float)
     _local, dist = section.to_local(path)
     if (np.abs(dist) > 1e-5 * section.diameter).any():
         raise ValueError(
@@ -993,7 +990,7 @@ def path_voltage(
     basis: np.ndarray,
     coords: np.ndarray,
     path: np.ndarray,
-    name: str | None = None,
+    name: str,
 ) -> np.ndarray:
     """``V = int E . dl`` along ``path`` (m) of each field ``basis @ coords[i]``.
 
