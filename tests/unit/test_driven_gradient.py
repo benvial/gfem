@@ -226,9 +226,10 @@ def test_a_uniform_cotangent_is_the_sum_of_the_per_element_ones(axes_line):
     objective = _field_objective(axes_line)
     uniform_grad = jax.grad(lambda v: objective(v, axes=field.axes))(uniform)
     element_grad = jax.grad(lambda v: objective(v, axes=field.axes))(per_element)
-    # measured on MN5: 3.3e-16 .. 5.6e-16 relative
+    # round-off of a sum over the elements: 3.3e-16 .. 5.6e-16 relative on MN5,
+    # up to 1.1e-14 on the CI runners (Windows, py3.14)
     for name, g in uniform_grad.items():
-        assert _relative(element_grad[name].sum(axis=0), g) <= 2e-15, name
+        assert _relative(element_grad[name].sum(axis=0), g) <= 1e-13, name
 
 
 def test_principal_values_beside_a_second_order_wall_of_isotropic_material(
