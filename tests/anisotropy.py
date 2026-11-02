@@ -86,6 +86,19 @@ def transverse(rng, n, lo, hi):
     return axes.T @ np.diag(rng.uniform(lo, hi, 3)) @ axes
 
 
+def rodrigues(axis, angle):
+    """The rotation by ``angle`` (rad) about the vector ``axis``."""
+    k = np.asarray(axis, float) / np.linalg.norm(axis)
+    k_cross = cross(k)
+    return np.eye(3) + np.sin(angle) * k_cross + (1 - np.cos(angle)) * k_cross @ k_cross
+
+
+#: Principal axes tilted off every coordinate axis and plane (rows a_k: the
+#: coordinate axes turned by 0.7 rad about (1, 2, 3)), so every off-diagonal
+#: entry of each a_k a_k^T is nonzero.
+TILTED = tuple(tuple(float(x) for x in row) for row in rodrigues((1, 2, 3), 0.7).T)
+
+
 def turned(axis, degrees):
     """`gfem.Material` axes: the coordinate axes turned about coordinate ``axis``."""
     t = np.radians(degrees)

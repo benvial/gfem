@@ -4,6 +4,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from anisotropy import TILTED, rodrigues
 
 import gfem
 
@@ -83,20 +84,13 @@ def test_loss_tangent_takes_three_values_along_the_axes():
     assert "tan_delta" in str(err.value)
 
 
-def _rotation(axis, angle):
-    """The rotation by ``angle`` about ``axis`` (Rodrigues)."""
-    k = np.asarray(axis, float) / np.linalg.norm(axis)
-    cross = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
-    return np.eye(3) + np.sin(angle) * cross + (1 - np.cos(angle)) * cross @ cross
-
-
 def _tensor(values, axes):
     a = np.eye(3) if axes is None else np.asarray(axes)
     return sum(v * np.outer(a_k, a_k) for v, a_k in zip(values, a, strict=True))
 
 
 def test_a_symmetric_matrix_becomes_principal_values_along_axes():
-    r = _rotation((1, 2, 3), 0.4)
+    r = rodrigues((1, 2, 3), 0.4)
     matrix = r @ np.diag([2.0, 3.0, 5.0]) @ r.T
     m = gfem.Material(eps_r=matrix)
     # r is close to the identity: column k of r is the axis closest to e_k
@@ -139,7 +133,7 @@ def test_a_symmetric_matrix_becomes_principal_values_along_axes():
 def test_derived_axes_are_ordered_by_the_closest_coordinate_axis_and_signed(
     angle, values, axes
 ):
-    r = _rotation((0, 0, 1), angle)
+    r = rodrigues((0, 0, 1), angle)
     m = gfem.Material(eps_r=r @ np.diag([2.0, 3.0, 5.0]) @ r.T)
     np.testing.assert_allclose(m.eps_r, values, rtol=1e-12)
     np.testing.assert_allclose(m.axes, (*axes, (0, 0, 1)), atol=1e-12)
@@ -156,7 +150,7 @@ def test_a_diagonal_matrix_equals_its_principal_values_on_the_coordinate_axes():
 
 
 def test_a_degenerate_eigenspace_takes_the_projected_coordinate_axes():
-    r = _rotation((1, 2, 3), 0.4)
+    r = rodrigues((1, 2, 3), 0.4)
     u = r[:, 2]  # the eigenvector of 5, closest to z
     p = np.eye(3) - np.outer(u, u)  # the eigenspace of 2
     a0 = p[:, 0] / np.linalg.norm(p[:, 0])
@@ -164,7 +158,7 @@ def test_a_degenerate_eigenspace_takes_the_projected_coordinate_axes():
     a1 /= np.linalg.norm(a1)
     expected = (a0, a1, u)
     for spin in (0.0, 1.0, 2.0):  # any basis of the eigenspace: one normal form
-        q = r @ _rotation((0, 0, 1), spin)
+        q = r @ rodrigues((0, 0, 1), spin)
         m = gfem.Material(eps_r=q @ np.diag([2.0, 2.0, 5.0]) @ q.T)
         np.testing.assert_allclose(m.eps_r, (2.0, 2.0, 5.0), rtol=1e-12)
         np.testing.assert_allclose(m.axes, expected, atol=1e-12)
@@ -177,7 +171,7 @@ def _message(**kwargs):
 
 
 def test_matrix_input_rules():
-    r = _rotation((1, 2, 3), 0.4)
+    r = rodrigues((1, 2, 3), 0.4)
     tilted = r @ np.diag([2.0, 3.0, 5.0]) @ r.T
     assert _message(eps_r=tilted, axes=np.eye(3)) == (
         "Material: eps_r is a 3x3 matrix, which carries its own principal axes; "
@@ -210,7 +204,7 @@ def test_matrix_input_rules():
 
 
 def test_a_material_s_matrices_share_one_set_of_principal_axes():
-    r = _rotation((1, 2, 3), 0.4)
+    r = rodrigues((1, 2, 3), 0.4)
     assert _message(
         eps_r=r @ np.diag([2.0, 3.0, 5.0]) @ r.T,
         conductivity=np.diag([1.0, 2.0, 3.0]),
@@ -259,7 +253,7 @@ def test_equal_principal_values_are_one_value():
     assert m == gfem.Material(eps_r=2)
     assert hash(m) == hash(gfem.Material(eps_r=2))
     assert repr(m) == "Material(eps_r=2.0)"
-    r = _rotation((1, 2, 3), 0.4)
+    r = rodrigues((1, 2, 3), 0.4)
     near = r @ (2 * np.diag([1 + 1e-10, 1.0, 1 - 1e-10])) @ r.T
     m = gfem.Material(eps_r=near)
     assert m.isotropic
@@ -389,9 +383,6 @@ def test_material_repr_shows_only_what_differs_from_vacuum():
 
 
 # --- MaterialField with axes: principal values on fixed axes -------------------
-
-#: A tilted orthonormal frame (rows are the principal axes).
-TILTED = tuple(tuple(row) for row in _rotation((1, 2, 3), 0.4).T)
 
 
 def _crystal(axes=TILTED, order=(0, 1, 2), signs=(1, 1, 1)):
@@ -526,7 +517,7 @@ def test_interpolate_blends_two_coaxial_crystals_and_refuses_others():
     np.testing.assert_allclose(_field_tensor(f, "eps_r", 0), expected, atol=1e-14)
     sigma = 0.25 * _tensor(b.conductivity, b.axes)
     np.testing.assert_allclose(_field_tensor(f, "conductivity", 0), sigma, atol=1e-14)
-    turned = _crystal(axes=tuple(tuple(r) for r in _rotation((0, 0, 1), 0.3).T))
+    turned = _crystal(axes=tuple(tuple(r) for r in rodrigues((0, 0, 1), 0.3).T))
     with pytest.raises(ValueError, match="different principal axes"):
         gfem.MaterialField.interpolate(jnp.array([0.5]), a, turned)
 

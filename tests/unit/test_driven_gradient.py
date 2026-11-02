@@ -18,8 +18,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import structured_meshes as sm
+from anisotropy import TILTED
 from finite_differences import assert_gradient_matches, unit_directions
-from gradient_cases import TILTED
 from solver_misses import adjoint_cannot_converge_at, cannot_converge_at
 
 import gfem

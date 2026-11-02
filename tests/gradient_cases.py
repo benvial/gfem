@@ -8,7 +8,7 @@ pytest ``tmp_path_factory.mktemp`` directory).
 
 - `layered_line`: a two-layer parallel-plate line, lumped ports, second-order
   absorbing side walls (driven and adaptive material gradients); first-order
-  ones for fields with axes (`with_axes_fields`, on the `TILTED` axes).
+  ones for fields with axes (`with_axes_fields`, on `anisotropy.TILTED`).
 - `stack`, `capacitor`: two-layer capacitors (electrostatic material and
   shape gradients).
 - `shape_line`: the two-layer line with a conductor top plate and a lossy,
@@ -68,7 +68,7 @@ def layered_line(directory: Path, absorbing_order: int = 2) -> gfem.Model:
     """Two layers between PEC plates, lumped ports, absorbing sides.
 
     Of ``absorbing_order``: second-order sides raise next to a field with
-    axes, so the per-axis designs take first-order ones.
+    axes, so the principal-value designs take first-order ones.
     """
     mesh = _mesh(
         directory, "line.msh", sm.strip_line(4.0, 2.0, 1.0, (4, 2, 1), layers=LAYERS)
@@ -115,17 +115,6 @@ def with_fields(line: gfem.Model, values: dict, axes=None) -> gfem.Model:
 # --- principal values on fixed axes --------------------------------------------
 
 
-def _turned(axis, angle: float) -> np.ndarray:
-    """The rotation by ``angle`` (rad) about ``axis`` (Rodrigues)."""
-    k = np.asarray(axis, float) / np.linalg.norm(axis)
-    cross = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
-    return np.eye(3) + np.sin(angle) * cross + (1 - np.cos(angle)) * cross @ cross
-
-
-#: Principal axes tilted off every coordinate axis and plane (rows a_k: the
-#: coordinate axes turned by 0.7 rad about (1, 2, 3)), so every off-diagonal
-#: entry of each a_k a_k^T is nonzero.
-TILTED = tuple(tuple(float(x) for x in row) for row in _turned((1, 2, 3), 0.7).T)
 #: Factors that make one value three distinct principal values (biaxial).
 BIAXIAL = np.array([1.0, 1.15, 0.85])
 

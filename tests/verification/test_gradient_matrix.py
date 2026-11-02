@@ -22,7 +22,7 @@ They stay out of `CELLS`, from which the docs build derives the Capabilities
 page's claims: the verification job that runs on every PR has no PETSc.
 
 Each cell checks the gradient along 3 random unit directions (the third
-along ``i`` for a complex per-axis permittivity) against
+along ``i`` for a complex permittivity of principal values) against
 fourth-order central differences (tests/finite_differences.py, gate 1e-6)
 at tight tolerance (iterative solves to 1e-12, eigenpairs to 1e-12), and
 that the Taylor remainder falls at second order at production tolerance
@@ -48,6 +48,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from anisotropy import TILTED
 from finite_differences import (
     assert_gradient_matches,
     assert_taylor_second_order,
@@ -62,7 +63,6 @@ from gradient_cases import (
     RESONATOR_TARGET,
     SHEETS,
     STACK_PROBLEM,
-    TILTED,
     capacitor,
     cavity_fill,
     cavity_model,
@@ -147,7 +147,7 @@ def _cells() -> list[Cell]:
                 if solver == "direct" or (port == "lossy" and name in bddc)
             ]
             # principal values beside a lossy port: the port terms read no
-            # field, so one cell shows the per-axis path through them
+            # field, so one cell shows the principal-value path through them
             if solver == "direct" and sweep == "uniform":
                 cells.append(Cell("driven_wave", "eps_r_axes", solver, sweep, "lossy"))
         cells += [
@@ -289,7 +289,7 @@ def _options(cell: Cell, *, production: bool) -> gfem.SolverOptions:
 #: Steps on unit directions: fourth-order truncation and round-off both well
 #: below the 1e-6 gate (measured worst errors 1e-8 .. 1e-10).
 STEPS = {"eps_r": 1e-2, "conductivity": 5e-2, "nodes": 2e-6}
-#: A per-axis input's property: ``eps_r_axes`` holds principal values of eps_r.
+#: A principal-value input's suffix: ``eps_r_axes`` holds principal values of eps_r.
 AXES = "_axes"
 
 

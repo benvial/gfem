@@ -361,20 +361,6 @@ BETA_EPS2 = 395.3211489544672  # TE10 of WR-28 at 20 GHz in eps_r = 2, rad/m
 BETA_EPS4 = 712.5195571307862  # in eps_r = 4
 
 
-def _axes(axis, degrees):
-    """The coordinate axes turned by ``degrees`` about coordinate ``axis``."""
-    t = math.radians(degrees)
-    i, j = (k for k in range(3) if k != axis)
-    r = np.eye(3)
-    r[i, i], r[i, j], r[j, i], r[j, j] = (
-        math.cos(t),
-        -math.sin(t),
-        math.sin(t),
-        math.cos(t),
-    )
-    return tuple(tuple(row) for row in r.T)
-
-
 @pytest.fixture(scope="module")
 def wr28_mesh(tmp_path_factory):
     return anisotropy.wr28(tmp_path_factory.mktemp("wr28"))
@@ -404,7 +390,9 @@ def _wr28_gamma(mesh, material, frequency=F_WR28):
 )
 def test_a_tensor_tilted_off_the_port_normal_raises_naming_it(plate_mesh, values, name):
     # turned 20 degrees about x, in the port plane: tangential-normal coupling
-    material = gfem.Material(**{"eps_r": 4.0, **values}, axes=_axes(0, 20.0))
+    material = gfem.Material(
+        **{"eps_r": 4.0, **values}, axes=anisotropy.turned(0, 20.0)
+    )
     with pytest.raises(
         ValueError, match=rf"{name} with no principal axis along the port normal"
     ):
@@ -416,7 +404,7 @@ def test_a_uniaxial_tensor_turned_inside_its_degenerate_plane_is_accepted(
 ):
     # (5, 2, 2) with axes 2 and 3 turned about x: the y-z plane is still
     # degenerate, so z is a principal axis; the TEM mode's E along y sees 2
-    material = gfem.Material(eps_r=(5.0, 2.0, 2.0), axes=_axes(0, 20.0))
+    material = gfem.Material(eps_r=(5.0, 2.0, 2.0), axes=anisotropy.turned(0, 20.0))
     result = gfem.solve(plate(plate_mesh, material), gfem.PortMode("p1", 10e9))
     np.testing.assert_allclose(np.asarray(result.n_eff), math.sqrt(2.0), rtol=1e-8)
 
@@ -429,7 +417,7 @@ def test_te10_of_a_biaxial_guide_sees_the_permittivity_along_its_field(wr28_mesh
 
 def test_a_tensor_turned_about_the_guide_axis_keeps_a_propagating_mode(wr28_mesh):
     # no closed form: the mode is hybrid, between the eps_t = 2 and 4 guides
-    material = gfem.Material(eps_r=(2.0, 4.0, 3.0), axes=_axes(2, 30.0))
+    material = gfem.Material(eps_r=(2.0, 4.0, 3.0), axes=anisotropy.turned(2, 30.0))
     gamma = _wr28_gamma(wr28_mesh, material)
     assert BETA_EPS2 < gamma.imag < BETA_EPS4
     assert abs(gamma.real) <= 1e-14 * abs(gamma)  # measured 1.3e-18 (round-off)
@@ -456,7 +444,7 @@ def test_a_mode_above_the_mean_diagonal_index_is_found(wr28_mesh):
     # first mode has 2.5 < n_eff^2 < 4. A bound from the diagonal dropped it
     # and took the second mode (n_eff^2 = 1.28). A square guide would not
     # show this: its port frame can lie along the diagonals.
-    material = gfem.Material(eps_r=(1.0, 4.0, 1.0), axes=_axes(2, 45.0))
+    material = gfem.Material(eps_r=(1.0, 4.0, 1.0), axes=anisotropy.turned(2, 45.0))
     frequency = 30e9
     gamma = _wr28_gamma(wr28_mesh, material, frequency)
     n2 = (gamma / (2j * np.pi * frequency / C0)) ** 2
@@ -469,7 +457,9 @@ def test_a_field_with_axes_off_the_port_normal_raises_whatever_its_values(
     # structural: the test reads the field's fixed axes, never its values,
     # so equal principal values raise too
     n = len(plate_mesh.elements("fill"))
-    field = gfem.MaterialField(eps_r=jnp.full((n, 3), 4.0), axes=_axes(0, 20.0))
+    field = gfem.MaterialField(
+        eps_r=jnp.full((n, 3), 4.0), axes=anisotropy.turned(0, 20.0)
+    )
     with pytest.raises(
         ValueError, match=r"eps_r with no principal axis along the port normal"
     ):
@@ -485,7 +475,7 @@ def test_a_field_with_axes_off_the_port_normal_names_every_tensor_it_holds(
     field = gfem.MaterialField(
         eps_r=jnp.full((n, 3), 4.0),
         conductivity=jnp.full(3, 0.1),
-        axes=_axes(0, 20.0),
+        axes=anisotropy.turned(0, 20.0),
     )
     with pytest.raises(
         ValueError,
@@ -502,7 +492,7 @@ def test_a_field_with_axes_has_the_mode_of_its_material(wr28_mesh):
         mu_r=(1.0, 2.0, 1.5),
         tan_delta=(1e-3, 2e-3, 0.0),
         conductivity=(0.2, 0.05, 0.1),
-        axes=_axes(2, 30.0),
+        axes=anisotropy.turned(2, 30.0),
     )
     expected = _wr28_gamma(wr28_mesh, material, 16e9)
     uniform = gfem.MaterialField.uniform("fill", material)
