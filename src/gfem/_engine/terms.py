@@ -10,9 +10,9 @@ with k0 = ω scale / c, the wavenumber per file unit, and the pieces
 
 - ``curl_curl``, θ = 1: ∫ mu_r^-1 curl E · curl v;
 - ``mass``, θ = -k0²: ∫ eps_r (1 - i tan_delta) E · v (per principal axis
-  for a per-axis `Material`);
+  for an anisotropic material);
 - ``conductivity``, θ = i k0: ∫ eta0 sigma scale E · v (sigma a 3x3
-  tensor along its principal axes for a per-axis `Material`);
+  tensor along its principal axes for an anisotropic material);
 - ``absorbing``, θ = i k0: ∫ sqrt(eps_r / mu_r) E_t · v_t on every
   absorbing surface (real parts of the adjacent element's values); next to
   an anisotropic material, ∫ (Y E_t) · v_t with the face's normal-incidence
@@ -491,7 +491,7 @@ def pieces(
             },
         ),
     ]
-    # a per-axis Material gives its 3x3 tensor; its own i k0 piece, not
+    # an anisotropic material gives its 3x3 tensor; its own i k0 piece, not
     # folded into the mass (the eigen operator splits the pieces by power of k)
     sigma = element_tensors(model, "conductivity").real
     sigma = np.where(active.reshape((-1,) + (1,) * (sigma.ndim - 1)), sigma, 0.0)

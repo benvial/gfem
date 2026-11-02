@@ -959,8 +959,8 @@ class EigenmodeResult:
             region of the solve domain, by region name: the fraction of the
             mode's electric energy ``E`` stored in it. For an isotropic
             loss, the region's contribution to ``1 / Q`` is ``p * (tan_delta
-            + conductivity / (eps0 eps_r Re omega))``; for a per-axis loss
-            use `principal_participation`.
+            + conductivity / (eps0 eps_r Re omega))``; for a loss given as
+            principal values use `principal_participation`.
         principal_participation: The electric energy participation of each
             anisotropic volume region (an anisotropic `Material`, or a
             `MaterialField` with `axes`) split along its principal axes, by

@@ -83,7 +83,7 @@ def element_values(
         if isinstance(material, Material):
             principal = isinstance(value, tuple)
         else:
-            principal = material.per_axis(name)
+            principal = material.has_principal_values(name)
         if principal:
             if per_axis is None:
                 raise ValueError(
@@ -302,10 +302,10 @@ def anisotropic_elements(model: Model) -> np.ndarray:
 def lossy_eps(model: Model) -> np.ndarray:
     """``eps_r (1 - i tan_delta)`` per tetrahedron, ``(n,)`` or ``(n, 3, 3)``.
 
-    A `Material` with per-axis `eps_r` or `tan_delta`, and a `MaterialField`
-    with `axes`, give the tensor of their principal values ``eps_r[k] (1 -
-    i tan_delta[k])`` along their axes (the ``(n, 3, 3)`` form then holds
-    multiples of the identity elsewhere).
+    A `Material` with principal values of `eps_r` or `tan_delta`, and a
+    `MaterialField` with `axes`, give the tensor of their principal values
+    ``eps_r[k] (1 - i tan_delta[k])`` along their axes (the ``(n, 3, 3)``
+    form then holds multiples of the identity elsewhere).
     """
     scalar = element_values(model, "eps_r", per_axis=0.0) * (
         1.0 - 1j * element_values(model, "tan_delta", per_axis=0.0).real

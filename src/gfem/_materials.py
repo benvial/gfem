@@ -308,7 +308,7 @@ class Material:
             along `axes`, or a real symmetric 3x3 matrix in the global frame.
         mu_r: Relative permeability, in the same forms as `eps_r`.
         tan_delta: Dielectric loss tangent, >= 0, in the same forms as
-            `eps_r` (an anisotropic crystal such as sapphire). Each principal
+            `eps_r` (an anisotropic material such as sapphire). Each principal
             value of the permittivity is then ``eps_r[k] (1 - i tan_delta[k])``.
         conductivity: The electrical conductivity in S/m, in the same forms
             as `eps_r`, each principal value >= 0 (not the thermal
@@ -424,8 +424,8 @@ def _axes(
 # --- MaterialField --------------------------------------------------------------
 
 
-def _field_value(prop: _Property, value: Any, per_axis: bool) -> jax.Array | None:
-    """A checked field value; ``per_axis``: three principal values (along `axes`)."""
+def _field_value(prop: _Property, value: Any, principal: bool) -> jax.Array | None:
+    """A checked field value; ``principal``: three principal values (along `axes`)."""
     if value is None:
         return None
     arr = jnp.asarray(value)
@@ -438,7 +438,7 @@ def _field_value(prop: _Property, value: Any, per_axis: bool) -> jax.Array | Non
         arr = arr.astype(jnp.complex128)
     else:
         arr = arr.astype(jnp.float64)
-    if per_axis:
+    if principal:
         if arr.ndim not in (1, 2) or arr.shape[-1] != 3:
             raise ValueError(
                 f"MaterialField: {prop.name} has shape {arr.shape}, but a field "
@@ -561,13 +561,13 @@ class MaterialField:
     `eps_r` and `mu_r` may be complex (lossy, negative imaginary part under
     e^{+iωt}); `conductivity` is electrical, S/m.
 
-    With `axes`, the field is anisotropic: each of `eps_r`, `mu_r`,
-    `tan_delta` and `conductivity` holds three principal values along the
-    axes, shape ``(n_elements, 3)`` per element or ``(3,)`` for the whole
-    region (an isotropic value is three equal values); the thermal
-    properties keep one value. The axes are fixed: the values vary, the
-    principal directions do not. `jax.grad` gives one cotangent per
-    principal value, in the leaf's shape; the axes have none.
+    With `axes`, the field is an anisotropic material field: each of
+    `eps_r`, `mu_r`, `tan_delta` and `conductivity` holds three principal
+    values along the principal axes, shape ``(n_elements, 3)`` per element
+    or ``(3,)`` for the whole region (an isotropic value is three equal
+    values); the thermal properties keep one value. The axes are fixed: the
+    values vary, the principal axes do not. `jax.grad` gives one cotangent
+    per principal value, in the leaf's shape; the axes have none.
 
     Build one with `MaterialField.interpolate` (a design density blended
     between two materials) or `MaterialField.uniform` (a whole region whose
@@ -576,8 +576,8 @@ class MaterialField:
     Attributes:
         region: The region the field was built for, or ``None``. When set,
             the model checks that the field is assigned to this region.
-        axes: Three orthonormal vectors, the principal directions of the
-            per-axis values, or ``None`` (an isotropic field). Static data,
+        axes: Three orthonormal vectors, the principal axes of the
+            principal values, or ``None`` (an isotropic field). Static data,
             not a pytree leaf: it cannot be differentiated.
 
     Raises:
@@ -607,10 +607,10 @@ class MaterialField:
             object.__setattr__(self, "axes", _axes(self.axes, "MaterialField", remedy))
         sizes = set()
         for prop in PROPERTIES:
-            per_axis = self.per_axis(prop.name)
-            value = _field_value(prop, getattr(self, prop.name), per_axis)
+            principal = self.has_principal_values(prop.name)
+            value = _field_value(prop, getattr(self, prop.name), principal)
             object.__setattr__(self, prop.name, value)
-            if value is not None and value.ndim == 1 + per_axis:
+            if value is not None and value.ndim == 1 + principal:
                 sizes.add(value.shape[0])
         if all(getattr(self, n) is None for n in PROPERTY_NAMES):
             raise ValueError(
@@ -628,11 +628,11 @@ class MaterialField:
         """Number of per-element values, or ``None`` if every value is uniform."""
         for name in PROPERTY_NAMES:
             v = getattr(self, name)
-            if v is not None and v.ndim == 1 + self.per_axis(name):
+            if v is not None and v.ndim == 1 + self.has_principal_values(name):
                 return int(v.shape[0])
         return None
 
-    def per_axis(self, name: str) -> bool:
+    def has_principal_values(self, name: str) -> bool:
         """Whether property ``name`` holds three principal values along `axes`."""
         return self.axes is not None and _BY_NAME[name].may_be_tensor
 
@@ -660,10 +660,11 @@ class MaterialField:
 
         Anisotropic materials blend per principal value, when every tensor
         of both shares one set of principal axes (an isotropic material
-        shares any, so air and a crystal blend). The field then has those
-        `axes` (in `Material`'s normal form: axis k the one closest to
-        coordinate axis k), so axes given in another order or sign give the
-        same field. Two isotropic materials give an isotropic field.
+        shares any, so air and an anisotropic material blend). The field
+        then has those `axes` (in `Material`'s normal form: axis k the one
+        closest to coordinate axis k), so axes given in another order or
+        sign give the same field. Two isotropic materials give an isotropic
+        field (an anisotropic material field otherwise).
 
         Args:
             density: One value per element, in [0, 1] (0 = void, 1 = solid).
@@ -694,8 +695,8 @@ class MaterialField:
         for name in PROPERTY_NAMES:
             a, b = ends[0][name], ends[1][name]
             if a is not None and b is not None:
-                per_axis = axes is not None and _BY_NAME[name].may_be_tensor
-                props[name] = a + (w[..., None] if per_axis else w) * (b - a)
+                principal = axes is not None and _BY_NAME[name].may_be_tensor
+                props[name] = a + (w[..., None] if principal else w) * (b - a)
         return cls(**props, axes=axes)
 
     @classmethod

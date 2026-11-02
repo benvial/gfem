@@ -752,7 +752,9 @@ def sensitivity(
 def _per_axis(model: Model, kind: tuple) -> bool:
     """Whether material ``kind`` is a leaf of principal values (field `axes`)."""
     material = model.materials.get(kind[1])
-    return isinstance(material, MaterialField) and material.per_axis(kind[2])
+    return isinstance(material, MaterialField) and material.has_principal_values(
+        kind[2]
+    )
 
 
 def _material_sensitivity(
