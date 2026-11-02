@@ -87,7 +87,7 @@ def test_raising_cells_name_their_error(derived):
 
 def test_raises_list_is_the_out_of_scope_rows_off_the_grid(derived):
     rows = {r["label"]: r for r in derived["raises"]}
-    assert len(rows) == 7
+    assert len(rows) == 8
     assert "electrostatic \N{MULTIPLICATION SIGN} sheet fill" not in rows
     assert (
         rows["probe \N{MULTIPLICATION SIGN} node coordinates"]["error"]
