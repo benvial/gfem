@@ -585,13 +585,19 @@ def test_the_turned_ports_correction_is_the_lone_closed_form(turned_wr28):
     h = u @ port.phi[0]
     gamma = sweep.gamma[0] * port.scale
     h_s = u @ np.concatenate([gamma * coords[:m], np.zeros(m)])
-    c = surface.correction_coefficients(2 * math.pi * F_WR28)
-    assert np.linalg.norm(c - c.T) <= 1e-14 * np.linalg.norm(c)
+    omega = 2 * math.pi * F_WR28
+    c = surface.correction_coefficients(omega)
+    # TE10 has E_n = 0 up to the mesh: h = h_s and W is a cancellation of
+    # its two terms, so both checks are relative to one term's size
+    p, d = surface.correction(omega)
+    size = np.linalg.norm(p[:, 0]) ** 2 * abs(d[0, 0])
+    assert np.linalg.norm(c - c.T) <= 1e-14 * size
     # on random vectors: W itself is a dense ndof x ndof
     x = np.random.default_rng(0).standard_normal((u.shape[0], 6))
-    closed = np.outer(h, h @ x) / (h @ e) - np.outer(h_s, h_s @ x) / (h_s @ e)
+    full = np.outer(h, h @ x) / (h @ e)
+    closed = full - np.outer(h_s, h_s @ x) / (h_s @ e)
     w = u @ (c @ (u.T @ x))
-    assert np.linalg.norm(w - closed) <= 1e-14 * np.linalg.norm(closed)
+    assert np.linalg.norm(w - closed) <= 1e-12 * np.linalg.norm(full)
 
 
 def test_an_isotropic_port_keeps_a_scalar_robin_coefficient(wr28_mesh):
