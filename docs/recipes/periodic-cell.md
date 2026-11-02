@@ -6,8 +6,8 @@ vector on the problem, the fields repeat unchanged from cell to cell
 ({term}`plain periodicity`). With `wave_vector=k` on the problem, they pick up
 a {term}`Bloch phase` from cell to cell, which gives band diagrams and phased
 unit cells. Eigenmode and driven problems take both (a driven problem with a
-wave vector on the uniform sweep only), and their gradients are checked against finite differences like those of any model
-({doc}`../capabilities`).
+wave vector on the uniform sweep only), and their gradients are checked
+against finite differences like those of any model ({doc}`../capabilities`).
 
 ## Pair two surfaces
 
@@ -59,7 +59,7 @@ along a, k = φ a / |a|².
 - Only the phases exp(−i k·a) enter the solve, so a k outside the first
   Brillouin zone gives the folded result.
 - `wave_vector=(0, 0, 0)` solves with a Bloch phase of 1, and gives the
-  solution with no wave vector to round-off.
+  solution with no wave vector (to a relative 1e-10 in the unit tests).
 
 See {py:obj}`gfem.conventions` (Bloch periodicity).
 
