@@ -1262,11 +1262,12 @@ def _check_port_mode_projection(
             continue
         q = surface.cross_projection()
         q[:, np.arange(n), np.arange(n)] = 0.0
-        k, mode, port = np.unravel_index(int(np.argmax(q)), q.shape)
-        value = float(q[k, mode, port])
+        # q[k, l, j]: port j's S functional on port l's mode at frequency k
+        k, l, j = np.unravel_index(int(np.argmax(q)), q.shape)
+        value = float(q[k, l, j])
         if not value > PORT_MODE_PROJECTION_FLOOR:
             continue
-        a, b = surface.ports[mode].port, surface.ports[port].port
+        a, b = surface.ports[l].port, surface.ports[j].port
         f = surface.lead.omegas[k] / (2 * math.pi)
         msg = (
             f"WavePorts {a.name!r} and {b.name!r} on surface {a.surface!r}: the S "
