@@ -13,12 +13,13 @@ first-kind Nédélec x H1 elements of the same order, it solves
 ``eps_nn`` include ``-i sigma_tt / (omega eps0)`` and ``-i sigma_nn /
 (omega eps0)`` (the conductivity tensor split like the permittivity), and
 an absorbing edge adds ``i k0 Y_tau (E_T, V_T)`` to the first diagonal
-block and ``i k0 Y_n (E_T, V_T)`` to the second (`edge_admittance`). A
-`Conductor` or `Impedance` edge adds its admittance to both, as the driven
-problem's face term (`gfem._engine.terms`): ``i k0 eta0 / Z_s(omega)`` for a
-conductor, ``i k0 eta0 / R``, ``mu0 scale / L`` and ``-k0^2 C / (eps0
-scale)`` for an impedance. Both matrices are affine: each is a sum of fixed
-matrices times 1, -k0^2, i k0 or a conductor's own scalar, assembled once.
+block and ``i k0 Y_n (E_T, V_T)`` to the second
+(`gfem._engine.anisotropy.edge_admittance`). A `Conductor` or `Impedance`
+edge adds its admittance to both, as the driven problem's face term
+(`gfem._engine.terms`): ``i k0 eta0 / Z_s(omega)`` for a conductor, ``i k0
+eta0 / R``, ``mu0 scale / L`` and ``-k0^2 C / (eps0 scale)`` for an
+impedance. Both matrices are affine: each is a sum of fixed matrices times
+1, -k0^2, i k0 or a conductor's own scalar, assembled once.
 Coordinates are in the mesh file's unit, so ``k0`` is per local unit.
 """
 

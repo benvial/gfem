@@ -3,12 +3,12 @@
 import math
 from pathlib import Path
 
-import anisotropy
 import numpy as np
 import pytest
 
 import gfem
-from gfem._port_section import edge_admittance, port_section
+from gfem._engine.anisotropy import CROSS_N, admittance, edge_admittance
+from gfem._port_section import port_section
 
 DATA = Path(__file__).parent / "data"
 
@@ -127,12 +127,14 @@ def _transverse(rng, lo, hi):
 
 def _in_section(eps, mu):
     """``eps_tt, eps_nn, nu_tt, nu_nn`` of 3x3 tensors, frame (u, v, n) = (x, y, z)."""
-    rot = np.array([[0.0, 1.0], [-1.0, 0.0]])  # R a = a x n
-    nu_tt = rot.T @ np.linalg.inv(mu[:2, :2]) @ rot
+    nu_tt = CROSS_N.T @ np.linalg.inv(mu[:2, :2]) @ CROSS_N
     return eps[:2, :2], eps[2, 2], nu_tt, 1 / mu[2, 2]
 
 
 def test_edge_admittance_is_the_3d_face_admittance_on_the_edge():
+    # the closed form against the module's own 3D admittance, restricted to
+    # the face's frame (edge tangent, port normal); the 3D one is checked
+    # against the plane-wave reference in test_driven_boundaries.py
     rng = np.random.default_rng(0)
     z = np.array([0.0, 0.0, 1.0])
     for _ in range(20):
@@ -140,13 +142,13 @@ def test_edge_admittance_is_the_3d_face_admittance_on_the_edge():
         phi = rng.uniform(0, 2 * np.pi)
         m = np.array([np.cos(phi), np.sin(phi), 0.0])  # in-plane edge normal
         tau = np.cross(z, m)
-        y3 = anisotropy.admittance(eps, mu, m)
+        y3 = admittance(eps[None], mu[None], m[None], where="x")[0]
         et, en, nt, nn = _in_section(eps, mu)
         got = edge_admittance(
             et[None], np.array([en]), nt[None], np.array([nn]), m[None, :2], where="x"
         )[0]
         want = np.array([tau @ y3 @ tau, z @ y3 @ z])
-        # measured 7.8e-16 and 1.6e-16 (round-off)
+        # measured 5.2e-16 and 0 (round-off)
         np.testing.assert_allclose(got, want, rtol=3e-15)
         assert abs(tau @ y3 @ z) <= 5e-16 * np.abs(want).max()
 

@@ -21,6 +21,7 @@ from gfem._boundaries import (
     sheet_of,
     surfaces_of,
 )
+from gfem._engine.anisotropy import CROSS_N, edge_admittance
 from gfem._materials import (
     Material,
     MaterialField,
@@ -34,8 +35,6 @@ from gfem.model import Model
 
 # Relative distance from the port plane (in port diameters) still on the plane.
 PLANE_RTOL = 1e-6
-# a x z = R a for a transverse vector a = (a_u, a_v).
-_ROT = np.array([[0.0, 1.0], [-1.0, 0.0]])
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -65,8 +64,9 @@ class PortSection:
         absorbing_edges: ``(n, 2)`` node pairs on absorbing boundaries.
         absorbing_admittance: Relative wave admittances ``(Y_tau, Y_n)`` of
             the medium beside each absorbing edge for the field along the
-            edge and along ``n``, ``(n, 2)`` (`edge_admittance`; both
-            ``sqrt(eps / mu)`` in an isotropic medium).
+            edge and along ``n``, ``(n, 2)``
+            (`gfem._engine.anisotropy.edge_admittance`; both ``sqrt(eps /
+            mu)`` in an isotropic medium).
         faces: The mesh triangle (gfem index) of each of ``triangles``, or
             ``None`` (sections saved before it was recorded).
         impedance_edges: ``(n, 2)`` node pairs on `Conductor` or `Impedance`
@@ -280,7 +280,7 @@ def _materials(model: Model, port: WavePort, tets: np.ndarray, frame: np.ndarray
             mt, mn = _in_frame(mu, frame, port, region, "mu_r")
             st, sn = _in_frame(sigma, frame, port, region, "conductivity")
             eps_tt[rows], eps_nn[rows] = et, en
-            nu_tt[rows], nu_nn[rows] = _ROT.T @ np.linalg.inv(mt) @ _ROT, 1 / mn
+            nu_tt[rows], nu_nn[rows] = CROSS_N.T @ np.linalg.inv(mt) @ CROSS_N, 1 / mn
             sigma_tt[rows], sigma_nn[rows] = st, sn
             isotropic[rows] = material.isotropic
         elif material.axes is not None:
@@ -288,7 +288,7 @@ def _materials(model: Model, port: WavePort, tets: np.ndarray, frame: np.ndarray
             tensors = _field_tensors(material, frame, port, region, pos)
             (et, en), (mt, mn), (st, sn) = tensors
             eps_tt[rows], eps_nn[rows] = et, en
-            nu_tt[rows], nu_nn[rows] = _ROT.T @ np.linalg.inv(mt) @ _ROT, 1 / mn
+            nu_tt[rows], nu_nn[rows] = CROSS_N.T @ np.linalg.inv(mt) @ CROSS_N, 1 / mn
             sigma_tt[rows], sigma_nn[rows] = st.real, sn.real
             isotropic[rows] = False
         else:
@@ -517,57 +517,6 @@ def _absorbing_admittance(port, points, edges, owners, *, surfaces, tensors, iso
             where=f"WavePort {port.name!r}: the absorbing surface {name!r}",
         )
     return out
-
-
-def edge_admittance(
-    eps_tt: np.ndarray,
-    eps_nn: np.ndarray,
-    nu_tt: np.ndarray,
-    nu_nn: np.ndarray,
-    normals: np.ndarray,
-    *,
-    where: str,
-) -> np.ndarray:
-    """The admittances ``(Y_tau, Y_n)`` of absorbing edges, ``(m, 2)``.
-
-    An absorbing edge of the cross-section is the trace of a 3D absorbing
-    face, whose admittance is ``Y = A # eps_eff`` (ADR 0051) from the real
-    parts of the material's tensors. With ``n`` principal, as the port mode
-    problem requires, ``Y`` is diagonal in the face's tangents, the edge
-    tangent ``tau`` and ``n``. In the frame ``(m, tau, n)``, ``m`` the
-    in-plane edge normal and ``p = (m, tau)`` the in-plane block:
-
-    - ``Y_tau = sqrt(det eps_p / (eps_mm mu_nn))`` for the field along ``tau``;
-    - ``Y_n = sqrt(eps_nn mu_mm / det mu_p)`` for the field along ``n``.
-
-    Both are ``sqrt(eps / mu)`` in an isotropic medium.
-
-    Args:
-        eps_tt, eps_nn, nu_tt, nu_nn: The medium beside each edge, as in
-            `PortSection`.
-        normals: In-plane unit edge normals ``(m, 2)`` (either sign).
-        where: The surface, for the error message.
-
-    Raises:
-        ValueError: A factor is not positive, so the medium has no real
-            admittance there.
-    """
-    m = np.asarray(normals, float)
-    eps = np.asarray(eps_tt).real
-    mu = (_ROT @ np.linalg.inv(nu_tt) @ _ROT.T).real  # mu_tt = R nu_tt^-1 R^T
-    eps_n = np.asarray(eps_nn).real
-    mu_n = (1 / np.asarray(nu_nn)).real
-    eps_mm = np.einsum("ki,kij,kj->k", m, eps, m)
-    mu_mm = np.einsum("ki,kij,kj->k", m, mu, m)
-    det_eps, det_mu = np.linalg.det(eps), np.linalg.det(mu)
-    if not all((f > 0).all() for f in (det_eps, eps_mm, mu_n, eps_n, mu_mm, det_mu)):
-        raise ValueError(
-            f"{where}: the material beside the port edge has no wave admittance "
-            "there: the real parts of its eps_r and mu_r are not positive definite."
-        )
-    return np.sqrt(
-        np.stack([det_eps / (eps_mm * mu_n), eps_n * mu_mm / det_mu], axis=1)
-    )
 
 
 def _sheet_fill_by_edge(model: Model) -> dict[str, dict[tuple[int, int], float]]:

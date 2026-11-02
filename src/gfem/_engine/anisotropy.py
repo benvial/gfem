@@ -24,6 +24,12 @@ coaxial real tensors while ``A`` and ``eps_eff`` stay positive definite,
 so `admittance_derivatives` takes ``dY/de_k`` and ``dY/dm_k`` by complex
 step on the closed form: exact to rounding, with no derivative of a matrix
 function written by hand.
+
+A wave port's cross-section holds transverse-anisotropic materials only
+(ADR 0052): a principal axis along the port normal ``n``. There ``Y`` of an
+absorbing face that meets the port along an edge is diagonal in the edge
+tangent and ``n``, and `edge_admittance` gives those two values from the
+section's 2x2 blocks in closed form.
 """
 
 from __future__ import annotations
@@ -31,11 +37,18 @@ from __future__ import annotations
 import numpy as np
 
 __all__ = [
+    "CROSS_N",
     "admittance",
     "admittance_derivatives",
+    "edge_admittance",
     "tangent_frames",
     "tangential_inverse_permeability",
 ]
+
+
+#: ``a x n = CROSS_N a`` for a vector ``a = (a_u, a_v)`` in the plane of a
+#: right-handed frame ``(u, v, n)``.
+CROSS_N = np.array([[0.0, 1.0], [-1.0, 0.0]])
 
 
 def _cross(n: np.ndarray) -> np.ndarray:
@@ -182,3 +195,56 @@ def admittance_derivatives(
             steps.append(y.imag / _STEP)
         out.append(np.stack(steps, axis=1))
     return out[0], out[1]
+
+
+def edge_admittance(
+    eps_tt: np.ndarray,
+    eps_nn: np.ndarray,
+    nu_tt: np.ndarray,
+    nu_nn: np.ndarray,
+    normals: np.ndarray,
+    *,
+    where: str,
+) -> np.ndarray:
+    """The admittances ``(Y_tau, Y_n)`` of absorbing edges, ``(m, 2)``.
+
+    An absorbing edge of the cross-section is the trace of a 3D absorbing
+    face, whose admittance is ``Y = A # eps_eff`` (ADR 0051) from the real
+    parts of the material's tensors. With ``n`` principal, as the port mode
+    problem requires, ``Y`` is diagonal in the face's tangents, the edge
+    tangent ``tau`` and ``n``. In the frame ``(m, tau, n)``, ``m`` the
+    in-plane edge normal and ``p = (m, tau)`` the in-plane block:
+
+    - ``Y_tau = sqrt(det eps_p / (eps_mm mu_nn))`` for the field along ``tau``;
+    - ``Y_n = sqrt(eps_nn mu_mm / det mu_p)`` for the field along ``n``.
+
+    Both are ``sqrt(eps / mu)`` in an isotropic medium.
+
+    Args:
+        eps_tt, eps_nn, nu_tt, nu_nn: The medium beside each edge, as in
+            `gfem._port_section.PortSection`: ``(m, 2, 2)`` and ``(m,)``
+            blocks in a frame ``(u, v, n)``, ``nu_tt = R^T mu_tt^-1 R``
+            with ``R = CROSS_N``.
+        normals: In-plane unit edge normals ``(m, 2)`` (either sign).
+        where: The surface, for the error message.
+
+    Raises:
+        ValueError: A factor is not positive, so the medium has no real
+            admittance there.
+    """
+    m = np.asarray(normals, float)
+    eps = np.asarray(eps_tt).real
+    mu = (CROSS_N @ np.linalg.inv(nu_tt) @ CROSS_N.T).real  # mu_tt = R nu_tt^-1 R^T
+    eps_n = np.asarray(eps_nn).real
+    mu_n = (1 / np.asarray(nu_nn)).real
+    eps_mm = np.einsum("ki,kij,kj->k", m, eps, m)
+    mu_mm = np.einsum("ki,kij,kj->k", m, mu, m)
+    det_eps, det_mu = np.linalg.det(eps), np.linalg.det(mu)
+    if not all((f > 0).all() for f in (det_eps, eps_mm, mu_n, eps_n, mu_mm, det_mu)):
+        raise ValueError(
+            f"{where}: the material beside the port edge has no wave admittance "
+            "there: the real parts of its eps_r and mu_r are not positive definite."
+        )
+    return np.sqrt(
+        np.stack([det_eps / (eps_mm * mu_n), eps_n * mu_mm / det_mu], axis=1)
+    )
