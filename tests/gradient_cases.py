@@ -28,6 +28,7 @@ pytest ``tmp_path_factory.mktemp`` directory).
 import math
 from pathlib import Path
 
+import anisotropy
 import jax.numpy as jnp
 import numpy as np
 import scipy.constants as const
@@ -56,7 +57,11 @@ def s_functional(s):
     )
 
 
-def _mesh(directory: Path, name: str, mesh: tuple, unit: str = "mm") -> gfem.Mesh:
+def _mesh(
+    directory: Path, name: str, mesh: tuple, unit: str = "mm", rotation=None
+) -> gfem.Mesh:
+    if rotation is not None:
+        mesh = anisotropy.rotate_mesh(mesh, rotation)
     path = sm.write_msh22(Path(directory) / name, mesh)
     return gfem.Mesh.from_gmsh(path, length_unit=unit)
 
@@ -64,15 +69,23 @@ def _mesh(directory: Path, name: str, mesh: tuple, unit: str = "mm") -> gfem.Mes
 # --- driven: the two-layer line ----------------------------------------------------
 
 
-def layered_line(directory: Path, absorbing_order: int = 2) -> gfem.Model:
+def layered_line(
+    directory: Path, absorbing_order: int = 2, rotation=None
+) -> gfem.Model:
     """Two layers between PEC plates, lumped ports, absorbing sides.
 
     Of ``absorbing_order``: second-order sides raise next to a field with
-    axes, so the principal-value designs take first-order ones.
+    axes, so the principal-value designs take first-order ones. With ``rotation``,
+    a 3x3 rotation matrix, the line and its port directions are turned by
+    it about the origin.
     """
     mesh = _mesh(
-        directory, "line.msh", sm.strip_line(4.0, 2.0, 1.0, (4, 2, 1), layers=LAYERS)
+        directory,
+        "line.msh",
+        sm.strip_line(4.0, 2.0, 1.0, (4, 2, 1), layers=LAYERS),
+        rotation=rotation,
     )
+    up = "+z" if rotation is None else tuple(float(x) for x in rotation[:, 2])
     return gfem.Model(
         mesh,
         materials={"sub": gfem.Material(), "cover": gfem.Material()},
@@ -82,8 +95,8 @@ def layered_line(directory: Path, absorbing_order: int = 2) -> gfem.Model:
             gfem.Absorbing("side", order=absorbing_order),
         ],
         ports=[
-            gfem.LumpedPort("p1", "port1", "+z"),
-            gfem.LumpedPort("p2", "port2", "+z"),
+            gfem.LumpedPort("p1", "port1", up),
+            gfem.LumpedPort("p2", "port2", up),
         ],
     )
 
@@ -159,10 +172,19 @@ def stack_fields(model: gfem.Model, eps, axes=None) -> gfem.Model:
     )
 
 
-def capacitor(directory: Path) -> gfem.Model:
-    """A 2 x 2 mm capacitor of two dielectric layers, one anisotropic."""
+def capacitor(directory: Path, rotation=None) -> gfem.Model:
+    """A 2 x 2 mm capacitor of two dielectric layers, one anisotropic.
+
+    With ``rotation``, a 3x3 rotation matrix, the mesh is turned by it
+    about the origin (the materials are not).
+    """
     layers = (("oxide", 0.5), ("nitride", 0.5))
-    mesh = _mesh(directory, "plate.msh", sm.plate(2.0, 2.0, layers, (3, 3, 2)))
+    mesh = _mesh(
+        directory,
+        "plate.msh",
+        sm.plate(2.0, 2.0, layers, (3, 3, 2)),
+        rotation=rotation,
+    )
     return gfem.Model(
         mesh,
         materials={

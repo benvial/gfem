@@ -108,17 +108,52 @@ def turned(axis, degrees):
     return tuple(tuple(float(x) for x in row) for row in r.T)
 
 
+# --- rotated models --------------------------------------------------------------
+
+
+def rotate_mesh(mesh, q):
+    """A `structured_meshes.structured` mesh with its nodes turned by ``q``.
+
+    A rotation keeps every tetrahedron's orientation and every name.
+    """
+    nodes, *rest = mesh
+    return (nodes @ np.asarray(q).T, *rest)
+
+
+def rotated(material, q):
+    """``material`` turned by ``q``: every tensor as the global matrix ``q C q^T``.
+
+    The matrix input of `gfem.Material`, which derives the principal axes
+    again.
+    """
+    import gfem
+
+    a = np.eye(3) if material.axes is None else np.asarray(material.axes)
+
+    def matrix(values):
+        c = a.T @ np.diag(np.broadcast_to(np.asarray(values, float), (3,))) @ a
+        return q @ c @ q.T
+
+    return gfem.Material(
+        eps_r=matrix(material.eps_r),
+        mu_r=matrix(material.mu_r),
+        tan_delta=matrix(material.tan_delta),
+        conductivity=matrix(material.conductivity),
+    )
+
+
 # --- the WR-28 guide ------------------------------------------------------------
 
 #: WR-28 inner width and height, mm (Palace issue #835's guide).
 WR28 = (7.112, 3.556)
 
 
-def wr28(directory, length=1.0, cells=(12, 6, 1)):
+def wr28(directory, length=1.0, cells=(12, 6, 1), rotation=None):
     """A WR-28 guide along z, 0 < z < ``length`` mm, as a `gfem.Mesh`.
 
     Volume "fill"; surfaces "port1" (z = 0), "port2" (z = length) and
-    "walls". ``cells`` along x, y and z.
+    "walls". ``cells`` along x, y and z. With ``rotation``, a 3x3 rotation
+    matrix, the guide is turned by it about the origin.
     """
     from pathlib import Path
 
@@ -139,7 +174,8 @@ def wr28(directory, length=1.0, cells=(12, 6, 1)):
             return "port2"
         return "walls"
 
-    path = sm.write_msh22(
-        Path(directory) / "wr28.msh", sm.structured(edges, lambda _: "fill", surface)
-    )
+    mesh = sm.structured(edges, lambda _: "fill", surface)
+    if rotation is not None:
+        mesh = rotate_mesh(mesh, rotation)
+    path = sm.write_msh22(Path(directory) / "wr28.msh", mesh)
     return gfem.Mesh.from_gmsh(path, length_unit="mm")
