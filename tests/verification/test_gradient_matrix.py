@@ -641,7 +641,9 @@ def _periodic_material(d: Designs, cell: Cell, options, seed: int) -> Case:
         model = pc.g(mesh, **{**values, name: p})
         return _periodic_value(cell, gfem.solve(model, problem, options=options), rows)
 
-    taylor = {"eps_r": 1e-1, "conductivity": 1.0}[name]
+    # G's S bends little in eps_r: below 1e-1 the remainder reaches the
+    # BDDC + GMRES error (1e-9 at 3e-2)
+    taylor = {"eps_r": 3e-1, "conductivity": 1.0}[name]
     return Case(objective, values[name], rng, step=STEPS[name], taylor=taylor)
 
 
