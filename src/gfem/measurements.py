@@ -151,7 +151,7 @@ def interface_participation(
 
     Differentiable with respect to ``thickness``, ``eps_r``, ``tan_delta``,
     the mode fields and the substrate's `MaterialField` permittivity (the
-    ``"MS"`` flux), per principal axis for a field with `axes`. Mode fields
+    ``"MS"`` flux), per principal axis for a field with ``axes``. Mode fields
     are not differentiable in this version, so a gradient that reaches the
     eigenmode solve raises `gfem.NonDifferentiableError` there; mesh-node
     gradients raise.

@@ -168,7 +168,8 @@ class Model:
         boundaries: Boundary conditions (`PEC`, `PMC`, `Absorbing`,
             `Conductor`, `Impedance`) and periodic pairs (`Periodic`, one to
             three). At most one electromagnetic condition or port per surface,
-            except several `WavePort`s, one mode each (a shared port surface).
+            except several wave ports (`WavePort`), one mode each (a shared port
+            surface).
         ports: `LumpedPort` and `WavePort` values; their order is the order
             of the network parameters.
         excluded: Volumes removed from the solve domain of electromagnetic

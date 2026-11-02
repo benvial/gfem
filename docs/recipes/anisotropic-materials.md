@@ -54,9 +54,11 @@ library will do for building the matrix:
 r = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
 tensor = gfem.Material(eps_r=r @ np.diag([no2, ne2, no2]) @ r.T)
 tensor.eps_r  # ≈ (no2, ne2, no2)
-tensor.axes   # ≈ ((c, s, 0), (-s, c, 0), (0, 0, 1)), as `turned`
+tensor.axes  # ≈ ((c, s, 0), (-s, c, 0), (0, 0, 1)), as `turned`
 # a diagonal matrix keeps axes=None: the same material as the three values
-gfem.Material(eps_r=np.diag([no2, ne2, no2])) == gfem.Material(eps_r=(no2, ne2, no2))  # True
+gfem.Material(eps_r=np.diag([no2, ne2, no2])) == gfem.Material(
+    eps_r=(no2, ne2, no2)
+)  # True
 ```
 
 `mu_r`, `tan_delta` and `conductivity` take the same three forms, on the same
@@ -163,7 +165,7 @@ import jax.numpy as jnp
 def loss(rho):
     field = gfem.MaterialField.interpolate(rho, void=clad, solid=ln)  # axes from ln
     m = model.with_material("design", field)
-    return -jnp.abs(gfem.solve(m, problem).s["out", "in"]) ** 2
+    return -(jnp.abs(gfem.solve(m, problem).s["out", "in"]) ** 2)
 
 
 n = len(mesh.elements("design"))

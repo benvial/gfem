@@ -968,9 +968,9 @@ class EigenmodeResult:
             principal values use `principal_participation`.
         principal_participation: The electric energy participation of each
             anisotropic volume region (an anisotropic `Material`, or a
-            `MaterialField` with `axes`) split along its principal axes, by
+            `MaterialField` with ``axes``) split along its principal axes, by
             region name: ``(n_modes, 3)``, in the order of the material's
-            `axes` (the coordinate axes when ``None``), ``p_k = 1/2 eps0
+            ``axes`` (the coordinate axes when ``None``), ``p_k = 1/2 eps0
             ∫ eps_r[k] |a_k . E|^2 dV / E``; the three add up to the region's
             `bulk_participation`. The region's contribution to ``1 / Q`` is
             ``sum_k p_k (tan_delta[k] + conductivity[k] / (eps0 eps_r[k] Re
@@ -1056,7 +1056,7 @@ class EigenmodeResult:
         axis for both (NaN where a port has no value), and
         `bulk_participation` over ``("mode", "region")``, and
         `principal_participation` over ``("mode", "anisotropic_region",
-        "axis")`` (axis 0, 1, 2 in each material's `axes` order). The fields
+        "axis")`` (axis 0, 1, 2 in each material's ``axes`` order). The fields
         and materials are not exported. Needs the ``xarray`` extra: ``pip
         install "gfem[xarray]"``.
 

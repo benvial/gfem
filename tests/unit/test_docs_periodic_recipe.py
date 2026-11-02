@@ -23,7 +23,7 @@ REFERENCE = ROOT / "tests" / "reference" / "test_periodic.py"
 
 
 def _reference_constants() -> dict:
-    tree = ast.parse(REFERENCE.read_text())
+    tree = ast.parse(REFERENCE.read_text(encoding="utf-8"))
     return {
         node.targets[0].id: ast.literal_eval(node.value)
         for node in tree.body
@@ -58,7 +58,7 @@ def _claims() -> list[tuple[str, str, float]]:
 
 @pytest.fixture(scope="module")
 def page():
-    return PAGE.read_text()
+    return PAGE.read_text(encoding="utf-8")
 
 
 def _bullet(page: str, case: str) -> str:

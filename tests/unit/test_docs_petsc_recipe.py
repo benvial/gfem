@@ -27,7 +27,7 @@ def _python(options: dict) -> str:
 
 @pytest.fixture(scope="module")
 def page():
-    return PAGE.read_text()
+    return PAGE.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(
