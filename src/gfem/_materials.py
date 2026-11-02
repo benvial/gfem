@@ -223,6 +223,13 @@ def _ordered_axes(spaces: list[np.ndarray]) -> np.ndarray:
     return best * np.sign(best[np.arange(3), dominant])[:, None]
 
 
+def _off_diagonal(matrix: np.ndarray, axes: np.ndarray) -> bool:
+    """Whether ``matrix`` is not diagonal along the rows of ``axes`` (`_TENSOR_TOL`)."""
+    d = axes @ matrix @ axes.T
+    scale = _TENSOR_TOL * np.linalg.norm(matrix)
+    return bool(np.abs(d - np.diag(np.diag(d))).max() > scale)
+
+
 def _principal(
     values: dict[str, Any], axes: Any, owner: str
 ) -> tuple[dict[str, Any], Any]:
@@ -245,16 +252,12 @@ def _principal(
             f"give {name} as one value or a 3x3 matrix."
         )
 
-    def off_diagonal(m: np.ndarray, a: np.ndarray) -> bool:
-        d = a @ m @ a.T
-        return np.abs(d - np.diag(np.diag(d))).max() > _TENSOR_TOL * np.linalg.norm(m)
-
-    if not any(off_diagonal(m, np.eye(3)) for m in matrices.values()):
+    if not any(_off_diagonal(m, np.eye(3)) for m in matrices.values()):
         a = None
     else:
         a = _ordered_axes(_eigenspaces(list(matrices.values())))
         for name, m in matrices.items():
-            if off_diagonal(m, a):
+            if _off_diagonal(m, a):
                 other = next(
                     (
                         o
@@ -273,7 +276,7 @@ def _principal(
     out = dict(values)
     tensor = False
     for name, m in matrices.items():
-        prop = next(p for p in PROPERTIES if p.name == name)
+        prop = _BY_NAME[name]
         v = np.diag(m) if a is None else np.einsum("ki,ij,kj->k", a, m, a)
         _check_passive(prop, v, owner, a)
         if np.ptp(v) <= _TENSOR_TOL * np.linalg.norm(m):
@@ -527,9 +530,7 @@ def _common_axes(
                 values[name] = np.full(3, value)
                 continue
             matrix = principal_tensor(value, m.axes)
-            d = a @ matrix @ a.T
-            scale = np.linalg.norm(matrix)
-            if np.abs(d - np.diag(np.diag(d))).max() > _TENSOR_TOL * scale:
+            if _off_diagonal(matrix, a):
                 names = [repr(x.name) if x.name else "(unnamed)" for x in ends_of]
                 raise ValueError(
                     f"MaterialField.interpolate: void {names[0]} and solid "
@@ -539,7 +540,8 @@ def _common_axes(
                 )
             # each principal value exactly as the material gives it
             own_values = np.asarray(value)
-            nearest = np.abs(np.diag(d)[:, None] - own_values[None, :]).argmin(axis=1)
+            along = np.diag(a @ matrix @ a.T)
+            nearest = np.abs(along[:, None] - own_values[None, :]).argmin(axis=1)
             values[name] = own_values[nearest]
         ends.append(values)
     return _axes(a, "MaterialField.interpolate"), (ends[0], ends[1])

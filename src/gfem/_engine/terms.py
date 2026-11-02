@@ -58,9 +58,10 @@ from __future__ import annotations
 
 import cmath
 import dataclasses
+import functools
 import math
 from collections.abc import Callable, Mapping
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 import ngsolve as ngs
 import numpy as np
@@ -87,6 +88,7 @@ from gfem._morph import unit_normals
 from gfem._sheet import check_fill
 from gfem.conventions import EXTERIOR_THICKNESS_FACTOR
 from gfem.errors import PortGeometryError
+from gfem.mesh import Mesh
 from gfem.model import Model
 
 __all__ = [
@@ -601,7 +603,7 @@ def absorbing_coefficients(
         return first, curl
     eps = _tensors(np.real(lossy_eps(model)))
     mu = _tensors(np.real(element_tensors(model, "mu_r")))
-    normals = unit_normals(np.asarray(mesh.nodes, float), mesh.triangles)
+    normals = _face_normals(mesh)
     y = first[:, None, None] * np.eye(3)
     for surface in surfaces:
         on = tensor & (mesh.triangle_tags == mesh.region(surface).tag)
@@ -613,6 +615,11 @@ def absorbing_coefficients(
                 where=f"Absorbing {surface!r}",
             )
     return y, curl
+
+
+def _face_normals(mesh: Mesh) -> np.ndarray:
+    """Unit normals of every gfem triangle, ``(n, 3)``: the faces' frames."""
+    return unit_normals(np.asarray(mesh.nodes, float), mesh.triangles)
 
 
 def _tensors(values: np.ndarray) -> np.ndarray:
@@ -746,49 +753,59 @@ def _absorbing_axis_derivatives(
     = Re(eps_r[k] (1 - i tan_delta[k]))`` and ``m_k = Re(mu_r[k])``: its
     ``dY/de_k`` and ``dY/dm_k`` (`anisotropy.admittance_derivatives`),
     chained as the isotropic forms are. Zero on the other faces. Computed
-    once, on first read.
+    once, on first read (`_AxisSteps`).
     """
-    steps: dict[str, np.ndarray] = {}
 
-    def step(name: str) -> np.ndarray:
-        if not steps:
-            mesh = model.mesh
-            on = (owner >= 0) & np.isin(
-                mesh.triangle_tags, [mesh.region(s).tag for s in surfaces]
-            )
-            on &= per_axis_elements(model)[np.maximum(owner, 0)]
-            faces = np.flatnonzero(on)
-            behind = owner[faces]
-            eps = principal_values(model, "eps_r")
-            tan = np.real(principal_values(model, "tan_delta"))
-            e = np.real(eps * (1.0 - 1j * tan))[behind]
-            m = np.real(principal_values(model, "mu_r"))[behind]
-            normals = unit_normals(np.asarray(mesh.nodes, float), mesh.triangles)
-            by_e, by_m = anisotropy.admittance_derivatives(
-                e,
-                m,
-                element_axes(model)[behind],
-                normals[faces],
-                where=f"Absorbing {', '.join(map(repr, surfaces))}",
-            )
-            for key, part in (("e", by_e), ("m", by_m)):
-                full = np.zeros((len(owner), 3, 3, 3))
-                full[faces] = part
-                steps[key] = full
-            im = np.zeros((len(owner), 3))
-            im[faces] = np.imag(eps)[behind]
-            steps["im"] = im
-        return steps[name]
+    @functools.cache
+    def steps() -> _AxisSteps:
+        mesh = model.mesh
+        on = (owner >= 0) & np.isin(
+            mesh.triangle_tags, [mesh.region(s).tag for s in surfaces]
+        )
+        on &= per_axis_elements(model)[np.maximum(owner, 0)]
+        faces = np.flatnonzero(on)
+        behind = owner[faces]
+        eps = principal_values(model, "eps_r")
+        tan = np.real(principal_values(model, "tan_delta"))
+        e = np.real(eps * (1.0 - 1j * tan))[behind]
+        m = np.real(principal_values(model, "mu_r"))[behind]
+        by_e, by_m = anisotropy.admittance_derivatives(
+            e,
+            m,
+            element_axes(model)[behind],
+            _face_normals(mesh)[faces],
+            where=f"Absorbing {', '.join(map(repr, surfaces))}",
+        )
+        full = []
+        for part in (by_e, by_m):
+            out = np.zeros((len(owner), 3, 3, 3))
+            out[faces] = part
+            full.append(out)
+        eps_imag = np.zeros((len(owner), 3))
+        eps_imag[faces] = np.imag(eps)[behind]
+        return _AxisSteps(by_e=full[0], by_m=full[1], eps_imag=eps_imag)
 
     return {
         "eps_r": Derivative(
-            lambda: step("e"), holomorphic=False, chain=lambda: _axis_loss(model)
+            lambda: steps().by_e, holomorphic=False, chain=lambda: _axis_loss(model)
         ),
         "tan_delta": Derivative(
-            lambda: step("e") * step("im")[:, :, None, None], holomorphic=False
+            lambda: steps().by_e * steps().eps_imag[:, :, None, None],
+            holomorphic=False,
         ),
-        "mu_r": Derivative(lambda: step("m"), holomorphic=False),
+        "mu_r": Derivative(lambda: steps().by_m, holomorphic=False),
     }
+
+
+class _AxisSteps(NamedTuple):
+    """`_absorbing_axis_derivatives`' arrays, per gfem triangle (zero off its faces)."""
+
+    #: ``dY/de_k``, ``(n, 3, 3, 3)`` (k, then Y).
+    by_e: np.ndarray
+    #: ``dY/dm_k``, the same shape.
+    by_m: np.ndarray
+    #: ``Im eps_r[k]`` of the tetrahedron behind, ``(n, 3)``: ``de_k/dtan_delta_k``.
+    eps_imag: np.ndarray
 
 
 def _owned(
@@ -1023,7 +1040,7 @@ def wave_port_coefficients(model: Model, surface: str) -> np.ndarray:
     if not tensor.any():
         return values
     out = values[:, None, None] * np.eye(3)
-    normals = unit_normals(np.asarray(mesh.nodes, float), mesh.triangles)
+    normals = _face_normals(mesh)
     out[tensor] = anisotropy.tangential_inverse_permeability(
         _tensors(mu)[owner[tensor]], normals[tensor]
     )
