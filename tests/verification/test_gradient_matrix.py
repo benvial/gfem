@@ -36,7 +36,7 @@ electrostatic conductivity (an exact zero) and sheet fill (not an
 electrostatic object), eigenmode field quantities, the port mode problem.
 
 Run the gate with ``pytest -m verification -k gradient_matrix``. The slowest
-multimode cells (`REFERENCE_CELLS`) also carry the ``reference`` marker, so
+shared-surface cells (`REFERENCE_CELLS`) also carry the ``reference`` marker, so
 the default tiers (``-m "not reference ..."``) leave them to the reference
 tier.
 """
@@ -72,12 +72,12 @@ from gradient_cases import (
     layered_resonator,
     line_design,
     mirrored_cavity,
-    multimode_functional,
     on_the_sheet,
     ramp,
     resonator_mesh,
     s_functional,
     shape_line,
+    shared_surface_functional,
     sheet_cavity,
     sheet_fill,
     sheet_line,
@@ -146,7 +146,7 @@ def _cells() -> list[Cell]:
             # A shared port surface (two modes per end): every input on the
             # direct solver, the permittivity on BDDC + GMRES
             cells += [
-                Cell("driven_wave", name, solver, sweep, "multimode")
+                Cell("driven_wave", name, solver, sweep, "shared")
                 for name in ("eps_r", "conductivity", "nodes")
                 if solver == "direct" or (name == "eps_r" and sweep == "uniform")
             ]
@@ -175,14 +175,14 @@ PETSC_PARAMS = [
     )
     for cell in PETSC_CELLS
 ]
-#: Cells run in the reference tier only: each multimode cell solves four
+#: Cells run in the reference tier only: each shared-surface cell solves four
 #: wave ports through two port mode sweeps, and these three take 2-4 min on
-#: MN5 (8 cores). The default tiers keep the multimode permittivity on both
+#: MN5 (8 cores). The default tiers keep the shared-surface permittivity on both
 #: sweeps and every input on the uniform sweep.
 REFERENCE_CELLS = {
-    Cell("driven_wave", "eps_r", "bddc_gmres", "uniform", "multimode"),
-    Cell("driven_wave", "conductivity", "direct", "adaptive", "multimode"),
-    Cell("driven_wave", "nodes", "direct", "adaptive", "multimode"),
+    Cell("driven_wave", "eps_r", "bddc_gmres", "uniform", "shared"),
+    Cell("driven_wave", "conductivity", "direct", "adaptive", "shared"),
+    Cell("driven_wave", "nodes", "direct", "adaptive", "shared"),
 }
 CELL_PARAMS = [
     pytest.param(cell, marks=pytest.mark.reference, id=str(cell))
@@ -308,10 +308,10 @@ HYBRID_GRID = tuple(float(f) for f in np.linspace(52e9, 68e9, 9))
 HYBRID_SAMPLES = (HYBRID_GRID[0], HYBRID_GRID[8], HYBRID_GRID[4], HYBRID_GRID[2])
 #: Max relative gradient difference, adjoint vs reciprocity, per solver
 #: (measured 6.2e-15 and 1.7e-13).
-MULTIMODE_RECIPROCITY = {"direct": 2e-14, "bddc_gmres": 5e-13}
+SHARED_SURFACE_RECIPROCITY = {"direct": 2e-14, "bddc_gmres": 5e-13}
 #: Relative value and gradient differences, adaptive vs full, at the samples
 #: (measured 5.6e-11 and below 1e-9).
-MULTIMODE_ADAPTIVE = (2e-10, 3e-9)
+SHARED_SURFACE_ADAPTIVE = (2e-10, 3e-9)
 SHAPE_FREQUENCIES = (GRID[2], GRID[8])
 SHAPE_SAMPLES = (GRID[0], GRID[10], GRID[5])
 SHEET_FREQUENCIES = (6e9, 9e9)
@@ -331,17 +331,22 @@ def _sweep(cell: Cell, frequencies, grid, samples, **kwargs):
 def _wave(d: Designs, cell: Cell):
     """A wave-port cell's mesh, model, problem and S objective at its rows.
 
-    The ``"multimode"`` variant excites p1_m1 of the hybrid line only: its
+    The ``"shared"`` variant excites p1_m1 of the hybrid line only: its
     cross-mode entries take adjoint loads through the shared surfaces' full
     modal corrections.
     """
-    if cell.variant == "multimode":
+    if cell.variant == "shared":
         mesh = d.hybrid_mesh
         problem, rows = _sweep(
             cell, HYBRID_FREQUENCIES, HYBRID_GRID, HYBRID_SAMPLES, excite="p1_m1"
         )
         rows = jnp.asarray(rows)
-        return mesh, hybrid_line(mesh), problem, lambda s: multimode_functional(s, rows)
+        return (
+            mesh,
+            hybrid_line(mesh),
+            problem,
+            lambda s: shared_surface_functional(s, rows),
+        )
     mesh = d.wave_mesh
     problem, rows = _sweep(cell, WAVE_FREQUENCIES, GRID, WAVE_SAMPLES)
     rows = jnp.asarray(rows)
@@ -712,8 +717,8 @@ def test_gradient_matrix_adaptive_equals_the_full_solve_at_the_samples(
     assert float(jnp.linalg.norm(grad - full_grad) / jnp.linalg.norm(full_grad)) <= 1e-7
 
 
-def _multimode_core(designs, problem, options, *, seed=0):
-    """The multimode objective in the core's eps_r, on ``problem``'s rows."""
+def _shared_surface_core(designs, problem, options, *, seed=0):
+    """The shared-surface objective in the core's eps_r, on ``problem``'s rows."""
     mesh = designs.hybrid_mesh
     model = hybrid_line(mesh)
     values, _ = core_design(mesh, seed)
@@ -722,13 +727,15 @@ def _multimode_core(designs, problem, options, *, seed=0):
     def objective(eps):
         m = model.with_material("core", gfem.MaterialField(**{**values, "eps_r": eps}))
         m = m.replace(mesh=jax.lax.stop_gradient(m.mesh))
-        return multimode_functional(gfem.solve(m, problem, options=options).s, rows)
+        return shared_surface_functional(
+            gfem.solve(m, problem, options=options).s, rows
+        )
 
     return objective, values["eps_r"]
 
 
 @pytest.mark.parametrize("solver", SOLVERS)
-def test_gradient_matrix_multimode_reciprocity_equals_the_explicit_adjoint(
+def test_gradient_matrix_shared_surface_reciprocity_equals_the_explicit_adjoint(
     designs, solver
 ):
     # Exciting p1_m1 only leaves the cross-mode entries without p1_m2's and
@@ -738,30 +745,30 @@ def test_gradient_matrix_multimode_reciprocity_equals_the_explicit_adjoint(
     options = tight(solver)
 
     def gradient(problem):
-        objective, eps = _multimode_core(designs, problem, options, seed=3)
+        objective, eps = _shared_surface_core(designs, problem, options, seed=3)
         return jax.grad(objective)(eps)
 
     full = gradient(gfem.Driven(frequency=HYBRID_FREQUENCIES))
     adjoint = gradient(gfem.Driven(frequency=HYBRID_FREQUENCIES, excite="p1_m1"))
     error = np.abs(np.asarray(adjoint - full)).max() / np.abs(np.asarray(full)).max()
-    assert error <= MULTIMODE_RECIPROCITY[solver]
+    assert error <= SHARED_SURFACE_RECIPROCITY[solver]
 
 
-def test_gradient_matrix_multimode_adaptive_equals_the_full_solve_at_the_samples(
+def test_gradient_matrix_shared_surface_adaptive_equals_the_full_solve_at_the_samples(
     designs,
 ):
     # at a sample the full solution lies in the frozen basis
     options = tight("direct")
-    cell = Cell("driven_wave", "eps_r", "direct", "adaptive", "multimode")
+    cell = Cell("driven_wave", "eps_r", "direct", "adaptive", "shared")
     adaptive = _wave_material(designs, cell, options, 0).objective
     problem = gfem.Driven(frequency=HYBRID_SAMPLES, excite="p1_m1")
-    full, eps = _multimode_core(designs, problem, options)
+    full, eps = _shared_surface_core(designs, problem, options)
     value, grad = jax.value_and_grad(adaptive)(eps)
     full_value, full_grad = jax.value_and_grad(full)(eps)
     value_error = abs(float(value) - float(full_value)) / abs(float(full_value))
     error = float(jnp.linalg.norm(grad - full_grad) / jnp.linalg.norm(full_grad))
-    assert value_error <= MULTIMODE_ADAPTIVE[0]
-    assert error <= MULTIMODE_ADAPTIVE[1]
+    assert value_error <= SHARED_SURFACE_ADAPTIVE[0]
+    assert error <= SHARED_SURFACE_ADAPTIVE[1]
 
 
 # --- degenerate eigenmode clusters -------------------------------------------------

@@ -199,7 +199,7 @@ EXPECTED |= {
 # permittivity: each cell costs a 4-port solve, and the other properties'
 # outcomes are the lone wave ports' above.
 EXPECTED |= {
-    ("driven_wave_multimode", out, kind): GRADIENT if out == "s.values" else ZERO
+    ("driven_wave_shared", out, kind): GRADIENT if out == "s.values" else ZERO
     for out in (
         "s.values",
         "s.z_ref",
@@ -359,7 +359,7 @@ def wave_model(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def multimode_model(tmp_path_factory):
+def shared_surface_model(tmp_path_factory):
     # the gradient matrix's hybrid line on the coarsest grid that keeps its
     # quadrant: modes 1 and 2 of each lead on one shared port surface
     mesh = hybrid_mesh(tmp_path_factory.mktemp("hybrid"), cells=(4, 2, 2))
@@ -413,10 +413,10 @@ def sheet_cases(sheet_mesh):
 
 
 @pytest.fixture(scope="module")
-def wave_cases(wave_model, multimode_model):
+def wave_cases(wave_model, shared_surface_model):
     return {
         "driven_wave": (wave_model, gfem.Driven(frequency=20e9)),
-        "driven_wave_multimode": (multimode_model, MULTIMODE_PROBLEM),
+        "driven_wave_shared": (shared_surface_model, SHARED_SURFACE_PROBLEM),
     }
 
 
@@ -442,7 +442,7 @@ def cases(model, driven_model, eigen_model, wave_cases, sheet_cases):
 
 #: Both modes of the hybrid line propagate (mode 2 from about 48 GHz). One
 #: excitation: S's other rows (cross-mode included) take adjoint loads.
-MULTIMODE_PROBLEM = gfem.Driven(frequency=60e9, excite="p1_m1")
+SHARED_SURFACE_PROBLEM = gfem.Driven(frequency=60e9, excite="p1_m1")
 PROBLEMS = {
     "electrostatic": gfem.Electrostatic(terminals={"top": "top"}, ground="bottom"),
 }
@@ -581,13 +581,13 @@ def _out_material_on_a_wave_port_face(request):
 
 def _out_material_on_a_shared_wave_port_face(request):
     # the error names the shared port surface and every port on it
-    model = request.getfixturevalue("multimode_model")
+    model = request.getfixturevalue("shared_surface_model")
     n = len(model.mesh.elements("fill"))
 
     def objective(eps):
         m = model.with_material("fill", gfem.MaterialField(eps_r=eps))
         m = m.replace(mesh=jax.lax.stop_gradient(m.mesh))
-        return jnp.sum(jnp.abs(gfem.solve(m, MULTIMODE_PROBLEM).s.values) ** 2)
+        return jnp.sum(jnp.abs(gfem.solve(m, SHARED_SURFACE_PROBLEM).s.values) ** 2)
 
     jax.make_jaxpr(jax.grad(objective))(jnp.full(n, 2.0))
 

@@ -144,7 +144,7 @@ differentiate as for one mode per port
     own phase, unreflected and unconverted:
     `tests/reference/test_shared_port_surface.py`.
   - The gradients of cross-mode entries, against finite differences: the
-    `multimode` cells of `tests/verification/test_gradient_matrix.py`, part
+    `shared` cells of `tests/verification/test_gradient_matrix.py`, part
     of the driven row of the matrix on {doc}`../capabilities`.
 
 ## Limits

@@ -295,7 +295,7 @@ def hybrid_leads_core(mesh: gfem.Mesh) -> np.ndarray:
     return np.where(block, HYBRID_EPS["block"], HYBRID_EPS["fill"])
 
 
-def multimode_functional(s, rows):
+def shared_surface_functional(s, rows):
     """Weighted S of excited port p1_m1 at ``rows``: co-mode and cross-mode.
 
     ``|S|^2`` of the transmitted co-mode entry ``S[p2_m1, p1_m1]`` and of
