@@ -354,6 +354,11 @@ class LumpedPort:
 class WavePort:
     """A wave port on an exterior surface, fed by its port mode.
 
+    The cross-section may contain anisotropic materials when every tensor
+    has a principal axis along the port normal (any orientation in the port
+    plane); off-axis tensors would make forward and backward port modes
+    differ. Tilted axes elsewhere in the model are fully supported.
+
     Attributes:
         name: The port's name; ports index S-parameters by name, in the
             order of the model's ``ports``.

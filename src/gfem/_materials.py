@@ -295,6 +295,11 @@ class Material:
     a_k a_kᵀ; a single value counts for all three axes. The two loss
     models, `tan_delta` and `conductivity`, add.
 
+    Anisotropic values are real symmetric tensors that share one set of
+    principal axes; non-symmetric (gyrotropic) tensors are not supported. A
+    wave port's cross-section accepts an anisotropic material only with a
+    principal axis along the port normal (see `WavePort`).
+
     Attributes:
         eps_r: Relative permittivity: one value, three principal values
             along `axes`, or a real symmetric 3x3 matrix in the global frame.
@@ -305,13 +310,15 @@ class Material:
         conductivity: The electrical conductivity in S/m, in the same forms
             as `eps_r`, each principal value >= 0 (not the thermal
             conductivity, which is `thermal_conductivity`).
-        axes: Three orthonormal vectors, the principal directions shared by
-            `eps_r`, `mu_r`, `tan_delta` and `conductivity`. ``None``: the
-            coordinate axes. A matrix input sets them: the material stores
-            the matrix as principal values along derived axes (axis k the
-            one closest to coordinate axis k, its dominant component
-            positive; ``None`` if every matrix is diagonal). Equal principal
-            values are stored as one value.
+        axes: Three orthonormal vectors, as rows: the principal directions
+            shared by `eps_r`, `mu_r`, `tan_delta` and `conductivity`.
+            ``None``: the coordinate axes. At a wave port one of them must
+            lie along the port normal (see `WavePort`). With a matrix
+            input, leave ``None``: the material stores the matrix as
+            principal values along derived axes (axis k the one closest to
+            coordinate axis k, its dominant component positive; ``None`` if
+            every matrix is diagonal). Equal principal values are stored as
+            one value.
         thermal_conductivity: Reserved for thermal problems, W/(m K).
             ``None`` means not given.
         density: Reserved for thermal problems, kg/m^3.
