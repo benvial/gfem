@@ -45,12 +45,12 @@ def mesh(tmp_path_factory):
     )
 
 
-def _solve(mesh, material, frequency):
+def _solve(mesh, material, frequency, ports=None):
     model = gfem.Model(
         mesh,
         materials={"fill": material},
         boundaries=[gfem.PEC("walls")],
-        ports=[gfem.WavePort("p1", "port1"), gfem.WavePort("p2", "port2")],
+        ports=ports or [gfem.WavePort("p1", "port1"), gfem.WavePort("p2", "port2")],
     )
     result = gfem.solve(model, gfem.Driven(frequency), options=OPTIONS)
     s = np.asarray(result.s.values)[0]
@@ -143,3 +143,38 @@ def test_a_uniform_field_fill_at_the_ports_refuses_its_gradient(mesh):
         gfem.PortGeometryError, match=r"WavePort 'p\d'.*'fill'.*eps_r.*stop_gradient"
     ):
         jax.make_jaxpr(jax.grad(objective))(field.eps_r)
+
+
+def test_a_rotated_guide_gives_the_same_s_parameters(mesh, tmp_path_factory):
+    # the guide, its fill and its voltage paths turned by a generic rotation:
+    # oblique port normals, so the port reads the full N mu^-1 N^T; the fill
+    # is given as global matrices (the matrix input). The voltage paths fix
+    # each mode's polarity in both guides.
+    q = anisotropy.rotation_about((1, 2, 3), 0.7)
+    turned = anisotropy.wr28(
+        tmp_path_factory.mktemp("wr28_rotated"),
+        length=LENGTH,
+        cells=(8, 4, 10),
+        rotation=q,
+    )
+    a, b = (1e-3 * x for x in anisotropy.WR28)
+
+    def ports(r):
+        def path(z):
+            return tuple(
+                tuple(float(x) for x in r @ p) for p in ((a / 2, 0, z), (a / 2, b, z))
+            )
+
+        return [
+            gfem.WavePort("p1", "port1", voltage_path=path(0.0)),
+            gfem.WavePort("p2", "port2", voltage_path=path(LENGTH * 1e-3)),
+        ]
+
+    material = gfem.Material(eps_r=EPS, mu_r=MU)
+    s, gamma = _solve(mesh, material, F_MU, ports(np.eye(3)))
+    s_turned, gamma_turned = _solve(
+        turned, anisotropy.rotated(material, q), F_MU, ports(q)
+    )
+    # measured on MN5: gamma 1.2e-15 relative, max |dS| 1.5e-14
+    np.testing.assert_allclose(gamma_turned, gamma, rtol=4e-15)
+    np.testing.assert_allclose(s_turned, s, rtol=0, atol=5e-14)
