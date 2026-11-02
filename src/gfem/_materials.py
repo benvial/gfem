@@ -745,3 +745,25 @@ class MaterialField:
 
 
 register_fields(MaterialField, PROPERTY_NAMES)
+
+
+def field_principal_values(
+    field: MaterialField, name: str, at: np.ndarray | None = None
+) -> Any:
+    """The principal values of property ``name`` of an anisotropic material field.
+
+    The leaf as held, ``(n_elements, 3)`` or ``(3,)`` (a JAX array stays
+    one, so a traced value stays traced), or the property's default three
+    times when the field leaves ``name`` out. With ``at`` (element
+    positions in the region, any shape), the values of those elements,
+    ``(*at.shape, 3)``.
+    """
+    value = getattr(field, name)
+    if value is None:
+        value = np.full(3, _BY_NAME[name].default)
+    if at is None:
+        return value
+    if value.ndim == 2:
+        return value[at]
+    xp = np if isinstance(value, np.ndarray) else jnp
+    return xp.broadcast_to(value, (*np.shape(at), 3))

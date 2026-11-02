@@ -476,6 +476,24 @@ def test_a_field_with_axes_off_the_port_normal_raises_whatever_its_values(
         gfem.solve(plate(plate_mesh, field), gfem.PortMode("p1", 10e9))
 
 
+def test_a_field_with_axes_off_the_port_normal_names_every_tensor_it_holds(
+    plate_mesh,
+):
+    # the axes fail for every tensor property together: the error names all
+    # those the field gives, in table order, not only the first
+    n = len(plate_mesh.elements("fill"))
+    field = gfem.MaterialField(
+        eps_r=jnp.full((n, 3), 4.0),
+        conductivity=jnp.full(3, 0.1),
+        axes=_axes(0, 20.0),
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"eps_r and conductivity with no principal axis along the port normal",
+    ):
+        gfem.solve(plate(plate_mesh, field), gfem.PortMode("p1", 10e9))
+
+
 def test_a_field_with_axes_has_the_mode_of_its_material(wr28_mesh):
     # turned about the guide axis, with per-axis eps_r, mu_r, tan_delta and
     # conductivity: per element, the field holds the material's tensors

@@ -23,8 +23,10 @@ from gfem._boundaries import (
 )
 from gfem._engine.anisotropy import CROSS_N, edge_admittance
 from gfem._materials import (
+    PROPERTIES,
     Material,
     MaterialField,
+    field_principal_values,
     lossy_permittivity,
     principal_tensor,
 )
@@ -280,15 +282,15 @@ def _materials(model: Model, port: WavePort, tets: np.ndarray, frame: np.ndarray
             mt, mn = _in_frame(mu, frame, port, region, "mu_r")
             st, sn = _in_frame(sigma, frame, port, region, "conductivity")
             eps_tt[rows], eps_nn[rows] = et, en
-            nu_tt[rows], nu_nn[rows] = CROSS_N.T @ np.linalg.inv(mt) @ CROSS_N, 1 / mn
+            nu_tt[rows], nu_nn[rows] = _inverse_permeability(mt, mn)
             sigma_tt[rows], sigma_nn[rows] = st, sn
             isotropic[rows] = material.isotropic
         elif material.axes is not None:
             pos = np.searchsorted(mesh.elements(region), tets[rows])
-            tensors = _field_tensors(material, frame, port, region, pos)
-            (et, en), (mt, mn), (st, sn) = tensors
+            blocks = _field_blocks(material, frame, port, region, pos)
+            (et, en), (mt, mn), (st, sn) = blocks
             eps_tt[rows], eps_nn[rows] = et, en
-            nu_tt[rows], nu_nn[rows] = CROSS_N.T @ np.linalg.inv(mt) @ CROSS_N, 1 / mn
+            nu_tt[rows], nu_nn[rows] = _inverse_permeability(mt, mn)
             sigma_tt[rows], sigma_nn[rows] = st.real, sn.real
             isotropic[rows] = False
         else:
@@ -315,43 +317,50 @@ def _field(material: MaterialField, name: str, default: float, pos: np.ndarray):
     return np.broadcast_to(arr, (len(pos),)) if arr.ndim == 0 else arr[pos]
 
 
-def _field_tensors(
+def _inverse_permeability(mu_tt: np.ndarray, mu_nn: np.ndarray):
+    """``(nu_tt, nu_nn)`` of permeability blocks: ``R^T mu_tt^-1 R``, ``1 / mu_nn``."""
+    return CROSS_N.T @ np.linalg.inv(mu_tt) @ CROSS_N, 1 / mu_nn
+
+
+#: The properties a material may hold as tensors, in table order.
+_TENSOR_PROPERTIES = tuple(p.name for p in PROPERTIES if p.may_be_tensor)
+
+
+def _names(names: list[str]) -> str:
+    """``"a"``, ``"a and b"``, ``"a, b and c"``."""
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def _field_blocks(
     material: MaterialField,
     frame: np.ndarray,
     port: WavePort,
     region: str,
     pos: np.ndarray,
 ):
-    """A field with `axes` as lossy eps, mu and sigma blocks per triangle.
+    """An anisotropic material field's lossy eps, mu and sigma blocks per triangle.
 
     Each is ``(tt, nn)``: ``(n, 2, 2)`` and ``(n,)`` in the port frame, from
     ``sum_k v_k a_k a_k^T`` per element. The normal-axis test reads the
     field's fixed axes, never its values (structural): an axis along the
-    normal is needed whatever the principal values.
+    normal is needed whatever the principal values, so every tensor property
+    the field gives fails it together, and the error names them all.
     """
     axes = np.asarray(material.axes, float)
-    given = [
-        n
-        for n in ("eps_r", "mu_r", "tan_delta", "conductivity")
-        if getattr(material, n) is not None
-    ]
+    given = [n for n in _TENSOR_PROPERTIES if getattr(material, n) is not None]
     # distinct principal values: block-diagonal in the frame iff an axis is
     # along the normal
     probe = principal_tensor((1.0, 2.0, 3.0), material.axes)
     if given:
-        _in_frame(probe, frame, port, region, given[0])
+        _in_frame(probe, frame, port, region, _names(given))
     local = axes @ frame.T  # (3 axes, 3 frame components)
 
-    def values(name: str, default: float) -> np.ndarray:
-        v = getattr(material, name)
-        if v is None:
-            return np.full((len(pos), 3), default, complex)
-        v = np.asarray(v).astype(complex)
-        return np.broadcast_to(v, (len(pos), 3)) if v.ndim == 1 else v[pos]
+    def values(name: str) -> np.ndarray:
+        return np.asarray(field_principal_values(material, name, pos)).astype(complex)
 
-    eps = values("eps_r", 1.0) * (1 - 1j * values("tan_delta", 0.0).real)
+    eps = values("eps_r") * (1 - 1j * values("tan_delta").real)
     out = []
-    for v in (eps, values("mu_r", 1.0), values("conductivity", 0.0)):
+    for v in (eps, values("mu_r"), values("conductivity")):
         t = np.einsum("ek,ki,kj->eij", v, local, local)
         out.append((t[:, :2, :2], t[:, 2, 2]))
     return out
@@ -364,10 +373,10 @@ def _in_frame(tensor, frame, port: WavePort, region: str, what: str):
         raise ValueError(
             f"WavePort {port.name!r}: region {region!r} has {what} with no "
             "principal axis along the port normal (tangential-normal coupling); "
-            "the port mode problem supports only materials with a principal axis "
-            "along the normal. Rotate the material axes or the port, or end the "
-            "port in a material aligned with it; tilted axes are fine away from "
-            "ports."
+            "the port mode problem supports only transverse-anisotropic materials, "
+            "with a principal axis along the normal. Rotate the principal axes or "
+            "the port, or end the port in an isotropic or transverse-anisotropic "
+            "material; tilted principal axes are allowed away from ports."
         )
     return local[:2, :2], local[2, 2]
 

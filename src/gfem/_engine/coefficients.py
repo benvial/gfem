@@ -16,6 +16,7 @@ from gfem._materials import (
     PROPERTIES,
     Material,
     MaterialField,
+    field_principal_values,
     lossy_permittivity,
     principal_tensor,
 )
@@ -91,14 +92,6 @@ def _per_axis_fields(model: Model) -> dict[str, MaterialField]:
     }
 
 
-def _principal_values(field: MaterialField, name: str) -> np.ndarray:
-    """A field's principal values of ``name``, ``(n, 3)`` or ``(3,)``."""
-    value = getattr(field, name)
-    if value is None:
-        return np.full(3, _DEFAULTS[name])
-    return np.asarray(value)
-
-
 def per_axis_elements(model: Model) -> np.ndarray:
     """Whether each tetrahedron lies in a `MaterialField` with `axes`."""
     out = np.zeros(len(model.mesh.tetrahedra), bool)
@@ -130,7 +123,7 @@ def principal_values(model: Model, name: str) -> np.ndarray:
     """
     scalar = element_values(model, name, per_axis=1.0)
     fields = _per_axis_fields(model)
-    values = {r: _principal_values(f, name) for r, f in fields.items()}
+    values = {r: np.asarray(field_principal_values(f, name)) for r, f in fields.items()}
     dtype = np.result_type(scalar, *values.values())
     out = np.repeat(scalar[:, None], 3, axis=1).astype(dtype)
     for region, value in values.items():
@@ -201,7 +194,7 @@ def principal_permittivity(
         if isinstance(material, Material):
             value = np.real(np.asarray(material.eps_r, complex))
         else:
-            value = np.real(_principal_values(material, "eps_r"))
+            value = np.real(np.asarray(field_principal_values(material, "eps_r")))
         members = mesh.elements(region)
         values[members] = np.broadcast_to(value, (len(members), 3))
         axes[members] = np.eye(3) if material.axes is None else material.axes
@@ -232,7 +225,7 @@ def permittivity(model: Model, built: EngineMesh) -> ngs.CoefficientFunction:
         if isinstance(m, Material) and not m.isotropic
     }
     fields = {
-        r: _field_tensors(f, _principal_values(f, "eps_r").real)
+        r: _field_tensors(f, np.asarray(field_principal_values(f, "eps_r")).real)
         for r, f in _per_axis_fields(model).items()
     }
     if not anisotropic and not fields:
@@ -256,7 +249,7 @@ def element_tensors(model: Model, name: str) -> np.ndarray:
         if isinstance(m, Material) and isinstance(getattr(m, name), tuple)
     }
     fields = {
-        r: _field_tensors(f, _principal_values(f, name))
+        r: _field_tensors(f, np.asarray(field_principal_values(f, name)))
         for r, f in _per_axis_fields(model).items()
     }
     if not anisotropic and not fields:
@@ -304,8 +297,8 @@ def lossy_eps(model: Model) -> np.ndarray:
     }
     fields = {}
     for region, f in _per_axis_fields(model).items():
-        eps = _principal_values(f, "eps_r")
-        tan = _principal_values(f, "tan_delta").real
+        eps = np.asarray(field_principal_values(f, "eps_r"))
+        tan = np.asarray(field_principal_values(f, "tan_delta")).real
         fields[region] = _field_tensors(f, eps * (1 - 1j * tan))
     if not anisotropic and not fields:
         return scalar

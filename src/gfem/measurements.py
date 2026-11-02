@@ -38,7 +38,7 @@ import scipy.constants as const
 
 from gfem import _probe
 from gfem._checks import check_fixed, is_traced
-from gfem._materials import Material
+from gfem._materials import Material, field_principal_values
 from gfem._pytree import register_fields
 from gfem.conventions import MODE_ENERGY
 from gfem.errors import NonDifferentiableError
@@ -375,12 +375,10 @@ def _media(
             # principal values along fixed axes: the tensor per element, and
             # the bound from the largest principal values
             index = np.maximum(position[tets], 0)
-
-            def principal(v: Any, index: np.ndarray = index) -> jax.Array:
-                v = jnp.real(jnp.asarray(1.0 if v is None else v))
-                return v[index] if v.ndim == 2 else jnp.broadcast_to(v, (3,))
-
-            e_r, m_r = principal(material.eps_r), principal(material.mu_r)
+            e_r, m_r = (
+                jnp.real(jnp.asarray(field_principal_values(material, name, index)))
+                for name in ("eps_r", "mu_r")
+            )
             a = jnp.asarray(material.axes)
             value = jnp.einsum("...k,ki,kj->...ij", e_r, a, a)
             value = jnp.broadcast_to(value, eps.shape)
