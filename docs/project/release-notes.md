@@ -9,9 +9,10 @@
   materials per principal value when their tensors share principal axes (air
   and a crystal, for example); materials with different axes raise. Driven,
   eigenmode, electrostatic and port mode solves read the field's tensor on
-  each element. Gradients with respect to such a field's values, and material
-  gradients of a model that holds one, raise `NonDifferentiableError` in this
-  version.
+  each element. `jax.grad` through driven, eigenmode and electrostatic solves
+  gives one cotangent per principal value, shape `(n_elements, 3)` or `(3,)`,
+  checked against finite differences in the gradient verification matrix. The
+  axes are fixed: the orientation is not a design input.
 - **Wave ports accept anisotropic permeability.** A driven solve with a wave
   port on an anisotropic `mu_r` (with a principal axis along the port normal)
   no longer raises `NotImplementedError`: the port's boundary term uses the

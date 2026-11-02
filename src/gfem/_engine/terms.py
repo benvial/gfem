@@ -71,9 +71,12 @@ from gfem._engine import anisotropy, quadrature
 from gfem._engine.coefficients import (
     anisotropic_elements,
     coefficient,
+    element_axes,
     element_tensors,
     element_values,
     lossy_eps,
+    per_axis_elements,
+    principal_values,
     surface_coefficient,
     surface_p0,
 )
@@ -454,7 +457,12 @@ def pieces(
             coefficient=nu,
             derivatives={
                 "mu_r": Derivative(
-                    lambda: -(element_values(model, "mu_r") ** -2.0), holomorphic=True
+                    lambda: -(element_values(model, "mu_r", per_axis=1.0) ** -2.0),
+                    holomorphic=True,
+                    per_axis=Derivative(
+                        lambda: -(principal_values(model, "mu_r") ** -2.0),
+                        holomorphic=True,
+                    ),
                 )
             },
         ),
@@ -465,9 +473,18 @@ def pieces(
             kind="value",
             coefficient=eps_cf,
             derivatives={
-                "eps_r": Derivative(lambda: _loss(model), holomorphic=True),
+                "eps_r": Derivative(
+                    lambda: _loss(model),
+                    holomorphic=True,
+                    per_axis=Derivative(lambda: _axis_loss(model), holomorphic=True),
+                ),
                 "tan_delta": Derivative(
-                    lambda: -1j * element_values(model, "eps_r"), holomorphic=False
+                    lambda: -1j * element_values(model, "eps_r", per_axis=1.0),
+                    holomorphic=False,
+                    per_axis=Derivative(
+                        lambda: -1j * principal_values(model, "eps_r"),
+                        holomorphic=False,
+                    ),
                 ),
             },
         ),
@@ -488,7 +505,12 @@ def pieces(
                 kind="value",
                 coefficient=sigma_cf,
                 derivatives={
-                    "conductivity": Derivative(ETA0, holomorphic=False, length_power=1)
+                    "conductivity": Derivative(
+                        ETA0,
+                        holomorphic=False,
+                        length_power=1,
+                        per_axis=Derivative(ETA0, holomorphic=False, length_power=1),
+                    )
                 },
             )
         )
@@ -508,7 +530,9 @@ def pieces(
                 kind="trace",
                 coefficient=y_cf,
                 region=form.region,
-                derivatives=_absorbing_derivatives(model, order=1),
+                derivatives=_absorbing_derivatives(
+                    model, order=1, faces=(surfaces, owner)
+                ),
                 owner=_owned(model, surfaces, owner, faces),
             )
         )
@@ -658,23 +682,35 @@ def _absorbing_by_m(e: np.ndarray, m: np.ndarray, order: int) -> np.ndarray:
     return -1.5 * e**-0.5 * m**-2.5
 
 
+# The derivatives read the elements of fields with axes through their
+# per-axis forms (`principal_values`); the isotropic forms take a placeholder
+# there (`element_values(..., per_axis=1.0)`), never read for those elements.
 def _loss(model: Model) -> np.ndarray:
     """``1 - i tan_delta`` per tetrahedron: the mass coefficient per unit eps_r."""
-    return 1.0 - 1j * np.real(element_values(model, "tan_delta"))
+    return 1.0 - 1j * np.real(element_values(model, "tan_delta", per_axis=1.0))
 
 
-def _absorbing_derivatives(model: Model, order: int) -> dict[str, Derivative]:
+def _axis_loss(model: Model) -> np.ndarray:
+    """``1 - i tan_delta_k`` per tetrahedron and principal axis, ``(n, 3)``."""
+    return 1.0 - 1j * np.real(principal_values(model, "tan_delta"))
+
+
+def _absorbing_derivatives(
+    model: Model, order: int, faces: tuple[tuple[str, ...], np.ndarray] | None = None
+) -> dict[str, Derivative]:
     """The derivatives of the absorbing coefficient of ``order`` per tetrahedron.
 
     Of the real ``e = Re(eps_r (1 - i tan_delta))`` and ``m = Re(mu_r)`` of
-    the isotropic element values (design inputs are isotropic
-    `MaterialField` leaves): ``de/deps_r`` is 1 along ``Re(chain eps_r)``
-    with ``chain = 1 - i tan_delta``, and ``de/dtan_delta = Im(eps_r)``.
+    the isotropic element values: ``de/deps_r`` is 1 along ``Re(chain
+    eps_r)`` with ``chain = 1 - i tan_delta``, and ``de/dtan_delta =
+    Im(eps_r)``. With ``faces`` (the surfaces and the owner per triangle of
+    the first-order term), each also has its per-axis form, per face
+    (`_absorbing_axis_derivatives`).
     """
 
     def em() -> tuple[np.ndarray, np.ndarray]:
-        e = np.real(element_values(model, "eps_r") * _loss(model))
-        return e, np.real(element_values(model, "mu_r"))
+        e = np.real(element_values(model, "eps_r", per_axis=1.0) * _loss(model))
+        return e, np.real(element_values(model, "mu_r", per_axis=1.0))
 
     def by_e() -> np.ndarray:
         return _absorbing_by_e(*em(), order)
@@ -682,13 +718,76 @@ def _absorbing_derivatives(model: Model, order: int) -> dict[str, Derivative]:
     def by_m() -> np.ndarray:
         return _absorbing_by_m(*em(), order)
 
+    axis = {} if faces is None else _absorbing_axis_derivatives(model, *faces)
     return {
-        "eps_r": Derivative(by_e, holomorphic=False, chain=lambda: _loss(model)),
-        "tan_delta": Derivative(
-            lambda: by_e() * np.imag(element_values(model, "eps_r")),
+        "eps_r": Derivative(
+            by_e,
             holomorphic=False,
+            chain=lambda: _loss(model),
+            per_axis=axis.get("eps_r"),
         ),
-        "mu_r": Derivative(by_m, holomorphic=False),
+        "tan_delta": Derivative(
+            lambda: by_e() * np.imag(element_values(model, "eps_r", per_axis=1.0)),
+            holomorphic=False,
+            per_axis=axis.get("tan_delta"),
+        ),
+        "mu_r": Derivative(by_m, holomorphic=False, per_axis=axis.get("mu_r")),
+    }
+
+
+def _absorbing_axis_derivatives(
+    model: Model, surfaces: tuple[str, ...], owner: np.ndarray
+) -> dict[str, Derivative]:
+    """The per-axis derivatives of the first-order admittance, per face.
+
+    A face of ``surfaces`` whose owner tetrahedron (``owner``, per gfem
+    triangle) lies in a field with axes takes the tensor ``Y`` of
+    `anisotropy.admittance`, a function of the real principal values ``e_k
+    = Re(eps_r[k] (1 - i tan_delta[k]))`` and ``m_k = Re(mu_r[k])``: its
+    ``dY/de_k`` and ``dY/dm_k`` (`anisotropy.admittance_derivatives`),
+    chained as the isotropic forms are. Zero on the other faces. Computed
+    once, on first read.
+    """
+    steps: dict[str, np.ndarray] = {}
+
+    def step(name: str) -> np.ndarray:
+        if not steps:
+            mesh = model.mesh
+            on = (owner >= 0) & np.isin(
+                mesh.triangle_tags, [mesh.region(s).tag for s in surfaces]
+            )
+            on &= per_axis_elements(model)[np.maximum(owner, 0)]
+            faces = np.flatnonzero(on)
+            behind = owner[faces]
+            eps = principal_values(model, "eps_r")
+            tan = np.real(principal_values(model, "tan_delta"))
+            e = np.real(eps * (1.0 - 1j * tan))[behind]
+            m = np.real(principal_values(model, "mu_r"))[behind]
+            normals = unit_normals(np.asarray(mesh.nodes, float), mesh.triangles)
+            by_e, by_m = anisotropy.admittance_derivatives(
+                e,
+                m,
+                element_axes(model)[behind],
+                normals[faces],
+                where=f"Absorbing {', '.join(map(repr, surfaces))}",
+            )
+            for key, part in (("e", by_e), ("m", by_m)):
+                full = np.zeros((len(owner), 3, 3, 3))
+                full[faces] = part
+                steps[key] = full
+            im = np.zeros((len(owner), 3))
+            im[faces] = np.imag(eps)[behind]
+            steps["im"] = im
+        return steps[name]
+
+    return {
+        "eps_r": Derivative(
+            lambda: step("e"), holomorphic=False, chain=lambda: _axis_loss(model)
+        ),
+        "tan_delta": Derivative(
+            lambda: step("e") * step("im")[:, :, None, None], holomorphic=False
+        ),
+        "mu_r": Derivative(lambda: step("m"), holomorphic=False),
     }
 
 

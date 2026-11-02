@@ -18,13 +18,24 @@ An isotropic material gives ``Y = sqrt(eps / mu)`` on the tangent plane.
 returned as 3x3 tensors in the global frame, zero along n. The formulas
 hold for complex symmetric tensors (lossy media) with the principal square
 root; gfem's absorbing boundary passes real parts.
+
+``Y`` is real-analytic in the principal values ``e_k`` and ``m_k`` of
+coaxial real tensors while ``A`` and ``eps_eff`` stay positive definite,
+so `admittance_derivatives` takes ``dY/de_k`` and ``dY/dm_k`` by complex
+step on the closed form: exact to rounding, with no derivative of a matrix
+function written by hand.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-__all__ = ["admittance", "tangent_frames", "tangential_inverse_permeability"]
+__all__ = [
+    "admittance",
+    "admittance_derivatives",
+    "tangent_frames",
+    "tangential_inverse_permeability",
+]
 
 
 def _cross(n: np.ndarray) -> np.ndarray:
@@ -122,3 +133,52 @@ def admittance(
             )
     y = _geometric_mean(a, b)
     return _to_global(frames, 0.5 * (y + np.swapaxes(y, -1, -2)))
+
+
+#: The complex step of `admittance_derivatives`: far below rounding of
+#: principal values of order 1, far above the smallest normal number.
+_STEP = 1e-30
+
+
+def admittance_derivatives(
+    e: np.ndarray,
+    m: np.ndarray,
+    axes: np.ndarray,
+    normals: np.ndarray,
+    *,
+    where: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """``dY/de_k`` and ``dY/dm_k`` per face, each ``(f, 3, 3, 3)`` (k, then Y).
+
+    ``Y`` is `admittance` of the real tensors ``eps = sum_k e_k a_k a_k^T``
+    and ``mu = sum_k m_k a_k a_k^T`` (coaxial: one set of axes per face).
+    Each derivative is the imaginary part of ``Y`` at the principal value
+    stepped by ``i h``, over ``h`` (complex step: no difference, so no
+    cancellation).
+
+    Args:
+        e: Real principal permittivities behind each face, ``(f, 3)``.
+        m: Real principal permeabilities, ``(f, 3)``.
+        axes: The principal axes behind each face, ``(f, 3, 3)``, rows a_k.
+        normals: Unit face normals, ``(f, 3)``.
+        where: What the faces are, for the error message.
+
+    Raises:
+        ValueError: As `admittance`.
+    """
+    e, m = np.asarray(e, float), np.asarray(m, float)
+    axes = np.asarray(axes, float)
+
+    def tensors(values: np.ndarray) -> np.ndarray:
+        return np.einsum("fk,fki,fkj->fij", values, axes, axes)
+
+    out = []
+    for values, other, first in ((e, m, True), (m, e, False)):
+        steps = []
+        for k in range(3):
+            stepped = values + 1j * _STEP * np.eye(3)[k]
+            pair = (stepped, other) if first else (other, stepped)
+            y = admittance(tensors(pair[0]), tensors(pair[1]), normals, where=where)
+            steps.append(y.imag / _STEP)
+        out.append(np.stack(steps, axis=1))
+    return out[0], out[1]

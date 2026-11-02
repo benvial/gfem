@@ -52,7 +52,8 @@ _BY_NAME = {p.name: p for p in PROPERTIES}
 _TRACED_REMEDY = (
     "To differentiate with respect to a region's material, assign "
     "gfem.MaterialField.uniform(region, material) to that region instead: its "
-    "values are pytree leaves."
+    "values are pytree leaves (an anisotropic material gives principal values "
+    "along its axes)."
 )
 
 
@@ -556,7 +557,8 @@ class MaterialField:
     axes, shape ``(n_elements, 3)`` per element or ``(3,)`` for the whole
     region (an isotropic value is three equal values); the thermal
     properties keep one value. The axes are fixed: the values vary, the
-    principal directions do not.
+    principal directions do not. `jax.grad` gives one cotangent per
+    principal value, in the leaf's shape; the axes have none.
 
     Build one with `MaterialField.interpolate` (a design density blended
     between two materials) or `MaterialField.uniform` (a whole region whose

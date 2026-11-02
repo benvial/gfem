@@ -25,12 +25,15 @@ __all__ = [
     "anisotropic_elements",
     "anisotropic_regions",
     "coefficient",
+    "element_axes",
     "element_tensors",
     "element_values",
     "lossy_eps",
     "p0",
+    "per_axis_elements",
     "permittivity",
     "principal_permittivity",
+    "principal_values",
     "surface_coefficient",
     "surface_p0",
 ]
@@ -94,6 +97,45 @@ def _principal_values(field: MaterialField, name: str) -> np.ndarray:
     if value is None:
         return np.full(3, _DEFAULTS[name])
     return np.asarray(value)
+
+
+def per_axis_elements(model: Model) -> np.ndarray:
+    """Whether each tetrahedron lies in a `MaterialField` with `axes`."""
+    out = np.zeros(len(model.mesh.tetrahedra), bool)
+    for region in _per_axis_fields(model):
+        out[model.mesh.elements(region)] = True
+    return out
+
+
+def element_axes(model: Model) -> np.ndarray:
+    """The principal axes of each tetrahedron's field, ``(n, 3, 3)``, rows a_k.
+
+    The axes of the `MaterialField` with `axes` the tetrahedron lies in; the
+    coordinate axes elsewhere.
+    """
+    out = np.broadcast_to(np.eye(3), (len(model.mesh.tetrahedra), 3, 3)).copy()
+    for region, field in _per_axis_fields(model).items():
+        out[model.mesh.elements(region)] = np.asarray(field.axes, float)
+    return out
+
+
+def principal_values(model: Model, name: str) -> np.ndarray:
+    """Property ``name`` per tetrahedron and principal axis, ``(n, 3)``.
+
+    The values of the `MaterialField` with `axes` each tetrahedron lies in,
+    along `element_axes` (a field's default where it leaves ``name`` out).
+    Elsewhere the element's one value three times (a `Material`'s tensor
+    gives its mean, `element_values`): a placeholder for a reader of the
+    fields' tetrahedra only.
+    """
+    scalar = element_values(model, name, per_axis=1.0)
+    fields = _per_axis_fields(model)
+    values = {r: _principal_values(f, name) for r, f in fields.items()}
+    dtype = np.result_type(scalar, *values.values())
+    out = np.repeat(scalar[:, None], 3, axis=1).astype(dtype)
+    for region, value in values.items():
+        out[model.mesh.elements(region)] = value
+    return out
 
 
 def _field_tensors(field: MaterialField, values: np.ndarray) -> np.ndarray:

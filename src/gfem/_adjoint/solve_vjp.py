@@ -5,7 +5,8 @@ host; this module owns everything JAX sees:
 
 - **Inputs** are the model's and the problem's array leaves. Each leaf gets
   a kind from its pytree path: ``("nodes",)`` for the mesh node coordinates,
-  ``("material", region, property)`` for a `MaterialField` value,
+  ``("material", region, property)`` for a `MaterialField` value (per
+  element, or per element and principal axis for a field with `axes`),
   ``("boundary", index, ...)``, ``("port", index, ...)`` and
   ``("problem", path)`` for the rest.
 - **Static rules, at trace time** (``symbolic_zeros=True`` tells the forward
@@ -177,9 +178,7 @@ def solve_vjp(rule: Any, model: Any, problem: Any) -> dict[str, jax.Array]:
 
     def fwd(m_leaves: list, p_leaves: list) -> tuple:
         inputs = [*m_leaves, *p_leaves]
-        state["wanted"] = _wanted(
-            rule, kinds, [x.perturbed for x in inputs], _per_axis_reason(model)
-        )
+        state["wanted"] = _wanted(rule, kinds, [x.perturbed for x in inputs])
         values = [x.value for x in inputs]
         # nothing to keep when every perturbed input is unread
         outputs, key = call_forward(bool(state["wanted"]), values)
@@ -251,32 +250,11 @@ def _forward(rule: Any, model: Any, *, keep: bool) -> tuple:
     return rule.forward(model, keep=keep)
 
 
-def _per_axis_reason(model: Any) -> str | None:
-    """Why material gradients of ``model`` are unavailable here, or None.
-
-    The sensitivity kernel reads one value per element: a `MaterialField`
-    with `axes` (principal values) has no derivative in this version, and
-    its presence leaves the other regions' derivatives without their
-    per-element values.
-    """
-    from gfem._materials import MaterialField
-
-    for region, material in getattr(model, "materials", {}).items():
-        if isinstance(material, MaterialField) and material.axes is not None:
-            return (
-                f"the MaterialField of region {region!r} holds principal values "
-                "along axes, and gradients through per-axis material values are "
-                "not available in this version"
-            )
-    return None
-
-
-def _wanted(
-    rule: Any, kinds: list[tuple], perturbed: list[bool], per_axis: str | None = None
-) -> tuple[int, ...]:
+def _wanted(rule: Any, kinds: list[tuple], perturbed: list[bool]) -> tuple[int, ...]:
     """Indices of the inputs the backward computes; raise for unsupported ones.
 
-    ``per_axis`` (`_per_axis_reason`) refuses every material input.
+    The rule's own refusal (`unsupported_input`) comes first, then the
+    kernel's (`gfem._engine.sensitivity.unsupported`).
     """
     from gfem._engine.sensitivity import unsupported
 
@@ -286,8 +264,6 @@ def _wanted(
             continue
         own = getattr(rule, "unsupported_input", None)
         reason = None if own is None else own(kind)
-        if reason is None and kind[0] == "material":
-            reason = per_axis
         if reason is None:
             reason = unsupported(rule.form, kind)
         if reason is not None:
@@ -342,7 +318,12 @@ def _host_backward(
     for i in wanted:
         g = grads[kinds[i]]
         leaf = np.asarray(values[i])
-        g = g.reshape(leaf.shape) if leaf.ndim else g.sum()
+        if not leaf.ndim:
+            g = g.sum()
+        elif g.ndim > leaf.ndim:  # a uniform leaf of principal values, (3,)
+            g = g.sum(axis=0)
+        else:
+            g = g.reshape(leaf.shape)
         if not np.iscomplexobj(leaf):
             g = np.real(g)
         out.append(np.asarray(g, dtype=leaf.dtype))

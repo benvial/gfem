@@ -539,6 +539,69 @@ def _out_material_on_a_wave_port_face(request):
     jax.make_jaxpr(jax.grad(objective))(jnp.full(n, 2.0))
 
 
+def _out_field_with_axes_on_a_wave_port_face(request):
+    # a field with axes at the port: the port reads its tensors (the forward
+    # takes them), its principal values may not move (raised while tracing)
+    model = request.getfixturevalue("wave_model")
+    problem = gfem.Driven(frequency=20e9)
+    n = len(model.mesh.elements("dielectric"))
+
+    def objective(eps):
+        field = gfem.MaterialField(eps_r=eps, axes=np.eye(3))
+        m = model.with_material("dielectric", field)
+        m = m.replace(mesh=jax.lax.stop_gradient(m.mesh))
+        return jnp.sum(jnp.abs(gfem.solve(m, problem).s.values) ** 2)
+
+    eps = jnp.tile(jnp.array([2.0, 2.5, 3.0]), (n, 1))
+    jax.make_jaxpr(jax.grad(objective))(eps)
+
+
+def _out_material_axes(request):
+    # the principal directions are static data, never a design input
+    model = request.getfixturevalue("driven_model")
+    problem = gfem.Driven(frequency=5e9)
+    n = len(model.mesh.elements("dielectric"))
+
+    def objective(axes):
+        field = gfem.MaterialField(eps_r=jnp.full((n, 3), 2.0), axes=axes)
+        m = model.with_material("dielectric", field)
+        return jnp.sum(jnp.abs(gfem.solve(m, problem).s.values) ** 2)
+
+    jax.grad(objective)(jnp.eye(3))
+
+
+def _out_anisotropic_material_value(request):
+    # a Material is a constant, anisotropic or not: the error names the
+    # field that holds its principal values as leaves
+    model = request.getfixturevalue("driven_model")
+    problem = gfem.Driven(frequency=5e9)
+
+    def objective(eps):
+        m = model.with_material("dielectric", gfem.Material(eps_r=(eps, 2.5, 3.0)))
+        return jnp.sum(jnp.abs(gfem.solve(m, problem).s.values) ** 2)
+
+    jax.grad(objective)(2.0)
+
+
+def _out_nodes_beside_a_tensor_absorbing_face(request):
+    # the node pass transports scalar absorbing coefficients only
+    driven = request.getfixturevalue("driven_model")
+    model = driven.replace(
+        materials={"dielectric": gfem.Material(eps_r=(2.0, 2.5, 3.0))},
+        boundaries=[*driven.boundaries, gfem.Absorbing("side")],
+    )
+    problem = gfem.Driven(frequency=5e9)
+
+    def objective(nodes):
+        mesh = jax.tree_util.tree_unflatten(
+            jax.tree_util.tree_structure(model.mesh), [nodes]
+        )
+        s = gfem.solve(model.replace(mesh=mesh), problem).s.values
+        return jnp.sum(jnp.abs(s) ** 2)
+
+    jax.make_jaxpr(jax.grad(objective))(jnp.asarray(model.mesh.nodes))
+
+
 def _moved_port_objective(model, value):
     """``value(result)`` with one node of port1 moved by ``dx`` along x."""
     mesh = model.mesh
@@ -636,6 +699,30 @@ OUT_OF_SCOPE = [
         _out_material_on_a_wave_port_face,
         gfem.PortGeometryError,
         "has elements on the port face",
+    ),
+    (
+        "driven x material field with axes on a wave port face",
+        _out_field_with_axes_on_a_wave_port_face,
+        gfem.PortGeometryError,
+        "has elements on the port face",
+    ),
+    (
+        "material axes (orientation)",
+        _out_material_axes,
+        gfem.NonDifferentiableError,
+        r"axes are fixed.*principal values",
+    ),
+    (
+        "values of an anisotropic Material",
+        _out_anisotropic_material_value,
+        gfem.NonDifferentiableError,
+        r"MaterialField\.uniform.*principal values along its axes",
+    ),
+    (
+        "nodes beside an anisotropic absorbing face",
+        _out_nodes_beside_a_tensor_absorbing_face,
+        gfem.NonDifferentiableError,
+        r"Absorbing surface 'side' has an anisotropic material.*stop_gradient",
     ),
     (
         "driven x nodes of a port surface",

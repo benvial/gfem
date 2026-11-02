@@ -323,6 +323,50 @@ def test_admittance_without_a_real_geometric_mean_names_the_surface():
         anisotropy.admittance(np.eye(3)[None], indefinite, n, where="Absorbing 'box'")
 
 
+def _reference_derivative(values, k, h=1e-3):
+    """``dY/dv_k`` of the 6x6 reference, fourth-order central differences.
+
+    ``values`` holds ``e``, ``m`` (principal values), ``axes`` (rows) and
+    ``n``; ``v`` is ``e`` or ``m`` as ``k`` is below 3 or not.
+    """
+
+    def admittance(d):
+        e, m = values["e"].copy(), values["m"].copy()
+        (e if k < 3 else m)[k % 3] += d
+        a = values["axes"]
+        return anisotropy_reference.admittance(
+            a.T @ np.diag(e) @ a, a.T @ np.diag(m) @ a, values["n"]
+        )
+
+    f = [admittance(j * h) for j in (-2, -1, 1, 2)]
+    return (8 * (f[2] - f[1]) - (f[3] - f[0])) / (12 * h)
+
+
+def test_admittance_derivatives_are_the_reference_admittance_differentiated():
+    # complex step on the closed form against differences of the 6x6
+    # plane-wave reference, per principal value of coaxial e and m on random
+    # axes and normals
+    rng = np.random.default_rng(17)
+    worst = 0.0
+    for _ in range(20):
+        n = rng.normal(size=3)
+        values = {
+            "e": rng.uniform(1.5, 6.0, 3),
+            "m": rng.uniform(0.8, 2.0, 3),
+            "axes": anisotropy_reference.rotation(rng),
+            "n": n / np.linalg.norm(n),
+        }
+        by_e, by_m = anisotropy.admittance_derivatives(
+            *(values[key][None] for key in ("e", "m", "axes", "n")), where="test"
+        )
+        for k in range(6):
+            got = (by_e if k < 3 else by_m)[0, k % 3]
+            fd = _reference_derivative(values, k)
+            worst = max(worst, np.abs(got - fd).max() / np.abs(fd).max())
+    # measured on MN5: 5.3e-9 (the differences' truncation and round-off)
+    assert worst <= 2e-8
+
+
 #: A square parallel-plate section (mm) along z: the slab fills it.
 SIDE, LENGTH = 2.0, 10.0
 

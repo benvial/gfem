@@ -5,9 +5,11 @@ One cell per problem type x input kind x linear solver x frequency sweep:
 - problems: electrostatic capacitance (and a potential functional), driven
   S on lumped ports and on wave ports (lossless and lossy), eigenfrequency
   (frequency and loss of a simple mode);
-- inputs: per-element permittivity ``eps_r`` and conductivity, the fill of a
-  `gfem.SheetField`, and the mesh node coordinates (through
-  `gfem.shape.boundary_morph`);
+- inputs: per-element permittivity ``eps_r`` and conductivity, the same per
+  principal value of a field with axes (``eps_r_axes``,
+  ``conductivity_axes``: biaxial values on the `TILTED` axes, so every
+  entry of each projector is exercised), the fill of a `gfem.SheetField`,
+  and the mesh node coordinates (through `gfem.shape.boundary_morph`);
 - solvers: ``direct`` and ``bddc_gmres``; sweeps: uniform and adaptive (with
   frozen samples; the objective reads S at the samples, where the reduced
   model reproduces the full solve of the perturbed design too, so the
@@ -19,7 +21,8 @@ installed, and are skipped elsewhere (the ``petsc`` / ``slepc`` markers).
 They stay out of `CELLS`, from which the docs build derives the Capabilities
 page's claims: the verification job that runs on every PR has no PETSc.
 
-Each cell checks the gradient along 3 random unit directions against
+Each cell checks the gradient along 3 random unit directions (the third
+along ``i`` for a complex per-axis permittivity) against
 fourth-order central differences (tests/finite_differences.py, gate 1e-6)
 at tight tolerance (iterative solves to 1e-12, eigenpairs to 1e-12), and
 that the Taylor remainder falls at second order at production tolerance
@@ -51,6 +54,7 @@ from finite_differences import (
     unit_directions,
 )
 from gradient_cases import (
+    BIAXIAL,
     CAVITY_TARGET,
     EPS0,
     MIRRORED_TARGET,
@@ -58,12 +62,14 @@ from gradient_cases import (
     RESONATOR_TARGET,
     SHEETS,
     STACK_PROBLEM,
+    TILTED,
     capacitor,
     cavity_fill,
     cavity_model,
     core_design,
     layered_line,
     layered_resonator,
+    line_axes_design,
     line_design,
     mirrored_cavity,
     on_the_sheet,
@@ -110,6 +116,7 @@ def _cells() -> list[Cell]:
     for solver in SOLVERS:
         cells += [
             Cell("electrostatic", "eps_r", solver),
+            Cell("electrostatic", "eps_r_axes", solver),
             Cell("electrostatic", "nodes", solver, variant="capacitance"),
             Cell("electrostatic", "nodes", solver, variant="potential"),
         ]
@@ -117,6 +124,9 @@ def _cells() -> list[Cell]:
             cells += [
                 Cell("driven", "eps_r", solver, sweep),
                 Cell("driven", "conductivity", solver, sweep),
+                # on first-order absorbing sides, owned by the design
+                Cell("driven", "eps_r_axes", solver, sweep),
+                Cell("driven", "conductivity_axes", solver, sweep),
                 Cell("driven", "nodes", solver, sweep),
             ]
             sheets = (
@@ -136,9 +146,20 @@ def _cells() -> list[Cell]:
                 for name in ("eps_r", "conductivity", "nodes")
                 if solver == "direct" or (port == "lossy" and name in bddc)
             ]
+            # principal values beside a lossy port: the port terms read no
+            # field, so one cell shows the per-axis path through them
+            if solver == "direct" and sweep == "uniform":
+                cells.append(Cell("driven_wave", "eps_r_axes", solver, sweep, "lossy"))
         cells += [
             Cell("eigenmode", name, solver)
-            for name in ("eps_r", "conductivity", "fill", "nodes")
+            for name in (
+                "eps_r",
+                "conductivity",
+                "eps_r_axes",
+                "conductivity_axes",
+                "fill",
+                "nodes",
+            )
         ]
     return cells
 
@@ -184,9 +205,13 @@ class Case:
     taylor_at: jax.Array | None = None
     taylor_ratio: float = 10**0.5
     mask: Callable = lambda directions: directions
+    imaginary: bool = False  # the third direction along i (a complex input)
 
     def directions(self, n: int) -> list[np.ndarray]:
-        return self.mask(unit_directions(self.rng, self.p.shape, n))
+        out = self.mask(unit_directions(self.rng, self.p.shape, n))
+        if self.imaginary and n >= 3:
+            out[2] = 1j * out[2]
+        return out
 
 
 class Designs:
@@ -209,6 +234,10 @@ class Designs:
     @functools.cached_property
     def line(self):
         return layered_line(self._dir("line"))
+
+    @functools.cached_property
+    def axes_line(self):
+        return layered_line(self._dir("axes_line"), absorbing_order=1)
 
     @functools.cached_property
     def shape_line(self):
@@ -260,6 +289,14 @@ def _options(cell: Cell, *, production: bool) -> gfem.SolverOptions:
 #: Steps on unit directions: fourth-order truncation and round-off both well
 #: below the 1e-6 gate (measured worst errors 1e-8 .. 1e-10).
 STEPS = {"eps_r": 1e-2, "conductivity": 5e-2, "nodes": 2e-6}
+#: A per-axis input's property: ``eps_r_axes`` holds principal values of eps_r.
+AXES = "_axes"
+
+
+def _property(name: str) -> str:
+    return name.removesuffix(AXES)
+
+
 #: Grids of the driven cells: uniform frequencies, adaptive grid and samples.
 LINE_FREQUENCIES = (18e9, 27e9)
 LINE_GRID = tuple(float(f) for f in np.linspace(10e9, 30e9, 21))
@@ -282,17 +319,23 @@ def _sweep(cell: Cell, frequencies, grid, samples):
     return problem, [grid.index(f) for f in samples]
 
 
-def _electrostatic_eps(d: Designs, _cell: Cell, options, seed: int) -> Case:
-    """J(eps) = <W, C(eps)> on a two-terminal stack with a random P0 field."""
+def _electrostatic_eps(d: Designs, cell: Cell, options, seed: int) -> Case:
+    """J(eps) = <W, C(eps)> on a two-terminal stack with a random P0 field.
+
+    Per principal value (``eps_r_axes``): ``(n, 3)`` on the tilted axes.
+    """
     model = d.stack
     weights = np.array([[1.0, 0.3], [-0.7, 2.0]])  # not symmetric on purpose
+    axes = TILTED if cell.input.endswith(AXES) else None
 
     def objective(eps):
-        c = gfem.solve(stack_fields(model, eps), STACK_PROBLEM, options=options)
+        fields = stack_fields(model, eps, axes)
+        c = gfem.solve(fields, STACK_PROBLEM, options=options)
         return jnp.sum(weights * c.capacitance) / (EPS0 * 1e-6)  # O(1) values
 
     rng = np.random.default_rng(42 + seed)
-    eps = jnp.asarray(rng.uniform(2.0, 9.0, len(model.mesh.tetrahedra)))
+    shape = (len(model.mesh.tetrahedra),) + ((3,) if axes else ())
+    eps = jnp.asarray(rng.uniform(2.0, 9.0, shape))
     return Case(objective, eps, rng, step=STEPS["eps_r"], taylor=1e-1)
 
 
@@ -327,19 +370,36 @@ def _electrostatic_nodes(d: Designs, cell: Cell, options, seed: int) -> Case:
 
 
 def _driven_material(d: Designs, cell: Cell, options, seed: int) -> Case:
-    """S of the two-layer line in its per-element eps_r or conductivity."""
-    line = d.line
-    values, rng = line_design(line, seed)
+    """S of the two-layer line in its per-element eps_r or conductivity.
+
+    Per principal value (``_axes``): biaxial values on the tilted axes, on
+    the line with first-order absorbing sides (each side face's admittance
+    tensor moves with the values of the element behind it).
+    """
+    name = _property(cell.input)
+    if cell.input.endswith(AXES):
+        line, axes = d.axes_line, TILTED
+        values, rng = line_axes_design(line, seed)
+    else:
+        line, axes = d.line, None
+        values, rng = line_design(line, seed)
     problem, rows = _sweep(cell, LINE_FREQUENCIES, LINE_GRID, LINE_SAMPLES)
-    name = cell.input
 
     def objective(p):
-        model = with_fields(line, {**values, name: p})
+        model = with_fields(line, {**values, name: p}, axes)
         s = gfem.solve(model, problem, options=options).s.values
         return s_functional(s[jnp.asarray(rows)])
 
     taylor = {"eps_r": 1e-1, "conductivity": 1.0}[name]
-    return Case(objective, values[name], rng, step=STEPS[name], taylor=taylor)
+    p = values[name]
+    return Case(
+        objective,
+        p,
+        rng,
+        step=STEPS[name],
+        taylor=taylor,
+        imaginary=axes is not None and jnp.iscomplexobj(p),
+    )
 
 
 def _driven_fill(d: Designs, cell: Cell, options, seed: int) -> Case:
@@ -394,22 +454,37 @@ def _driven_nodes(d: Designs, cell: Cell, options, seed: int) -> Case:
 
 
 def _wave_material(d: Designs, cell: Cell, options, seed: int) -> Case:
-    """S through wave ports in the core's per-element eps_r or conductivity."""
+    """S through wave ports in the core's per-element eps_r or conductivity.
+
+    Per principal value (``_axes``): biaxial values on the tilted axes.
+    """
     mesh = d.wave_mesh
     model = wave_line(mesh, cell.variant)
     values, rng = core_design(mesh, seed)
     problem, rows = _sweep(cell, WAVE_FREQUENCIES, GRID, WAVE_SAMPLES)
-    name = cell.input
+    name = _property(cell.input)
+    axes = TILTED if cell.input.endswith(AXES) else None
+    if axes:
+        values = {k: v[:, None] * BIAXIAL for k, v in values.items()}
 
     def objective(p):
-        m = model.with_material("core", gfem.MaterialField(**{**values, name: p}))
+        field = gfem.MaterialField(**{**values, name: p}, axes=axes)
+        m = model.with_material("core", field)
         m = m.replace(mesh=jax.lax.stop_gradient(m.mesh))
         s = gfem.solve(m, problem, options=options).s.values
         return s_functional(s[jnp.asarray(rows)])
 
     # (the lossy uniform BDDC cell's remainder bends above 3e-2)
     taylor = {"eps_r": 3e-2, "conductivity": 1.0}[name]
-    return Case(objective, values[name], rng, step=STEPS[name], taylor=taylor)
+    p = values[name]
+    return Case(
+        objective,
+        p,
+        rng,
+        step=STEPS[name],
+        taylor=taylor,
+        imaginary=axes is not None and jnp.iscomplexobj(p),
+    )
 
 
 def _wave_nodes(d: Designs, cell: Cell, options, seed: int) -> Case:
@@ -438,17 +513,24 @@ def _omega(model, options, target):
 
 
 def _eigen_material(d: Designs, cell: Cell, options, seed: int) -> Case:
-    """omega of the terminated line resonator in its eps_r or conductivity."""
+    """omega of the terminated line resonator in its eps_r or conductivity.
+
+    Per principal value (``_axes``): the ramps times distinct factors per
+    axis (biaxial), on the tilted axes.
+    """
     mesh = d.resonator
     values = {
         "eps_r": ramp(mesh, "dielectric", 3.5, 4.5),
         "conductivity": ramp(mesh, "dielectric", 0.2, 0.6),
     }
-    name = cell.input
+    name = _property(cell.input)
+    axes = TILTED if cell.input.endswith(AXES) else None
+    if axes:
+        values = {k: v[:, None] * BIAXIAL for k, v in values.items()}
 
     def objective(p):
         fields = values | {name: p}
-        model = terminated(mesh, fields["eps_r"], fields["conductivity"])
+        model = terminated(mesh, fields["eps_r"], fields["conductivity"], axes)
         return _omega(model, options, RESONATOR_TARGET)
 
     # a unit step of 1 S/m would make the 0.2 S/m end of the ramp negative
@@ -500,16 +582,22 @@ def _eigen_nodes(d: Designs, _cell: Cell, options, seed: int) -> Case:
 
 BUILDERS = {
     ("electrostatic", "eps_r"): _electrostatic_eps,
+    ("electrostatic", "eps_r_axes"): _electrostatic_eps,
     ("electrostatic", "nodes"): _electrostatic_nodes,
     ("driven", "eps_r"): _driven_material,
     ("driven", "conductivity"): _driven_material,
+    ("driven", "eps_r_axes"): _driven_material,
+    ("driven", "conductivity_axes"): _driven_material,
     ("driven", "fill"): _driven_fill,
     ("driven", "nodes"): _driven_nodes,
     ("driven_wave", "eps_r"): _wave_material,
     ("driven_wave", "conductivity"): _wave_material,
+    ("driven_wave", "eps_r_axes"): _wave_material,
     ("driven_wave", "nodes"): _wave_nodes,
     ("eigenmode", "eps_r"): _eigen_material,
     ("eigenmode", "conductivity"): _eigen_material,
+    ("eigenmode", "eps_r_axes"): _eigen_material,
+    ("eigenmode", "conductivity_axes"): _eigen_material,
     ("eigenmode", "fill"): _eigen_fill,
     ("eigenmode", "nodes"): _eigen_nodes,
 }
@@ -552,6 +640,7 @@ FAMILIES = [
     Cell("electrostatic", "nodes", "direct", variant="potential"),
     Cell("driven", "eps_r", "direct", "uniform"),
     Cell("driven", "eps_r", "direct", "adaptive"),
+    Cell("driven", "eps_r_axes", "direct", "uniform"),
     Cell("driven", "fill", "direct", "uniform", "conductor"),
     Cell("driven", "nodes", "direct", "uniform"),
     Cell("driven_wave", "eps_r", "direct", "uniform", "lossy"),

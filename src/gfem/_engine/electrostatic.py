@@ -290,7 +290,9 @@ class ElectrostaticRule:
         """The electrostatic form ``int Re(eps_r) grad u . grad v``, as a `Term`.
 
         The pairs' weight ``eps0`` and the length power 1 make it SI. Its
-        coefficient reads ``r = Re(eps_r)``, so ``dc/dr = 1``. The terminal
+        coefficient reads ``r = Re(eps_r)``, so ``dc/dr = 1``, and along
+        each principal axis of a field with axes ``dC/dr_k = a_k a_k^T``
+        (per-axis factor 1). The terminal
         liftings are DOF values (1 on a terminal's DOFs, 0 elsewhere), so
         they do not move with the nodes.
         """
@@ -301,7 +303,13 @@ class ElectrostaticRule:
                 "gradient",
                 coefficient=permittivity(model, built),
                 length_power=1,
-                derivatives={"eps_r": Derivative(1.0, holomorphic=False)},
+                derivatives={
+                    "eps_r": Derivative(
+                        1.0,
+                        holomorphic=False,
+                        per_axis=Derivative(1.0, holomorphic=False),
+                    )
+                },
             )
         ]
 

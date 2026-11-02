@@ -4,6 +4,11 @@ A small line with second-order absorbing side walls and lossy, magnetic,
 conducting P0 fields: each property's gradient (complex ``eps_r`` along
 both axes, with a loss tangent that mixes them in the absorbing terms)
 against central differences on the direct solver.
+
+The same per principal value of a field with axes (first-order absorbing
+side walls, whose admittance tensors move with the values behind them),
+per element and for a uniform field, and the identities that tie the
+per-axis cotangents to the isotropic ones.
 """
 
 import math
@@ -14,6 +19,7 @@ import numpy as np
 import pytest
 import structured_meshes as sm
 from finite_differences import assert_gradient_matches, unit_directions
+from gradient_cases import TILTED
 from solver_misses import adjoint_cannot_converge_at, cannot_converge_at
 
 import gfem
@@ -115,6 +121,161 @@ def test_gradient_beside_a_per_axis_lossy_crystal(tmp_path):
     p = jnp.asarray(rng.uniform(2.0, 5.0, n))
     directions = unit_directions(rng, p.shape, 2)
     assert_gradient_matches(objective, p, directions, step=STEPS["eps_r"])
+
+
+# --- principal values on fixed axes ---------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def axes_line(line):
+    # second-order absorbing walls raise next to a field with axes
+    return line.replace(
+        boundaries=[gfem.PEC("bottom"), gfem.PEC("top"), gfem.Absorbing("side")]
+    )
+
+
+def _axis_values(line):
+    """Biaxial per-element values, ``(n, 3)``, of every property."""
+    rng = np.random.default_rng(11)
+    n = (len(line.mesh.tetrahedra), 3)
+    return {
+        "eps_r": jnp.asarray(rng.uniform(2.0, 5.0, n) * (1 - 0.1j)),
+        "mu_r": jnp.asarray(rng.uniform(1.0, 2.0, n)),
+        "tan_delta": jnp.asarray(rng.uniform(0.01, 0.2, n)),
+        "conductivity": jnp.asarray(rng.uniform(0.1, 1.0, n)),
+    }, rng
+
+
+def _field_objective(line):
+    """The S functional of the line with a field of ``values`` (a dict)."""
+    options = gfem.SolverOptions(linear_solver="direct")
+
+    def objective(values, axes=TILTED):
+        field = gfem.MaterialField(**values, axes=axes)
+        model = line.with_material("dielectric", field)
+        s = gfem.solve(model, gfem.Driven(frequency=F), options=options).s.values
+        return jnp.sum(jnp.abs(s) ** 2 * jnp.array([[1.0, 0.5], [2.0, -1.0]]))
+
+    return objective
+
+
+@pytest.mark.parametrize("name", ["eps_r", "mu_r", "tan_delta", "conductivity"])
+def test_gradient_of_each_principal_value_matches_central_differences(axes_line, name):
+    # the curl (mu_r) and loss (tan_delta) paths beside the matrix's eps_r
+    # and conductivity cells, through the walls' admittance tensors
+    values, rng = _axis_values(axes_line)
+    objective = _field_objective(axes_line)
+    p = values[name]
+    (d,) = unit_directions(rng, p.shape, 1)
+    directions = [d, 1j * d] if jnp.iscomplexobj(p) else [d]
+    assert_gradient_matches(
+        lambda q: objective({**values, name: q}), p, directions, step=STEPS[name]
+    )
+
+
+CRYSTAL = gfem.Material(
+    eps_r=(3.0, 4.5, 6.0),
+    mu_r=(1.2, 1.0, 1.5),
+    tan_delta=(0.02, 0.05, 0.01),
+    conductivity=(0.3, 0.1, 0.6),
+    axes=TILTED,
+)
+
+
+@pytest.mark.parametrize("name", ["eps_r", "mu_r", "tan_delta", "conductivity"])
+def test_gradient_of_a_uniform_field_of_principal_values(axes_line, name):
+    # MaterialField.uniform of a crystal: (3,) leaves
+    field = gfem.MaterialField.uniform("dielectric", CRYSTAL)
+    values = {n: getattr(field, n) for n in field.properties}
+    objective = _field_objective(axes_line)
+    rng = np.random.default_rng(5)
+    directions = unit_directions(rng, (3,), 2)
+    assert_gradient_matches(
+        lambda q: objective({**values, name: q}, axes=field.axes),
+        values[name],
+        directions,
+        step=STEPS[name],
+    )
+
+
+def _relative(got, want):
+    got, want = np.asarray(got), np.asarray(want)
+    return float(np.linalg.norm(got - want) / np.linalg.norm(want))
+
+
+def test_equal_principal_values_give_the_isotropic_s_and_cotangents(axes_line):
+    # sum_k a_k a_k^T = I: the field with axes and equal principal values is
+    # the isotropic field (its wall faces take the tensor path), and its
+    # per-axis cotangents sum to the isotropic one
+    values, _ = _values(axes_line)
+    objective = _field_objective(axes_line)
+    equal = {k: jnp.repeat(v[:, None], 3, axis=1) for k, v in values.items()}
+    iso, iso_grad = jax.value_and_grad(lambda v: objective(v, axes=None))(values)
+    per_axis, axes_grad = jax.value_and_grad(objective)(equal)
+    # measured on MN5: S 7.3e-15 relative, cotangents 1.1e-15 .. 1.5e-15
+    assert abs(float(per_axis) - float(iso)) <= 3e-14 * abs(float(iso))
+    for name, g in iso_grad.items():
+        assert _relative(axes_grad[name].sum(axis=1), g) <= 5e-15, name
+
+
+def test_a_uniform_cotangent_is_the_sum_of_the_per_element_ones(axes_line):
+    field = gfem.MaterialField.uniform("dielectric", CRYSTAL)
+    uniform = {n: getattr(field, n) for n in field.properties}
+    n = len(axes_line.mesh.elements("dielectric"))
+    per_element = {k: jnp.tile(v, (n, 1)) for k, v in uniform.items()}
+    objective = _field_objective(axes_line)
+    uniform_grad = jax.grad(lambda v: objective(v, axes=field.axes))(uniform)
+    element_grad = jax.grad(lambda v: objective(v, axes=field.axes))(per_element)
+    # measured on MN5: 3.3e-16 .. 5.6e-16 relative
+    for name, g in uniform_grad.items():
+        assert _relative(element_grad[name].sum(axis=0), g) <= 2e-15, name
+
+
+def test_principal_values_beside_a_second_order_wall_of_isotropic_material(
+    tmp_path,
+):
+    # the second-order absorbing term has no per-axis derivative: it reads
+    # only the isotropic air behind it, so it adds nothing to the crystal's
+    side, length = 2.0, 6.0
+    tol = 1e-9 * length
+
+    def surface(c):
+        if abs(c[2]) < tol:
+            return "port"
+        if abs(c[2] - length) < tol:
+            return "end"
+        return "ywalls" if min(abs(c[1]), abs(c[1] - side)) < tol else ""
+
+    def volume(c):
+        return "crystal" if c[2] < length / 2 else "air"
+
+    edges = (
+        np.linspace(0, side, 3),
+        np.linspace(0, side, 3),
+        np.linspace(0, length, 7),
+    )
+    path = sm.write_msh22(tmp_path / "slab.msh", sm.structured(edges, volume, surface))
+    mesh = gfem.Mesh.from_gmsh(path, length_unit="mm")
+    options = gfem.SolverOptions(linear_solver="direct")
+
+    def objective(eps):
+        model = gfem.Model(
+            mesh,
+            materials={
+                "crystal": gfem.MaterialField(eps_r=eps, axes=TILTED),
+                "air": gfem.Material(),
+            },
+            boundaries=[gfem.PEC("ywalls"), gfem.Absorbing("end", order=2)],
+            ports=[gfem.LumpedPort("p1", "port", "+y")],
+        )
+        s = gfem.solve(model, gfem.Driven(frequency=10e9), options=options).s
+        return jnp.sum(jnp.abs(s.values) ** 2)
+
+    rng = np.random.default_rng(13)
+    n = len(mesh.elements("crystal"))
+    eps = jnp.asarray(rng.uniform(2.0, 5.0, (n, 3)))
+    directions = unit_directions(rng, eps.shape, 1)
+    assert_gradient_matches(objective, eps, directions, step=STEPS["eps_r"])
 
 
 def test_unexcited_port_rows_use_an_adjoint_solve(line):
