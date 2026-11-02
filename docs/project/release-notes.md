@@ -2,14 +2,17 @@
 
 ## Unreleased
 
-- **Anisotropic materials throughout.** Every feature that reads a
-  `Material` now takes an anisotropic one; where a case is not supported it
-  raises, and nothing is approximated silently. See
+- **Anisotropic materials.** Driven, eigenmode, electrostatic and port mode
+  solves, wave ports, first-order absorbing boundaries, `MaterialField` and
+  its gradients, `EigenmodeResult.principal_participation`,
+  `interface_participation` and job files now take an anisotropic
+  `Material`. The cases listed below as unsupported raise. See
   {doc}`../recipes/anisotropic-materials`.
   - `eps_r`, `mu_r`, `tan_delta` and now `conductivity` each take one value,
     three principal values along `axes`, or a real symmetric 3×3 matrix in
     the global frame, stored as principal values plus `axes`. Driven and
-    eigenmode solves read a per-axis conductivity along its axes.
+    eigenmode solves read a conductivity given as principal values along its
+    principal axes.
   - Wave ports accept anisotropic `mu_r`, and anisotropic materials in a
     {term}`transverse-anisotropic` cross-section (every tensor with a
     principal axis along the port normal, at any orientation in the port
@@ -23,7 +26,8 @@
     shape `(n_elements, 3)`, or for the whole region, shape `(3,)`, along
     fixed axes. `MaterialField.uniform` takes an anisotropic `Material`, and
     `MaterialField.interpolate` blends two materials per principal value when
-    their tensors share principal axes (air and a crystal, for example);
+    their tensors share principal axes (air and an anisotropic material, for
+    example);
     materials with different axes raise. Driven, eigenmode, electrostatic and
     port mode solves read the field's tensor on each element. `jax.grad`
     gives one cotangent per principal value, checked against finite
@@ -31,7 +35,8 @@
     orientation is not a design input.
   - `EigenmodeResult.principal_participation` splits each anisotropic
     region's participation along its principal axes, which gives the exact
-    per-region loss for a per-axis `tan_delta` and `conductivity`.
+    per-region loss for `tan_delta` and `conductivity` given as principal
+    values.
   - Errors: passivity errors name the failing principal value and its axis;
     the wave-port error names the property (`eps_r`, `mu_r`, `conductivity`)
     with no principal axis along the port normal, and gives the workarounds;

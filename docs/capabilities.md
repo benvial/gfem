@@ -70,7 +70,10 @@ gradient that would be wrong:
   differ from the permittivity's. Both raise `ValueError`.
 - **Anisotropic materials at wave ports**: a port's cross-section may contain
   anisotropic materials when every tensor has a principal axis along the port
-  normal. Tilted axes elsewhere in the model are fully supported.
+  normal. Elsewhere in the model the principal axes may point in any
+  direction: a model with tilted principal axes and its rigidly rotated copy
+  give the same S, eigenfrequency and capacitance
+  (`tests/unit/test_anisotropic_rotation.py`).
 - **Second-order absorbing boundaries** raise next to an anisotropic
   material; use order 1, which is exact at normal incidence for any
   anisotropic material.

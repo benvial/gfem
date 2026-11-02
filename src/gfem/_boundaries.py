@@ -357,7 +357,8 @@ class WavePort:
     The cross-section may contain anisotropic materials when every tensor
     has a principal axis along the port normal (any orientation in the port
     plane); off-axis tensors would make forward and backward port modes
-    differ. Tilted axes elsewhere in the model are fully supported.
+    differ. Elsewhere in the model the principal axes may point in any
+    direction.
 
     Attributes:
         name: The port's name; ports index S-parameters by name, in the

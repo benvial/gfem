@@ -80,8 +80,8 @@ ports = [
 ]
 ```
 
-Palace's per-axis values and `MaterialAxes` map onto gfem's principal values
-and `axes` ({doc}`anisotropic-materials`).
+Palace's three-valued material properties and `MaterialAxes` map onto gfem's
+principal values and `axes` ({doc}`anisotropic-materials`).
 
 gsim meshes the metal traces as volumes and tags them with the name of the
 dielectric around them, so a trace has no region name of its own. Exclude it

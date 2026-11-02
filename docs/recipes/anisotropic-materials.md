@@ -1,9 +1,9 @@
 # Model an anisotropic material
 
-A crystal's permittivity, permeability, loss tangent and conductivity depend
-on the direction of the field: lithium niobate guides its TE and TM modes with
-different indices, and sapphire loses energy differently along and across its
-c-axis. gfem takes each of these properties as a real symmetric tensor, and
+An anisotropic material's permittivity, permeability, loss tangent and
+conductivity depend on the direction of the field: lithium niobate guides its
+TE and TM modes with different indices, and sapphire loses energy differently
+along and across its c-axis. gfem takes each of these properties as a real symmetric tensor, and
 the tensors of one {term}`anisotropic material` share one set of
 {term}`principal axes`. Driven, eigenmode, electrostatic and port mode solves
 read them on every element, and gradients reach their
@@ -31,13 +31,13 @@ import numpy as np
 import gfem
 
 no2, ne2 = 2.211**2, 2.138**2
-ln = gfem.Material(eps_r=(no2, ne2, no2), name="LN")  # optic axis along y
+ln = gfem.Material(eps_r=(no2, ne2, no2), name="LN")  # extraordinary axis along y
 clad = gfem.Material(eps_r=1.444**2)
 ```
 
 When the principal axes are not the coordinate axes, give them as `axes`,
-three orthonormal vectors, one row per principal value. The same crystal with
-its optic axis turned 10° in the chip plane:
+three orthonormal vectors, one row per principal value. The same film with
+its extraordinary axis turned 10° in the chip plane:
 
 ```python
 c, s = np.cos(np.radians(10)), np.sin(np.radians(10))
@@ -95,9 +95,14 @@ s = gfem.solve(model, problem).s
   normal, with any orientation in the port plane. The x-cut film passes on
   guides along x or y (its axes include both). A port on a guide at 45° in
   the plane does not, and the port mode solve raises `ValueError` naming the
-  region and the property. End such a port in an access guide aligned with
-  the crystal, or in an isotropic one. Tilted axes away from the ports are
-  fully supported.
+  region and the property. End such a port in an access guide that is
+  transverse-anisotropic there, or in an isotropic one. Away from the ports
+  the principal axes may point in any direction: a model with tilted
+  principal axes and its rigidly rotated copy give the same S,
+  eigenfrequency and capacitance (`tests/unit/test_anisotropic_rotation.py`),
+  and a uniform anisotropic material field on tilted axes solves as its
+  material
+  (`tests/unit/test_driven.py::test_a_uniform_field_of_a_crystal_solves_like_the_crystal`).
 - **First-order absorbing boundaries.** `gfem.Absorbing(..., order=1)` next
   to an anisotropic material applies that material's
   {term}`absorbing admittance` for each face's normal. It is exact for a
@@ -106,13 +111,13 @@ s = gfem.solve(model, problem).s
   isotropic faces.
 - **Second-order absorbing boundaries** raise `NotImplementedError` when an
   anisotropic material touches the surface. Use order 1, or put an isotropic
-  buffer layer between the crystal and the boundary.
+  buffer layer between the anisotropic material and the boundary.
 
 ## Loss per principal axis
 
 A resonator on a sapphire substrate, c-axis along z: the substrate's loss
 tangent differs along and across the c-axis. Solve the resonator lossless,
-then weigh assumed per-axis loss tangents by
+then weigh assumed loss tangents along each principal axis by
 {term}`principal participation`. `modes.principal_participation` holds one
 `(n_modes, 3)` array per anisotropic region, in the order of the material's
 `axes` (here the coordinate axes):
@@ -132,11 +137,11 @@ inverse_q_substrate = p @ tan_delta  # (n_modes,)
 ```
 
 - The three columns add up to `modes.bulk_participation["substrate"]`.
-- A per-axis `conductivity` adds
+- A `conductivity` given as principal values adds
   `p[:, k] * conductivity[k] / (ε0 eps_r[k] Re ω)` on each axis.
 - The sum is exact for any field direction, with the losses uniform over the
   region. `bulk_participation × tan_delta` is the rule for an isotropic loss:
-  it does not apply to a per-axis one.
+  it does not apply to principal values.
 - A solve with the loss tangents in the material gives the same 1/Q from its
   complex eigenfrequency, to first order in 1/Q.
 
@@ -146,9 +151,9 @@ Isotropic regions have no entry in `principal_participation`.
 
 In the model above, the region `"design"` (between the two guides, away
 from the ports) holds the cladding. A density blended there between the
-cladding and the crystal is an
+cladding and the LN film is an
 {term}`anisotropic material field`: its permittivity holds three principal
-values per element, along the crystal's axes.
+values per element, along the film's principal axes.
 
 ```python
 import jax
@@ -172,12 +177,13 @@ grad = jax.grad(loss)(jnp.full(n, 0.5))  # (n,), one value per element
   `(n, 3)` builds one directly.
 - **Shared axes.** `interpolate` blends two materials per principal value
   when their tensors share principal axes. An isotropic material shares any,
-  so cladding and crystal blend; two crystals on different axes raise
+  so cladding and LN blend; two anisotropic materials on different
+  principal axes raise
   `ValueError`.
 - **What differentiates.** Gradients with respect to the principal values of
   `eps_r` (driven, eigenmode and electrostatic solves) and of `conductivity`
   (driven and eigenmode solves) are checked against finite differences: see
-  {doc}`../capabilities`. The axes, the crystal's orientation, are not a
+  {doc}`../capabilities`. The axes, the material's orientation, are not a
   design input.
 - **Ports.** As for any design, keep the design region off the wave port
   faces ({doc}`s-parameter-gradient`).
@@ -198,10 +204,12 @@ identities. No tolerance is quoted here; each is in its test.
   reflect either (the case of Palace issue #835):
   `tests/verification/test_anisotropic_wave_ports.py::test_a_fill_turned_about_the_guide_axis_does_not_reflect`.
 - The port mode of that turned tensor propagates, with its propagation
-  constant between those of the two aligned guides:
+  constant between those of the two guides filled with the tensor's
+  principal values across the guide (`eps_r` = 2 and 4):
   `tests/unit/test_port_mode.py::test_a_tensor_turned_about_the_guide_axis_keeps_a_propagating_mode`.
-- Per-axis loss from `principal_participation` matches 1/Q from the complex
-  eigenfrequency, on a crystal whose field lies off every principal axis:
+- The loss along each principal axis from `principal_participation` matches
+  1/Q from the complex eigenfrequency, on an anisotropic material whose
+  field lies off every principal axis:
   `tests/unit/test_eigenmode.py::test_principal_participation_gives_a_per_axis_loss_exactly`.
 - A model and its rigidly rotated copy, with the material given as rotated
   global matrices, give the same S, eigenfrequency and capacitance
@@ -225,7 +233,7 @@ Two checks on your own model:
 - **Wave ports need transverse-anisotropic cross-sections**: every tensor in
   the cross-section has a principal axis along the port normal. Otherwise the
   port mode solve raises `ValueError`; rotate the material or the port, or
-  end the port in an aligned or isotropic access guide
+  end the port in a transverse-anisotropic or isotropic access guide
   ({py:obj}`gfem.WavePort`).
 - **First-order absorbing boundaries are exact at normal incidence only**, as
   for isotropic materials, and read the real parts of ε and μ
