@@ -89,6 +89,19 @@ Absorbing boundary
   A boundary condition on a truncating surface that approximates an open,
   non-reflecting exterior, of first or second order.
 
+Transverse-anisotropic
+  An {term}`anisotropic material` with one of its {term}`principal axes`
+  along the surface normal at a port or boundary, so each tensor is
+  block-diagonal in the surface frame (a 2x2 tangential block and a normal
+  value). A wave port's cross-section may contain only transverse-anisotropic
+  materials; tilted axes are allowed elsewhere.
+
+Absorbing admittance
+  The relative wave admittance a first-order {term}`absorbing boundary`
+  applies to the tangential electric field on each face, set by the material
+  behind the face and the face normal: a scalar for an isotropic material, a
+  tangential tensor for an {term}`anisotropic <Anisotropic material>` one.
+
 Air box
   The truncated exterior region between the device and the
   {term}`absorbing boundary`.
@@ -173,6 +186,12 @@ Participation ratio
   The fraction of a mode's electric or inductive energy stored in one region,
   port or interface.
 
+Principal participation
+  The fraction of a mode's electric energy stored in one
+  {term}`anisotropic <Anisotropic material>` region by the field component
+  along one of the region's {term}`principal axes`; the three sum to the
+  region's {term}`participation ratio`.
+
 Measurement
   A post-solve function of a result's {term}`fields <Field>` that needs extra
   physics input (a surface, a thickness, a point, a path).
@@ -191,12 +210,41 @@ Power flow
 Material
   A linear medium with constant relative permittivity, permeability, loss
   tangent and electrical conductivity (S/m), assigned to a whole
-  {term}`region`.
+  {term}`region`; each property may be one value or, for an
+  {term}`anisotropic material`, a tensor.
+
+Anisotropic material
+  A {term}`material` whose permittivity, permeability, loss tangent or
+  conductivity depends on the field direction: real symmetric tensors, given
+  as {term}`principal values` along the material's {term}`principal axes` or
+  as symmetric 3x3 matrices, all sharing one set of principal axes.
+
+Principal axes
+  The three orthonormal directions (`axes`) shared by every tensor property
+  of one {term}`anisotropic material`; along each one a property takes its
+  {term}`principal value <Principal values>`.
+
+Principal values
+  The three values a tensor property takes along a material's
+  {term}`principal axes`; equal principal values mean the property is
+  isotropic.
+
+Gyrotropic material
+  A material with a non-symmetric (for example Hermitian) permittivity or
+  permeability tensor, such as a magnetized ferrite or a magneto-optic
+  crystal; it is non-reciprocal and not supported.
 
 Material field
   A spatially varying assignment of material properties (permittivity,
   permeability, conductivity) over the mesh, possibly derived from
-  {term}`design parameters`.
+  {term}`design parameters`; an {term}`anisotropic material field` holds
+  principal values on fixed axes.
+
+Anisotropic material field
+  A {term}`material field` whose tensor properties are
+  {term}`principal values` per element along one fixed set of
+  {term}`principal axes` shared by the whole field; the principal values are
+  design inputs, the axes are not.
 
 Sheet
   A zero-thickness conducting layer on an interior surface, described by its

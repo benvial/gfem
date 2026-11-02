@@ -2,24 +2,43 @@
 
 ## Unreleased
 
-- **Anisotropic material fields.** A `MaterialField` with `axes` holds three
-  principal values per element, shape `(n_elements, 3)`, or for the whole
-  region, shape `(3,)`, along fixed axes. `MaterialField.uniform` now takes
-  an anisotropic `Material`, and `MaterialField.interpolate` blends two
-  materials per principal value when their tensors share principal axes (air
-  and a crystal, for example); materials with different axes raise. Driven,
-  eigenmode, electrostatic and port mode solves read the field's tensor on
-  each element. `jax.grad` through driven, eigenmode and electrostatic solves
-  gives one cotangent per principal value, shape `(n_elements, 3)` or `(3,)`,
-  checked against finite differences in the gradient verification matrix. The
-  axes are fixed: the orientation is not a design input.
-- **Wave ports accept anisotropic permeability.** A driven solve with a wave
-  port on an anisotropic `mu_r` (with a principal axis along the port normal)
-  no longer raises `NotImplementedError`: the port's boundary term uses the
-  port's tangential inverse-permeability tensor. Fixed with it: the port's
-  modal coupling used the rotated tangential permeability instead of that
-  tensor; no 0.1.0 result changes, because 0.1.0 refused anisotropic `mu_r` at
-  a wave port before reaching it.
+- **Anisotropic materials throughout.** Every feature that reads a
+  `Material` now takes an anisotropic one; where a case is not supported it
+  raises, and nothing is approximated silently. See
+  {doc}`../recipes/anisotropic-materials`.
+  - `eps_r`, `mu_r`, `tan_delta` and now `conductivity` each take one value,
+    three principal values along `axes`, or a real symmetric 3×3 matrix in
+    the global frame, stored as principal values plus `axes`. Driven and
+    eigenmode solves read a per-axis conductivity along its axes.
+  - Wave ports accept anisotropic `mu_r`, and anisotropic materials in a
+    {term}`transverse-anisotropic` cross-section (every tensor with a
+    principal axis along the port normal, at any orientation in the port
+    plane). Fixed with it: the port's modal
+    coupling used the rotated tangential permeability instead of the port's
+    inverse-permeability tensor; no 0.1.0 result changes, because 0.1.0
+    refused anisotropic `mu_r` at a wave port before reaching it.
+  - First-order absorbing boundaries use the material's exact admittance
+    (see the behaviour change below).
+  - A `MaterialField` with `axes` holds three principal values per element,
+    shape `(n_elements, 3)`, or for the whole region, shape `(3,)`, along
+    fixed axes. `MaterialField.uniform` takes an anisotropic `Material`, and
+    `MaterialField.interpolate` blends two materials per principal value when
+    their tensors share principal axes (air and a crystal, for example);
+    materials with different axes raise. Driven, eigenmode, electrostatic and
+    port mode solves read the field's tensor on each element. `jax.grad`
+    gives one cotangent per principal value, checked against finite
+    differences in the gradient verification matrix. The axes are fixed: the
+    orientation is not a design input.
+  - `EigenmodeResult.principal_participation` splits each anisotropic
+    region's participation along its principal axes, which gives the exact
+    per-region loss for a per-axis `tan_delta` and `conductivity`.
+  - Errors: passivity errors name the failing principal value and its axis;
+    the wave-port error names the property (`eps_r`, `mu_r`, `conductivity`)
+    with no principal axis along the port normal, and gives the workarounds;
+    non-symmetric (gyrotropic) tensors and tensors with different principal
+    axes raise `ValueError` at `Material`.
+
+  Job files and saved results from 0.1.0 read unchanged.
 - **Behaviour change: equal principal values are one value.**
   `Material(eps_r=(2, 2, 2))` is now stored as `eps_r=2.0`: it equals
   `Material(eps_r=2)`, `isotropic` is `True`, and its repr changes. Results are

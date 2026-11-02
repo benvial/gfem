@@ -20,6 +20,7 @@ orphan: true
 
 ## Solving
 
+- {doc}`anisotropic-materials`
 - {doc}`measurements`
 - {doc}`gpu-direct-solver`
 - {doc}`petsc-slepc`

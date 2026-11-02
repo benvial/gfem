@@ -6,7 +6,9 @@ the transformations, the memory knob and `stop_gradient`). `jax.grad` of an
 objective built from `result.omega`, and so from `result.frequency` and
 `result.q`, reaches the per-element `eps_r` (complex where lossy), `mu_r`,
 `tan_delta` and `conductivity`, also when the model has `Conductor` plates or
-a second-order `Absorbing` boundary.
+a second-order `Absorbing` boundary. For a field with `axes` (an {term}`anisotropic material field`) the
+gradient has the field's shape, one value per principal axis; see
+{doc}`anisotropic-materials`.
 
 ## A frequency and loss objective
 

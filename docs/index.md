@@ -48,6 +48,7 @@ recipes/remesh-and-restart
 :hidden:
 :caption: Solving
 
+recipes/anisotropic-materials
 recipes/measurements
 recipes/gpu-direct-solver
 recipes/petsc-slepc

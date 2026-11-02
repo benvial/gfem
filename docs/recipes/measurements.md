@@ -26,7 +26,9 @@ ma.participation  # (n_modes,)
 
 On a metal sheet between substrate and vacuum, `"MA"` reads the vacuum face
 and `"MS"` the substrate face (its normal flux, with the substrate's
-permittivity tensor), so one surface serves both.
+permittivity tensor), so one surface serves both. A side counts as vacuum
+only if no wave in it is slower than in vacuum, so an anisotropic substrate is
+never taken for vacuum; the thin layer itself is isotropic.
 
 ## Probes
 

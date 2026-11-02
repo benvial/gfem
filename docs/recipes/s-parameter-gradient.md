@@ -4,7 +4,9 @@ A driven solve is a JAX function of the model's `MaterialField` values like
 any other (see [Differentiate a capacitance](capacitance-gradient.md) for the
 transformations, the memory knob and `stop_gradient`). `jax.grad` of an
 objective built from `result.s` or from kept fields reaches the per-element
-`eps_r` (complex where lossy), `mu_r`, `tan_delta` and `conductivity`.
+`eps_r` (complex where lossy), `mu_r`, `tan_delta` and `conductivity`. For a field with `axes` (an {term}`anisotropic material field`) the
+gradient has the field's shape, one value per principal axis; see
+{doc}`anisotropic-materials`.
 
 ## A transmission objective
 

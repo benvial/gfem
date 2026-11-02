@@ -50,7 +50,11 @@ name = {(r.dim, r.tag): r.name for r in mesh.regions}
 
 materials = {
     name[3, tag]: gfem.Material(
-        eps_r=m["Permittivity"], tan_delta=m.get("LossTan", 0.0)
+        eps_r=m["Permittivity"],
+        mu_r=m.get("Permeability", 1.0),
+        tan_delta=m.get("LossTan", 0.0),
+        conductivity=m.get("Conductivity", 0.0),
+        axes=m.get("MaterialAxes"),
     )
     for m in config["Domains"]["Materials"]
     for tag in m["Attributes"]
@@ -75,6 +79,9 @@ ports = [
     for p in sorted(bnd["LumpedPort"], key=lambda p: p["Index"])
 ]
 ```
+
+Palace's per-axis values and `MaterialAxes` map onto gfem's principal values
+and `axes` ({doc}`anisotropic-materials`).
 
 gsim meshes the metal traces as volumes and tags them with the name of the
 dielectric around them, so a trace has no region name of its own. Exclude it

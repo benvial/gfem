@@ -40,8 +40,10 @@ gradient that would be wrong:
 - **Boundaries**: {py:obj}`gfem.PEC`, {py:obj}`gfem.PMC` (symmetry planes), {py:obj}`gfem.Absorbing`
   (first or second order), {py:obj}`gfem.Conductor` (a finite-conductivity metal, by
   its surface impedance) and {py:obj}`gfem.Impedance` (per-square R, L and C).
-- **Materials and designs**: {py:obj}`gfem.Material` per region, {py:obj}`gfem.MaterialField`
-  per element, and {py:obj}`gfem.SheetField` for the fill of a patterned metal sheet
+- **Materials and designs**: {py:obj}`gfem.Material` per region (isotropic, or
+  anisotropic: real symmetric tensors on shared principal axes,
+  {doc}`recipes/anisotropic-materials`), {py:obj}`gfem.MaterialField` per
+  element (isotropic, or principal values on fixed axes), and {py:obj}`gfem.SheetField` for the fill of a patterned metal sheet
   ({doc}`recipes/sheet-design`).
 - **Measurements**: {py:obj}`gfem.characteristic_impedance`,
   {py:obj}`gfem.interface_participation` and {py:obj}`gfem.power_flow`
@@ -63,6 +65,15 @@ gradient that would be wrong:
   lose digits, and it warns with {py:obj}`gfem.LowFrequencyWarning`. For
   capacitance at low frequency, solve {py:obj}`gfem.Electrostatic`; the
   details are under {py:obj}`gfem.Driven`.
+- **Gyrotropic materials**: non-symmetric (non-reciprocal) tensors, such as a
+  magnetized ferrite, are not supported. Neither is loss whose principal axes
+  differ from the permittivity's. Both raise `ValueError`.
+- **Anisotropic materials at wave ports**: a port's cross-section may contain
+  anisotropic materials when every tensor has a principal axis along the port
+  normal. Tilted axes elsewhere in the model are fully supported.
+- **Second-order absorbing boundaries** raise next to an anisotropic
+  material; use order 1, which is exact at normal incidence for any
+  anisotropic material.
 
 ## Platforms
 
