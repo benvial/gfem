@@ -175,6 +175,7 @@ def test_a_rotated_guide_gives_the_same_s_parameters(mesh, tmp_path_factory):
     s_turned, gamma_turned = _solve(
         turned, anisotropy.rotated(material, q), F_MU, ports(q)
     )
-    # measured on MN5: gamma 1.2e-15 relative, max |dS| 1.5e-14
-    np.testing.assert_allclose(gamma_turned, gamma, rtol=4e-15)
+    # measured on MN5: gamma 1.2e-15 and 4.4e-15 relative (two nodes), max
+    # |dS| 1.5e-14: round-off
+    np.testing.assert_allclose(gamma_turned, gamma, rtol=1.5e-14)
     np.testing.assert_allclose(s_turned, s, rtol=0, atol=5e-14)

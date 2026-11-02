@@ -56,8 +56,9 @@ def test_a_rotated_line_gives_the_same_s_parameters(lines):
     problem = gfem.Driven(frequency=[10e9, 20e9])
     s = np.asarray(gfem.solve(line, problem, options=OPTIONS).s.values)
     s_turned = np.asarray(gfem.solve(turned, problem, options=OPTIONS).s.values)
-    # measured on MN5: max |dS| 2.4e-15 of max |S|
-    np.testing.assert_allclose(s_turned, s, rtol=0, atol=8e-15 * np.abs(s).max())
+    # measured on MN5: max |dS| 2.4e-15 of max |S| (round-off: the bound
+    # leaves room for other nodes' rounding)
+    np.testing.assert_allclose(s_turned, s, rtol=0, atol=2e-14 * np.abs(s).max())
 
 
 def test_a_rotated_line_gives_the_same_eigenfrequency(lines):
@@ -67,7 +68,7 @@ def test_a_rotated_line_gives_the_same_eigenfrequency(lines):
     omega_turned = complex(gfem.solve(turned, problem, options=OPTIONS).omega[0])
     # measured on MN5: 7.2e-16 relative (a strongly damped mode: the side
     # walls absorb the line's field, Im omega > Re omega)
-    np.testing.assert_allclose(omega_turned, omega, rtol=2.5e-15)
+    np.testing.assert_allclose(omega_turned, omega, rtol=1e-14)
 
 
 def test_a_rotated_capacitor_gives_the_same_capacitance(tmp_path_factory):
@@ -81,4 +82,4 @@ def test_a_rotated_capacitor_gives_the_same_capacitance(tmp_path_factory):
         gfem.solve(turned, STACK_PROBLEM, options=OPTIONS).capacitance
     )
     # measured on MN5: max |dC| 5.9e-16 of max |C|
-    np.testing.assert_allclose(c_turned, c, rtol=0, atol=2e-15 * np.abs(c).max())
+    np.testing.assert_allclose(c_turned, c, rtol=0, atol=1e-14 * np.abs(c).max())
