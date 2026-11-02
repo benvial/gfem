@@ -255,6 +255,34 @@ EXPECTED |= {
     for kind in [("nodes",)] + [("material", "dielectric", p) for p in ALL_PROPERTIES]
 }
 
+# Eigenmode on a periodic model (the C3 Bragg line, plain at Γ and Bloch at
+# the zone edge; a material field on its "low" layer, no ports): as the
+# non-periodic resonator, region "low".
+EXPECTED |= {
+    (problem, out, kind): (
+        (
+            ZERO
+            if kind == ("nodes",)
+            else GRADIENT
+            if kind[2] == out.removeprefix("materials.low.")
+            else ZERO
+        )
+        if out.startswith("materials.low.")
+        else _eigen_outcome(out, kind)
+    )
+    for problem in ("eigenmode_periodic_plain", "eigenmode_periodic_bloch")
+    for out in (
+        "omega",
+        "error",
+        "bulk_participation.low",
+        "bulk_participation.high",
+        "cluster",
+        *(f"e_fields.0.{leaf}" for leaf in ("coefficients", "mesh.nodes", "omega")),
+        *(f"materials.low.{p}" for p in ALL_PROPERTIES),
+    )
+    for kind in [("nodes",)] + [("material", "low", p) for p in ALL_PROPERTIES]
+}
+
 # Sheet fields: the fill of a sheet on the glued line (model.boundaries[2],
 # static materials). Driven S and eigenfrequencies differentiate with respect
 # to it like a material; the port mode is not differentiable at all.
@@ -423,6 +451,26 @@ def driven_periodic_cases(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
+def eigen_periodic_cases(tmp_path_factory):
+    # the C3 Bragg line (periodic along x), weakly lossy: a material field
+    # over its low layer, the high layer a constant material
+    mesh = pc.c3_mesh(tmp_path_factory.mktemp("c3"), (5, 1, 1))
+    low = _field(mesh, "low", conductivity=1e-3)
+    model = pc.c3(mesh).with_material("low", low)
+    zone_edge = (math.pi / (pc.C3_A * pc.MM), 0.0, 0.0)
+    return {
+        "eigenmode_periodic_plain": (
+            model,
+            gfem.Eigenmode(target=pc.C3_PLAIN_TARGET),
+        ),
+        "eigenmode_periodic_bloch": (
+            model,
+            gfem.Eigenmode(target=5e9, wave_vector=zone_edge),
+        ),
+    }
+
+
+@pytest.fixture(scope="module")
 def cases(model, driven_model, eigen_model, wave_model, request):
     mesh = gfem.Mesh.from_gmsh(DATA / "parallel_plate.msh", length_unit="um")
     port_model = gfem.Model(
@@ -440,6 +488,7 @@ def cases(model, driven_model, eigen_model, wave_model, request):
         "eigenmode": (eigen_model, gfem.Eigenmode(target=17e9)),
         **request.getfixturevalue("sheet_cases"),
         **request.getfixturevalue("driven_periodic_cases"),
+        **request.getfixturevalue("eigen_periodic_cases"),
     }
 
 
@@ -786,38 +835,38 @@ OUT_OF_SCOPE = [
     ),
     # driven on a periodic model
     (
-        "driven x traced wave_vector",
+        "driven x wave_vector",
         _out_driven_traced_wave_vector,
         gfem.NonDifferentiableError,
         "wave_vector must be fixed",
     ),
     (
-        "periodic x moved mesh that breaks a pair",
+        "periodic model x node move that breaks a pair",
         _out_periodic_pair_broken,
         HOST,
         r"ValueError.*breaks Periodic\(",
     ),
     (
-        "boundary_morph moving a paired surface",
+        "boundary_morph x paired moving surface",
         _out_morph_of_a_paired_surface,
         ValueError,
         "cannot be the moving surface",
     ),
     (
-        "Bloch adaptive sweep",
+        "Bloch driven x adaptive sweep",
         _out_bloch_adaptive_sweep,
         NotImplementedError,
         "sweep='uniform'",
     ),
     # periodic eigenmode rows
     (
-        "eigenmode x traced wave_vector",
+        "eigenmode x wave_vector",
         _out_eigenmode_traced_wave_vector,
         gfem.NonDifferentiableError,
         "wave_vector must be fixed",
     ),
     (
-        "Bloch eigenmode on bddc_gmres",
+        "Bloch eigenmode x bddc_gmres",
         _out_bloch_eigenmode_on_bddc,
         ValueError,
         "linear_solver='direct'",
