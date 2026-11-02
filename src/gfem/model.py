@@ -157,7 +157,8 @@ class Model:
         materials: A `Material` or `MaterialField` per volume region name.
         boundaries: Boundary conditions (`PEC`, `PMC`, `Absorbing`,
             `Conductor`, `Impedance`). At most one electromagnetic condition
-            per surface.
+            or port per surface, except several `WavePort`s, one mode each
+            (a shared port surface).
         ports: `LumpedPort` and `WavePort` values; their order is the order
             of the network parameters.
         excluded: Volumes removed from the solve domain of electromagnetic
@@ -169,8 +170,9 @@ class Model:
     Raises:
         RegionNotFoundError: A name is not a region of the mesh.
         ValueError: The model is physically inconsistent (a volume without a
-            material, two conditions on one surface, an absorbing boundary on
-            an interior surface, ...); the message gives the remedy.
+            material, two conditions on one surface (except several wave
+            ports, one mode each), an absorbing boundary on an interior
+            surface, ...); the message gives the remedy.
         TypeError: An argument has the wrong type.
     """
 
@@ -270,13 +272,7 @@ class Model:
             if isinstance(item, WavePort):
                 for edge in item.pec_edges:
                     check_surface(mesh, edge, f"WavePort {item.name!r} pec_edges")
-        for (physics, surface), items in taken.items():
-            if len(items) > 1:
-                raise ValueError(
-                    f"Surface {surface!r} has more than one "
-                    f"{_PHYSICS_NAMES[physics]} boundary condition or port: "
-                    f"{', '.join(repr(i) for i in items)}. Keep one."
-                )
+        _check_one_per_surface(taken)
 
     def _check_sheet(self, what: str, surface: str, field: SheetField) -> None:
         """A sheet field: on an interior surface, one fill value per face."""
@@ -520,3 +516,41 @@ def _items(values: Any, kinds: tuple[type, ...], what: str) -> tuple:
             names = ", ".join(k.__name__ for k in kinds)
             raise TypeError(f"{what} takes {names}; got {item!r}.")
     return items
+
+
+def _check_one_per_surface(taken: dict[tuple[str, str], list]) -> None:
+    """One condition or port per surface, or only wave ports (a shared surface).
+
+    The mixed-kinds error comes first on every surface, then each shared
+    port surface's rules.
+    """
+    for (physics, surface), items in taken.items():
+        if len(items) > 1 and not all(isinstance(i, WavePort) for i in items):
+            raise ValueError(
+                f"Surface {surface!r} has more than one "
+                f"{_PHYSICS_NAMES[physics]} boundary condition or port: "
+                f"{', '.join(repr(i) for i in items)}. Keep one."
+            )
+    for (_, surface), items in taken.items():
+        if len(items) > 1:
+            _check_shared_port_surface(surface, items)
+
+
+def _check_shared_port_surface(surface: str, ports: list) -> None:
+    """Several wave ports on one surface: distinct modes, equal ``pec_edges``."""
+    for k, b in enumerate(ports):
+        for a in ports[:k]:
+            if a.mode == b.mode:
+                raise ValueError(
+                    f"WavePorts {a.name!r} and {b.name!r} on surface {surface!r} "
+                    f"both request mode {a.mode}; give each wave port on a surface "
+                    "a different mode."
+                )
+    first = ports[0]
+    for other in ports[1:]:
+        if set(other.pec_edges) != set(first.pec_edges):
+            raise ValueError(
+                f"WavePorts {first.name!r} and {other.name!r} on surface "
+                f"{surface!r} share one port mode problem, so they need the same "
+                f"pec_edges; got {first.pec_edges!r} and {other.pec_edges!r}."
+            )

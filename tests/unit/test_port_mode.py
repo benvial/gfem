@@ -6,6 +6,7 @@ to solver precision. Convergence to analytic waveguide modes is in the
 verification tier.
 """
 
+import dataclasses
 import math
 from pathlib import Path
 
@@ -254,6 +255,113 @@ def test_a_cutoff_inside_the_band_raises_with_its_estimate(guide_mesh):
         gfem.PortModeError, match=r"cutoff inside the band 5-10 GHz, at about 6.5[56]"
     ):
         gfem.solve(guide(guide_mesh), gfem.PortMode("p1", np.linspace(5e9, 10e9, 41)))
+
+
+# --- a shared port surface ----------------------------------------------------
+
+
+def shared_guide(mesh):
+    return gfem.Model(
+        mesh,
+        materials={"air": gfem.Material()},
+        boundaries=[gfem.PEC("walls")],
+        ports=[
+            gfem.WavePort("p1_TE10", "port1", mode=1),
+            gfem.WavePort("p1_TE20", "port1", mode=2),
+        ],
+    )
+
+
+@pytest.mark.parametrize("port", ["p1_TE10", "p1_TE20"])
+def test_a_cutoff_of_a_shared_surface_mode_names_its_port_and_surface(guide_mesh, port):
+    # TE20 of WR-90 is cut off at c / a = 13.11 GHz; either port runs the
+    # surface's sweep, so either raises for TE20
+    with pytest.raises(
+        gfem.PortModeError,
+        match=r"WavePort 'p1_TE20' on surface 'port1' \(shared with 'p1_TE10'\): "
+        r"mode 2 has its cutoff inside the band 10-15 GHz, at about 13\.1.*drop "
+        r"that wave port",
+    ):
+        gfem.solve(
+            shared_guide(guide_mesh), gfem.PortMode(port, np.linspace(10e9, 15e9, 21))
+        )
+
+
+def test_an_explicit_mode_on_a_shared_surface_sweeps_that_rank_alone(guide_mesh):
+    # the surface's TE20 is cut off in the band, TE10 alone is not
+    result = gfem.solve(
+        shared_guide(guide_mesh), gfem.PortMode("p1_TE10", [10e9, 15e9], mode=1)
+    )
+    assert np.asarray(result.n_eff).real.min() > 0
+
+
+def test_a_voltage_path_off_the_plane_names_its_own_port_on_a_shared_surface(
+    guide_mesh,
+):
+    off = ((A / 4, 0.0, 1e-3), (A / 4, B, 1e-3))
+    model = shared_guide(guide_mesh)
+    model = model.replace(
+        ports=[model.ports[0], dataclasses.replace(model.ports[1], voltage_path=off)]
+    )
+    with pytest.raises(ValueError, match=r"WavePort 'p1_TE20': voltage_path leaves"):
+        gfem.solve(model, gfem.PortMode("p1_TE10", 16e9))
+
+
+@pytest.fixture(scope="module")
+def hybrid_shared():
+    # the hybrid guide's modes 1 and 2 at both ends (all four propagate)
+    mesh = gfem.Mesh.from_gmsh(DATA / "hybrid_waveguide.msh", length_unit="mm")
+    return gfem.Model(
+        mesh,
+        materials={"block": gfem.Material(eps_r=6.0), "air": gfem.Material()},
+        boundaries=[gfem.PEC("walls")],
+        ports=[
+            gfem.WavePort(name, f"port{name[1]}", mode=int(name[-1]))
+            for name in ("p1_m1", "p1_m2", "p2_m1", "p2_m2")
+        ],
+    )
+
+
+HYBRID_F = tuple(np.linspace(16e9, 20e9, 9))
+
+
+@pytest.fixture(scope="module")
+def hybrid_driven(hybrid_shared):
+    problem = gfem.Driven(HYBRID_F, excite="p1_m1", keep_fields=True)
+    options = gfem.SolverOptions(order=3, linear_solver="direct")
+    return gfem.solve(hybrid_shared, problem, options=options)
+
+
+@pytest.mark.parametrize("port", ["p1_m1", "p1_m2"])
+def test_port_mode_on_a_shared_surface_is_the_driven_problems_mode(
+    hybrid_shared, hybrid_driven, port
+):
+    options = gfem.SolverOptions(order=3)
+    result = gfem.solve(hybrid_shared, gfem.PortMode(port, HYBRID_F), options=options)
+    driven = hybrid_driven.port_modes[port]
+    assert result.mode == driven.mode
+    # measured 4.6e-15
+    np.testing.assert_allclose(result.gamma, driven.gamma, rtol=1e-12)
+    np.testing.assert_array_equal(result.solved, driven.solved)
+    coords = result.e_field._coords
+    np.testing.assert_allclose(
+        coords, driven.e_field._coords, rtol=0, atol=1e-12 * np.abs(coords).max()
+    )
+    # the surface's ports share their exact solves
+    other = hybrid_driven.port_modes["p1_m2" if port == "p1_m1" else "p1_m1"]
+    np.testing.assert_array_equal(driven.solved, other.solved)
+    assert not np.asarray(driven.solved).all()  # some frequencies are reduced
+
+
+def test_an_explicit_mode_on_a_shared_surface_matches_the_joint_sweep(hybrid_shared):
+    options = gfem.SolverOptions(order=3)
+    joint = gfem.solve(hybrid_shared, gfem.PortMode("p1_m2", HYBRID_F), options=options)
+    alone = gfem.solve(
+        hybrid_shared, gfem.PortMode("p1_m2", HYBRID_F, mode=2), options=options
+    )
+    # to the port mode tolerance, not to round-off: the sweeps differ
+    tolerance = options.port_mode_tolerance
+    np.testing.assert_allclose(alone.gamma, joint.gamma, rtol=tolerance)
 
 
 def test_conductor_walls_give_te10_its_conductor_loss(guide_mesh):

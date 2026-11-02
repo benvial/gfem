@@ -8,6 +8,7 @@ worker sweep pays the workers' start-up (seconds), so the tests are few.
 """
 
 import os
+import warnings
 from pathlib import Path
 
 import jax
@@ -19,7 +20,7 @@ from solver_misses import cannot_converge_at
 
 import gfem
 from gfem._engine import workers
-from gfem._engine.driven import DrivenRule
+from gfem._engine.driven import DrivenRule, _solve_block
 from gfem._linalg import prepare
 
 DATA = Path(__file__).parent / "data"
@@ -57,6 +58,29 @@ def test_wave_ports_need_one_worker():
     s = gfem.solve(model, gfem.Driven(3e9), options=options).s.values
     ref = gfem.solve(model, gfem.Driven(3e9), options=one).s.values
     np.testing.assert_allclose(s, ref, rtol=0, atol=1e-9)
+
+
+def test_a_worker_does_not_repeat_the_parents_port_mode_warnings():
+    # a lone mode=2 skips mode 1: the parent's rule warns, a worker's does not
+    mesh = gfem.Mesh.from_gmsh(DATA / "parallel_plate.msh", length_unit="um")
+    model = gfem.Model(
+        mesh,
+        materials={"fill": gfem.Material(eps_r=4.0)},
+        boundaries=[gfem.PEC("plates")],
+        ports=[gfem.WavePort("p1", "port1", 2), gfem.WavePort("p2", "port2", 2)],
+    )
+    problem = gfem.Driven(2.5e12)
+    options = gfem.SolverOptions(order=1)
+    with pytest.warns(gfem.SkippedPortModeWarning):
+        DrivenRule(model, problem, options)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", gfem.SkippedPortModeWarning)
+        warnings.simplefilter("error", gfem.PortModeProjectionWarning)
+        outputs, _, reason = _solve_block(
+            *workers.model_parts(model), problem, options, keep=False
+        )
+    assert reason is None
+    assert outputs.rows == (0,)
 
 
 def _forward(model, problem, *, keep=False, **options):

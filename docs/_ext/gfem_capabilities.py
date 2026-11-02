@@ -81,6 +81,7 @@ COLUMNS = {
 PROBLEMS = {
     "driven": Problem("driven", "s.values", "lumped"),
     "driven_wave": Problem("driven", "s.values", "wave"),
+    "driven_wave_shared": Problem("driven", "s.values", "wave"),
     "driven_sheet": Problem("driven", "s.values", "lumped"),
     "driven_adaptive": Problem("driven", "s.values", "lumped"),
     "eigenmode": Problem("eigenmode", "omega"),

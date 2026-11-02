@@ -327,8 +327,9 @@ class PortModeResult:
             problem. It exceeds ``SolverOptions.port_mode_tolerance`` only at
             the formulation's low-frequency accuracy floor, where it is at
             most 10x that of an exact solve.
-        solved: ``(n_freq,)`` bool, True where the mode is an exact port mode
-            solve; elsewhere it comes from the reduced port mode model.
+        solved: ``(n_freq,)`` bool, True where the port's cross-section was
+            solved exactly (shared by the wave ports of a shared port
+            surface); elsewhere it comes from the reduced port mode model.
         e_field: The mode's electric field, normalized to 1 W; ``None`` on a
             driven result that keeps no fields.
     """
@@ -812,7 +813,9 @@ class DrivenResult:
             peak phasor (e^{+iωt}) in V/m for 1 W time-averaged incident
             power at the excited port, every other port terminated in its
             reference impedance ``z_ref``, so time-averaged densities carry
-            a factor 1/2 (see `gfem.conventions`). Quantity ``"E"``, on
+            a factor 1/2 (see `gfem.conventions`). A wave port is
+            terminated by absorbing its mode (matched), including the other
+            modes of the excited port's own surface. Quantity ``"E"``, on
             H(curl) of the solve order, over the solve domain.
             An adaptive sweep's fields are basis-backed (`ReducedFields`):
             the result holds the reduced basis and one short coordinate

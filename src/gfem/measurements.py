@@ -433,7 +433,13 @@ def characteristic_impedance(mode: PortModeResult, voltage_path: Any) -> jax.Arr
             "keeps its wave ports' mode fields only with Driven(keep_fields=...). "
             "Solve with keep_fields, or solve gfem.PortMode for the port."
         )
-    volts = path_voltage(field._space, field._basis, field._coords, path)  # noqa: SLF001
+    volts = path_voltage(
+        field._space,  # noqa: SLF001
+        field._basis,  # noqa: SLF001
+        field._coords,  # noqa: SLF001
+        path,
+        mode.port,
+    )
     return jnp.asarray(np.abs(volts) ** 2 / 2.0)
 
 
