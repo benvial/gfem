@@ -173,9 +173,10 @@ differentiate as for one mode per port
   the solve raises {py:obj}`gfem.PortModeError`, naming both ports when both
   modes are requested. It raises too when two requested modes follow the
   same mode through an unresolved crossing, and when a requested mode is
-  below cutoff somewhere in the band; the messages name the port and the
-  surface. A clean crossing is followed and warns with
-  {py:obj}`gfem.PortModeTrackingWarning`.
+  below cutoff somewhere in the band (a lossy mode counts as below cutoff
+  where its attenuation is at least its phase constant, Re β ≤ |Im β|); the
+  messages name the port and the surface. A clean crossing is followed and
+  warns with {py:obj}`gfem.PortModeTrackingWarning`.
 - **Eigenmodes.** {py:obj}`gfem.Eigenmode` raises `NotImplementedError` for
   any wave port, lone or shared: find resonances from a `gfem.Driven` sweep.
 - **Designs on a port face.** The port modes are constants of the solve: a

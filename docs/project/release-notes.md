@@ -23,6 +23,12 @@
   Gram matrix on the port face is singular now raises
   {py:obj}`gfem.PortModeError` before the 3D solve, where 0.1.0 silently
   dropped the port's modal correction. Lone-port S is otherwise unchanged.
+- **Behaviour change: lossy modes below cutoff.** A requested port mode whose
+  attenuation is at least its phase constant (Re β ≤ |Im β|, for example an
+  RC-like line at low frequency) now counts as below cutoff: the solve raises
+  the port mode sweep's cutoff {py:obj}`gfem.PortModeError`, naming the port
+  (and its surface when shared), lone wave ports included, where 0.1.0
+  accepted it as a propagating mode.
 - **`gfem.Eigenmode`'s message** for a wave port on a shared port surface
   names the surface and its wave ports and points to a `gfem.Driven` sweep.
 
