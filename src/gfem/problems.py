@@ -180,6 +180,9 @@ class PortMode:
     is solved exactly. The mode is picked at the lowest frequency and
     followed through the band by its overlap with the neighbouring
     frequency's mode, so it stays the same physical mode through crossings.
+    On a shared port surface it runs the surface's sweep, with the other
+    wave ports of its surface, so it gives the same mode a driven problem
+    uses; an explicit ``mode`` sweeps that rank alone.
 
     Args:
         port: The name of a `WavePort` of the model.
@@ -196,7 +199,8 @@ class PortMode:
         NonDifferentiableError: ``frequency`` is traced by JAX.
 
     `gfem.solve` raises `PortModeError` when the mode is below cutoff
-    somewhere in the band (naming the estimated cutoff) or degenerate, and
+    somewhere in the band (naming the estimated cutoff) or degenerate, or
+    follows the same mode as another wave port of its surface, and
     warns with `PortModeTrackingWarning` when it crosses another mode. The
     2D problem always runs SuperLU and SciPy on the CPU: options with another
     ``device``, ``linear_solver`` or ``eigen_solver`` raise `ValueError`.
@@ -525,13 +529,14 @@ class Eigenmode:
 
     `gfem.solve` raises `gfem.EigenmodeConvergenceError` when fewer than
     ``n_modes`` modes converge (never a partial result), and
-    NotImplementedError for a `WavePort` (its propagation constant would
-    have to be solved at the complex eigenfrequency): replace it with a
-    `LumpedPort` of the line impedance, or use a `gfem.Driven` sweep. With
-    ``wave_vector``, it raises ValueError on a model without a
-    `gfem.Periodic` pair, for a k with a component outside the span of the
-    pairs' translations, and with any ``linear_solver`` but ``"direct"``;
-    and NotImplementedError on a GPU ``device``.
+    NotImplementedError for a `WavePort` or a shared port surface (its
+    propagation constants would have to be solved at the complex
+    eigenfrequency): replace a lone wave port with a `LumpedPort` of the
+    line impedance, or use a `gfem.Driven` sweep. With ``wave_vector``, it
+    raises ValueError on a model without a `gfem.Periodic` pair, for a k
+    with a component outside the span of the pairs' translations, and with
+    any ``linear_solver`` but ``"direct"``; and NotImplementedError on a GPU
+    ``device``.
 
     Example:
         ``gfem.Eigenmode(target=5e9, n_modes=2)``

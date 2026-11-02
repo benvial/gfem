@@ -30,8 +30,9 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Self
 
 import numpy as np
+import scipy.linalg
 
-from gfem._engine.wave_ports import WavePortCoupling
+from gfem._engine.wave_ports import PortSurfaceCoupling
 from gfem._linalg import (
     Handle,
     Operator,
@@ -58,24 +59,24 @@ class SystemOperator:
 
     Attributes:
         operator: The driven operator, wave-port Robin pieces included.
-        waves: The wave ports' couplings.
+        surfaces: The wave port surfaces' couplings.
     """
 
     def __init__(
         self,
         operator: DrivenOperator,
-        waves: Sequence[WavePortCoupling],
+        surfaces: Sequence[PortSurfaceCoupling],
         linear: ResolvedLinearSolver,
         *,
         width: int,
         adjoint_tolerance: float,
         transposed: Callable[[], DrivenOperator] | None = None,
     ) -> None:
-        """Add each wave port's Robin piece to ``operator``.
+        """Add each wave port surface's Robin piece to ``operator``.
 
         Args:
             operator: The driven operator.
-            waves: The wave ports' couplings.
+            surfaces: The wave port surfaces' couplings.
             linear: The rule's linear solver.
             width: The right-hand sides per solve (the excited ports).
             adjoint_tolerance: The relative residual of adjoint solves.
@@ -84,12 +85,12 @@ class SystemOperator:
                 the adjoint solves; ``None`` when ``operator`` is complex
                 symmetric.
         """
-        if waves:
+        if surfaces:
             operator = dataclasses.replace(
-                operator, pieces=[*operator.pieces, *(c.piece for c in waves)]
+                operator, pieces=[*operator.pieces, *(c.piece for c in surfaces)]
             )
         self.operator = operator
-        self.waves = list(waves)
+        self.surfaces = list(surfaces)
         self._linear = linear
         self._width = width
         self._adjoint_tolerance = adjoint_tolerance
@@ -156,7 +157,7 @@ class SystemOperator:
         held = self._held_nbytes()
         if self._transposed_system is not None:
             held += self._transposed_system._held_nbytes()  # noqa: SLF001
-        return held + sum(int(c.vectors.nbytes) for c in self.waves)
+        return held + sum(int(c.vectors.nbytes) for c in self.surfaces)
 
     def free(self) -> None:
         """Release the adjoint handles and the pieces (a prepare reassembles them).
@@ -194,7 +195,7 @@ class SystemOperator:
         if self._transposed_system is None:
             self._transposed_system = SystemOperator(
                 self._transposed(),
-                self.waves,
+                self.surfaces,
                 self._linear,
                 width=self._width,
                 adjoint_tolerance=self._adjoint_tolerance,
@@ -218,15 +219,15 @@ class SystemOperator:
     def corrections(self, omega: float) -> tuple[np.ndarray, np.ndarray]:
         """``W(ω) = U C Uᵀ``: ``U`` ``(ndof, 2 n_wave)``, ``C`` block diagonal.
 
-        Two columns per wave port, the mode's n x H with and without ``grad
-        E_n`` (see `WavePortCoupling.correction`).
+        One block per wave port surface, two columns per wave port on it
+        (see `PortSurfaceCoupling.correction`).
         """
-        columns, diagonal = [], []
-        for c in self.waves:
+        columns, blocks = [], []
+        for c in self.surfaces:
             p, d = c.correction(omega)
             columns.append(c.vectors @ p)
-            diagonal.append(d)
-        return np.concatenate(columns, axis=1), np.diag(np.concatenate(diagonal))
+            blocks.append(d)
+        return np.concatenate(columns, axis=1), scipy.linalg.block_diag(*blocks)
 
     def _system_handle(self, base: Handle, omega: float, *, borrow: bool) -> Handle:
         """A handle of ``A(ω) + W(ω)`` from a handle ``base`` of ``A(ω)``.
@@ -234,7 +235,7 @@ class SystemOperator:
         ``base`` itself without wave ports; otherwise a Woodbury update that
         owns ``base`` or ``borrow``s it.
         """
-        if not self.waves:
+        if not self.surfaces:
             return base
         return low_rank_update(base, *self.corrections(omega), borrow=borrow)
 

@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- **Several modes on one wave port surface.** Several
+  {py:obj}`gfem.WavePort`s on one surface, one `mode` each, form a
+  {term}`shared port surface`: each mode is its own port, with its own row
+  and column of S, so S holds the coupling between modes (for example TE0 to
+  TM0 conversion in a silicon strip). Gradients and adaptive sweeps work as
+  for one mode per port, and {py:obj}`gfem.PortMode` on such a port runs the
+  surface's sweep, so it gives the mode the driven solve uses. See
+  {doc}`../recipes/shared-port-surface`.
+- **New warnings.** {py:obj}`gfem.SkippedPortModeWarning`: a surface leaves
+  out a port mode ranked below a requested one (a lone `mode=2`, or modes 1
+  and 3), which the port then partly reflects. A lone `mode=1` never warns.
+  {py:obj}`gfem.PortModeProjectionWarning`: on a shared port surface with
+  loss in the cross-section, one port's S reads part of another port's mode
+  above 1e-3.
+- **New errors at `gfem.Model`.** Two wave ports on one surface that request
+  the same `mode`, or give different `pec_edges`, raise `ValueError`. A lumped
+  port or a boundary condition beside a wave port on one surface still does.
+- **Behaviour change for a lone wave port.** A port mode whose reaction or
+  Gram matrix on the port face is singular now raises
+  {py:obj}`gfem.PortModeError` before the 3D solve, where 0.1.0 silently
+  dropped the port's modal correction. Lone-port S is otherwise unchanged.
+- **Behaviour change: lossy modes below cutoff.** A requested port mode whose
+  attenuation is at least its phase constant (Re β ≤ |Im β|, for example an
+  RC-like line at low frequency) now counts as below cutoff: the solve raises
+  the port mode sweep's cutoff {py:obj}`gfem.PortModeError`, naming the port
+  (and its surface when shared), lone wave ports included, where 0.1.0
+  accepted it as a propagating mode.
+- **`gfem.Eigenmode`'s message** for a wave port on a shared port surface
+  names the surface and its wave ports and points to a `gfem.Driven` sweep.
+
 Periodic cells: `gfem.Periodic` pairs two surfaces of a model related by a
 translation (one to three pairs). Eigenmode and uniform driven problems take a
 Bloch wave vector, `wave_vector=(kx, ky, kz)` in rad/m, with

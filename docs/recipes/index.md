@@ -21,6 +21,7 @@ orphan: true
 ## Solving
 
 - {doc}`periodic-cell`
+- {doc}`shared-port-surface`
 - {doc}`measurements`
 - {doc}`gpu-direct-solver`
 - {doc}`petsc-slepc`

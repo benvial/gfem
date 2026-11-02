@@ -3,7 +3,8 @@
 One cell per problem type x input kind x linear solver x frequency sweep:
 
 - problems: electrostatic capacitance (and a potential functional), driven
-  S on lumped ports and on wave ports (lossless and lossy), driven S (and
+  S on lumped ports and on wave ports (lossless, lossy, and two modes per
+  shared port surface, read through cross-mode entries), driven S (and
   probed fields) on a periodic cell with plain and Bloch periodicity,
   eigenfrequency (frequency and loss of a simple mode);
 - inputs: per-element permittivity ``eps_r`` and conductivity, the fill of a
@@ -43,7 +44,10 @@ version does not differentiate are rows of the raise table
 electrostatic conductivity (an exact zero) and sheet fill (not an
 electrostatic object), eigenmode field quantities, the port mode problem.
 
-Run the gate with ``pytest -m verification -k gradient_matrix``.
+Run the gate with ``pytest -m verification -k gradient_matrix``. The slowest
+shared-surface cells (`REFERENCE_CELLS`) also carry the ``reference`` marker, so
+the default tiers (``-m "not reference ..."``) leave them to the reference
+tier.
 """
 
 import dataclasses
@@ -72,6 +76,8 @@ from gradient_cases import (
     cavity_fill,
     cavity_model,
     core_design,
+    hybrid_line,
+    hybrid_mesh,
     layered_line,
     layered_resonator,
     line_design,
@@ -81,6 +87,7 @@ from gradient_cases import (
     resonator_mesh,
     s_functional,
     shape_line,
+    shared_surface_functional,
     sheet_cavity,
     sheet_fill,
     sheet_line,
@@ -160,6 +167,13 @@ def _cells() -> list[Cell]:
                 for name in ("eps_r", "conductivity", "nodes")
                 if solver == "direct" or (port == "lossy" and name in bddc)
             ]
+            # A shared port surface (two modes per end): every input on the
+            # direct solver, the permittivity on BDDC + GMRES
+            cells += [
+                Cell("driven_wave", name, solver, sweep, "shared")
+                for name in ("eps_r", "conductivity", "nodes")
+                if solver == "direct" or (name == "eps_r" and sweep == "uniform")
+            ]
         cells += [
             Cell("eigenmode", name, solver)
             for name in ("eps_r", "conductivity", "fill", "nodes")
@@ -235,6 +249,21 @@ PETSC_PARAMS = [
     )
     for cell in PETSC_CELLS
 ]
+#: Cells run in the reference tier only: each shared-surface cell solves four
+#: wave ports through two port mode sweeps, and these three take 2-4 min on
+#: MN5 (8 cores). The default tiers keep the shared-surface permittivity on both
+#: sweeps and every input on the uniform sweep.
+REFERENCE_CELLS = {
+    Cell("driven_wave", "eps_r", "bddc_gmres", "uniform", "shared"),
+    Cell("driven_wave", "conductivity", "direct", "adaptive", "shared"),
+    Cell("driven_wave", "nodes", "direct", "adaptive", "shared"),
+}
+CELL_PARAMS = [
+    pytest.param(cell, marks=pytest.mark.reference, id=str(cell))
+    if cell in REFERENCE_CELLS
+    else cell
+    for cell in CELLS
+]
 
 
 @dataclasses.dataclass
@@ -293,6 +322,12 @@ class Designs:
         return wave_mesh(self._dir("wave"))
 
     @functools.cached_property
+    def hybrid_mesh(self):
+        # the coarsest grid that keeps the quadrant (96 tetrahedra): its two
+        # modes and Gram coupling are the finer grids' to 3 digits
+        return hybrid_mesh(self._dir("hybrid"), cells=(4, 2, 2))
+
+    @functools.cached_property
     def sheet_mesh(self):
         return sheet_mesh(self._dir("sheet"))
 
@@ -349,6 +384,16 @@ LINE_SAMPLES = (LINE_GRID[0], LINE_GRID[20], LINE_GRID[10], LINE_GRID[4], LINE_G
 GRID = tuple(float(f) for f in np.linspace(10e9, 30e9, 11))
 WAVE_FREQUENCIES = (12e9, 24e9)
 WAVE_SAMPLES = (GRID[0], GRID[10], GRID[5], GRID[2])
+#: The hybrid line's grids: modes 1 and 2 propagate, mode 3 is cut off.
+HYBRID_FREQUENCIES = (55e9, 65e9)
+HYBRID_GRID = tuple(float(f) for f in np.linspace(52e9, 68e9, 9))
+HYBRID_SAMPLES = (HYBRID_GRID[0], HYBRID_GRID[8], HYBRID_GRID[4], HYBRID_GRID[2])
+#: Max relative gradient difference, adjoint vs reciprocity, per solver
+#: (measured 6.2e-15 and 1.7e-13).
+SHARED_SURFACE_RECIPROCITY = {"direct": 2e-14, "bddc_gmres": 5e-13}
+#: Relative value and gradient differences, adaptive vs full, at the samples
+#: (measured 5.6e-11 and below 1e-9).
+SHARED_SURFACE_ADAPTIVE = (2e-10, 3e-9)
 SHAPE_FREQUENCIES = (GRID[2], GRID[8])
 SHAPE_SAMPLES = (GRID[0], GRID[10], GRID[5])
 SHEET_FREQUENCIES = (6e9, 9e9)
@@ -356,12 +401,43 @@ SHEET_GRID = tuple(float(f) for f in np.linspace(5e9, 10e9, 6))
 SHEET_SAMPLES = (SHEET_GRID[0], SHEET_GRID[5], SHEET_GRID[2])
 
 
-def _sweep(cell: Cell, frequencies, grid, samples):
+def _sweep(cell: Cell, frequencies, grid, samples, **kwargs):
     """The cell's problem and the grid rows its objective reads."""
     if cell.sweep == "uniform":
-        return gfem.Driven(frequency=frequencies), list(range(len(frequencies)))
-    problem = gfem.Driven(frequency=grid, sweep="adaptive", samples=samples)
+        problem = gfem.Driven(frequency=frequencies, **kwargs)
+        return problem, list(range(len(frequencies)))
+    problem = gfem.Driven(frequency=grid, sweep="adaptive", samples=samples, **kwargs)
     return problem, [grid.index(f) for f in samples]
+
+
+def _wave(d: Designs, cell: Cell):
+    """A wave-port cell's mesh, model, problem and S objective at its rows.
+
+    The ``"shared"`` variant excites p1_m1 of the hybrid line only: its
+    cross-mode entries take adjoint loads through the shared surfaces' full
+    modal corrections.
+    """
+    if cell.variant == "shared":
+        mesh = d.hybrid_mesh
+        problem, rows = _sweep(
+            cell, HYBRID_FREQUENCIES, HYBRID_GRID, HYBRID_SAMPLES, excite="p1_m1"
+        )
+        rows = jnp.asarray(rows)
+        return (
+            mesh,
+            hybrid_line(mesh),
+            problem,
+            lambda s: shared_surface_functional(s, rows),
+        )
+    mesh = d.wave_mesh
+    problem, rows = _sweep(cell, WAVE_FREQUENCIES, GRID, WAVE_SAMPLES)
+    rows = jnp.asarray(rows)
+    return (
+        mesh,
+        wave_line(mesh, cell.variant),
+        problem,
+        lambda s: s_functional(s.values[rows]),
+    )
 
 
 def _electrostatic_eps(d: Designs, _cell: Cell, options, seed: int) -> Case:
@@ -477,17 +553,14 @@ def _driven_nodes(d: Designs, cell: Cell, options, seed: int) -> Case:
 
 def _wave_material(d: Designs, cell: Cell, options, seed: int) -> Case:
     """S through wave ports in the core's per-element eps_r or conductivity."""
-    mesh = d.wave_mesh
-    model = wave_line(mesh, cell.variant)
+    mesh, model, problem, functional = _wave(d, cell)
     values, rng = core_design(mesh, seed)
-    problem, rows = _sweep(cell, WAVE_FREQUENCIES, GRID, WAVE_SAMPLES)
     name = cell.input
 
     def objective(p):
         m = model.with_material("core", gfem.MaterialField(**{**values, name: p}))
         m = m.replace(mesh=jax.lax.stop_gradient(m.mesh))
-        s = gfem.solve(m, problem, options=options).s.values
-        return s_functional(s[jnp.asarray(rows)])
+        return functional(gfem.solve(m, problem, options=options).s)
 
     # (the lossy uniform BDDC cell's remainder bends above 3e-2)
     taylor = {"eps_r": 3e-2, "conductivity": 1.0}[name]
@@ -496,13 +569,12 @@ def _wave_material(d: Designs, cell: Cell, options, seed: int) -> Case:
 
 def _wave_nodes(d: Designs, cell: Cell, options, seed: int) -> Case:
     """S through wave ports; the top plate moves, held on the port faces."""
-    model = wave_line(d.wave_mesh, cell.variant)
+    _, model, problem, functional = _wave(d, cell)
     morph = boundary_morph(model, "top")
-    problem, rows = _sweep(cell, WAVE_FREQUENCIES, GRID, WAVE_SAMPLES)
 
     def objective(t):
-        s = gfem.solve(model.replace(mesh=morph(t)), problem, options=options).s.values
-        return s_functional(s[jnp.asarray(rows)])
+        moved = model.replace(mesh=morph(t))
+        return functional(gfem.solve(moved, problem, options=options).s)
 
     return Case(
         objective,
@@ -798,7 +870,7 @@ def _case(designs: Designs, cell: Cell, *, production: bool, seed: int = 0) -> C
 # --- the cells -----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("cell", [*CELLS, *PETSC_PARAMS], ids=str)
+@pytest.mark.parametrize("cell", [*CELL_PARAMS, *PETSC_PARAMS], ids=str)
 def test_gradient_matrix_matches_central_differences(designs, cell):
     case = _case(designs, cell, production=False)
     assert_gradient_matches(
@@ -810,7 +882,7 @@ def test_gradient_matrix_matches_central_differences(designs, cell):
     )
 
 
-@pytest.mark.parametrize("cell", [*CELLS, *PETSC_PARAMS], ids=str)
+@pytest.mark.parametrize("cell", [*CELL_PARAMS, *PETSC_PARAMS], ids=str)
 def test_gradient_matrix_taylor_remainder_is_second_order(designs, cell):
     case = _case(designs, cell, production=True, seed=1)
     (d,) = case.directions(1)
@@ -924,6 +996,60 @@ def test_gradient_matrix_adaptive_equals_the_full_solve_at_the_samples(
     full_value, full_grad = jax.value_and_grad(full)(p)
     assert float(value) == pytest.approx(float(full_value), rel=1e-9)
     assert float(jnp.linalg.norm(grad - full_grad) / jnp.linalg.norm(full_grad)) <= 1e-7
+
+
+def _shared_surface_core(designs, problem, options, *, seed=0):
+    """The shared-surface objective in the core's eps_r, on ``problem``'s rows."""
+    mesh = designs.hybrid_mesh
+    model = hybrid_line(mesh)
+    values, _ = core_design(mesh, seed)
+    rows = jnp.arange(len(problem.frequency))
+
+    def objective(eps):
+        m = model.with_material("core", gfem.MaterialField(**{**values, "eps_r": eps}))
+        m = m.replace(mesh=jax.lax.stop_gradient(m.mesh))
+        return shared_surface_functional(
+            gfem.solve(m, problem, options=options).s, rows
+        )
+
+    return objective, values["eps_r"]
+
+
+@pytest.mark.parametrize("solver", SOLVERS)
+def test_gradient_matrix_shared_surface_reciprocity_equals_the_explicit_adjoint(
+    designs, solver
+):
+    # Exciting p1_m1 only leaves the cross-mode entries without p1_m2's and
+    # p2_m2's solutions: their gradients take adjoint solves through the
+    # shared surfaces' full modal corrections. With every port excited they
+    # come from reciprocity, which holds only if each correction is symmetric.
+    options = tight(solver)
+
+    def gradient(problem):
+        objective, eps = _shared_surface_core(designs, problem, options, seed=3)
+        return jax.grad(objective)(eps)
+
+    full = gradient(gfem.Driven(frequency=HYBRID_FREQUENCIES))
+    adjoint = gradient(gfem.Driven(frequency=HYBRID_FREQUENCIES, excite="p1_m1"))
+    error = np.abs(np.asarray(adjoint - full)).max() / np.abs(np.asarray(full)).max()
+    assert error <= SHARED_SURFACE_RECIPROCITY[solver]
+
+
+def test_gradient_matrix_shared_surface_adaptive_equals_the_full_solve_at_the_samples(
+    designs,
+):
+    # at a sample the full solution lies in the frozen basis
+    options = tight("direct")
+    cell = Cell("driven_wave", "eps_r", "direct", "adaptive", "shared")
+    adaptive = _wave_material(designs, cell, options, 0).objective
+    problem = gfem.Driven(frequency=HYBRID_SAMPLES, excite="p1_m1")
+    full, eps = _shared_surface_core(designs, problem, options)
+    value, grad = jax.value_and_grad(adaptive)(eps)
+    full_value, full_grad = jax.value_and_grad(full)(eps)
+    value_error = abs(float(value) - float(full_value)) / abs(float(full_value))
+    error = float(jnp.linalg.norm(grad - full_grad) / jnp.linalg.norm(full_grad))
+    assert value_error <= SHARED_SURFACE_ADAPTIVE[0]
+    assert error <= SHARED_SURFACE_ADAPTIVE[1]
 
 
 # --- consistency on a periodic model (the gradient cell G) -------------------------

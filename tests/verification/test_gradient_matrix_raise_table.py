@@ -26,6 +26,7 @@ import numpy as np
 import periodic_cases as pc
 import pytest
 import structured_meshes as sm
+from gradient_cases import HYBRID_PORTS, hybrid_line, hybrid_mesh
 
 import gfem
 from gfem._adjoint import solve_vjp
@@ -209,6 +210,25 @@ EXPECTED |= {
     for kind in [("nodes",)] + [("material", "core", p) for p in ALL_PROPERTIES]
 }
 
+# A shared port surface (two requested modes at each end of a hybrid line):
+# S, cross-mode entries included, differentiates like a lone wave port's;
+# every port's mode is a constant of the solve. The core carries only a
+# permittivity: each cell costs a 4-port solve, and the other properties'
+# outcomes are the lone wave ports' above.
+EXPECTED |= {
+    ("driven_wave_shared", out, kind): GRADIENT if out == "s.values" else ZERO
+    for out in (
+        "s.values",
+        "s.z_ref",
+        *(
+            f"port_modes.{p}.{leaf}"
+            for p in HYBRID_PORTS
+            for leaf in WAVE_PORT_MODE_OUTPUTS
+        ),
+    )
+    for kind in [("nodes",), ("material", "core", "eps_r")]
+}
+
 # Eigenmode: the eigenvalues (omega, also as each mode field's omega)
 # differentiate with respect to every electromagnetic property and the node
 # coordinates; quantities of the mode fields (backward error, port Q,
@@ -388,6 +408,15 @@ def wave_model(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
+def shared_surface_model(tmp_path_factory):
+    # the gradient matrix's hybrid line on the coarsest grid that keeps its
+    # quadrant: modes 1 and 2 of each lead on one shared port surface
+    mesh = hybrid_mesh(tmp_path_factory.mktemp("hybrid"), cells=(4, 2, 2))
+    eps = 3.0 * np.linspace(1.0, 1.5, len(mesh.elements("core")))
+    return hybrid_line(mesh).with_material("core", gfem.MaterialField(eps_r=eps))
+
+
+@pytest.fixture(scope="module")
 def sheet_mesh(tmp_path_factory):
     path = tmp_path_factory.mktemp("sheet") / "sheet.msh"
     sm.write_msh22(path, sm.sheet_line(4.0, 2.0, 1.0, (4, 1, 1)))
@@ -429,6 +458,14 @@ def sheet_cases(sheet_mesh):
             _sheet_model(sheet_mesh, waves),
             gfem.PortMode("p1", 20e9),
         ),
+    }
+
+
+@pytest.fixture(scope="module")
+def wave_cases(wave_model, shared_surface_model):
+    return {
+        "driven_wave": (wave_model, gfem.Driven(frequency=20e9)),
+        "driven_wave_shared": (shared_surface_model, SHARED_SURFACE_PROBLEM),
     }
 
 
@@ -478,7 +515,7 @@ def eigen_periodic_cases(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def cases(model, driven_model, eigen_model, wave_model, request):
+def cases(model, driven_model, eigen_model, wave_cases, request):
     mesh = gfem.Mesh.from_gmsh(DATA / "parallel_plate.msh", length_unit="um")
     port_model = gfem.Model(
         mesh,
@@ -491,7 +528,7 @@ def cases(model, driven_model, eigen_model, wave_model, request):
         "port_mode": (port_model, gfem.PortMode("p1", 10e9)),
         "driven": (driven_model, gfem.Driven(frequency=5e9, keep_fields=True)),
         "driven_adaptive": (driven_model, ADAPTIVE),
-        "driven_wave": (wave_model, gfem.Driven(frequency=20e9)),
+        **wave_cases,
         "eigenmode": (eigen_model, gfem.Eigenmode(target=17e9)),
         **request.getfixturevalue("sheet_cases"),
         **request.getfixturevalue("driven_periodic_cases"),
@@ -499,6 +536,9 @@ def cases(model, driven_model, eigen_model, wave_model, request):
     }
 
 
+#: Both modes of the hybrid line propagate (mode 2 from about 48 GHz). One
+#: excitation: S's other rows (cross-mode included) take adjoint loads.
+SHARED_SURFACE_PROBLEM = gfem.Driven(frequency=60e9, excite="p1_m1")
 PROBLEMS = {
     "electrostatic": gfem.Electrostatic(terminals={"top": "top"}, ground="bottom"),
 }
@@ -631,6 +671,19 @@ def _out_material_on_a_wave_port_face(request):
         m = model.with_material("dielectric", gfem.MaterialField(eps_r=eps))
         m = m.replace(mesh=jax.lax.stop_gradient(m.mesh))
         return jnp.sum(jnp.abs(gfem.solve(m, problem).s.values) ** 2)
+
+    jax.make_jaxpr(jax.grad(objective))(jnp.full(n, 2.0))
+
+
+def _out_material_on_a_shared_wave_port_face(request):
+    # the error names the shared port surface and every port on it
+    model = request.getfixturevalue("shared_surface_model")
+    n = len(model.mesh.elements("fill"))
+
+    def objective(eps):
+        m = model.with_material("fill", gfem.MaterialField(eps_r=eps))
+        m = m.replace(mesh=jax.lax.stop_gradient(m.mesh))
+        return jnp.sum(jnp.abs(gfem.solve(m, SHARED_SURFACE_PROBLEM).s.values) ** 2)
 
     jax.make_jaxpr(jax.grad(objective))(jnp.full(n, 2.0))
 
@@ -814,6 +867,15 @@ OUT_OF_SCOPE = [
         _out_material_on_a_wave_port_face,
         gfem.PortGeometryError,
         "has elements on the port face",
+    ),
+    (
+        "driven x material on a shared wave port face",
+        _out_material_on_a_shared_wave_port_face,
+        gfem.PortGeometryError,
+        (
+            r"^WavePorts 'p1_m1', 'p1_m2' on surface 'port1': region 'fill' has "
+            "elements on the port face"
+        ),
     ),
     (
         "driven x nodes of a port surface",

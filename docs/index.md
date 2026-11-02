@@ -49,6 +49,7 @@ recipes/remesh-and-restart
 :caption: Solving
 
 recipes/periodic-cell
+recipes/shared-port-surface
 recipes/measurements
 recipes/gpu-direct-solver
 recipes/petsc-slepc

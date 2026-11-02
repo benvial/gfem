@@ -51,7 +51,8 @@ Port mode problem
 Port mode sweep
   The {term}`port mode problem` solved over a driven problem's output
   frequencies before the 3D solve, giving each wave port's propagation constant
-  and mode profile at every output frequency.
+  and mode profile at every output frequency. The wave ports of a
+  {term}`shared port surface` share one sweep.
 
 Gradient verification matrix
   The set of cells (problem type × gradient input × linear solver × sweep)
@@ -111,6 +112,26 @@ TM-like mode
 Port
   A named excitation and measurement surface, lumped or wave, whose order in the
   {term}`model` fixes the order of the network parameters.
+
+Shared port surface
+  An exterior surface that carries several wave ports, each requesting a
+  different mode of one {term}`port mode problem`; together they form one
+  boundary.
+
+Requested mode
+  The port mode, by rank at the lowest frequency, that a wave port excites and
+  reports, with its own row and column of the network parameters. Wave ports
+  that share a surface request different modes.
+
+Skipped port mode
+  A propagating mode of a surface's {term}`port mode problem`, ranked below the
+  highest mode requested on that surface, that no wave port on the surface
+  requests.
+
+Mode cross-projection
+  The conjugated S functional of one {term}`requested mode` applied to another
+  requested mode of the same {term}`shared port surface`; zero for a lossless
+  cross-section, otherwise the error it puts into S.
 
 Terminal
   A conductor, given as one or more regions (volumes or surfaces), whose

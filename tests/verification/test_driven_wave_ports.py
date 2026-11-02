@@ -15,6 +15,10 @@
   error as ``SolverOptions.port_mode_tolerance`` tightens from 1e-4 to
   1e-8 (measured log-log slope 1.18), and below 1e-5 at the default
   tolerance.
+- The same guide with modes 1 and 2 on each port surface (a shared port
+  surface): reflections and cross-mode entries converge to zero and
+  transmissions to ``exp(-gamma L)`` with the order, and the adaptive sweep
+  matches the uniform one.
 """
 
 from pathlib import Path
@@ -138,3 +142,64 @@ def test_the_adaptive_sweep_projects_the_modal_correction(hybrid):
     du = np.abs(np.asarray(adaptive.s.values)[rows] - np.asarray(uniform.s.values))
     assert rows
     assert du.max() <= 1e-6
+
+
+# --- a shared port surface: modes 1 and 2 of the hybrid guide at each end ------
+
+SHARED_F = (16e9, 20e9)
+SHARED = ("p1_m1", "p1_m2", "p2_m1", "p2_m2")
+TRANSMISSIONS = ((2, 0), (0, 2), (3, 1), (1, 3))
+
+
+def _shared(model):
+    return model.replace(
+        ports=[
+            gfem.WavePort(name, f"port{name[1]}", mode=int(name[-1])) for name in SHARED
+        ]
+    )
+
+
+def _shared_error(result):
+    """Largest error of S against a matched guide: reflections and cross-mode
+    entries against 0, transmissions against ``exp(-gamma L)``."""
+    s = np.asarray(result.s.values)
+    rest = np.ones(s.shape[1:], bool)
+    errors = []
+    for i, j in TRANSMISSIONS:
+        rest[i, j] = False
+        expected = np.exp(
+            -np.asarray(result.port_modes[SHARED[j]].gamma) * HYBRID_LENGTH
+        )
+        # no voltage path: the sign of each mode is a mesh-dependent rule
+        t = s[:, i, j]
+        errors.append(np.minimum(np.abs(t - expected), np.abs(t + expected)).max())
+    return max(*errors, np.abs(s[:, rest]).max())
+
+
+def test_a_shared_hybrid_surface_converges_with_order(hybrid):
+    model = _shared(hybrid)
+    errors = []
+    for order in (2, 3, 4):
+        options = gfem.SolverOptions(order=order, linear_solver="direct")
+        result = gfem.solve(model, gfem.Driven(SHARED_F), options=options)
+        errors.append(_shared_error(result))
+    print(f"\nshared hybrid guide: max error at orders 2, 3, 4: {errors}")  # noqa: T201
+    # measured 5.6e-3 / 1.9e-4 / 3.0e-6: mode 1's transmission, as for a lone port
+    assert errors[0] > errors[1] > errors[2]
+    assert errors[2] < 1e-5
+
+
+def test_the_adaptive_sweep_projects_a_shared_surface_correction(hybrid):
+    model = _shared(hybrid)
+    options = gfem.SolverOptions(order=2, linear_solver="direct")
+    grid = tuple(np.linspace(16e9, 20e9, 23))
+    adaptive = gfem.solve(model, gfem.Driven(grid, sweep="adaptive"), options=options)
+    solved = np.array(adaptive.sweep.solved)
+    rows = [i for i in (3, 10, 17) if not solved[i]]
+    uniform = gfem.solve(
+        model, gfem.Driven(tuple(grid[i] for i in rows)), options=options
+    )
+    du = np.abs(np.asarray(adaptive.s.values)[rows] - np.asarray(uniform.s.values))
+    print(f"\nshared hybrid guide: adaptive - uniform {du.max():.2e} at rows {rows}")  # noqa: T201
+    assert rows
+    assert du.max() <= 2e-8  # measured 6.6e-9

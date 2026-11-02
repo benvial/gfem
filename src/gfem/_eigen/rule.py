@@ -60,7 +60,7 @@ import numpy as np
 import scipy.constants as const
 
 from gfem import _petsc
-from gfem._boundaries import LumpedPort, WavePort
+from gfem._boundaries import LumpedPort, WavePort, wave_port_surfaces
 from gfem._eigen import slepc
 from gfem._eigen.arpack import shift_invert
 from gfem._eigen.operator import EigenOperator
@@ -904,9 +904,23 @@ def _is_hermitian(op: EigenOperator) -> bool:
 
 
 def _check_supported(model: Model) -> None:
-    """Raise for model terms this version cannot solve as eigenmodes."""
+    """Raise for model terms this version cannot solve as eigenmodes.
+
+    The first wave port in model order is reported; when its surface is
+    shared, the message names the surface and all its wave ports.
+    """
     for port in model.ports:
         if isinstance(port, WavePort):
+            shared = [p.name for p in wave_port_surfaces(model.ports)[port.surface]]
+            if len(shared) > 1:
+                raise NotImplementedError(
+                    f"Eigenmode does not support the shared port surface "
+                    f"{port.surface!r} (wave ports "
+                    f"{', '.join(repr(n) for n in shared)}) in this version of "
+                    "gfem: the propagation constants of its modes must be solved "
+                    "at the complex eigenfrequency. Find the resonances and Q "
+                    "from a gfem.Driven sweep."
+                )
             raise NotImplementedError(
                 f"Eigenmode does not support wave port {port.name!r} in this "
                 "version of gfem: its propagation constant must be solved at the "
