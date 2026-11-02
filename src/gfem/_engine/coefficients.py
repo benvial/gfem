@@ -45,18 +45,17 @@ _DEFAULTS = {p.name: p.default for p in PROPERTIES}
 def element_values(
     model: Model, name: str, *, per_axis: float | None = None
 ) -> np.ndarray:
-    """Property ``name`` per tetrahedron (gfem element order), isotropic part.
+    """Property ``name`` per tetrahedron (gfem element order), one value each.
 
-    A tensor `Material` value gives the mean of its principal values here;
-    use `element_tensors` or `lossy_eps` for the full tensor. Tetrahedra
-    without a material (excluded volumes) get the property's default.
-
-    A `MaterialField` with `axes` holds ``name`` per principal axis, which
-    has no one value: its tetrahedra get ``per_axis``, a placeholder for a
-    caller that reads them from the tensors, and raise when it is ``None``.
+    Tetrahedra without a material (excluded volumes) get the property's
+    default. An anisotropic material that holds ``name`` as principal values
+    (a `Material` with three of them, or a `MaterialField` with `axes`) has
+    no one value: its tetrahedra get ``per_axis``, a placeholder for a
+    caller that reads them from the tensors (`element_tensors`,
+    `lossy_eps`, `principal_values`), and raise when it is ``None``.
 
     Raises:
-        ValueError: A field holds ``name`` per principal axis and
+        ValueError: A region holds ``name`` as principal values and
             ``per_axis`` is ``None``.
     """
     mesh = model.mesh
@@ -67,12 +66,14 @@ def element_values(
         if value is None:
             continue
         if isinstance(material, Material):
-            value = float(np.mean(value))
-        elif material.per_axis(name):
+            principal = isinstance(value, tuple)
+        else:
+            principal = material.per_axis(name)
+        if principal:
             if per_axis is None:
                 raise ValueError(
-                    f"The MaterialField of region {region!r} holds {name} per "
-                    "principal axis; it has no one value per element (read "
+                    f"The material of region {region!r} holds {name} as three "
+                    "principal values; it has no one value per element (read "
                     "element_tensors)."
                 )
             value = per_axis
@@ -117,9 +118,9 @@ def principal_values(model: Model, name: str) -> np.ndarray:
 
     The values of the `MaterialField` with `axes` each tetrahedron lies in,
     along `element_axes` (a field's default where it leaves ``name`` out).
-    Elsewhere the element's one value three times (a `Material`'s tensor
-    gives its mean, `element_values`): a placeholder for a reader of the
-    fields' tetrahedra only.
+    Elsewhere the element's one value three times, and 1 for a `Material`
+    with principal values of ``name`` (`element_values`): a placeholder for
+    a reader of the fields' tetrahedra only.
     """
     scalar = element_values(model, name, per_axis=1.0)
     fields = _per_axis_fields(model)

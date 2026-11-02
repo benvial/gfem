@@ -540,7 +540,7 @@ def test_interpolate_of_two_isotropic_materials_keeps_an_isotropic_field():
     np.testing.assert_array_equal(f.eps_r, [1.0, 2.0])
 
 
-def test_element_values_refuse_a_property_held_per_axis(tmp_path):
+def test_element_values_refuse_a_property_held_as_principal_values(tmp_path):
     import structured_meshes as sm
 
     from gfem._engine import coefficients
@@ -553,8 +553,20 @@ def test_element_values_refuse_a_property_held_per_axis(tmp_path):
     values = np.tile([2.0, 3.0, 5.0], (n, 1)) * np.linspace(1, 2, n)[:, None]
     field = gfem.MaterialField(eps_r=values, axes=TILTED)
     model = gfem.Model(mesh, materials={"a": field, "b": gfem.Material(eps_r=4.0)})
-    with pytest.raises(ValueError, match=r"'a'.*eps_r.*per principal axis"):
+    with pytest.raises(ValueError, match=r"'a'.*eps_r.*principal values"):
         coefficients.element_values(model, "eps_r")
+    # an anisotropic Material has no one value either: no mean of its
+    # principal values, the same placeholder or error as a field
+    crystal = gfem.Material(eps_r=(2.0, 3.0, 5.0), tan_delta=1e-3)
+    with_crystal = model.replace(materials={"a": field, "b": crystal})
+    with pytest.raises(ValueError, match=r"'b'.*eps_r.*principal values"):
+        coefficients.element_values(with_crystal, "eps_r")
+    placeholder = coefficients.element_values(with_crystal, "eps_r", per_axis=7.0)
+    np.testing.assert_array_equal(placeholder[mesh.elements("b")], 7.0)
+    np.testing.assert_array_equal(
+        coefficients.element_values(with_crystal, "tan_delta")[mesh.elements("b")],
+        1e-3,
+    )
     np.testing.assert_array_equal(
         coefficients.element_values(model, "mu_r"), np.ones(len(mesh.tetrahedra))
     )
