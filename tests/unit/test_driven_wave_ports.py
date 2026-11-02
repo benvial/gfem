@@ -745,12 +745,12 @@ QUADRANT_A, QUADRANT_B, QUADRANT_L = 4.0, 1.5, 2.0  # mm
 QUADRANT_OPTIONS = gfem.SolverOptions(order=2, linear_solver="direct")
 
 
-@pytest.fixture(scope="module")
-def quadrant_mesh(tmp_path_factory):
+def _quadrant_mesh(tmp_path_factory, a, b):
+    """An ``a`` x ``b`` mm guide, QUADRANT_L long, its block in one quadrant."""
     eps = 1e-9
 
     def volume(c):
-        return "block" if c[1] < QUADRANT_A / 2 and c[2] < QUADRANT_B / 2 else "fill"
+        return "block" if c[1] < a / 2 and c[2] < b / 2 else "fill"
 
     def surface(c):
         x, y, z = c
@@ -758,21 +758,26 @@ def quadrant_mesh(tmp_path_factory):
             return "port1"
         if abs(x - QUADRANT_L) < eps:
             return "port2"
-        if min(y, z, QUADRANT_A - y, QUADRANT_B - z) < eps:
+        if min(y, z, a - y, b - z) < eps:
             return "walls"
         return ""
 
     edges = (
         np.linspace(0, QUADRANT_L, 5),
-        np.linspace(0, QUADRANT_A, 9),
-        np.linspace(0, QUADRANT_B, 5),
+        np.linspace(0, a, 9),
+        np.linspace(0, b, 5),
     )
     path = tmp_path_factory.mktemp("quadrant") / "quadrant.msh"
     sm.write_msh22(path, sm.structured(edges, volume, surface))
     return gfem.Mesh.from_gmsh(path, length_unit="mm")
 
 
-def quadrant_guide(mesh, tan_delta):
+@pytest.fixture(scope="module")
+def quadrant_mesh(tmp_path_factory):
+    return _quadrant_mesh(tmp_path_factory, QUADRANT_A, QUADRANT_B)
+
+
+def quadrant_guide(mesh, tan_delta, names=HYBRID_SHARED):
     return gfem.Model(
         mesh,
         materials={
@@ -781,8 +786,7 @@ def quadrant_guide(mesh, tan_delta):
         },
         boundaries=[gfem.PEC("walls")],
         ports=[
-            gfem.WavePort(name, f"port{name[1]}", mode=int(name[-1]))
-            for name in HYBRID_SHARED
+            gfem.WavePort(name, f"port{name[1]}", mode=int(name[-1])) for name in names
         ],
     )
 
@@ -811,6 +815,44 @@ def test_a_lossy_shared_port_surface_warns_its_cross_projection(quadrant_mesh):
         value = float(re.search(r"cross-projection of ([0-9.e+-]+)", message)[1])
         # measured 2.67e-2 (1.34 tan_delta): the order of the block's loss
         assert 2e-2 < value < 3.5e-2
+
+
+# A narrower quadrant guide (2 x 1 mm): mode 1 propagates at 55 and 65 GHz,
+# mode 2 is evanescent at both. Its eigenpairs there keep a small Re beta:
+# beta = 6.8 - 2541j 1/m at 55 GHz with loss, and a complex pair
+# beta = 4.0 +- 4059j 1/m without.
+NARROW_F = (55e9, 65e9)
+
+
+@pytest.fixture(scope="module")
+def narrow_quadrant_mesh(tmp_path_factory):
+    return _quadrant_mesh(tmp_path_factory, 2.0, 1.0)
+
+
+@pytest.mark.parametrize("tan_delta", [0.0, 0.02])
+def test_an_evanescent_mode_of_a_shared_port_surface_raises_its_cutoff(
+    narrow_quadrant_mesh, tan_delta
+):
+    model = quadrant_guide(narrow_quadrant_mesh, tan_delta)
+    with pytest.raises(
+        gfem.PortModeError,
+        match=r"WavePort 'p1_m2' on surface 'port1' \(shared with 'p1_m1'\): mode 2 "
+        r"does not propagate in the band 55-65 GHz .* the band is below the mode's "
+        r"cutoff\. .*or drop that wave port\.",
+    ):
+        gfem.solve(model, gfem.Driven(NARROW_F), options=QUADRANT_OPTIONS)
+
+
+@pytest.mark.parametrize("tan_delta", [0.0, 0.02])
+def test_an_evanescent_lone_mode_raises_its_cutoff(narrow_quadrant_mesh, tan_delta):
+    model = quadrant_guide(narrow_quadrant_mesh, tan_delta, names=("p1_m2", "p2_m2"))
+    with pytest.raises(
+        gfem.PortModeError,
+        match=r"^WavePort 'p1_m2': mode 2 does not propagate in the band 55-65 GHz "
+        r".* the band is below the mode's cutoff\. Start the band above the cutoff, "
+        r"pick a lower mode, or use a LumpedPort\.$",
+    ):
+        gfem.solve(model, gfem.Driven(NARROW_F), options=QUADRANT_OPTIONS)
 
 
 # --- a mirror half model: ranks count the modes the symmetry plane admits -------
