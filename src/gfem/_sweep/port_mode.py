@@ -45,7 +45,12 @@ import numpy as np
 import scipy.constants
 import scipy.linalg
 
-from gfem._boundaries import WavePort, lead_port, wave_port_surfaces
+from gfem._boundaries import (
+    WavePort,
+    lead_port,
+    wave_port_label,
+    wave_port_surfaces,
+)
 from gfem._checks import is_traced
 from gfem._engine.port_mode import PortModeSpace
 from gfem._engine.runtime import task_manager
@@ -458,13 +463,7 @@ class _Greedy:
             else:
                 good = np.flatnonzero(passed)
                 self._exact(j, int(good[np.argmin(np.abs(good - j))]), certain=False)
-        names = " and ".join(repr(p.name) for p in self.ports)
-        modes = " and ".join(str(mode) for mode in self.modes)
-        raise PortModeError(  # pragma: no cover - a safeguard
-            f"WavePort {names}: the port mode sweep could not settle which "
-            f"mode continues mode {modes} over {self._band()}. Narrow the band "
-            "or use a LumpedPort."
-        )
+        raise self._unsettled_error()  # pragma: no cover - a safeguard
 
     # --- exact solves -----------------------------------------------------------
 
@@ -718,6 +717,18 @@ class _Greedy:
         if len(self.ports) == 1:
             return f"{first}, or use a LumpedPort."
         return f"{first}, use a LumpedPort, or drop that wave port."
+
+    def _unsettled_error(self) -> PortModeError:  # pragma: no cover - a safeguard
+        if len(self.modes) == 1:
+            which = f"mode continues mode {self.modes[0]}"
+        else:
+            *rest, last = (str(mode) for mode in self.modes)
+            which = f"modes continue modes {', '.join(rest)} and {last}"
+        return PortModeError(
+            f"{wave_port_label(self.ports)}: the port mode sweep could not settle "
+            f"which {which} over {self._band()}. Narrow the band or use a "
+            "LumpedPort."
+        )
 
     def _cutoff_error(self, first: _Candidates) -> PortModeError:
         """A mode is evanescent at the lowest frequency: locate its cutoff.
