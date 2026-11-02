@@ -4,6 +4,21 @@ Every material value, from a `Material` (constant per region) or a
 `MaterialField` (one value per element), becomes one value per tetrahedron,
 so the forward forms and the per-element sensitivity forms read the same
 coefficient.
+
+"Anisotropic" has two structural meanings here, both read from which
+properties are tensors, never from values:
+
+- `anisotropic_elements`: the real wave tensors ``eps_r`` or ``mu_r`` are
+  tensors. The boundary paths (the absorbing admittance, a wave port's
+  inverse-permeability tensor) branch on it, since only those two shape a
+  wave's admittance; a loss-only tensor (``tan_delta`` or
+  ``conductivity``) keeps the scalar boundary coefficient.
+- `anisotropic_regions`: any tensor property, loss-only ones included. The
+  principal participation splits these regions, since a loss tensor alone
+  needs the energy along each principal axis.
+
+A `MaterialField` with `axes` is anisotropic in both senses
+(`per_axis_elements` marks its tetrahedra).
 """
 
 from __future__ import annotations
@@ -159,11 +174,13 @@ def _with_tensors(
 
 
 def anisotropic_regions(model: Model, regions: tuple[str, ...]) -> tuple[str, ...]:
-    """The ``regions`` whose material is anisotropic, in order.
+    """The ``regions`` with any tensor property, in order.
 
-    Structural: a `Material` that is not `Material.isotropic` (a per-axis
-    loss alone counts) and a `MaterialField` with `axes`, whatever its
-    values.
+    Structural: a `Material` that is not `Material.isotropic` (principal
+    values of ``tan_delta`` or ``conductivity`` alone count) and a
+    `MaterialField` with `axes`, whatever its values. Wider than
+    `anisotropic_elements`, which ignores loss-only tensors (see the module
+    docstring).
     """
     out = []
     for region in regions:
@@ -259,13 +276,15 @@ def element_tensors(model: Model, name: str) -> np.ndarray:
 
 
 def anisotropic_elements(model: Model) -> np.ndarray:
-    """Whether each tetrahedron has an anisotropic real ``eps_r`` or ``mu_r``.
+    """Whether each tetrahedron has a tensor real ``eps_r`` or ``mu_r``.
 
     Structural: the tetrahedra of a `Material` with three principal values
     of ``eps_r`` or ``mu_r``, and of a `MaterialField` with `axes`, whatever
     the values (so an optimizer moving a field's values never changes it).
-    A per-axis ``tan_delta`` of a `Material` alone does not count (it moves
-    only the imaginary part).
+    Principal values of a `Material`'s ``tan_delta`` or ``conductivity``
+    alone do not count: they leave the real wave tensors, and so the
+    boundary admittances, isotropic. `anisotropic_regions` counts them (see
+    the module docstring).
     """
     out = np.zeros(len(model.mesh.tetrahedra), bool)
     for region, material in model.materials.items():
