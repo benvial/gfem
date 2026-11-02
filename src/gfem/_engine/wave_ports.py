@@ -52,7 +52,12 @@ import ngsolve as ngs
 import numpy as np
 import scipy.constants
 
-from gfem._boundaries import WavePort
+from gfem._boundaries import (
+    WavePort,
+    lead_port,
+    wave_port_label,
+    wave_port_surfaces,
+)
 from gfem._engine import terms
 from gfem._engine.mesh import EngineMesh
 from gfem._engine.port_mode import PortModeSpace
@@ -161,7 +166,8 @@ class PortSurfaceCoupling:
     @property
     def lead(self) -> WavePortCoupling:
         """The wave port with the smallest ``mode``: its gamma is ``gamma_0``."""
-        return min(self.ports, key=lambda c: c.port.mode)
+        lead = lead_port([c.port for c in self.ports])
+        return next(c for c in self.ports if c.port is lead)
 
     def _blocks(self, k: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """``P``, ``R_sym`` and ``gamma_0 G`` at output frequency ``k``."""
@@ -178,16 +184,13 @@ class PortSurfaceCoupling:
         return p, (r + r.T) / 2, reactions[n:]
 
     def _singular_error(self, name: str, k: int) -> PortModeError:
-        lead = self.lead
-        names = ", ".join(repr(c.port.name) for c in self.ports)
-        kind = "WavePort" if len(self.ports) == 1 else "WavePorts"
-        f = lead.omegas[k] / (2 * math.pi)
+        label = wave_port_label([c.port for c in self.ports], lone_surface=True)
+        f = self.lead.omegas[k] / (2 * math.pi)
         return PortModeError(
-            f"{kind} {names} on surface {lead.port.surface!r}: the modal "
-            f"correction's {name} matrix is singular at {f / 1e9:.6g} GHz (the "
-            "port mode's products with its own trace on the port face vanish), so "
-            "the port cannot impose its mode. Check the port's cross-section and "
-            "mesh, or use a LumpedPort."
+            f"{label}: the modal correction's {name} matrix is singular at "
+            f"{f / 1e9:.6g} GHz (the port mode's products with its own trace on "
+            "the port face vanish), so the port cannot impose its mode. Check the "
+            "port's cross-section and mesh, or use a LumpedPort."
         )
 
     def correction(self, omega: float) -> tuple[np.ndarray, np.ndarray]:
@@ -272,21 +275,18 @@ def wave_port_couplings(
         surface's first wave port.
     """
     omegas = 2 * np.pi * np.asarray(frequency, float)
-    surfaces: dict[str, list[tuple[int, WavePort]]] = {}
-    for index, port in enumerate(model.ports):
-        if isinstance(port, WavePort):
-            surfaces.setdefault(port.surface, []).append((index, port))
+    index = {p.name: i for i, p in enumerate(model.ports)}
     out = []
-    for group in surfaces.values():
-        lead = min((p for _, p in group), key=lambda p: p.mode)
+    for group in wave_port_surfaces(model.ports).values():
+        lead = lead_port(group)
         section = port_section(model, lead)
         modes = PortModeSpace(section, order)
         sweeps = port_mode_sweep(
             modes,
             frequency,
-            [p.mode for _, p in group],
+            [p.mode for p in group],
             tolerance=tolerance,
-            ports=[p for _, p in group],
+            ports=list(group),
         )
         idx3, idx2 = trace_dofs(model, section, modes, built, space)
         free = free_mask(space.FreeDofs(), space.ndof)
@@ -303,7 +303,7 @@ def wave_port_couplings(
         scale = section.scale
         q = basis[: modes.n_t, :m].T @ np.conj(r)
         ports = []
-        for (index, port), sweep in zip(group, sweeps, strict=True):
+        for port, sweep in zip(group, sweeps, strict=True):
             coords = sweep.coords
             gamma = sweep.gamma * scale
             phi = np.concatenate([gamma[:, None] * coords[:, :m], coords[:, m:]], 1)
@@ -312,7 +312,7 @@ def wave_port_couplings(
             power = np.abs(scale * proj / (omegas * scipy.constants.mu_0))
             ports.append(
                 WavePortCoupling(
-                    index=index,
+                    index=index[port.name],
                     port=port,
                     sweep=sweep,
                     phi=phi,

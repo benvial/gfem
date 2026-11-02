@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Iterable, Sequence
 from typing import Any, ClassVar, Literal
 
 import jax
@@ -432,3 +433,44 @@ def surfaces_of(item: Boundary | Port) -> tuple[str, ...]:
     if isinstance(item, LumpedPort):
         return item.surfaces
     return (item.surface,)
+
+
+def wave_port_surfaces(ports: Iterable[Port]) -> dict[str, tuple[WavePort, ...]]:
+    """The wave ports among ``ports`` by surface, in model order.
+
+    Surfaces come in the order of their first wave port; a surface with
+    several wave ports is a shared port surface.
+    """
+    surfaces: dict[str, list[WavePort]] = {}
+    for port in ports:
+        if isinstance(port, WavePort):
+            surfaces.setdefault(port.surface, []).append(port)
+    return {surface: tuple(group) for surface, group in surfaces.items()}
+
+
+def lead_port(group: Sequence[WavePort]) -> WavePort:
+    """The wave port with the smallest ``mode`` on a surface.
+
+    Its propagation constant is the surface's Robin ``gamma_0``.
+    """
+    return min(group, key=lambda p: p.mode)
+
+
+def wave_port_label(
+    group: Sequence[WavePort], *, lone_surface: bool = False, modes: bool = False
+) -> str:
+    """``WavePorts 'a', 'b' on surface 's'`` for a surface's wave ports.
+
+    Args:
+        group: The wave ports of one surface.
+        lone_surface: Name the surface of a lone wave port too
+            (``WavePort 'a' on surface 's'``); else ``WavePort 'a'``.
+        modes: Follow each name with its mode (``'a' (mode 1)``).
+    """
+    names = ", ".join(
+        f"{p.name!r} (mode {p.mode})" if modes else repr(p.name) for p in group
+    )
+    surface = f" on surface {group[0].surface!r}"
+    if len(group) == 1:
+        return f"WavePort {names}{surface if lone_surface else ''}"
+    return f"WavePorts {names}{surface}"

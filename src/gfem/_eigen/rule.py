@@ -48,7 +48,7 @@ import numpy as np
 import scipy.constants as const
 
 from gfem import _petsc
-from gfem._boundaries import LumpedPort, WavePort
+from gfem._boundaries import LumpedPort, WavePort, wave_port_surfaces
 from gfem._eigen import slepc
 from gfem._eigen.arpack import shift_invert
 from gfem._eigen.operator import EigenOperator
@@ -805,11 +805,7 @@ def _check_supported(model: Model) -> None:
     """
     for port in model.ports:
         if isinstance(port, WavePort):
-            shared = [
-                p.name
-                for p in model.ports
-                if isinstance(p, WavePort) and p.surface == port.surface
-            ]
+            shared = [p.name for p in wave_port_surfaces(model.ports)[port.surface]]
             if len(shared) > 1:
                 raise NotImplementedError(
                     f"Eigenmode does not support the shared port surface "

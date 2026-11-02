@@ -45,7 +45,7 @@ import numpy as np
 import scipy.constants
 import scipy.linalg
 
-from gfem._boundaries import WavePort
+from gfem._boundaries import WavePort, lead_port, wave_port_surfaces
 from gfem._checks import is_traced
 from gfem._engine.port_mode import PortModeSpace
 from gfem._engine.runtime import task_manager
@@ -177,7 +177,9 @@ class PortModeRule:
         # its own mode: the surface's joint sweep, with the surface's wave
         # ports in model order, as a driven problem runs it
         self._ports = (
-            _surface_ports(model, self.port) if problem.mode is None else [self.port]
+            list(wave_port_surfaces(model.ports)[self.port.surface])
+            if problem.mode is None
+            else [self.port]
         )
         self._model = model
 
@@ -232,7 +234,7 @@ class PortModeRule:
         del keep
         ports = self._ports
         modes = [self.mode] if len(ports) == 1 else [p.mode for p in ports]
-        lead = min(ports, key=lambda p: p.mode)
+        lead = lead_port(ports)
         section = port_section(model, lead)
         with task_manager(self.options.threads):
             space = PortModeSpace(section, self.options.order)
@@ -302,13 +304,6 @@ def _wave_port(model: Model, name: str) -> WavePort:
         f"PortMode(port={name!r}): the model has no port named {name!r}. Its wave "
         f"ports: {known}."
     )
-
-
-def _surface_ports(model: Model, port: WavePort) -> list[WavePort]:
-    """The wave ports on ``port``'s surface, in model order."""
-    return [
-        p for p in model.ports if isinstance(p, WavePort) and p.surface == port.surface
-    ]
 
 
 # --- the sweep ------------------------------------------------------------------

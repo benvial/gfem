@@ -73,6 +73,8 @@ from gfem._boundaries import (
     WavePort,
     sheet_of,
     surfaces_of,
+    wave_port_label,
+    wave_port_surfaces,
 )
 from gfem._engine import sweep_outputs, terms, workers
 from gfem._engine.cache import Entry, discretization
@@ -316,10 +318,12 @@ class DrivenRule:
         #: Per wave port, the volume regions with an element on its face:
         #: the port mode reads their materials.
         self.port_regions = _port_regions(model)
-        #: Per wave port, its surface (shared by the wave ports of a shared
+        #: Per wave port, the wave ports of its surface (several on a shared
         #: port surface).
-        self.port_surfaces = {
-            p.name: p.surface for p in model.ports if isinstance(p, WavePort)
+        self.port_groups = {
+            p.name: group
+            for group in wave_port_surfaces(model.ports).values()
+            for p in group
         }
         #: Per sheet field (index into ``model.boundaries``), the wave ports
         #: whose face shares an edge with the sheet: the port mode reads it.
@@ -807,12 +811,7 @@ class DrivenRule:
 
     def _port_label(self, port: str) -> str:
         """``WavePort 'p1'``, or a shared port surface's ports and surface."""
-        surface = self.port_surfaces[port]
-        shared = [p for p, s in self.port_surfaces.items() if s == surface]
-        if len(shared) == 1:
-            return f"WavePort {port!r}"
-        names = ", ".join(repr(p) for p in shared)
-        return f"WavePorts {names} on surface {surface!r}"
+        return wave_port_label(self.port_groups[port])
 
     def nondifferentiable_output(self, name: str) -> str:
         """The error message for a cotangent on output ``name``."""
@@ -1226,25 +1225,19 @@ def _check_skipped_port_modes(model: Model, *, stacklevel: int) -> None:
         model: The model and its wave ports.
         stacklevel: Passed on to `warnings.warn`, counted from the caller.
     """
-    surfaces: dict[str, list[WavePort]] = {}
-    for port in model.ports:
-        if isinstance(port, WavePort):
-            surfaces.setdefault(port.surface, []).append(port)
-    for surface, ports in surfaces.items():
+    for surface, ports in wave_port_surfaces(model.ports).items():
         requested = {p.mode for p in ports}
         skipped = [k for k in range(1, max(requested)) if k not in requested]
         if not skipped:
             continue
-        kind = "WavePort" if len(ports) == 1 else "WavePorts"
-        names = ", ".join(f"{p.name!r} (mode {p.mode})" for p in ports)
+        label = wave_port_label(ports, lone_surface=True, modes=True)
         msg = (
-            f"{kind} {names} on surface {surface!r}: the surface skips "
-            f"{_modes(skipped)}, which no wave port on it requests. A skipped "
-            "port mode propagates wherever the highest requested mode does, and "
-            "it is partly reflected at the port instead of absorbed, so S misses "
-            "the power the device sends into it. Add a WavePort on surface "
-            f"{surface!r} for each skipped mode, or filter this warning if the "
-            "reflection is acceptable."
+            f"{label}: the surface skips {_modes(skipped)}, which no wave port "
+            "on it requests. A skipped port mode propagates wherever the highest "
+            "requested mode does, and it is partly reflected at the port instead "
+            "of absorbed, so S misses the power the device sends into it. Add a "
+            f"WavePort on surface {surface!r} for each skipped mode, or filter "
+            "this warning if the reflection is acceptable."
         )
         warnings.warn(msg, SkippedPortModeWarning, stacklevel=stacklevel + 1)
 
