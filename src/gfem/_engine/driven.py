@@ -316,6 +316,11 @@ class DrivenRule:
         #: Per wave port, the volume regions with an element on its face:
         #: the port mode reads their materials.
         self.port_regions = _port_regions(model)
+        #: Per wave port, its surface (shared by the wave ports of a shared
+        #: port surface).
+        self.port_surfaces = {
+            p.name: p.surface for p in model.ports if isinstance(p, WavePort)
+        }
         #: Per sheet field (index into ``model.boundaries``), the wave ports
         #: whose face shares an edge with the sheet: the port mode reads it.
         self.sheet_ports = _sheet_ports(model)
@@ -775,7 +780,7 @@ class DrivenRule:
             ports = self.sheet_ports.get(kind[1], ())
             if ports:
                 raise PortGeometryError(
-                    f"WavePort {ports[0]!r}: the sheet field of model.boundaries"
+                    f"{self._port_label(ports[0])}: the sheet field of model.boundaries"
                     f"[{kind[1]}] shares an edge with the port face, so gfem cannot "
                     "differentiate with respect to its fill: the port mode reads "
                     "the sheet there and is a constant of the solve. Keep the "
@@ -790,8 +795,8 @@ class DrivenRule:
         touched = [p for p, regions in self.port_regions.items() if region in regions]
         if touched:
             raise PortGeometryError(
-                f"WavePort {touched[0]!r}: region {region!r} has elements on the "
-                f"port face, so gfem cannot differentiate with respect to "
+                f"{self._port_label(touched[0])}: region {region!r} has elements "
+                f"on the port face, so gfem cannot differentiate with respect to "
                 f"model.materials[{region!r}].{prop}: the port mode reads that "
                 "material and is a constant of the solve. Keep the design away "
                 "from wave port faces (give the elements beside the port a "
@@ -799,6 +804,15 @@ class DrivenRule:
                 "the value in jax.lax.stop_gradient."
             )
         return None
+
+    def _port_label(self, port: str) -> str:
+        """``WavePort 'p1'``, or a shared port surface's ports and surface."""
+        surface = self.port_surfaces[port]
+        shared = [p for p, s in self.port_surfaces.items() if s == surface]
+        if len(shared) == 1:
+            return f"WavePort {port!r}"
+        names = ", ".join(repr(p) for p in shared)
+        return f"WavePorts {names} on surface {surface!r}"
 
     def nondifferentiable_output(self, name: str) -> str:
         """The error message for a cotangent on output ``name``."""
