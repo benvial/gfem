@@ -1,5 +1,29 @@
 # Release notes
 
+## Unreleased
+
+Periodic cells: `gfem.Periodic` pairs two surfaces of a model related by a
+translation (one to three pairs). Eigenmode and uniform driven problems take a
+Bloch wave vector, `wave_vector=(kx, ky, kz)` in rad/m, with
+E(r + a) = exp(−i k·a) E(r); without one the fields are plain periodic. See
+{doc}`../recipes/periodic-cell`.
+
+- **Gradients.** Permittivity, conductivity, sheet fill and node coordinates
+  differentiate on periodic models, plain and Bloch, and are checked against
+  finite differences (four new rows on {doc}`../capabilities`). A boundary
+  morph moves the two nodes of a pair together. `wave_vector` is not
+  differentiable.
+- **Solvers under a Bloch wave vector.** The operator is no longer complex
+  symmetric: the direct solver factors it with MKL PARDISO LU (with the `mkl`
+  extra) or UMFPACK, and BDDC factors its coarse problem likewise. Eigenmode
+  problems need the direct solver. PETSc, cuDSS and the adaptive sweep refuse
+  a wave vector. Models without a periodic pair are unchanged.
+- **Results.** Fields of a periodic model hold values on both surfaces of
+  every pair. `gfem.power_flow` works on sides that cross a pair.
+  `gfem.interface_participation` refuses a paired surface.
+- **Job files** carry `Periodic` and `wave_vector`; older job files read
+  unchanged.
+
 ## 0.1.0 (2026-11-01)
 
 First release: driven problems (uniform and adaptive sweeps), eigenmode problems

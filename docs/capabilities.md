@@ -34,12 +34,16 @@ gradient that would be wrong:
   frequency grid, uniform or adaptive sweep), {py:obj}`gfem.Eigenmode` (resonant
   modes nearest a target frequency, with their Q), {py:obj}`gfem.Electrostatic` (the
   Maxwell capacitance matrix between named terminals) and {py:obj}`gfem.PortMode`
-  (the 2D mode of a wave port).
+  (the 2D mode of a wave port). Eigenmode and uniform driven problems take a
+  Bloch wave vector (`wave_vector=`, rad/m) on a periodic model.
 - **Ports**: {py:obj}`gfem.LumpedPort` on one or several surfaces driven together,
   and {py:obj}`gfem.WavePort` on an exterior surface, fed by its port mode.
 - **Boundaries**: {py:obj}`gfem.PEC`, {py:obj}`gfem.PMC` (symmetry planes), {py:obj}`gfem.Absorbing`
   (first or second order), {py:obj}`gfem.Conductor` (a finite-conductivity metal, by
-  its surface impedance) and {py:obj}`gfem.Impedance` (per-square R, L and C).
+  its surface impedance), {py:obj}`gfem.Impedance` (per-square R, L and C),
+  and {py:obj}`gfem.Periodic` (a periodic pair of surfaces, with plain
+  periodicity or a Bloch wave vector set on the problem;
+  {doc}`recipes/periodic-cell`).
 - **Materials and designs**: {py:obj}`gfem.Material` per region, {py:obj}`gfem.MaterialField`
   per element, and {py:obj}`gfem.SheetField` for the fill of a patterned metal sheet
   ({doc}`recipes/sheet-design`).
@@ -63,6 +67,12 @@ gradient that would be wrong:
   lose digits, and it warns with {py:obj}`gfem.LowFrequencyWarning`. For
   capacitance at low frequency, solve {py:obj}`gfem.Electrostatic`; the
   details are under {py:obj}`gfem.Driven`.
+- **Periodic models**: a Bloch wave vector needs the direct solver for
+  eigenmode problems, and the direct or BDDC + GMRES solver for driven
+  problems. PETSc and cuDSS refuse it, as does an adaptive sweep.
+  Electrostatic problems refuse any periodic pair, and a wave port may not
+  touch one. There are no Floquet ports. Details:
+  {doc}`recipes/periodic-cell`.
 
 ## Platforms
 

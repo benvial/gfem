@@ -136,6 +136,25 @@ PETSc stack
   {doc}`recipes/petsc-slepc` describes: what `linear_solver="petsc"` and
   `eigen_solver="slepc"` need.
 
+Periodic pair
+  Two exterior surfaces of a {term}`model` related by a translation, whose
+  fields are identified; one to three pairs make a 1D, 2D or 3D periodic cell
+  (`gfem.Periodic`).
+
+Plain periodicity
+  A {term}`periodic pair` whose fields are equal on both surfaces: a problem
+  with no {term}`Bloch wave vector`.
+
+Bloch wave vector
+  The wave vector k (rad/m) set on an eigenmode or driven problem
+  (`wave_vector=`) that gives each {term}`periodic pair` its
+  {term}`Bloch phase`.
+
+Bloch phase
+  The factor exp(−i k·a) between the fields of a {term}`periodic pair`,
+  E(r + a) = exp(−i k·a) E(r) under e^{+iωt}, with a the translation from the
+  pair's first surface to its second.
+
 Job
   A self-contained run, {term}`model` plus problem type plus
   {term}`solver options`, and the unit that is serialized.
@@ -183,6 +202,10 @@ Power flow
   Measured by `gfem.power_flow` from the residual of the discrete equations, so
   exact for the solved field. Poynting flux is kept for the pointwise integral
   of ½Re(E × H*).
+
+Bloch reciprocity
+  S(k)ᵀ = S(−k): a Bloch cell's S matrix is not symmetric, but swapping two
+  ports is the same as reversing the {term}`Bloch wave vector`.
 ```
 
 ## Materials and optimization
@@ -234,7 +257,8 @@ Moving surface
 
 Sliding surface
   A surface whose nodes may move only within their own facet plane during a
-  {term}`boundary morph`.
+  {term}`boundary morph`. On a {term}`periodic pair`, a node and its partner
+  move together.
 
 Mesh extension
   The elastic or harmonic solve that carries boundary motion into the mesh
