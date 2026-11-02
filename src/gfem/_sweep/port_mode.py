@@ -513,10 +513,40 @@ class _Greedy:
         """
         cand = self._solve(j)
         if len(cand.lam) < len(self.modes):
-            # too few candidates for distinct modes: the highest-ranked
-            # requested mode is the one that stopped propagating
-            raise self._evanescent_error(j, int(np.argmax(self.modes)))
+            # too few candidates for distinct modes
+            raise self._evanescent_error(j, self._lost(cand, ref, certain=certain))
         self._keep(j, cand, self._closest(j, cand, ref, certain=certain))
+
+    def _lost(self, cand: _Candidates, ref: int, *, certain: bool) -> list[int]:
+        """The modes left without a candidate when ``cand`` has too few.
+
+        Each candidate goes to the mode at ``ref`` it overlaps most, the
+        largest overlaps first, as the tracker matches them. Against an
+        uncertain reference with every mode still at its rank, the
+        highest-ranked modes are the ones lost.
+        """
+        n = len(self.modes)
+        ranks = [mode - 1 for mode in self.modes]
+        if not certain and all(pick == ranks for pick in self.pick.values()):
+            by_rank = np.argsort(self.modes, kind="stable")
+            return sorted(int(k) for k in by_rank[len(cand.lam) :])
+        overlap = np.array(
+            [
+                _overlaps(
+                    self.space.mass,
+                    self.reduced.lift(self.coords_at(ref, k)),
+                    cand.vecs,
+                )
+                for k in range(n)
+            ]
+        ).reshape(n, len(cand.lam))
+        lost = set(range(n))
+        for _ in range(len(cand.lam)):
+            k, c = np.unravel_index(int(np.argmax(overlap)), overlap.shape)
+            lost.discard(int(k))
+            overlap[k, :] = -np.inf
+            overlap[:, c] = -np.inf
+        return sorted(lost)
 
     def _closest(
         self, j: int, cand: _Candidates, ref: int, *, certain: bool
@@ -626,7 +656,7 @@ class _Greedy:
         gone = passed & ~self.solved & ~_propagates(beta, self.k_max)
         if gone.any():
             i = int(np.flatnonzero(gone.any(axis=0))[0])
-            raise self._evanescent_error(i, int(np.flatnonzero(gone[:, i])[0]))
+            raise self._evanescent_error(i, [int(np.flatnonzero(gone[:, i])[0])])
         return passed
 
     # --- normalization ----------------------------------------------------------
@@ -784,12 +814,23 @@ class _Greedy:
         fc = math.sqrt(kc2) / self.k0[hi] * self.f[hi]
         return min(max(fc, f_lo), f_hi)
 
-    def _evanescent_error(self, j: int, k: int) -> PortModeError:
-        remedy = self._remedy("Restrict the band to where the mode propagates")
+    def _evanescent_error(self, j: int, lost: list[int]) -> PortModeError:
+        """Modes ``lost`` (indices into ``modes``) stop propagating at ``j``."""
+        if len(lost) == 1:
+            (k,) = lost
+            remedy = self._remedy("Restrict the band to where the mode propagates")
+            return PortModeError(
+                f"{self._who(k)}: the tracked mode {self.modes[k]} stops "
+                f"propagating at {self.f[j] / 1e9:.6g} GHz inside the band "
+                f"{self._band()} (a cutoff in the band). {remedy}"
+            )
+        *rest, last = (str(self.modes[k]) for k in lost)
+        label = wave_port_label([self.ports[k] for k in lost], lone_surface=True)
+        remedy = self._remedy("Restrict the band to where the modes propagate")
         return PortModeError(
-            f"{self._who(k)}: the tracked mode {self.modes[k]} stops propagating "
-            f"at {self.f[j] / 1e9:.6g} GHz inside the band {self._band()} (a cutoff "
-            f"in the band). {remedy}"
+            f"{label}: the tracked modes {', '.join(rest)} and {last} stop "
+            f"propagating at {self.f[j] / 1e9:.6g} GHz inside the band "
+            f"{self._band()} (a cutoff in the band). {remedy}"
         )
 
     def _check_degenerate(self, first: _Candidates, k: int) -> None:
