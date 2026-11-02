@@ -478,6 +478,7 @@ def power_flow(
     conductivity, `Conductor` and `Impedance` sheets, its absorbing faces).
     A face term belongs to ``side`` only when every solve-domain element
     beside it does, so a sheet lying on the surface counts as outside.
+    A side may cross or touch a `gfem.Periodic` pair.
 
     A field of an adaptive sweep (`gfem.ReducedFields`) is exact at the
     solved frequencies and accurate to the sweep's tolerance in between.

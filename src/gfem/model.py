@@ -180,7 +180,9 @@ class Model:
         RegionNotFoundError: A name is not a region of the mesh.
         ValueError: The model is physically inconsistent (a volume without a
             material, two conditions on one surface, an absorbing boundary on
-            an interior surface, ...); the message gives the remedy.
+            an interior surface, ...), or a `Periodic` pair's two meshes do
+            not match under a translation, there are more than three pairs,
+            or two translations are parallel; the message gives the remedy.
         TypeError: An argument has the wrong type.
         NotImplementedError: A `WavePort` shares a mesh node with a surface
             of a `Periodic` pair.
@@ -381,9 +383,10 @@ class Model:
     def periodic_translations(self) -> tuple[tuple[float, float, float], ...]:
         """The translation a of each `Periodic`, in m, in ``boundaries`` order.
 
-        Measured from the imported mesh, from the pair's first surface to its
-        second; it stays fixed when the nodes move. A Bloch wave vector k
-        (rad/m) gives the pair the phase exp(-i k·a).
+        Measured from the imported mesh, from the pair's first surface
+        (``surfaces[0]``) to its second; it stays fixed when the nodes move.
+        A Bloch wave vector k (rad/m) gives the pair the phase exp(-i k·a).
+        Empty without a periodic pair.
         """
         return tuple(p.translation for p in self._periodic)
 

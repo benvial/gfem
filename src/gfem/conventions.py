@@ -66,6 +66,11 @@ real, power waves and pseudo-waves coincide.
   when it is one real value, and otherwise needs ``z0=`` to renormalize
   first. gfem never labels a port 50 Ω unless S was computed or
   renormalized for 50 Ω.
+- Under a Bloch wave vector (see Bloch periodicity), S is referenced to the
+  field E. A solver that reports the periodic envelope
+  ``u = E exp(+i k·r)`` (Palace) gives
+  ``S_ij exp(+i k·(r_i - r_j))``, with i the output port, j the excited
+  port and r_p a point of port p, when k·r is constant over each port.
 
 Time-averaged densities
 -----------------------
@@ -142,6 +147,10 @@ so, under e^{+iωt}, the phase of a Bloch wave travels along +k (as Palace's
 ``FloquetWaveVector``). Without a wave vector the fields are equal on both
 surfaces (plain periodicity). Swapping a pair's surfaces flips a and gives
 the same field.
+
+Under a Bloch wave vector, ``∫ D · E dV`` over the cell can vanish, so an
+eigenmode field is phased to make its largest coefficient real and positive
+instead (still scaled to `MODE_ENERGY`).
 """
 
 from __future__ import annotations

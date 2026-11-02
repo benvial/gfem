@@ -225,7 +225,11 @@ class SolverOptions:
             ``petsc_options`` configures another PETSc solver, from the
             PETSc stack the "Solve with PETSc and SLEPc" recipe builds; never
             chosen by ``"auto"``). A solver this Python cannot use raises
-            `gfem.SolverUnavailableError` when the solve starts.
+            `gfem.SolverUnavailableError` when the solve starts. Under a
+            Bloch wave vector (``wave_vector=`` on the problem) the operator
+            is general and ``"direct"`` factors it with LU (MKL PARDISO with
+            the ``mkl`` extra, UMFPACK otherwise); ``"petsc"`` raises, and
+            ``"bddc_gmres"`` raises for eigenmode problems.
         tolerance: With BDDC, the relative preconditioned residual of the
             iterative solve: for BDDC + GMRES ``|P(b - Ax)| / |P b|`` as
             GMRES estimates it, for BDDC + conjugate gradients the P-norm of

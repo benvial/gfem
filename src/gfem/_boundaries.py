@@ -202,8 +202,22 @@ class Periodic:
     Bloch periodicity). The order of the two surfaces is not physical:
     swapping them flips a and gives the same field.
 
+    `gfem.Eigenmode` and `gfem.Driven` solve periodic models: a driven
+    problem with a wave vector on the uniform sweep only, without one on
+    both sweeps. `gfem.Electrostatic` raises on a periodic model. A paired
+    surface takes no other boundary or port, and the default PMC skips it.
+    The two meshes are checked when the `gfem.Model` is built. See the
+    "Solve a periodic cell" recipe.
+
     Attributes:
         surfaces: The two surface region names (first, second).
+
+    Raises:
+        TypeError: ``surfaces`` is not two surface names.
+        ValueError: The same name is given twice.
+
+    Example:
+        ``gfem.Periodic(("x_min", "x_max"))``
     """
 
     surfaces: tuple[str, str]

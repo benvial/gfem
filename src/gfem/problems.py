@@ -79,6 +79,9 @@ class Electrostatic:
         ValueError: No terminal, or a surface in two terminals or in a
             terminal and the ground.
 
+    `gfem.solve` raises NotImplementedError on a model with a
+    `gfem.Periodic` pair.
+
     Example:
         ``gfem.Electrostatic(terminals={"trace": ["m1_xy", "m1_z"]},
         ground="ground")``
@@ -341,7 +344,8 @@ class Driven:
             surfaces of every pair. Any vector, (0, 0, 0) included, declares
             a Bloch solve: a uniform sweep on the CPU, with
             ``linear_solver`` ``"direct"`` or ``"bddc_gmres"``, whose S is
-            not symmetric (S(k)ᵀ = S(-k)).
+            not symmetric (S(k)ᵀ = S(-k)) and is referenced to the field E,
+            not to its periodic envelope (`gfem.conventions`).
 
     Raises:
         TypeError: ``excite`` is not port names, or ``keep_fields`` is not a
@@ -353,6 +357,11 @@ class Driven:
             of ``frequency``, or ``wave_vector`` is not a finite 3-vector.
         NonDifferentiableError: ``frequency``, ``samples``,
             ``keep_fields`` or ``wave_vector`` is traced by JAX.
+
+    With ``wave_vector``, `gfem.solve` raises ValueError on a model without
+    a `gfem.Periodic` pair, for a k with a component outside the span of
+    the pairs' translations, and with ``linear_solver="petsc"``; and
+    NotImplementedError with ``sweep="adaptive"`` or a GPU ``device``.
 
     Example:
         ``gfem.Driven(frequency=np.linspace(1e9, 100e9, 100))`` solves all
@@ -501,9 +510,11 @@ class Eigenmode:
             (Cartesian), of a model with `gfem.Periodic` pairs: across each
             pair, E(r + a) = exp(-i k·a) E(r), with a the pair's translation
             (`gfem.conventions`, Bloch periodicity). A band diagram is one
-            problem per k on the same model. ``None``: plain periodicity,
-            the fields equal on both surfaces of every pair. Any vector,
-            (0, 0, 0) included, declares a Bloch solve.
+            problem per k on the same model (one k per problem). ``None``:
+            plain periodicity, the fields equal on both surfaces of every
+            pair. Any vector, (0, 0, 0) included, declares a Bloch solve:
+            a lossless, undamped cell gives real ``omega``, and each mode's
+            phase makes its largest coefficient real and positive.
 
     Raises:
         ValueError: ``target`` is not a finite positive number,
@@ -516,7 +527,11 @@ class Eigenmode:
     ``n_modes`` modes converge (never a partial result), and
     NotImplementedError for a `WavePort` (its propagation constant would
     have to be solved at the complex eigenfrequency): replace it with a
-    `LumpedPort` of the line impedance, or use a `gfem.Driven` sweep.
+    `LumpedPort` of the line impedance, or use a `gfem.Driven` sweep. With
+    ``wave_vector``, it raises ValueError on a model without a
+    `gfem.Periodic` pair, for a k with a component outside the span of the
+    pairs' translations, and with any ``linear_solver`` but ``"direct"``;
+    and NotImplementedError on a GPU ``device``.
 
     Example:
         ``gfem.Eigenmode(target=5e9, n_modes=2)``
