@@ -32,11 +32,14 @@ gradient that would be wrong:
 
 - **Problems**: {py:obj}`gfem.Driven` (the response of a model to its ports over a
   frequency grid, uniform or adaptive sweep), {py:obj}`gfem.Eigenmode` (resonant
-  modes nearest a target frequency, with their Q), {py:obj}`gfem.Electrostatic` (the
+  modes nearest a target frequency, with their Q; lumped ports only: a wave
+  port raises), {py:obj}`gfem.Electrostatic` (the
   Maxwell capacitance matrix between named terminals) and {py:obj}`gfem.PortMode`
   (the 2D mode of a wave port).
 - **Ports**: {py:obj}`gfem.LumpedPort` on one or several surfaces driven together,
-  and {py:obj}`gfem.WavePort` on an exterior surface, fed by its port mode.
+  and {py:obj}`gfem.WavePort` on an exterior surface, fed by its port mode;
+  several wave ports on one surface each request a different mode of it,
+  each its own row and column of S ({doc}`recipes/shared-port-surface`).
 - **Boundaries**: {py:obj}`gfem.PEC`, {py:obj}`gfem.PMC` (symmetry planes), {py:obj}`gfem.Absorbing`
   (first or second order), {py:obj}`gfem.Conductor` (a finite-conductivity metal, by
   its surface impedance) and {py:obj}`gfem.Impedance` (per-square R, L and C).
@@ -63,6 +66,14 @@ gradient that would be wrong:
   lose digits, and it warns with {py:obj}`gfem.LowFrequencyWarning`. For
   capacitance at low frequency, solve {py:obj}`gfem.Electrostatic`; the
   details are under {py:obj}`gfem.Driven`.
+- **Unrequested port modes**: a propagating mode that no wave port on its
+  surface requests is partly reflected at the port, not converted; request
+  it to see where its power goes ({py:obj}`gfem.SkippedPortModeWarning`
+  flags a mode left out below a requested one).
+- **Lossy port lines**: wave-port S is the conjugated modal projection, exact
+  for a lossless port line. On a shared port surface with loss in the
+  cross-section the modes do not fully separate, and
+  {py:obj}`gfem.PortModeProjectionWarning` states the error.
 
 ## Platforms
 

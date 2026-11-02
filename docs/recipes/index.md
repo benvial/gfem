@@ -20,6 +20,7 @@ orphan: true
 
 ## Solving
 
+- {doc}`shared-port-surface`
 - {doc}`measurements`
 - {doc}`gpu-direct-solver`
 - {doc}`petsc-slepc`

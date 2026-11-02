@@ -101,6 +101,12 @@ S functionals at each sample along with the excitations and adds them to its
 basis, so its frozen-basis gradient is exact at the samples; a lossy port adds
 one right-hand side per sample.
 
+Several wave ports on one surface, one mode each, give S between modes, and a
+cross-mode entry such as `s["out_TM0", "in_TE0"]` differentiates like any
+other S entry. The cost rule is the same per mode: reading the row of a mode
+left out of `Driven(excite=...)` costs one adjoint solve per frequency. See
+[Request several modes on one port surface](shared-port-surface.md).
+
 ## Adaptive sweeps
 
 `Driven(sweep="adaptive")` differentiates too, with its reduced basis held
