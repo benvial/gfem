@@ -256,8 +256,11 @@ EXPECTED |= {
 }
 
 # Eigenmode on a periodic model (the C3 Bragg line, plain at Γ and Bloch at
-# the zone edge; a material field on its "low" layer, no ports): as the
-# non-periodic resonator, region "low".
+# the zone edge; no ports): as the non-periodic resonator, region "low".
+# Its material field carries only the permittivity and the conductivity
+# (the properties above are covered by "eigenmode"): each cell is an
+# eigenmode solve and its gradient.
+PERIODIC_EIGEN_PROPERTIES = ("eps_r", "conductivity")
 EXPECTED |= {
     (problem, out, kind): (
         (
@@ -278,9 +281,10 @@ EXPECTED |= {
         "bulk_participation.high",
         "cluster",
         *(f"e_fields.0.{leaf}" for leaf in ("coefficients", "mesh.nodes", "omega")),
-        *(f"materials.low.{p}" for p in ALL_PROPERTIES),
+        *(f"materials.low.{p}" for p in PERIODIC_EIGEN_PROPERTIES),
     )
-    for kind in [("nodes",)] + [("material", "low", p) for p in ALL_PROPERTIES]
+    for kind in [("nodes",)]
+    + [("material", "low", p) for p in PERIODIC_EIGEN_PROPERTIES]
 }
 
 # Sheet fields: the fill of a sheet on the glued line (model.boundaries[2],
@@ -455,7 +459,10 @@ def eigen_periodic_cases(tmp_path_factory):
     # the C3 Bragg line (periodic along x), weakly lossy: a material field
     # over its low layer, the high layer a constant material
     mesh = pc.c3_mesh(tmp_path_factory.mktemp("c3"), (5, 1, 1))
-    low = _field(mesh, "low", conductivity=1e-3)
+    ramp = np.linspace(1.0, 1.5, len(mesh.elements("low")))
+    low = gfem.MaterialField(
+        eps_r=ALL_PROPERTIES["eps_r"] * ramp, conductivity=1e-3 * ramp
+    )
     model = pc.c3(mesh).with_material("low", low)
     zone_edge = (math.pi / (pc.C3_A * pc.MM), 0.0, 0.0)
     return {
