@@ -6,6 +6,7 @@ modules or replace them by fakes, so they hold on any machine, with or
 without PETSc.
 """
 
+import os
 import re
 import shutil
 import subprocess
@@ -19,7 +20,7 @@ import pytest
 import structured_meshes as sm
 
 import gfem
-from gfem import _linalg, _petsc
+from gfem import _linalg, _mpi, _petsc
 from gfem._eigen import rule as eigen_rule
 from gfem._engine import driven, quadrature, workers
 from gfem._engine.mesh import to_ngsolve
@@ -30,6 +31,7 @@ F1 = 7.49e9  # the line's first half-wave resonance, Hz
 def _clear():
     _petsc.require_petsc.cache_clear()
     _petsc.require_slepc.cache_clear()
+    _petsc.has_mpi.cache_clear()
 
 
 def fake(name, *, version="3.26.0", scalar=np.complex128, error=None):
@@ -326,6 +328,103 @@ def _pin(name):
         if (m := re.fullmatch(rf"{name}=(\d+\.\d+\.\d+)", line.strip()))
     ]
     return tuple(int(part) for part in version.split("."))
+
+
+def _with_conf(petsc, directory, *, mpiuni):
+    """``petsc`` whose ``PETSC_DIR`` holds a ``petscconf.h`` of one of the stacks."""
+    (directory / "include").mkdir()
+    line = "#define PETSC_HAVE_MPIUNI 1\n" if mpiuni else "#define PETSC_HAVE_MUMPS 1\n"
+    (directory / "include" / "petscconf.h").write_text(line)
+    petsc.get_config = lambda: {"PETSC_DIR": str(directory), "PETSC_ARCH": ""}
+    return petsc
+
+
+@pytest.mark.parametrize("mpiuni", [True, False])
+def test_has_mpi_reads_the_stacks_header_before_init(stack, tmp_path, mpiuni):
+    petsc = _with_conf(fake("petsc4py"), tmp_path, mpiuni=mpiuni)
+    stack(petsc=petsc)
+    assert _petsc.has_mpi() is not mpiuni
+    assert petsc.calls == []
+
+
+def test_has_mpi_is_false_without_petsc4py(stack):
+    stack()
+    assert _petsc.has_mpi() is False
+
+
+def _launched(monkeypatch, tasks):
+    monkeypatch.setenv("OMPI_COMM_WORLD_SIZE", str(tasks))
+    monkeypatch.delitem(sys.modules, "mpi4py.MPI", raising=False)
+
+
+def test_rank_copies_on_the_no_mpi_stack_pass_petsc_its_launch_option(
+    stack, tmp_path, monkeypatch
+):
+    petsc = _with_conf(fake("petsc4py"), tmp_path, mpiuni=True)
+    stack(petsc=petsc)
+    _launched(monkeypatch, 2)
+    _petsc.require_petsc()
+    assert petsc.calls == [["-mpiuni-allow-multiprocess-launch"]]
+
+
+@pytest.mark.parametrize(("mpiuni", "tasks"), [(False, 2), (True, 1)])
+def test_no_other_stack_or_launch_gets_the_option(
+    stack, tmp_path, monkeypatch, mpiuni, tasks
+):
+    petsc = _with_conf(fake("petsc4py"), tmp_path, mpiuni=mpiuni)
+    stack(petsc=petsc)
+    _launched(monkeypatch, tasks)
+    _petsc.require_petsc()
+    assert petsc.calls == [[]]
+
+
+class _Ranks:
+    """A communicator of several ranks that reduces to this rank's own value."""
+
+    size = 4
+
+    def allreduce(self, value, op=None):  # noqa: ARG002
+        return value
+
+
+@pytest.mark.parametrize("kind", ["direct", "petsc"])
+def test_a_distributed_solver_refuses_the_no_mpi_stack_before_init(
+    stack, tmp_path, monkeypatch, kind
+):
+    petsc = _with_conf(fake("petsc4py"), tmp_path, mpiuni=True)
+    stack(petsc=petsc)
+    monkeypatch.setattr(_mpi, "_load_mpi", lambda: types.SimpleNamespace(LAND=None))
+    with pytest.raises(gfem.SolverUnavailableError, match=r"petsc_wheelhouse.sh --mpi"):
+        _petsc.require_mpi_petsc(kind, _Ranks())
+    assert petsc.calls == []
+
+
+def test_a_distributed_solver_without_petsc4py_names_the_stack(stack, monkeypatch):
+    stack()
+    monkeypatch.setattr(_mpi, "_load_mpi", lambda: types.SimpleNamespace(LAND=None))
+    with pytest.raises(gfem.SolverUnavailableError, match=r"linear_solver='direct'"):
+        _petsc.require_mpi_petsc("direct", _Ranks())
+
+
+def test_a_worker_starts_without_the_launchers_variables(monkeypatch):
+    names = (
+        "OMPI_COMM_WORLD_SIZE",
+        "OMPI_MCA_pml",
+        "PMIX_RANK",
+        "PMI_SIZE",
+        "SLURM_STEP_NUM_TASKS",
+    )
+    for name in names:
+        monkeypatch.setenv(name, "4")
+    monkeypatch.setenv("SLURM_JOB_ID", "7")  # the job's: no launcher reads it
+    seen = workers.run(
+        os.getenv,
+        [(name,) for name in (*names, "SLURM_JOB_ID")],
+        [f"worker {i}" for i in range(len(names) + 1)],
+        threads=1,
+    )
+    assert seen == [None] * len(names) + ["7"]
+    assert all(os.environ[name] == "4" for name in names)  # the parent's stay
 
 
 def test_the_version_floor_is_the_minor_the_build_script_pins():

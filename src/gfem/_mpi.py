@@ -101,9 +101,8 @@ _REFUSALS = {
         f"refused above one rank: use linear_solver='direct' or order=2, {_COPIES}."
     ),
     "driven": (
-        "A distributed driven solve runs on lumped ports with linear_solver='auto' or "
-        "'bddc_gmres' so far, with no gradient, kept field or result bundle: "
-        f"{_COPIES}."
+        "A distributed driven solve runs on lumped ports so far, with no gradient, "
+        f"kept field or result bundle: {_COPIES}."
     ),
     "port_mode": f"A distributed port mode solve is not built yet: {_COPIES}.",
 }
@@ -231,8 +230,7 @@ def refuse(model: Any, problem: Any, options: Any) -> None:
             refuse_feature("bddc_order_1")
         # Not built yet: no silent copies either.
         if (
-            options.linear_solver not in ("auto", "bddc_gmres")
-            or problem.kept_frequencies
+            problem.kept_frequencies
             or not all(isinstance(port, LumpedPort) for port in model.ports)
             or is_traced((model, problem))
         ):

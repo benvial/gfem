@@ -7,6 +7,10 @@ unusable. They are initialised without command-line arguments (never the
 script's ``sys.argv``), and a PETSc another library initialised first is
 accepted as it is.
 
+gfem documents two builds (ADR 0067). The no-MPI stack serves one process and rank
+copies, which pass PETSc its launch option; only the MPI stack serves a distributed
+solve (`require_mpi_petsc`). `has_mpi` tells them apart without initialising PETSc.
+
 Every PETSc or SLEPc object gfem creates gets its own options prefix
 (`next_prefix`). gfem's options sit in PETSc's global options database only
 while that object reads them (`scoped_options`), so they never reach a
@@ -22,10 +26,12 @@ import itertools
 import re
 import threading
 from collections.abc import Generator
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from gfem import _mpi
 from gfem.errors import SolverUnavailableError
 
 if TYPE_CHECKING:
@@ -35,7 +41,9 @@ __all__ = [
     "LOCK",
     "MIN_VERSION",
     "error_text",
+    "has_mpi",
     "next_prefix",
+    "require_mpi_petsc",
     "require_petsc",
     "require_slepc",
     "scoped_options",
@@ -52,6 +60,8 @@ LOCK = threading.RLock()
 _PREFIXES = itertools.count()
 
 _RECIPE = "the 'Solve with PETSc and SLEPc' recipe in the gfem docs"
+#: Lets a PETSc without MPI start under a launcher: each rank is a copy of its own.
+_ALLOW_LAUNCH = "-mpiuni-allow-multiprocess-launch"
 #: What a solver field asks for, and the solvers it could use instead.
 _SOLVERS = {
     "linear_solver": ("petsc", "use linear_solver='direct' or 'bddc_gmres'"),
@@ -62,10 +72,34 @@ _TRACEBACK = re.compile(r"\(\) at \S+:\d+$")
 _RANK = re.compile(r"^\[\d+\]\s*")
 
 
+@functools.cache
+def has_mpi() -> bool:
+    """Whether the installed PETSc stack is the MPI one; False without a stack.
+
+    Reads ``PETSC_HAVE_MPIUNI`` in ``petscconf.h``: ``hasExternalPackage("mpi")`` is
+    True on both stacks. It initialises nothing, so a distributed solve can refuse
+    a stack whose ``init`` would stop it.
+    """
+    try:
+        petsc4py = __import__("petsc4py")
+        directory = Path(petsc4py.get_config()["PETSC_DIR"])
+        header = (directory / "include" / "petscconf.h").read_text()
+    except Exception:  # noqa: BLE001 - also a broken install: `_import` tells why
+        return False
+    return "PETSC_HAVE_MPIUNI" not in header
+
+
 def _load(package: str, library: str) -> tuple[Any, Any]:
-    """``package`` initialised without arguments, and its ``library`` module."""
+    """``package`` initialised without the script's arguments, and its ``library``.
+
+    A launched PETSc without MPI stops at ``init`` unless told that each rank runs
+    alone, which is what a rank copy does; a distributed solve never gets this far
+    on that stack (`require_mpi_petsc`).
+    """
     module = __import__(package)
-    module.init([])  # before importing the library, which would read sys.argv
+    copies = package == "petsc4py" and _mpi.launched_tasks() > 1 and not has_mpi()
+    # before importing the library, which would read sys.argv
+    module.init([_ALLOW_LAUNCH] if copies else [])
     return module, getattr(__import__(package, fromlist=[library]), library)
 
 
@@ -128,6 +162,29 @@ def require_petsc(subject: str = "linear_solver") -> Any:
             f"{_RECIPE} describes, or {other}."
         )
     return PETSc
+
+
+def require_mpi_petsc(kind: str, comm: Any) -> Any:
+    """`require_petsc` for a distributed solve, on the MPI stack only.
+
+    Args:
+        kind: The linear solver that asks, for the error message.
+        comm: The resolved communicator. All ranks refuse together.
+
+    Raises:
+        gfem.SolverUnavailableError: The MPI stack is not installed (checked before
+            ``init``, which a no-MPI stack fails under a launcher), or as
+            `require_petsc`.
+    """
+    if not _mpi.agree_all(comm, flag=has_mpi()):
+        raise SolverUnavailableError(
+            f"linear_solver={kind!r} above one rank needs the MPI PETSc stack, and "
+            "this environment does not have it. Build it with "
+            f"tools/petsc_wheelhouse.sh --mpi as {_RECIPE} describes, use "
+            "linear_solver='bddc_gmres', or pass comm=MPI.COMM_SELF for independent "
+            "one-process copies."
+        )
+    return require_petsc("linear_solver")
 
 
 @functools.cache

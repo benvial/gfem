@@ -408,7 +408,9 @@ class PlannedHandle(NgsHandle):
                 self._pattern = pattern
 
                 def write(matrix: ngs.BaseMatrix) -> None:
-                    matrix.AsVector().data = new.AsVector()
+                    comm = self.layout.comm
+                    target = local_matrix(matrix, comm).AsVector()
+                    target.data = local_matrix(new, comm).AsVector()
 
                 self._new_values(write)
                 return

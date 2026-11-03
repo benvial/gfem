@@ -253,17 +253,15 @@ def test_a_refusal_under_jax_keeps_its_class(tmp_path, monkeypatch):
         jax.grad(objective)(np.ones(n))
 
 
-def test_a_lumped_port_solve_on_bddc_is_all_that_passes_so_far(tmp_path):
+def test_a_lumped_port_solve_is_all_that_passes_so_far(tmp_path):
     line = cases.layered_line(tmp_path)
     frequency = gfem.Driven(5e9)
-    for solver in ("auto", "bddc_gmres"):
+    for solver in ("auto", "bddc_gmres", "direct", "petsc"):
         options = gfem.SolverOptions(linear_solver=solver)
         assert _mpi.refuse(line, frequency, options) is None
     options = gfem.SolverOptions()
     kept = gfem.Driven(5e9, keep_fields=[5e9])
     for model, problem, chosen in (
-        (line, frequency, gfem.SolverOptions(linear_solver="direct")),
-        (line, frequency, gfem.SolverOptions(linear_solver="petsc")),
         (line, kept, options),
         (line.replace(ports=[gfem.WavePort("w", "port1")]), frequency, options),
     ):
