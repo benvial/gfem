@@ -16,13 +16,13 @@ import pytest
 from ranks import RanksFailed, on_ranks, on_ranks_argv
 
 import gfem
-from gfem import _mpi
+from gfem import _mpi, _petsc
 from gfem._engine.cache import ENTRIES, Entry
 from gfem._engine.driven import DrivenRule, driven_operator
 from gfem._engine.port_network import parallel_scale
 from gfem._engine.runtime import task_manager
 from gfem._engine.system_operator import SystemOperator
-from gfem._linalg import ResolvedLinearSolver, bddc, blas, prepare
+from gfem._linalg import ResolvedLinearSolver, bddc, blas, coarse, prepare
 from gfem._linalg.base import local_matrix
 from gfem._linalg.pieces import AssembledPieces
 
@@ -98,6 +98,126 @@ def test_lumped_s_and_iterations_match_one_process(tmp_path, ranks):
 @pytest.mark.parametrize("ranks", [3, 4])
 def test_a_sweep_reusing_bddc_matches_one_process(tmp_path, ranks):
     assert _assert_agrees(tmp_path, SWEEP, ranks) < len(SWEEP)
+
+
+# --- the coarse problem's two routes ------------------------------------------------
+
+needs_stack = pytest.mark.skipif(not _petsc.has_mpi(), reason="needs the MPI stack")
+
+
+#: `coarse.reduction` per route: a tiny mesh's own is to one rank.
+EVERY_RANK, HALF, ONE_RANK = "every rank", "half", "one rank"
+REDUCTIONS = {
+    EVERY_RANK: lambda _, __: 1,
+    HALF: lambda _, __: 2,
+    ONE_RANK: coarse.reduction,
+}
+
+
+def _on_a_route(directory, frequencies, route):
+    """`_s_and_iterations` with the coarse problem on ``route``, and what factored it.
+
+    ``"rank 0"`` is what a wheel-only install runs.
+    """
+    factored = []
+    if route == "rank 0":
+        bddc._coarse_on_mumps = lambda *_, **__: False  # noqa: SLF001
+    else:
+        coarse.reduction = REDUCTIONS[route]
+        set_up = coarse.CoarseMumps.set_up
+
+        def spy(self):
+            set_up(self)
+            pc = self._ksp.getPC()  # noqa: SLF001
+            factored.append((pc.getType(), self._factor))  # noqa: SLF001
+
+        coarse.CoarseMumps.set_up = spy
+    return (*_s_and_iterations(directory, frequencies), factored)
+
+
+def _assert_routes_agree(directory, frequencies, ranks, *, routes):
+    reference, *_ = on_ranks(
+        _on_a_route, directory, frequencies, "rank 0", ranks=ranks, limit=300
+    )
+    s_zero, iterations_zero, setups_zero, _ = reference
+    seen = {}
+    for route in routes:
+        (s, iterations, setups, factored), *_ = on_ranks(
+            _on_a_route, directory, frequencies, route, ranks=ranks, limit=300
+        )
+        error = np.abs(s - s_zero).max() / np.abs(s_zero).max()
+        print(  # noqa: T201
+            f"ranks={ranks} {route}: S error={error:.3g} "
+            f"iterations={iterations.tolist()} rank 0={iterations_zero.tolist()} "
+            f"factored={factored}"
+        )
+        assert error < S_GATE, f"S off by {error:.3g} relative"
+        np.testing.assert_array_equal(iterations, iterations_zero)
+        assert setups == setups_zero
+        seen[route] = factored
+    return seen
+
+
+@needs_stack
+@pytest.mark.parametrize("ranks", [3, 4, 8])
+def test_coarse_on_mumps_matches_the_rank_0_route(tmp_path, ranks):
+    seen = _assert_routes_agree(tmp_path, (FREQUENCY,), ranks, routes=[EVERY_RANK])
+    assert seen[EVERY_RANK] == [("cholesky", 1)]
+
+
+@needs_stack
+@pytest.mark.parametrize("ranks", [3, 4, 8])
+def test_telescoping_changes_neither_iterations_nor_s(tmp_path, ranks):
+    seen = _assert_routes_agree(tmp_path, (FREQUENCY,), ranks, routes=[HALF, ONE_RANK])
+    assert seen[HALF] == [("telescope", 2)]
+    assert seen[ONE_RANK] == [("telescope", ranks)]
+
+
+@needs_stack
+def test_a_sweep_reusing_bddc_on_either_coarse_route(tmp_path):
+    _assert_routes_agree(tmp_path, SWEEP, 4, routes=[EVERY_RANK, ONE_RANK])
+
+
+def _forced_coarse_failures(directory, route, failures):
+    """INFOG(1)=-9 ``failures`` times on the real route: a retry's count, or the error."""
+    coarse.reduction = REDUCTIONS[route]
+    calls = []
+    real = coarse.CoarseMumps._agreed_failure  # noqa: SLF001
+
+    def forced(self):
+        calls.append(1)
+        return coarse.MUMPS_WORKSPACE_ERROR if len(calls) <= failures else real(self)
+
+    coarse.CoarseMumps._agreed_failure = forced  # noqa: SLF001
+    options = cases.tight("bddc_gmres", threads=1)
+    problem = gfem.Driven(FREQUENCY)
+    try:
+        s = gfem.solve(cases.layered_line(directory), problem, options=options).s.values
+    except _mpi.AgreedError as err:
+        return "coarse problem failed" in str(err), len(calls), _world().allreduce(1)
+    return np.asarray(s), len(calls)
+
+
+@needs_stack
+@pytest.mark.parametrize("route", [EVERY_RANK, ONE_RANK])
+def test_a_coarse_workspace_too_small_retries_on_a_new_ksp(tmp_path, route):
+    s_one, *_ = _s_and_iterations(tmp_path, (FREQUENCY,))
+    (s, calls), *_ = on_ranks(
+        _forced_coarse_failures, tmp_path, route, 1, ranks=4, limit=300
+    )
+    assert calls == 2
+    assert np.abs(s - s_one).max() < S_GATE * np.abs(s_one).max()
+
+
+@needs_stack
+def test_a_coarse_workspace_too_small_for_every_retry_is_an_agreed_error(tmp_path):
+    limit = coarse.MUMPS_RETRIES + 1
+    (named, calls, ranks), *_ = on_ranks(
+        _forced_coarse_failures, tmp_path, ONE_RANK, limit, ranks=4, limit=300
+    )
+    assert named
+    assert calls == limit
+    assert ranks == 4
 
 
 # --- what lies under the solve ------------------------------------------------------

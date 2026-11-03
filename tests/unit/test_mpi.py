@@ -1,5 +1,6 @@
 """Launcher resolution and refusals, with no MPI: stub communicators, fake mpi4py."""
 
+import math
 import pickle
 import subprocess
 import sys
@@ -15,6 +16,7 @@ import pytest
 
 import gfem
 from gfem import _mpi
+from gfem._linalg import coarse
 
 TASK_VARIABLES = ("OMPI_COMM_WORLD_SIZE", "SLURM_STEP_NUM_TASKS", "PMI_SIZE")
 TESTS = Path(__file__).resolve().parents[1]
@@ -199,6 +201,22 @@ def test_a_one_process_solve_never_imports_mpi4py(environment, tmp_path):
     proc = _child(code, TESTS, TESTS.parent / "tools", **environment)
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == "[]"
+
+
+@pytest.mark.parametrize(
+    ("dofs", "size", "factor"),
+    [
+        (3_300_000, 28, 1),  # r10M at 28x4: 119 k per rank, nothing to reduce
+        (3_300_000, 64, 2),  # 32 ranks, as ticket 18 ran
+        (33_000_000, 896, 3),  # ADR 0078's arithmetic at 100 M DOF
+        (250_000, 8, 4),
+        (1_000, 8, 8),  # a tiny mesh: one rank
+        (1_000, 1, 1),
+    ],
+)
+def test_the_coarse_problem_runs_on_at_most_one_rank_per_100k_dofs(dofs, size, factor):
+    assert coarse.reduction(dofs, size) == factor
+    assert math.ceil(size / factor) <= max(1, dofs // coarse.DOFS_PER_RANK)
 
 
 # --- refusals ---------------------------------------------------------------------

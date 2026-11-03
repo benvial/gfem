@@ -21,11 +21,12 @@ warm solve there from that count, and sets it up again when GMRES iterations
 grow past one setup's worth. A handle prepared without
 reuse sets BDDC up at each `BddcHandle.refactorize`.
 
-Under ranks (an operator with a layout) BDDC's coarse problem is factored on rank
-0 by the same rule, GMRES runs on owned entries (`gfem._linalg.gmres`), and every
-decision above reads an agreed value: the iterations, the residuals and the norms of
-`gfem._linalg.layout`. Each rank's BLAS runs at its threads in a setup and at one
-thread in a solve, whose coarse apply gains nothing from them (ADR 0076).
+Under ranks (an operator with a layout) BDDC's coarse problem is factored by MUMPS
+across ranks when the MPI PETSc stack is installed (`gfem._linalg.coarse`), otherwise
+on rank 0 by the same rule; GMRES runs on owned entries (`gfem._linalg.gmres`), and
+every decision above reads an agreed value: the iterations, the residuals and the
+norms of `gfem._linalg.layout`. Each rank's BLAS runs at its threads in a setup and at
+one thread in a solve, whose coarse apply gains nothing from them (ADR 0076).
 """
 
 from __future__ import annotations
@@ -35,8 +36,8 @@ import math
 import ngsolve as ngs
 import numpy as np
 
-from gfem import _mpi
-from gfem._linalg import Operator, Symmetry
+from gfem import _mpi, _petsc
+from gfem._linalg import Operator, Symmetry, coarse
 from gfem._linalg.base import (
     NgsHandle,
     equals_its_transpose,
@@ -124,9 +125,16 @@ def _set_up(
     factorization (`_coarse_inverse`), chosen from NGSolve's threads and the
     ``columns`` the setup is expected to serve. (``coarsetype="direct"`` is
     not set: on the driven H(curl) reference it made the setup 5x slower and
-    GMRES take 68 iterations, not 49.) Across ranks, all name one inverse.
+    GMRES take 68 iterations, not 49.) Across ranks, all name one inverse, or on the
+    MPI PETSc stack gfem's own ``coarsetype`` (`gfem._linalg.coarse`).
     """
     is_complex = bool(form.space.is_complex)
+    if _coarse_on_mumps(comm, is_complex=is_complex):
+        preconditioner = ngs.Preconditioner(
+            form, "bddc", coarsetype=coarse.coarse_type(comm)
+        )
+        form.Assemble()
+        return preconditioner
     inverse = _coarse_inverse(
         symmetry,
         is_complex=is_complex,
@@ -136,6 +144,17 @@ def _set_up(
     preconditioner = ngs.Preconditioner(form, "bddc", inverse=inverse)
     form.Assemble()
     return preconditioner
+
+
+def _coarse_on_mumps(comm, *, is_complex: bool) -> bool:
+    """Whether BDDC's coarse problem leaves rank 0: on ranks, with the MPI stack.
+
+    A wheel-only install keeps rank 0, and so does a stack gfem cannot use. The route
+    never changes iterations or S, so no error is worth a solve that can still run.
+    """
+    if comm is None or not is_complex:
+        return False
+    return _mpi.agree_all(comm, flag=_petsc.mpi_stack_usable())
 
 
 def _slack(columns: int) -> int:
@@ -208,6 +227,7 @@ class BddcHandle(NgsHandle):
         self.reuse = reuse
         self._expected_columns = self._columns_per_setup(solves)
         self.symmetry = symmetry
+        self._coarse = None
         preconditioner = self._set_up(form)
         is_complex = bool(space.is_complex)
         super().__init__(form.mat, operator.freedofs, symmetry, is_complex=is_complex)
@@ -224,13 +244,13 @@ class BddcHandle(NgsHandle):
 
     def _set_up(self, form: ngs.BilinearForm) -> ngs.Preconditioner:
         """`_set_up` on ``form``, every BLAS at this rank's threads under ranks."""
+        comm = self.layout.comm
         with self.layout.blas_threads(ngs.GetNumThreads()):
-            return _set_up(
-                form,
-                self.symmetry,
-                columns=self._expected_columns,
-                comm=self.layout.comm,
+            preconditioner = _set_up(
+                form, self.symmetry, columns=self._expected_columns, comm=comm
             )
+            self._coarse = coarse.finish(comm)
+        return preconditioner
 
     def _hold(self, form: ngs.BilinearForm, preconditioner) -> None:
         """Solve ``form``'s matrix on a preconditioner just set up from it."""
@@ -246,6 +266,7 @@ class BddcHandle(NgsHandle):
         """Set BDDC up again on ``form`` (assembled again), and hold it."""
         # release the old setup first
         self._solver = self._preconditioner = self._matrix = self._form = None
+        self._free_coarse()
         self._hold(form, self._set_up(form))
 
     def _held(self) -> tuple[ngs.BaseMatrix, ngs.Preconditioner, ngs.BilinearForm]:
@@ -569,9 +590,17 @@ class BddcHandle(NgsHandle):
         if self._solver is None or self._matrix is None or pre is None:
             return 0
         matrix = local_matrix(self._matrix, self.layout.comm)
-        return host_bytes(matrix) + host_bytes(pre.mat)
+        factors = 0 if self._coarse is None else self._coarse.nbytes
+        return host_bytes(matrix) + host_bytes(pre.mat) + factors
+
+    def _free_coarse(self) -> None:
+        """Destroy a coarse factorization on MUMPS, which every rank does together."""
+        if self._coarse is not None:
+            self._coarse.free()
+            self._coarse = None
 
     def _release(self) -> None:
         """Drop the preconditioner and the form; under the lock."""
         self._preconditioner = None
         self._form = None
+        self._free_coarse()

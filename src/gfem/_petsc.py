@@ -42,6 +42,7 @@ __all__ = [
     "MIN_VERSION",
     "error_text",
     "has_mpi",
+    "mpi_stack_usable",
     "next_prefix",
     "require_mpi_petsc",
     "require_petsc",
@@ -162,6 +163,17 @@ def require_petsc(subject: str = "linear_solver") -> Any:
             f"{_RECIPE} describes, or {other}."
         )
     return PETSc
+
+
+def mpi_stack_usable() -> bool:
+    """Whether this rank can use the MPI stack; initialises PETSc if it can."""
+    if not has_mpi():
+        return False
+    try:
+        require_petsc()
+    except SolverUnavailableError:
+        return False
+    return True
 
 
 def require_mpi_petsc(kind: str, comm: Any) -> Any:
