@@ -42,8 +42,18 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
                 f"{item.nodeid}: tests must live in tests/<tier>/ with tier in {TIERS}"
             )
         item.add_marker(tier)
+        if tier == "mpi" and _uses_petsc_marker(item):
+            raise pytest.UsageError(
+                f"{item.nodeid}: a launched test skips on _petsc.has_mpi(): a petsc or "
+                "slepc marker would start PETSc, and on the MPI stack MPI, in this "
+                "process, which launched jobs then inherit"
+            )
     _skip_without_petsc(items)
     _skip_without_mpi(items)
+
+
+def _uses_petsc_marker(item: pytest.Item) -> bool:
+    return any(item.get_closest_marker(name) for name in ("petsc", "slepc"))
 
 
 def _skip_without_petsc(items: list[pytest.Item]) -> None:

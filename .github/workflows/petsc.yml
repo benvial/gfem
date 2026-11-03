@@ -147,6 +147,7 @@ jobs:
         _petsc.require_petsc('linear_solver'); _petsc.require_slepc('eigen_solver')"
     - name: Unit tier and the PETSc verification tests
       run: uv run --no-sync pytest -m "unit or (verification and (petsc or slepc))" -rs
-    - name: Launched direct tests
-      # A pytest of their own: the mpi and petsc selections stay apart.
-      run: uv run --no-sync pytest -m "mpi and petsc and not reference" -rs
+    - name: Launched tests
+      # A pytest of their own: the step above starts PETSc in pytest's process, and
+      # on this stack that loads MPI there, which a launched job must not inherit.
+      run: uv run --no-sync pytest -m "mpi and not reference" -rs

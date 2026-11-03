@@ -14,6 +14,8 @@ import numpy as np
 import pytest
 from ranks import on_ranks_argv
 
+from gfem import _petsc
+
 REPO = Path(__file__).parents[2]
 SCRIPT = REPO / "tools" / "distributed_line.py"
 MESH = REPO / "docs" / "tutorials" / "data" / "line.msh"
@@ -60,6 +62,6 @@ def test_the_recipes_script_on_bddc_matches_one_process(tmp_path):
     _check(tmp_path, "bddc_gmres", 1e-7)
 
 
-@pytest.mark.petsc
+@pytest.mark.skipif(not _petsc.has_mpi(), reason="needs the MPI stack")
 def test_the_recipes_script_on_mumps_matches_one_process(tmp_path):
     _check(tmp_path, "direct", 1e-9)

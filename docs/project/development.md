@@ -34,24 +34,26 @@ skip without them:
 
 ```bash
 uv sync --extra mpi
-uv run pytest -m "mpi and not petsc" -rs
+uv run pytest -m "mpi and not reference" -rs
 ```
 
 `GFEM_TEST_MPI_LAUNCH` replaces the launcher (`srun --mpi=pmix`), and
 `GFEM_TEST_MPI_MAX_RANKS` skips launches above a count, for a machine with few cores.
 The direct cases need the {term}`MPI PETSc stack`, which the script builds with
-`--mpi`:
+`--mpi`, and they skip without it:
 
 ```bash
 uv sync --extra mpi
 uv pip install --no-index --find-links wheelhouse-mpi petsc petsc4py slepc slepc4py
 uv run pytest -m "unit or (verification and (petsc or slepc))" -rs
-uv run pytest -m "mpi and petsc" -rs
+uv run pytest -m "mpi and not reference" -rs
 ```
 
-Run `mpi` and `petsc` selections as separate pytest commands, as above: one mixed
-`-m "mpi or petsc"` run failed a launch under `srun` and then did not exit, for a
-cause not found.
+Keep these two selections in separate pytest commands. A `petsc` or `slepc` test makes
+pytest start PETSc in its own process, which on this stack loads MPI there. A launched
+job under `srun` then failed in `MPI_Init_thread`, and pytest did not exit after its
+summary, with an `orted` as its child. So launched tests never carry those markers
+(collection refuses them), and they skip on `_petsc.has_mpi()` instead.
 
 ## Docs
 

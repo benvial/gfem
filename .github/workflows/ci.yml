@@ -135,7 +135,8 @@ jobs:
     - name: Unit tier
       run: uv run pytest -m unit
     - name: Launched tier
-      run: uv run pytest -m "mpi and not reference and not petsc" -rs
+      # Without the MPI PETSc stack its cases skip, and BDDC's coarse is on rank 0.
+      run: uv run pytest -m "mpi and not reference" -rs
     - name: Another MPI is refused
       # A throwaway environment: PyPI's mpich is no dependency of gfem's, and the
       # licence gate never sees it.
