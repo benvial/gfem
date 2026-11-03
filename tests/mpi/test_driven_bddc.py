@@ -180,6 +180,25 @@ def test_a_sweep_reusing_bddc_on_either_coarse_route(tmp_path):
     _assert_routes_agree(tmp_path, SWEEP, 4, routes=[EVERY_RANK, ONE_RANK])
 
 
+def _with_the_default_inverse_forbidden(directory):
+    """NGSolve's default inverse raises: the coarse route must not fall back on it."""
+    import ngsolve as ngs
+
+    class Forbidden(ngs.la.SparseFactorizationInterface):
+        def __init__(self, *_, **__):
+            raise AssertionError("gfem used NGSolve's default inverse type")
+
+    ngs.la.RegisterInverseType("gfem_forbidden", Forbidden)
+    ngs.BaseMatrix.SetDefaultInverseType("gfem_forbidden")
+    return _s_and_iterations(directory, (FREQUENCY,))[1]
+
+
+@needs_stack
+def test_the_coarse_route_never_reads_ngsolves_default_inverse(tmp_path):
+    iterations, *_ = on_ranks(_with_the_default_inverse_forbidden, tmp_path, ranks=3)
+    assert iterations.size
+
+
 def _rank_0_flags(directory):
     """The flags BDDC is given when the coarse problem stays on rank 0."""
     import ngsolve as ngs

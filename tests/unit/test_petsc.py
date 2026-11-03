@@ -599,7 +599,8 @@ def test_the_mpi_check_refuses_what_is_known_not_to_work(tmp_path, kwargs, messa
 def test_the_mpi_check_names_what_is_missing(tmp_path):
     result = _check(tmp_path, flags=["--mpi"])
     assert result.returncode != 0
-    assert "mpicc mpicxx mpifort bison flex" in result.stderr
+    # bison and flex may be in /usr/bin, which the stub PATH keeps
+    assert "mpicc mpicxx mpifort" in result.stderr
 
 
 @NOT_CONDA
