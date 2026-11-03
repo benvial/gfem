@@ -6,6 +6,7 @@ Nothing here solves. Every model is built from a directory, so a launched
 function can build it from arguments that pickle.
 """
 
+import dataclasses
 from pathlib import Path
 
 import gradient_cases as cases
@@ -67,11 +68,9 @@ def refused(key: str, directory: Path):  # noqa: PLR0911
         case "bddc_order_1_auto":
             options = gfem.SolverOptions(order=1)
             return _line(directory), gfem.Driven(FREQUENCY), options
-        # Not built yet: direct under ranks (slice 4), a port mode (slice 5).
+        # Not built yet: direct under ranks (slice 4).
         case "driven":
             return _line(directory), gfem.Driven(FREQUENCY), direct
-        case "port_mode":
-            return _line(directory), gfem.PortMode("p1", FREQUENCY), None
     raise ValueError(key)
 
 
@@ -87,13 +86,30 @@ KEYS = (
     "bddc_order_1",
     "bddc_order_1_auto",
     "driven",
-    "port_mode",
 )
 
 
 def feature(key: str) -> str:
     """The ``feature`` a case raises."""
     return key.removesuffix("_auto")
+
+
+def permuted(mesh: gfem.Mesh, seed: int = 7) -> gfem.Mesh:
+    """``mesh`` with its nodes renumbered at random, so order carries no geometry."""
+    topology = mesh._topology
+    order = np.random.default_rng(seed).permutation(len(mesh.nodes))
+    number = np.empty_like(order)
+    number[order] = np.arange(len(order))
+    return gfem.Mesh(
+        np.asarray(mesh.nodes)[order],
+        dataclasses.replace(
+            topology,
+            imported_nodes=np.asarray(topology.imported_nodes)[order],
+            tetrahedra=number[topology.tetrahedra],
+            triangles=number[topology.triangles],
+            source=None,
+        ),
+    )
 
 
 # --- the unit cube, built from arrays --------------------------------------------

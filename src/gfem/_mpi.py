@@ -30,6 +30,7 @@ import numpy as np
 from gfem.errors import (
     DistributedUnsupportedError,
     LinearSolverConvergenceError,
+    PortModeError,
     SolverUnavailableError,
 )
 
@@ -48,6 +49,7 @@ __all__ = [
     "node_budget",
     "node_bytes",
     "node_share",
+    "on_root",
     "rank",
     "reduce_bcast",
     "refuse",
@@ -74,6 +76,7 @@ AGREED_ERRORS: tuple[type[BaseException], ...] = (
     AgreedError,
     DistributedUnsupportedError,
     LinearSolverConvergenceError,
+    PortModeError,
     SolverUnavailableError,
 )
 
@@ -101,11 +104,9 @@ _REFUSALS = {
         f"refused above one rank: use linear_solver='direct' or order=2, {_COPIES}."
     ),
     "driven": (
-        "A distributed driven solve runs on lumped ports with linear_solver='auto' or "
-        "'bddc_gmres' so far, with no gradient, kept field or result bundle: "
-        f"{_COPIES}."
+        "A distributed driven solve runs with linear_solver='auto' or 'bddc_gmres' "
+        f"so far, with no gradient, kept field or result bundle: {_COPIES}."
     ),
-    "port_mode": f"A distributed port mode solve is not built yet: {_COPIES}.",
 }
 
 
@@ -205,17 +206,13 @@ def refuse(model: Any, problem: Any, options: Any) -> None:
     Raises:
         DistributedUnsupportedError: Its ``feature`` names what has no path.
     """
-    from gfem._boundaries import LumpedPort
     from gfem._checks import is_traced
-    from gfem.problems import Driven, Eigenmode, Electrostatic, PortMode
+    from gfem.problems import Driven, Eigenmode, Electrostatic
 
     if isinstance(problem, Eigenmode):
         refuse_feature("eigenmode")
     if isinstance(problem, Electrostatic):
         refuse_feature("electrostatic")
-    # No distributed solve exists yet. Runs on rank 0 and broadcasts by ADR 0059.
-    if isinstance(problem, PortMode):
-        refuse_feature("port_mode")
     if isinstance(problem, Driven):
         if problem.sweep == "adaptive":
             refuse_feature("adaptive_sweep")
@@ -233,7 +230,6 @@ def refuse(model: Any, problem: Any, options: Any) -> None:
         if (
             options.linear_solver not in ("auto", "bddc_gmres")
             or problem.kept_frequencies
-            or not all(isinstance(port, LumpedPort) for port in model.ports)
             or is_traced((model, problem))
         ):
             refuse_feature("driven")
@@ -513,13 +509,60 @@ def warn(
 
     Rank 0 warns normally. The others warn inside ``catch_warnings(record=True)``,
     which prints nothing and still raises under an ``error`` filter, so a filter
-    acts on every rank.
+    acts on every rank. What such a filter raises is an agreed error, so `section`
+    lets it through.
     """
-    if rank(comm) == 0:
-        warnings.warn(message, category, stacklevel=stacklevel + 1)
-        return
-    with warnings.catch_warnings(record=True):
-        warnings.warn(message, category, stacklevel=stacklevel + 1)
+    try:
+        if rank(comm) == 0:
+            warnings.warn(message, category, stacklevel=stacklevel + 1)
+            return
+        with warnings.catch_warnings(record=True):
+            warnings.warn(message, category, stacklevel=stacklevel + 1)
+    except Warning as raised:
+        raised._gfem_agreed = True  # ty: ignore[unresolved-attribute]  # noqa: SLF001
+        raise
+
+
+def on_root(
+    comm: Any,
+    compute: collections.abc.Callable[[], dict[str, np.ndarray]],
+    *,
+    agreed: tuple[type[Exception], ...] = (),
+) -> dict[str, np.ndarray]:
+    """``compute()``'s named arrays on every rank, computed once on rank 0.
+
+    Placement of a whole computation (ADR 0059): every rank must call this, a rank
+    holding no DOFs too, so no local test may stand in front of it. Warnings are
+    recorded on rank 0 whatever its filters say and replayed by `warn`, and one of
+    the ``agreed`` errors is raised on every rank after them, and `section` lets it
+    through. Anything else ends the job. On the one-process path this is ``compute()``.
+
+    Args:
+        comm: The resolved communicator.
+        compute: The computation; run on rank 0 alone.
+        agreed: The errors that are a result of the computation, for all ranks.
+    """
+    if comm is None:
+        return compute()
+    arrays = None
+    outcome = None
+    if comm.rank == 0:
+        failure = None
+        with section(comm, agreed=()), warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            try:
+                arrays = {k: np.ascontiguousarray(a) for k, a in compute().items()}
+            except agreed as error:
+                failure = error
+        outcome = (failure, [(str(w.message), w.category) for w in seen])
+    failure, recorded = comm.bcast(outcome, root=0)
+    shared = {} if failure is not None else bcast_arrays(comm, arrays)
+    for message, category in recorded:
+        warn(comm, message, category, stacklevel=2)
+    if failure is not None:
+        failure._gfem_agreed = True  # noqa: SLF001
+        raise failure
+    return shared
 
 
 def _abort(comm: Any, error: BaseException) -> None:
@@ -551,7 +594,7 @@ def section(
     except agreed:
         raise
     except BaseException as error:
-        if comm is None:
+        if comm is None or getattr(error, "_gfem_agreed", False):
             raise
         _abort(comm, error)
 

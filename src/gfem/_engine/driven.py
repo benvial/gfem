@@ -100,7 +100,7 @@ from gfem._engine.sweep_outputs import SweepOutputs
 from gfem._engine.system_operator import SystemOperator
 from gfem._engine.wave_ports import PortSurfaceCoupling, wave_port_couplings
 from gfem._linalg import Kind, ResolvedLinearSolver
-from gfem._linalg.layout import DofLayout, RankLayout
+from gfem._linalg.layout import ONE_PROCESS, DofLayout, RankLayout
 from gfem._periodic import bloch_phases, check_bloch, check_wave_vector
 from gfem._sweep.adaptive import AffineSystem, AffineTerm, adaptive_sweep
 from gfem.errors import (
@@ -754,6 +754,7 @@ class DrivenRule:
             order=op.order,
             frequency=self.problem.frequency,
             tolerance=self.options.port_mode_tolerance,
+            layout=op.layout or ONE_PROCESS,
         )
         if warn:
             _check_port_mode_projection(couplings, stacklevel=4, comm=self.comm)
