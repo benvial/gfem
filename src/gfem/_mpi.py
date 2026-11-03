@@ -30,12 +30,16 @@ import numpy as np
 from gfem.errors import (
     DistributedUnsupportedError,
     LinearSolverConvergenceError,
+    MeshQualityError,
+    PortGeometryError,
     PortModeError,
+    RegionNotFoundError,
     SolverUnavailableError,
 )
 
 __all__ = [
     "AGREED_ERRORS",
+    "FORWARD_ERRORS",
     "AgreedError",
     "agree_all",
     "agree_any",
@@ -80,6 +84,15 @@ AGREED_ERRORS: tuple[type[BaseException], ...] = (
     SolverUnavailableError,
 )
 
+#: What `section` lets through around a forward or a backward: the agreed errors, and
+#: those every rank raises by itself, from replicated inputs alone.
+FORWARD_ERRORS: tuple[type[BaseException], ...] = (
+    *AGREED_ERRORS,
+    MeshQualityError,
+    PortGeometryError,
+    RegionNotFoundError,
+)
+
 _comm_keyval: Any = None
 _comm_keys = itertools.count()
 
@@ -105,7 +118,7 @@ _REFUSALS = {
     ),
     "driven": (
         "A distributed driven solve runs with linear_solver='auto' or 'bddc_gmres' "
-        f"so far, with no gradient, kept field or result bundle: {_COPIES}."
+        f"so far, with no kept field or result bundle: {_COPIES}."
     ),
 }
 
@@ -206,7 +219,6 @@ def refuse(model: Any, problem: Any, options: Any) -> None:
     Raises:
         DistributedUnsupportedError: Its ``feature`` names what has no path.
     """
-    from gfem._checks import is_traced
     from gfem.problems import Driven, Eigenmode, Electrostatic
 
     if isinstance(problem, Eigenmode):
@@ -230,7 +242,6 @@ def refuse(model: Any, problem: Any, options: Any) -> None:
         if (
             options.linear_solver not in ("auto", "bddc_gmres")
             or problem.kept_frequencies
-            or is_traced((model, problem))
         ):
             refuse_feature("driven")
 
@@ -452,7 +463,15 @@ def _text_digest(text: str) -> str:
     ).hexdigest()
 
 
-def entry_check(comm: Any, call: str, model: Any, problem: Any, options: Any) -> None:
+def entry_check(
+    comm: Any,
+    call: str,
+    model: Any,
+    problem: Any,
+    options: Any,
+    *,
+    arrays: collections.abc.Mapping[str, Any] | None = None,
+) -> None:
     """Every rank at this collective call, with the same inputs (ADR 0058).
 
     Compares a digest of the call's number and name and of the replicated inputs, so
@@ -464,6 +483,7 @@ def entry_check(comm: Any, call: str, model: Any, problem: Any, options: Any) ->
         model: The model, whose leaves are compared one by one.
         problem: The problem, by its printed values.
         options: The solver options, by their printed values.
+        arrays: Further replicated values of the call, by name.
 
     Raises:
         AgreedError: On every rank, naming the first input that differs.
@@ -490,6 +510,7 @@ def entry_check(comm: Any, call: str, model: Any, problem: Any, options: Any) ->
         f"the model's {jax.tree_util.keystr(path)}": _leaf_digest(leaf)
         for path, leaf in leaves
     }
+    items |= {name: _leaf_digest(value) for name, value in (arrays or {}).items()}
     everyone = comm.allgather(items)
     for other, theirs in enumerate(everyone):
         for name in sorted(theirs.keys() | everyone[0].keys()):

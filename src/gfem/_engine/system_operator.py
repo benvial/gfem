@@ -19,7 +19,8 @@ the same DOFs, and ``W`` is symmetric and off every pair), built on the
 first adjoint solve. On the CPU an adjoint solve keeps one handle per
 frequency for later backward passes; on a GPU one base handle refactorized
 at each frequency, so device memory holds one factorization whatever the
-number of frequencies.
+number of frequencies. A distributed solve takes the GPU's path, and starts from
+the forward's base handle (`keep_base`, ADR 0065).
 """
 
 from __future__ import annotations
@@ -168,18 +169,36 @@ class SystemOperator:
         for handle in self._handles.values():
             handle.free()
         self._handles = {}
-        if self._adjoint_sweep is not None:
-            self._adjoint_sweep.free()
+        self.free_base()
         self._adjoint_sweep = None
         self._pieces.free()
         if self._transposed_system is not None:
             self._transposed_system.free()
         self._transposed_system = None
 
+    def keep_base(self, sweep: SystemSweep) -> None:
+        """Move a finished forward sweep's base handle to the adjoint solves.
+
+        Under ranks only, where one factorization per frequency does not fit and a
+        backward must not prepare what its forward just freed (ADR 0065). A base it
+        no longer holds is prepared again at the adjoint tolerance. On one process
+        the sweep keeps its base, and ``with`` frees it.
+        """
+        if self.operator.built.comm is None:
+            return
+        adjoint = self.sweep(tolerance=self._adjoint_tolerance)
+        sweep.move_base(adjoint)
+        self._adjoint_sweep = adjoint
+
+    def free_base(self) -> None:
+        """Release the adjoint solves' base handle; the sweep prepares it again."""
+        if self._adjoint_sweep is not None:
+            self._adjoint_sweep.free()
+
     def _held_nbytes(self) -> int:
         """The adjoint handles' and the pieces' bytes (not ``W``'s)."""
         held = sum(int(h.nbytes) for h in self._handles.values())
-        if self._adjoint_sweep is not None:  # the GPU adjoint base
+        if self._adjoint_sweep is not None:  # the GPU's and the ranks' adjoint base
             base = self._adjoint_sweep._base  # noqa: SLF001
             held += 0 if base is None else int(base.nbytes)
         return held + self._pieces.nbytes
@@ -245,8 +264,14 @@ class SystemOperator:
         """The adjoint handle of ``A(ω) + W(ω)`` of frequency ``n``.
 
         On the CPU prepared once per ``n`` and kept; on a GPU the adjoint
-        base refactorized at ``ω``, valid until the next call.
+        base refactorized at ``ω``, valid until the next call. Under ranks the same,
+        except that a base already at ``ω`` serves as it is: a one-frequency solve
+        factorizes once.
         """
+        if self.operator.built.comm is not None:
+            if self._adjoint_sweep is None:
+                self._adjoint_sweep = self.sweep(tolerance=self._adjoint_tolerance)
+            return self._adjoint_sweep.reuse_at(omega)
         if self._linear.device != "cpu":
             if self._adjoint_sweep is None:
                 self._adjoint_sweep = self.sweep(tolerance=self._adjoint_tolerance)
@@ -274,7 +299,7 @@ class SystemSweep:
     is. Wave ports wrap the base per frequency in a borrowing Woodbury
     update. A handle from `at` is valid until the next call. `free` (or
     leaving the ``with`` block) releases the base, also when the sweep
-    raises.
+    raises, and the sweep prepares it again if asked.
     """
 
     def __init__(
@@ -291,12 +316,27 @@ class SystemSweep:
         self._system_handle = system_handle
         self._prepare = prepare
         self._base: Handle | None = None
+        # the system handle `at` gave last, and its frequency
+        self._last: tuple[float, Handle] | None = None
 
     def at(self, omega: float) -> Handle:
         """A handle of ``A(ω) + W(ω)``, borrowing the sweep's base handle."""
         operator = self._operator_at(omega)
         self._base = refactorize_or_prepare(self._base, operator, self._prepare)
-        return self._system_handle(self._base, omega)
+        handle = self._system_handle(self._base, omega)
+        self._last = (omega, handle)
+        return handle
+
+    def reuse_at(self, omega: float) -> Handle:
+        """As `at`, but the last handle if it is still at ``ω``, Woodbury state too."""
+        if self._last is not None and self._last[0] == omega:
+            return self._last[1]
+        return self.at(omega)
+
+    def move_base(self, other: SystemSweep) -> None:
+        """Give ``other`` this sweep's base handle; this one holds none after."""
+        other._base, other._last = self._base, self._last
+        self._base, self._last = None, None
 
     def solve(
         self, omega: float, rhs: np.ndarray, *, x0: np.ndarray | None = None
@@ -308,7 +348,7 @@ class SystemSweep:
         """Release the base handle."""
         if self._base is not None:
             self._base.free()
-        self._base = None
+        self._base, self._last = None, None
 
     def __enter__(self) -> Self:
         return self

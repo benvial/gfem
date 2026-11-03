@@ -44,6 +44,7 @@ __all__ = [
     "element_axes",
     "element_tensors",
     "element_values",
+    "facet_space",
     "lossy_eps",
     "p0",
     "per_axis_elements",
@@ -337,7 +338,7 @@ def surface_p0(built: EngineMesh, values: np.ndarray) -> ngs.GridFunction:
     """A face-wise constant field with ``values`` per gfem triangle."""
     is_complex = np.iscomplexobj(values)
     if built.comm is not None:
-        space, dofs = _facet_space(built, is_complex=is_complex)
+        space, dofs = facet_space(built, is_complex=is_complex)
         gf = ngs.GridFunction(space)
         gf.vec.FV().NumPy()[dofs] = np.asarray(values)[built.triangle_order]
         return gf
@@ -346,7 +347,7 @@ def surface_p0(built: EngineMesh, values: np.ndarray) -> ngs.GridFunction:
     return gf
 
 
-def _facet_space(
+def facet_space(
     built: EngineMesh, *, is_complex: bool
 ) -> tuple[ngs.FESpace, np.ndarray]:
     """Surface P0 under ranks: the space, and the DOF of each local surface element.

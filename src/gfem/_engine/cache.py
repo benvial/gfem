@@ -176,6 +176,26 @@ class EntryCache:
             self._entries.move_to_end(int(key))
         return entry
 
+    def discard(self, key: int) -> None:
+        """Free the entry under ``key``, if this process still holds it."""
+        entry = self._entries.pop(int(key), None)
+        if entry is not None:
+            entry.free()
+
+    def free_bases(self, comm: Any, keep: Entry | None = None) -> None:
+        """Free the base handles kept on ``comm``, all but ``keep``'s (ADR 0065).
+
+        A design loop under ranks holds one factorization at a time. An entry keeps
+        its fields, and a later backward from it prepares again. Nothing happens on
+        the one-process path, where each entry keeps its handles.
+        """
+        if comm is None:
+            return
+        for entry in self._entries.values():
+            free_base = getattr(entry.handle, "free_base", None)
+            if entry is not keep and free_base is not None:
+                free_base(comm)
+
     @property
     def nbytes(self) -> int:
         """Bytes held by every entry."""

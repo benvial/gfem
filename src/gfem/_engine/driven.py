@@ -89,7 +89,7 @@ from gfem._boundaries import (
     wave_port_surfaces,
 )
 from gfem._engine import sweep_outputs, terms, workers
-from gfem._engine.cache import Entry, discretization
+from gfem._engine.cache import ENTRIES, Entry, discretization
 from gfem._engine.domain import em_region, hcurl_space, pec_surfaces, space_key
 from gfem._engine.fields import fe_space
 from gfem._engine.mesh import EngineMesh
@@ -579,6 +579,8 @@ class DrivenRule:
         solutions: list[np.ndarray] = []
         miss: LinearSolverConvergenceError | None = None
         n_solved = len(frequencies)
+        # one factorization at a time under ranks: the last design's goes first
+        ENTRIES.free_bases(self.comm)
         with task_manager(self.options.threads, self.comm):
             system, ports = self._ports(model)
             s = np.zeros((len(frequencies), len(self.port_names), width), complex)
@@ -599,6 +601,8 @@ class DrivenRule:
                         # results keep fields on the unpaired space
                         fields.append(np.array(system.operator.expand(x), complex))
                     s[n] = ports.outgoing(omega, x)
+                if keep and miss is None:
+                    system.keep_base(sweep)
         # no backward pass will prepare from the pieces
         if not keep or miss is not None:
             system.free()
@@ -1055,7 +1059,7 @@ class DrivenRule:
         ct_s = cotangents.get("s")
         ct_e = cotangents.get("e_field")
         pairs = []
-        with task_manager(self.options.threads):
+        with task_manager(self.options.threads, self.comm):
             if not isinstance(entry.handle, _Kept):  # frequency workers keep none
                 entry.handle = _Kept(*self._ports(model, warn=False))
             system, ports = entry.handle.system, entry.handle.ports
@@ -1335,7 +1339,8 @@ def real_space(model: Model, op: DrivenOperator) -> ngs.FESpace:
     imaginary parts).
     """
     pec = pec_surfaces(model)
-    return discretization(model.mesh, model._periodic).space(  # noqa: SLF001
+    disc = discretization(model.mesh, model._periodic, op.built.comm)  # noqa: SLF001
+    return disc.space(
         space_key(model, "hcurl", op.order, real=True),
         lambda: hcurl_space(
             model, op.built, op.order, complex_valued=False, dirichlet=pec
@@ -1607,6 +1612,17 @@ class _Kept:
         if self._freed:
             return 0
         return self.system.nbytes + self.ports.nbytes
+
+    def free_base(self, comm: Any) -> None:
+        """Release the base handle kept for a backward pass, if it is on ``comm``.
+
+        Freeing may be collective on a backend, so an entry of another communicator
+        stays: its ranks are not here.
+        """
+        if not self._freed and _mpi.comm_key(
+            self.system.operator.built.comm
+        ) == _mpi.comm_key(comm):
+            self.system.free_base()
 
     def free(self) -> None:
         """Release the system operator's handles and pieces, and drop both.

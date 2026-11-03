@@ -244,10 +244,11 @@ def test_a_refusal_under_jax_keeps_its_class(tmp_path, monkeypatch):
     line = cases.layered_line(tmp_path)
     use_mpi(monkeypatch, fake_mpi())
     n = len(line.mesh.elements("sub")) + len(line.mesh.elements("cover"))
+    adaptive = gfem.Driven([1e9, 5e9], sweep="adaptive")
 
     def objective(eps):
         model = cases.with_fields(line, {"eps_r": eps})
-        return gfem.solve(model, gfem.Driven(5e9), comm=Stub(4)).s.values.real.sum()
+        return gfem.solve(model, adaptive, comm=Stub(4)).s.values.real.sum()
 
     with pytest.raises(gfem.DistributedUnsupportedError):
         jax.grad(objective)(np.ones(n))

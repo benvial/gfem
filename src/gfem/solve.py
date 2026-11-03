@@ -9,12 +9,7 @@ from gfem import _mpi
 from gfem._adjoint import solve_vjp
 from gfem._checks import is_traced
 from gfem._periodic import check_nodes
-from gfem.errors import (
-    LinearSolverConvergenceError,
-    MeshQualityError,
-    PortGeometryError,
-    RegionNotFoundError,
-)
+from gfem.errors import LinearSolverConvergenceError
 from gfem.model import Model
 from gfem.options import SolverOptions
 from gfem.shape import _check_quality
@@ -29,9 +24,6 @@ if TYPE_CHECKING:
     )
 
 __all__ = ["solve"]
-
-#: A forward's errors that every rank raises by itself, from replicated inputs alone.
-_DETERMINISTIC = (MeshQualityError, PortGeometryError, RegionNotFoundError)
 
 
 @overload
@@ -154,7 +146,7 @@ def solve(
     if partial_result is not None:
         rule.keeps_partial = True
     try:
-        with _mpi.section(resolved, agreed=(*_mpi.AGREED_ERRORS, *_DETERMINISTIC)):
+        with _mpi.section(resolved, agreed=_mpi.FORWARD_ERRORS):
             outputs, _ = rule.forward(model, keep=False)
     except LinearSolverConvergenceError as err:
         if partial_result is not None:

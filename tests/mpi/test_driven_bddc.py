@@ -24,6 +24,7 @@ from gfem._engine.runtime import task_manager
 from gfem._engine.system_operator import SystemOperator
 from gfem._linalg import ResolvedLinearSolver, bddc, blas, prepare
 from gfem._linalg.base import local_matrix
+from gfem._linalg.gmres import Gmres
 from gfem._linalg.pieces import AssembledPieces
 
 #: Relative to the largest entry of the one-process S: ADR 0070's BDDC gate.
@@ -98,6 +99,43 @@ def test_lumped_s_and_iterations_match_one_process(tmp_path, ranks):
 @pytest.mark.parametrize("ranks", [3, 4])
 def test_a_sweep_reusing_bddc_matches_one_process(tmp_path, ranks):
     assert _assert_agrees(tmp_path, SWEEP, ranks) < len(SWEEP)
+
+
+def test_a_capped_warm_solve_sets_bddc_up_on_every_rank(tmp_path):
+    # BDDC set up at 1 GHz and reused at 60 GHz stops at its cap, set up again, and
+    # goes on from the partial iterate, by iteration counts all ranks hold
+    assert _assert_agrees(tmp_path, (1e9, 60e9), 4) == 2
+
+
+def _a_short_stop(directory):
+    """S with one GMRES stopped early, above the tolerance: it restarts from there."""
+    original = Gmres._SolveImpl
+    iterations = []
+
+    def stops_short(self, rhs, sol):
+        maxiter = self.maxiter
+        if not iterations:
+            self.maxiter = min(2, maxiter)
+        try:
+            original(self, rhs=rhs, sol=sol)
+        finally:
+            self.maxiter = maxiter
+        iterations.append(self.iterations)
+
+    Gmres._SolveImpl = stops_short
+    try:
+        s, *_ = _s_and_iterations(directory, (FREQUENCY,))
+    finally:
+        Gmres._SolveImpl = original
+    return s, iterations[:2]
+
+
+def test_a_short_stop_restarts_on_every_rank(tmp_path):
+    s_one, *_ = _s_and_iterations(tmp_path, (FREQUENCY,))
+    (s, iterations), *_ = on_ranks(_a_short_stop, tmp_path, ranks=4, limit=300)
+    assert iterations[0] == 2
+    assert iterations[1] > 0
+    assert np.abs(s - s_one).max() / np.abs(s_one).max() < S_GATE
 
 
 # --- what lies under the solve ------------------------------------------------------
