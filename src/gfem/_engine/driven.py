@@ -1094,8 +1094,9 @@ class DrivenRule:
                     undefined = np.zeros(width, bool)
                 if ct_e is not None and n in self.kept:
                     k = self.kept.index(n)
-                    # a rank's rows, then its padding (ADR 0063): a load column
-                    g = np.asarray(ct_e)[: x.shape[0], k * width : (k + 1) * width]
+                    g = np.asarray(ct_e)[:, k * width : (k + 1) * width]
+                    if self.comm is not None:  # a rank's rows, then its padding
+                        g = g[: x.shape[0]]
                     # the field is P x: its cotangent loads P^T g
                     load += g if op.expansion is None else op.expansion.matrix.T @ g
                 # a rank without port DOFs would skip a collective solve
