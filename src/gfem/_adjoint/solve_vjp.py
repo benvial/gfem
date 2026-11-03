@@ -62,7 +62,7 @@ from __future__ import annotations
 
 import copy
 import functools
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 from typing import Any
 
 import jax
@@ -355,7 +355,7 @@ def _local_cotangents(
     model: Any,
     cotangents: dict[str, np.ndarray],
     *,
-    wants: set[tuple],
+    wants: set[Hashable],
     comm: Any,
 ) -> dict:
     """This rank's part of each wanted cotangent.

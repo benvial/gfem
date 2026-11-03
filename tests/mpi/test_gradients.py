@@ -624,6 +624,30 @@ def test_a_host_call_on_different_designs_raises_on_every_rank(tmp_path):
     assert finite
 
 
+# --- threads ----------------------------------------------------------------------
+
+
+def _on_the_default_threads(directory):
+    line = cases.layered_line(Path(directory))
+    values, _ = cases.line_design(line, seed=2)
+    driven = gfem.Driven(frequency=FREQUENCIES)
+    options = gfem.SolverOptions(order=2, linear_solver="bddc_gmres", tolerance=1e-12)
+
+    def objective(p):
+        model = cases.with_fields(line, {**values, "eps_r": p})
+        return cases.s_functional(gfem.solve(model, driven, options=options).s.values)
+
+    return np.asarray(jax.grad(objective)(values["eps_r"]))
+
+
+def test_threads_none_follows_the_rank_rule_in_the_backward(tmp_path):
+    one = _on_the_default_threads(tmp_path)
+    grad, *_ = on_ranks(
+        _on_the_default_threads, tmp_path, ranks=3, threads=2, limit=300
+    )
+    _assert_below_the_gate(grad, one, "threads=None")
+
+
 # --- off the main thread --------------------------------------------------------------
 
 
