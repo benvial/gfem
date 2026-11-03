@@ -117,8 +117,7 @@ _REFUSALS = {
         f"refused above one rank: use linear_solver='direct' or order=2, {_COPIES}."
     ),
     "driven": (
-        "A distributed driven solve runs with linear_solver='auto' or 'bddc_gmres' "
-        f"so far, with no kept field or result bundle: {_COPIES}."
+        f"A distributed driven solve runs with no kept field or result bundle so far: {_COPIES}."
     ),
 }
 
@@ -239,10 +238,7 @@ def refuse(model: Any, problem: Any, options: Any) -> None:
         if options.order == 1 and options.linear_solver in ("auto", "bddc_gmres"):
             refuse_feature("bddc_order_1")
         # Not built yet: no silent copies either.
-        if (
-            options.linear_solver not in ("auto", "bddc_gmres")
-            or problem.kept_frequencies
-        ):
+        if problem.kept_frequencies:
             refuse_feature("driven")
 
 

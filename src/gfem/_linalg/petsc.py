@@ -19,6 +19,10 @@ set up at an earlier operator. Where a Krylov solve on it does not converge,
 the handle sets it up once at the current operator and solves that column
 again from the partial iterate; only a solve on a preconditioner set up at
 the current operator raises `gfem.LinearSolverConvergenceError`.
+
+Across ranks `RankPetscHandle` holds the free block as an ``MPIAIJ`` filled through
+COO (ADR 0062), and is also what ``kind="direct"`` means there: MUMPS LDL^T on
+PT-Scotch, with retries on a new KSP while MUMPS runs out of workspace (ADR 0068).
 """
 
 from __future__ import annotations
@@ -29,12 +33,19 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 import ngsolve as ngs
 import numpy as np
 
-from gfem import _petsc
+from gfem import _mpi, _petsc
 from gfem._linalg import MAXITER, Symmetry
-from gfem._linalg.base import PlannedHandle, equals_its_transpose, host_bytes
+from gfem._linalg.base import (
+    PlannedHandle,
+    equals_its_transpose,
+    free_mask,
+    host_bytes,
+    local_matrix,
+)
 from gfem.errors import LinearSolverConvergenceError
 
 if TYPE_CHECKING:
+    from gfem._linalg.layout import RankLayout
     from gfem.options import PetscOptions
 
 #: gfem's options, under the user's: an exact MUMPS LDL^T factorization.
@@ -52,6 +63,19 @@ CG_HINT = (
 #: The preconditioners that factorize: their factors count in `nbytes`.
 FACTORIZATIONS = ("cholesky", "lu", "icc", "ilu")
 
+#: gfem's MUMPS options under ranks, under the user's. PT-Scotch: METIS's analysis is
+#: sequential. ICNTL(14) 60: the default gave INFOG(1)=-9 on tiny meshes at 4 and 8
+#: ranks and in 2 of 6 runs at 224 ranks, and 60 in none of 35 (ADR 0068).
+RANK_MUMPS_OPTIONS: tuple[tuple[str, Any], ...] = (
+    ("mat_mumps_icntl_28", 2),
+    ("mat_mumps_icntl_29", 1),
+    ("mat_mumps_icntl_14", 60),
+)
+#: INFOG(1) when MUMPS's main workspace is too small.
+MUMPS_WORKSPACE_ERROR = -9
+#: New KSPs on a too small workspace, each with ICNTL(14) doubled.
+MUMPS_RETRIES = 2
+
 
 class _Block(NamedTuple):
     """A free block as a PETSc AIJ over its own arrays (`PetscHandle._block`)."""
@@ -62,6 +86,114 @@ class _Block(NamedTuple):
     #: The free block's entries in NGSolve's value vector.
     index: np.ndarray
     values: np.ndarray
+
+
+class AgreedValueError(_mpi.AgreedError, ValueError):
+    """Every rank found the same bad option: a `ValueError` the job can catch."""
+
+
+class FreeNumbering:
+    """A matrix's free DOFs across ranks, in PETSc's ownership ranges (ADR 0062).
+
+    ``EnumerateGlobally`` numbers every free DOF, the same on each rank that holds it;
+    a rank's owned numbers are contiguous and start at the sum of the earlier ranks'
+    counts, which is observed and not documented, so it is checked here. Moving a
+    column costs one neighbour exchange each way.
+
+    Attributes:
+        numbers: Per local DOF, its number, or a negative value on a fixed one.
+        total: The free DOFs over all ranks.
+        count: This rank's owned free DOFs.
+    """
+
+    def __init__(self, pardofs: Any, freedofs: Any, work: Any, comm: Any) -> None:
+        """Number ``freedofs``; ``work`` is a column vector of the matrix, for scratch.
+
+        Raises:
+            gfem._mpi.AgreedError: The owned numbers are not PETSc's ranges.
+        """
+        numbers, total = pardofs.EnumerateGlobally(freedofs)
+        self.numbers = np.asarray(numbers, dtype=np.int64)
+        self.total = int(total)
+        master = free_mask(pardofs.MasterDofs(), len(self.numbers))
+        self._owned = master & (self.numbers >= 0)
+        self.count = int(self._owned.sum())
+        start = comm.exscan(self.count) or 0
+        owned = self.numbers[self._owned]
+        self._position = owned - start
+        ranges = np.array_equal(self._position, np.arange(self.count))
+        if not _mpi.agree_all(comm, flag=ranges):
+            raise _mpi.AgreedError(
+                "NGSolve's owned free DOF numbers are not contiguous on each rank, "
+                "so they are not PETSc's ownership ranges."
+            )
+        self._work = work
+
+    def load_rows(self, load: np.ndarray) -> np.ndarray:
+        """A load column's owned rows: its summed values, one neighbour exchange."""
+        fv = self._work.FV().NumPy()
+        fv[:] = load
+        self._work.SetParallelStatus(ngs.la.PARALLEL_STATUS.DISTRIBUTED)
+        self._work.Cumulate()
+        return self.state_rows(fv)
+
+    def state_rows(self, state: np.ndarray) -> np.ndarray:
+        """A state column's owned rows, each rank's in PETSc's order."""
+        rows = np.zeros(self.count, dtype=complex)
+        rows[self._position] = state[self._owned]
+        return rows
+
+    def state(self, rows: np.ndarray) -> np.ndarray:
+        """The state column of owned rows: 0 on fixed DOFs, one neighbour exchange."""
+        fv = self._work.FV().NumPy()
+        fv[:] = 0
+        values = rows[self._position]
+        fv[self._owned] = values if np.iscomplexobj(fv) else values.real
+        self._work.SetParallelStatus(ngs.la.PARALLEL_STATUS.DISTRIBUTED)
+        self._work.Cumulate()
+        return np.array(fv)  # a copy: the next column writes here
+
+
+def distributed_aij(
+    local: Any, numbering: FreeNumbering, comm: Any
+) -> tuple[Any, np.ndarray]:
+    """A rank's unassembled ``local`` matrix as a symmetric ``MPIAIJ`` by COO.
+
+    Returns the matrix and the positions of its entries in ``local``'s value vector,
+    for `set_values`.
+    """
+    PETSc = _petsc.require_petsc()
+    data, cols, rowptr = local.CSR()
+    cols = np.asarray(cols).astype(np.int64)
+    rowptr = np.asarray(rowptr).astype(np.int64)
+    rows = np.repeat(np.arange(local.height), np.diff(rowptr))
+    numbers = numbering.numbers
+    index = np.flatnonzero((numbers[rows] >= 0) & (numbers[cols] >= 0))
+    size = (numbering.count, numbering.total)
+    aij = PETSc.Mat().createAIJ([size, size], comm=comm)
+    try:
+        aij.setPreallocationCOO(
+            numbers[rows[index]].astype(PETSc.IntType),
+            numbers[cols[index]].astype(PETSc.IntType),
+        )
+        set_values(aij, data, index)
+        aij.setOption(PETSc.Mat.Option.SYMMETRIC, True)
+        aij.setOption(PETSc.Mat.Option.SYMMETRY_ETERNAL, True)
+    except BaseException:
+        aij.destroy()
+        raise
+    return aij, index
+
+
+def set_values(aij: Any, data: Any, index: np.ndarray) -> None:
+    """New values, on the same pattern, from a local matrix's value vector.
+
+    ``INSERT_VALUES`` zeroes and sums the COO duplicates. ``ADD_VALUES`` would add to
+    the previous frequency's values and give a wrong answer with no error.
+    """
+    PETSc = _petsc.require_petsc()
+    values = np.asarray(data)[index].astype(PETSc.ScalarType)
+    aij.setValuesCOO(values, addv=PETSc.InsertMode.INSERT_VALUES)
 
 
 class PetscHandle(PlannedHandle):
@@ -94,7 +226,7 @@ class PetscHandle(PlannedHandle):
         sets the preconditioner up again at every `refactorize`. ``symmetry``
         is refused before (`from_operator`).
         """
-        _refuse_storage(matrix)
+        _refuse_storage(local_matrix(matrix, self.layout.comm))
         super().__init__(matrix, freedofs, symmetry, is_complex=is_complex)
         self._lock = _petsc.LOCK  # PETSc's database and registry are global
         #: The KSP and the AIJ (petsc4py objects); ``None`` once freed.
@@ -105,30 +237,45 @@ class PetscHandle(PlannedHandle):
         self._reuses = False
         #: The preconditioner was set up at the current operator.
         self._pc_is_current = True
-        PETSc = _petsc.require_petsc("linear_solver")
+        _petsc.require_petsc("linear_solver")
         self._prefix = _petsc.next_prefix()
         # plain numbers: the database holds strings, and a NumPy scalar's is
         # its repr (``np.float64(1e-08)``), which PETSc refuses
         defaults = (
-            *DEFAULTS,
+            *self._defaults(),
             ("ksp_max_it", int(maxiter)),
             ("ksp_rtol", float(tolerance)),
         )
         self._options = tuple({**dict(defaults), **dict(options)}.items())
+        self._user = dict(options)
+        self._reuse = reuse
         with self._lock:
             try:
                 self._adopt(self._block(matrix))
-                ksp = PETSc.KSP().create(PETSc.COMM_SELF)
-                self._solver = self._ksp = ksp
-                ksp.setOptionsPrefix(self._prefix)
-                ksp.setOperators(self._mat)
+                self._new_ksp()
                 with _petsc.scoped_options(self._prefix, self._options):
-                    self._configure(dict(options), reuse=reuse)
+                    self._configure(self._user, reuse=reuse)
                     self._set_up_now()
                     self._check_read([name for name, _ in options])
             except BaseException:
                 self.free()
                 raise
+
+    def _defaults(self) -> tuple[tuple[str, Any], ...]:
+        """Gfem's options on this communicator, under the user's."""
+        return DEFAULTS
+
+    def _new_ksp(self) -> None:
+        """A KSP on the held AIJ under this handle's prefix, not configured."""
+        PETSc = _petsc.require_petsc()
+        ksp = PETSc.KSP().create(self._petsc_comm())
+        self._solver = self._ksp = ksp
+        ksp.setOptionsPrefix(self._prefix)
+        ksp.setOperators(self._mat)
+
+    def _petsc_comm(self) -> Any:
+        """The communicator of the handle's PETSc objects."""
+        return _petsc.require_petsc().COMM_SELF
 
     def _configure(self, user: dict[str, Any], *, reuse: bool) -> None:
         """Read the options into the KSP, then set what gfem decides.
@@ -141,7 +288,7 @@ class PetscHandle(PlannedHandle):
         try:
             ksp.setFromOptions()
         except PETSc.Error as err:
-            raise ValueError(
+            raise self._bad_option(
                 "SolverOptions.petsc_options was refused by PETSc: "
                 f"{_petsc.error_text(err)}."
             ) from err
@@ -149,7 +296,7 @@ class PetscHandle(PlannedHandle):
         name = "ksp_reuse_preconditioner"
         asked = PETSc.Options().getBool(f"{self._prefix}{name}", False)
         if self._direct and name in user and asked:
-            raise ValueError(
+            raise self._bad_option(
                 f"SolverOptions.petsc_options[{name!r}] with ksp_type preonly would "
                 "solve the previous operator after each refactorization; use a "
                 "Krylov ksp_type with it."
@@ -166,14 +313,18 @@ class PetscHandle(PlannedHandle):
         Call after the first set-up, with the options still in the database.
         """
         unread = _petsc.unread(self._prefix, names)
-        if not unread:
+        if _mpi.agree_all(self.layout.comm, flag=not unread):
             return
         keys = ", ".join(f"SolverOptions.petsc_options[{n!r}]" for n in unread)
         verb = "was" if len(unread) == 1 else "were"
-        raise ValueError(
+        raise self._bad_option(
             f"{keys} {verb} not read by PETSc's linear solver ({self._describe()}): "
             "check the name, or remove options this configuration does not use."
         )
+
+    def _bad_option(self, message: str) -> ValueError:
+        """The error of options PETSc refused."""
+        return ValueError(message)
 
     def _describe(self) -> str:
         """The configuration, e.g. ``KSP preonly, PC cholesky, MUMPS``."""
@@ -196,10 +347,14 @@ class PetscHandle(PlannedHandle):
         """
         matrix = self._live()
         write(matrix)
-        self._gather(matrix.CSR()[0], self._index, self._values)
-        self._mat.assemble()  # marks the new values: PETSc sets up again
+        self._refresh(matrix)
         self._set_up()
         self._pc_is_current = not self._reuses  # a reused preconditioner was kept
+
+    def _refresh(self, matrix: Any) -> None:
+        """Move the held matrix's new values to the AIJ; under the lock."""
+        self._gather(matrix.CSR()[0], self._index, self._values)
+        self._mat.assemble()  # marks the new values: PETSc sets up again
 
     def _new_plan(
         self,
@@ -328,20 +483,36 @@ class PetscHandle(PlannedHandle):
         Returns the iterations of each column too, ``()`` for ``preonly``.
         """
         cols, flat = self._columns(B)
-        free = self._free
-        rhs = np.ascontiguousarray(cols[free], dtype=complex)
-        guesses = None if x0 is None else self._columns(x0)[0][free]
-        out = np.zeros(cols.shape, dtype=complex)
         with self._lock:
             self._live()
+            rhs = self._load_rows(cols)
+            guesses = None if x0 is None else self._state_rows(self._columns(x0)[0])
             counts: tuple[int, ...] = ()
             if self._direct:
-                out[free] = self._exact(rhs)
+                solved = self._exact(rhs)
             else:
                 solved, counts = self._krylov(rhs, tolerance, guesses)
-                out[free] = solved
+            out = self._states(solved, cols.shape)
         result = out if self._complex else out.real
         return (result[:, 0] if flat else result), counts
+
+    def _load_rows(self, cols: np.ndarray) -> np.ndarray:
+        """Load columns as the AIJ's rows."""
+        return np.ascontiguousarray(cols[self._free], dtype=complex)
+
+    def _state_rows(self, cols: np.ndarray) -> np.ndarray:
+        """State columns as the AIJ's rows."""
+        return cols[self._free]
+
+    def _states(self, rows: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
+        """The AIJ's rows as state columns of ``shape``, zero on the fixed DOFs."""
+        out = np.zeros(shape, dtype=complex)
+        out[self._free] = rows
+        return out
+
+    def _dense_size(self, rows: int, columns: int) -> Any:
+        """A dense block's size for ``matSolve``, ``rows`` of them on this process."""
+        return (rows, columns)
 
     def _exact(self, rhs: np.ndarray) -> np.ndarray:
         """``preonly``: one solve, or one block solve (``KSPMatSolve``)."""
@@ -360,19 +531,20 @@ class PetscHandle(PlannedHandle):
                     b.destroy()
             else:
                 columns = np.asfortranarray(rhs)  # PETSc's dense storage
-                Bm = PETSc.Mat().createDense(
-                    (n, k), array=columns, comm=PETSc.COMM_SELF
-                )
-                Xm = PETSc.Mat().createDense((n, k), comm=PETSc.COMM_SELF)
+                comm = self._petsc_comm()
+                size = self._dense_size(n, k)
+                Bm = PETSc.Mat().createDense(size, array=columns, comm=comm)
+                Xm = PETSc.Mat().createDense(size, comm=comm)
                 try:
                     ksp.matSolve(Bm, Xm)
-                    X = Xm.getDenseArray().copy()
+                    # an empty rank's array has no second axis to keep
+                    X = Xm.getDenseArray().reshape(rhs.shape, order="F").copy()
                 finally:
                     Bm.destroy()
                     Xm.destroy()
         except PETSc.Error as err:
             raise self._failed("KSPSolve", err) from err
-        if ksp.getConvergedReason() < 0:
+        if self._diverged():
             raise self._factorization_failed()
         return X
 
@@ -400,15 +572,16 @@ class PetscHandle(PlannedHandle):
                 if guesses is not None:
                     x.array[:] = guesses[:, j]
                 spent = self._solve(b, x)
-                if ksp.getConvergedReason() < 0 and not self._pc_is_current:
+                if self._diverged() and not self._pc_is_current:
                     self._set_up_anew()
-                    if not np.isfinite(x.array).all():  # start again
+                    finite = bool(np.isfinite(x.array).all())
+                    if not _mpi.agree_all(self.layout.comm, flag=finite):  # start again
                         ksp.setInitialGuessNonzero(guesses is not None)
                         x.array[:] = 0 if guesses is None else guesses[:, j]
                     else:
                         ksp.setInitialGuessNonzero(True)
                     spent += self._solve(b, x)
-                if ksp.getConvergedReason() < 0:
+                if self._diverged():
                     raise self._not_converged(b.norm(), spent)
                 counts.append(spent)
                 X[:, j] = x.array
@@ -417,6 +590,10 @@ class PetscHandle(PlannedHandle):
             b.destroy()
             ksp.setTolerances(*prepared)
         return X, tuple(counts)
+
+    def _diverged(self) -> bool:
+        """Whether the last solve diverged, the same answer on every rank."""
+        return _mpi.agree_any(self.layout.comm, flag=self._ksp.getConvergedReason() < 0)
 
     def _solve(self, b, x) -> int:
         """``KSPSolve`` of ``b`` into ``x``; its iterations."""
@@ -463,7 +640,8 @@ class PetscHandle(PlannedHandle):
             if self._ksp is None or self._matrix is None:
                 return 0
             arrays = (self._values, self._rowptr, self._cols, self._index)
-            held = host_bytes(self._matrix) + sum(a.nbytes for a in arrays)
+            matrix = local_matrix(self._matrix, self.layout.comm)
+            held = host_bytes(matrix) + sum(a.nbytes for a in arrays)
             return held + self._factor_bytes()
 
     def _factor_bytes(self) -> int:
@@ -473,10 +651,14 @@ class PetscHandle(PlannedHandle):
             return 0
         factor = pc.getFactorMatrix()
         if pc.getFactorSolverType() == "mumps":
-            return 10**6 * int(factor.getMumpsInfog(22))
+            return 10**6 * self._mumps_megabytes(factor)
         PETSc = _petsc.require_petsc()
         entry = np.dtype(PETSc.ScalarType).itemsize + np.dtype(PETSc.IntType).itemsize
         return int(factor.getInfo()["nz_used"]) * entry
+
+    def _mumps_megabytes(self, factor: Any) -> int:
+        """MUMPS's own count of its memory, in millions of bytes."""
+        return int(factor.getMumpsInfog(22))
 
     def _release(self) -> None:
         """Destroy the KSP and the AIJ; under the lock."""
@@ -485,6 +667,146 @@ class PetscHandle(PlannedHandle):
             if obj is not None:
                 obj.destroy()
         self._ksp = self._mat = None
+
+
+class RankPetscHandle(PetscHandle):
+    """A PETSc KSP / PC on the free block across ranks: ``petsc``, and ``direct``.
+
+    Columns are a rank's, and their roles name their status (ADR 0062): a load goes
+    through an exchange to owned rows, and owned rows through another to a state.
+    The AIJ holds its own values, so a refactorization sends new ones through COO.
+    ``kind="direct"`` reads no user options; ``kind="petsc"`` reads them over gfem's
+    (`RANK_MUMPS_OPTIONS`), and gets the same exact solve by default.
+
+    A MUMPS that ran out of workspace (INFOG(1)=-9) is set up again on a new KSP with
+    ICNTL(14) doubled, since PETSc skips the numeric factorization on one whose
+    INFOG(1) is negative. Any other failure, and a workspace still too small after
+    `MUMPS_RETRIES`, raises `gfem._mpi.AgreedError` on every rank instead of a solve
+    that returns NaN. A ``PETSc.Error`` is one rank's own and ends the job.
+    """
+
+    def __init__(
+        self,
+        matrix: ngs.BaseMatrix,
+        freedofs: ngs.BitArray,
+        symmetry: Symmetry,
+        *,
+        is_complex: bool,
+        tolerance: float,
+        layout: RankLayout,
+        kind: str = "petsc",
+        maxiter: int = MAXITER,
+        options: PetscOptions = (),
+        reuse: bool = True,
+    ) -> None:
+        """Number the free DOFs, then as `PetscHandle`, on ``layout``'s communicator."""
+        self.kind = kind
+        self.layout = layout
+        self._numbering = FreeNumbering(
+            layout.pardofs, freedofs, matrix.CreateColVector(), layout.comm
+        )
+        super().__init__(
+            matrix,
+            freedofs,
+            symmetry,
+            is_complex=is_complex,
+            tolerance=tolerance,
+            maxiter=maxiter,
+            options=options,
+            reuse=reuse,
+        )
+
+    def _defaults(self) -> tuple[tuple[str, Any], ...]:
+        return (*DEFAULTS, *RANK_MUMPS_OPTIONS)
+
+    def _petsc_comm(self) -> Any:
+        return self.layout.comm
+
+    def _bad_option(self, message: str) -> ValueError:
+        return AgreedValueError(message)
+
+    def _block(self, matrix) -> _Block:
+        """The free block of ``matrix`` as a new ``MPIAIJ``, which copies the values."""
+        local = local_matrix(matrix, self.layout.comm)
+        aij, index = distributed_aij(local, self._numbering, self.layout.comm)
+        nothing = np.zeros(0, dtype=np.int64)
+        return _Block(aij, nothing, nothing, index, nothing)
+
+    def _refresh(self, matrix: Any) -> None:
+        local = local_matrix(matrix, self.layout.comm)
+        set_values(self._mat, local.CSR()[0], self._index)
+        self._ksp.setOperators(self._mat)
+
+    def _set_up_now(self) -> None:
+        """``KSPSetUp`` at the rank's BLAS threads, a new KSP while MUMPS needs one."""
+        PETSc = _petsc.require_petsc()
+        for attempt in range(MUMPS_RETRIES + 1):
+            try:
+                with self.layout.blas_threads(ngs.GetNumThreads()):
+                    self._ksp.setUp()
+            except PETSc.Error as err:
+                raise self._failed("KSPSetUp", err) from err
+            failure = self._agreed_failure()
+            if failure is None:
+                return
+            if failure != MUMPS_WORKSPACE_ERROR or attempt == MUMPS_RETRIES:
+                raise self._factorization_failed()
+            self._retry_with_more_workspace()
+
+    def _agreed_failure(self) -> int | None:
+        """``None`` if the set-up succeeded, else INFOG(1), or 0 without MUMPS."""
+        PETSc = _petsc.require_petsc()
+        pc = self._ksp.getPC()
+        comm = self.layout.comm
+        failed = pc.getFailedReason() != PETSc.PC.FailedReason.NOERROR
+        if not _mpi.agree_any(comm, flag=failed):
+            return None
+        if pc.getType() in FACTORIZATIONS and pc.getFactorSolverType() == "mumps":
+            return _mpi.agree_min(comm, int(pc.getFactorMatrix().getMumpsInfog(1)))
+        return 0
+
+    def _retry_with_more_workspace(self) -> None:
+        """A new KSP, in the scope of the handle's options, with ICNTL(14) doubled."""
+        PETSc = _petsc.require_petsc()
+        name = "mat_mumps_icntl_14"
+        options: dict[str, Any] = dict(self._options)
+        options[name] = 2 * max(int(options[name]), 20)
+        self._options = tuple(options.items())
+        # `scoped_options` deletes this name on exit whatever it holds
+        PETSc.Options().setValue(f"-{self._prefix}{name}", str(options[name]))
+        spent = self._ksp
+        self._new_ksp()
+        spent.destroy()
+        self._configure(self._user, reuse=self._reuse)
+
+    def _factorization_failed(self) -> RuntimeError:
+        return _mpi.AgreedError(str(super()._factorization_failed()))
+
+    def _load_rows(self, cols: np.ndarray) -> np.ndarray:
+        rows = np.zeros((self._numbering.count, cols.shape[1]), dtype=complex)
+        for j in range(cols.shape[1]):
+            rows[:, j] = self._numbering.load_rows(cols[:, j])
+        return rows
+
+    def _state_rows(self, cols: np.ndarray) -> np.ndarray:
+        rows = np.zeros((self._numbering.count, cols.shape[1]), dtype=complex)
+        for j in range(cols.shape[1]):
+            rows[:, j] = self._numbering.state_rows(cols[:, j])
+        return rows
+
+    def _states(self, rows: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
+        out = np.zeros(shape, dtype=complex)
+        for j in range(shape[1]):
+            out[:, j] = self._numbering.state(rows[:, j])
+        return out
+
+    def _dense_size(self, rows: int, columns: int) -> Any:
+        PETSc = _petsc.require_petsc()
+        return ((rows, self._numbering.total), (PETSc.DECIDE, columns))
+
+    def _mumps_megabytes(self, factor: Any) -> int:
+        """This rank's: INFO(22). INFOG(22) is the sum, and ADR 0058 sums per node."""
+        return int(factor.getMumpsInfo(22))
 
 
 def _name(enum, value: int) -> str:

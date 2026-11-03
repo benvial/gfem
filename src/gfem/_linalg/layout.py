@@ -90,7 +90,8 @@ class RankLayout(DofLayout):
         self.comm = comm
         from gfem._linalg.base import free_mask  # base imports this module
 
-        self.owners = free_mask(space.ParallelDofs().MasterDofs(), space.ndof)
+        self.pardofs = space.ParallelDofs()
+        self.owners = free_mask(self.pardofs.MasterDofs(), space.ndof)
         self._dtype = np.complex128 if space.is_complex else np.float64
         self._work = ngs.GridFunction(space).vec.CreateVector()
 

@@ -16,15 +16,17 @@ import pytest
 from ranks import RanksFailed, on_ranks, on_ranks_argv
 
 import gfem
-from gfem import _mpi
+from gfem import _mpi, _petsc
 from gfem._engine.cache import ENTRIES, Entry
 from gfem._engine.driven import DrivenRule, driven_operator
 from gfem._engine.port_network import parallel_scale
 from gfem._engine.runtime import task_manager
 from gfem._engine.system_operator import SystemOperator
-from gfem._linalg import ResolvedLinearSolver, bddc, blas, prepare
+from gfem._linalg import ResolvedLinearSolver, bddc, blas, coarse, prepare
 from gfem._linalg.base import local_matrix
+from gfem._linalg.direct import INVERSE
 from gfem._linalg.gmres import Gmres
+from gfem._linalg.pardiso import pardiso_inverse
 from gfem._linalg.pieces import AssembledPieces
 
 #: Relative to the largest entry of the one-process S: ADR 0070's BDDC gate.
@@ -136,6 +138,193 @@ def test_a_short_stop_restarts_on_every_rank(tmp_path):
     assert iterations[0] == 2
     assert iterations[1] > 0
     assert np.abs(s - s_one).max() / np.abs(s_one).max() < S_GATE
+
+
+# --- the coarse problem's two routes ------------------------------------------------
+
+needs_stack = pytest.mark.skipif(not _petsc.has_mpi(), reason="needs the MPI stack")
+
+
+#: `coarse.reduction` per route: a tiny mesh's own is to one rank.
+EVERY_RANK, HALF, ONE_RANK = "every rank", "half", "one rank"
+REDUCTIONS = {
+    EVERY_RANK: lambda _, __: 1,
+    HALF: lambda _, __: 2,
+    ONE_RANK: coarse.reduction,
+}
+
+
+def _on_a_route(directory, frequencies, route):
+    """`_s_and_iterations` with the coarse problem on ``route``, and what factored it.
+
+    ``"rank 0"`` is what a wheel-only install runs.
+    """
+    factored = []
+    if route == "rank 0":
+        bddc._coarse_on_mumps = lambda *_, **__: False
+    else:
+        coarse.reduction = REDUCTIONS[route]
+        set_up = coarse.CoarseMumps.set_up
+
+        def spy(self):
+            set_up(self)
+            pc = self._ksp.getPC()
+            factored.append((pc.getType(), self._factor))
+
+        coarse.CoarseMumps.set_up = spy
+    return (*_s_and_iterations(directory, frequencies), factored)
+
+
+def _assert_routes_agree(directory, frequencies, ranks, *, routes):
+    reference, *_ = on_ranks(
+        _on_a_route, directory, frequencies, "rank 0", ranks=ranks, limit=300
+    )
+    s_zero, iterations_zero, setups_zero, _ = reference
+    seen = {}
+    for route in routes:
+        (s, iterations, setups, factored), *_ = on_ranks(
+            _on_a_route, directory, frequencies, route, ranks=ranks, limit=300
+        )
+        error = np.abs(s - s_zero).max() / np.abs(s_zero).max()
+        print(  # noqa: T201
+            f"ranks={ranks} {route}: S error={error:.3g} "
+            f"iterations={iterations.tolist()} rank 0={iterations_zero.tolist()} "
+            f"factored={factored}"
+        )
+        assert error < S_GATE, f"S off by {error:.3g} relative"
+        np.testing.assert_array_equal(iterations, iterations_zero)
+        assert setups == setups_zero
+        seen[route] = factored
+    return seen
+
+
+@needs_stack
+@pytest.mark.parametrize("ranks", [3, 4, 8])
+def test_coarse_on_mumps_matches_the_rank_0_route(tmp_path, ranks):
+    seen = _assert_routes_agree(tmp_path, (FREQUENCY,), ranks, routes=[EVERY_RANK])
+    assert seen[EVERY_RANK] == [("cholesky", 1)]
+
+
+@needs_stack
+@pytest.mark.parametrize("ranks", [3, 4, 8])
+def test_telescoping_changes_neither_iterations_nor_s(tmp_path, ranks):
+    seen = _assert_routes_agree(tmp_path, (FREQUENCY,), ranks, routes=[HALF, ONE_RANK])
+    assert seen[HALF] == [("telescope", 2)]
+    assert seen[ONE_RANK] == [("telescope", ranks)]
+
+
+@needs_stack
+def test_a_sweep_reusing_bddc_on_either_coarse_route(tmp_path):
+    _assert_routes_agree(tmp_path, SWEEP, 4, routes=[EVERY_RANK, ONE_RANK])
+
+
+def _with_the_default_inverse_forbidden(directory):
+    """NGSolve's default inverse raises: the coarse route must not fall back on it."""
+    import ngsolve as ngs
+
+    class Forbidden(ngs.la.SparseFactorizationInterface):
+        def __init__(self, *_, **__):
+            raise AssertionError("gfem used NGSolve's default inverse type")
+
+    ngs.la.RegisterInverseType("gfem_forbidden", Forbidden)
+    ngs.BaseMatrix.SetDefaultInverseType("gfem_forbidden")
+    return _s_and_iterations(directory, (FREQUENCY,))[1]
+
+
+@needs_stack
+def test_the_coarse_route_never_reads_ngsolves_default_inverse(tmp_path):
+    iterations, *_ = on_ranks(_with_the_default_inverse_forbidden, tmp_path, ranks=3)
+    assert iterations.size
+
+
+def _rank_0_flags(directory):
+    """The flags BDDC is given when the coarse problem stays on rank 0."""
+    import ngsolve as ngs
+
+    seen = []
+    made = ngs.Preconditioner
+
+    def spy(form, kind, **flags):
+        seen.append(flags)
+        return made(form, kind, **flags)
+
+    bddc._coarse_on_mumps = lambda *_, **__: False
+    bddc.ngs.Preconditioner = spy
+    _s_and_iterations(directory, (FREQUENCY,))
+    return seen
+
+
+def test_the_rank_0_route_names_its_inverse(tmp_path):
+    # the coarse rule of one process: PARDISO with the mkl extra, else sparse Cholesky
+    (flags,), *_ = on_ranks(_rank_0_flags, tmp_path, ranks=3)
+    print(f"rank 0 inverse: {flags}")  # noqa: T201
+    assert flags.keys() == {"inverse"}
+    assert flags["inverse"] in (
+        pardiso_inverse("complex_symmetric", is_complex=True),
+        INVERSE,
+    )
+
+
+def _forced_coarse_failures(directory, route, failures):
+    """INFOG(1)=-9 ``failures`` times on the real route: a retry's count."""
+    coarse.reduction = REDUCTIONS[route]
+    calls = []
+    real = coarse.CoarseMumps._agreed_failure
+
+    def forced(self):
+        calls.append(1)
+        return coarse.MUMPS_WORKSPACE_ERROR if len(calls) <= failures else real(self)
+
+    coarse.CoarseMumps._agreed_failure = forced
+    options = cases.tight("bddc_gmres", threads=1)
+    problem = gfem.Driven(FREQUENCY)
+    try:
+        s = gfem.solve(cases.layered_line(directory), problem, options=options).s.values
+    except _mpi.AgreedError as err:
+        return "coarse problem failed" in str(err), len(calls), _world().allreduce(1)
+    return np.asarray(s), len(calls)
+
+
+@needs_stack
+@pytest.mark.parametrize("route", [EVERY_RANK, ONE_RANK])
+def test_a_coarse_workspace_too_small_retries_on_a_new_ksp(tmp_path, route):
+    s_one, *_ = _s_and_iterations(tmp_path, (FREQUENCY,))
+    (s, calls), *_ = on_ranks(
+        _forced_coarse_failures, tmp_path, route, 1, ranks=4, limit=300
+    )
+    assert calls == 2
+    assert np.abs(s - s_one).max() < S_GATE * np.abs(s_one).max()
+
+
+def _a_singular_coarse_problem(directory, route):
+    """A real failure in MUMPS, not a forced value: the real paths must see it."""
+    coarse.reduction = REDUCTIONS[route]
+    built = coarse.distributed_aij
+
+    def zero(*args):
+        aij, index = built(*args)
+        aij.zeroEntries()
+        return aij, index
+
+    coarse.distributed_aij = zero
+    options = cases.tight("bddc_gmres", threads=1)
+    problem = gfem.Driven(FREQUENCY)
+    try:
+        gfem.solve(cases.layered_line(directory), problem, options=options)
+    except _mpi.AgreedError as err:
+        return str(err), _world().allreduce(1)
+    raise AssertionError("a zero matrix factored")
+
+
+@needs_stack
+@pytest.mark.parametrize("route", [EVERY_RANK, ONE_RANK])
+def test_a_factorization_that_fails_is_an_agreed_error_with_no_nan(tmp_path, route):
+    (text, ranks), *_ = on_ranks(
+        _a_singular_coarse_problem, tmp_path, route, ranks=4, limit=300
+    )
+    assert "coarse problem failed" in text
+    assert ranks == 4
+    print(text)  # noqa: T201
 
 
 # --- what lies under the solve ------------------------------------------------------

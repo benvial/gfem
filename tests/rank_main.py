@@ -3,8 +3,8 @@
 A rank that raises writes its traceback and aborts the job, so a failed assertion
 on one rank cannot hang its peers. No collective sits behind a test on the rank.
 
-mpi4py is imported inside `main`: a frequency worker re-imports this file, and on
-Open MPI 4.1.6 ``MPI_Init`` in that child kills it.
+mpi4py is imported inside `main`: a frequency worker re-imports this file, and needs
+no MPI.
 """
 
 import importlib.util

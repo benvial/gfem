@@ -420,7 +420,8 @@ class DrivenRule:
                 wave vector without a periodic pair, or outside the span of
                 the pairs' translations).
             gfem.SolverUnavailableError: ``linear_solver="petsc"`` and PETSc
-                cannot be used.
+                cannot be used, or ``"direct"`` or ``"petsc"`` under ``comm``
+                without the MPI PETSc stack.
         """
         if not isinstance(problem, Driven):
             raise TypeError(f"Expected gfem.Driven, got {problem!r}.")
@@ -441,7 +442,7 @@ class DrivenRule:
             )
         # before any assembly, and before any worker
         self.linear = ResolvedLinearSolver.resolve(
-            options, default=DEFAULT_SOLVER, problem="driven"
+            options, default=DEFAULT_SOLVER, problem="driven", comm=comm
         )
         _check_supported(model)
         if not model.ports:

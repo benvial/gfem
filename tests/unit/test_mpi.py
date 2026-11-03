@@ -1,5 +1,6 @@
 """Launcher resolution and refusals, with no MPI: stub communicators, fake mpi4py."""
 
+import math
 import pickle
 import subprocess
 import sys
@@ -15,6 +16,7 @@ import pytest
 
 import gfem
 from gfem import _mpi
+from gfem._linalg import coarse
 
 TASK_VARIABLES = ("OMPI_COMM_WORLD_SIZE", "SLURM_STEP_NUM_TASKS", "PMI_SIZE")
 TESTS = Path(__file__).resolve().parents[1]
@@ -201,6 +203,22 @@ def test_a_one_process_solve_never_imports_mpi4py(environment, tmp_path):
     assert proc.stdout.strip() == "[]"
 
 
+@pytest.mark.parametrize(
+    ("dofs", "size", "factor"),
+    [
+        (3_300_000, 28, 1),  # r10M at 28x4: 119 k per rank, nothing to reduce
+        (3_300_000, 64, 2),  # 32 ranks, as ticket 18 ran
+        (33_000_000, 896, 3),  # ADR 0078's arithmetic at 100 M DOF
+        (250_000, 8, 4),
+        (1_000, 8, 8),  # a tiny mesh: one rank
+        (1_000, 1, 1),
+    ],
+)
+def test_the_coarse_problem_runs_on_at_most_one_rank_per_100k_dofs(dofs, size, factor):
+    assert coarse.reduction(dofs, size) == factor
+    assert math.ceil(size / factor) <= max(1, dofs // coarse.DOFS_PER_RANK)
+
+
 # --- refusals ---------------------------------------------------------------------
 
 
@@ -254,22 +272,18 @@ def test_a_refusal_under_jax_keeps_its_class(tmp_path, monkeypatch):
         jax.grad(objective)(np.ones(n))
 
 
-def test_a_port_solve_on_bddc_is_all_that_passes_so_far(tmp_path):
+def test_a_port_solve_is_all_that_passes_so_far(tmp_path):
     line = cases.layered_line(tmp_path)
     wave = line.replace(ports=[gfem.WavePort("w", "port1")])
     frequency = gfem.Driven(5e9)
-    for solver in ("auto", "bddc_gmres"):
+    for solver in ("auto", "bddc_gmres", "direct", "petsc"):
         options = gfem.SolverOptions(linear_solver=solver)
         assert _mpi.refuse(line, frequency, options) is None
         assert _mpi.refuse(wave, frequency, options) is None
     assert _mpi.refuse(wave, gfem.PortMode("w", 5e9), gfem.SolverOptions()) is None
     options = gfem.SolverOptions()
     kept = gfem.Driven(5e9, keep_fields=[5e9])
-    for model, problem, chosen in (
-        (line, frequency, gfem.SolverOptions(linear_solver="direct")),
-        (line, frequency, gfem.SolverOptions(linear_solver="petsc")),
-        (line, kept, options),
-    ):
+    for model, problem, chosen in ((line, kept, options),):
         with pytest.raises(gfem.DistributedUnsupportedError) as caught:
             _mpi.refuse(model, problem, chosen)
         assert caught.value.feature == "driven"

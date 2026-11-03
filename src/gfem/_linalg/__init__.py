@@ -62,6 +62,11 @@ Backends:
   residual. Real symmetric and complex symmetric operators only. Without a
   usable petsc4py it raises `gfem.SolverUnavailableError`, never falls back.
 
+Under ranks ``"direct"`` and ``"petsc"`` are both `gfem._linalg.petsc.RankPetscHandle`
+on the MPI PETSc stack, whose absence raises `gfem.SolverUnavailableError`.
+``"bddc_gmres"`` needs no PETSc: with the MPI stack its coarse problem moves off rank
+0 (`gfem._linalg.coarse`).
+
 `low_rank_update` wraps a handle of ``A`` into one of ``A + U C Uᵀ``
 (Woodbury, the update never assembled): wave ports' modal corrections.
 
@@ -73,7 +78,15 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Literal, Protocol, Self, get_args, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    Protocol,
+    Self,
+    get_args,
+    runtime_checkable,
+)
 
 import ngsolve as ngs
 import numpy as np
@@ -313,11 +326,14 @@ def prepare(
             operator, or an option PETSc cannot apply).
         gfem.DeviceUnavailableError: The GPU cannot be used.
         gfem.SolverUnavailableError: ``kind="petsc"`` and PETSc cannot be
-            used (checked before assembly).
+            used (checked before assembly), or ``"direct"`` or ``"petsc"`` under
+            ranks without the MPI PETSc stack.
+        gfem._mpi.AgreedError: Under ranks, MUMPS failed on every retry.
     """
     if operator.layout is not None:
         return _prepare_on_ranks(
             operator,
+            operator.layout,
             symmetry=symmetry,
             kind=kind,
             tolerance=tolerance,
@@ -325,6 +341,7 @@ def prepare(
             width=width,
             solves=solves,
             reuse_preconditioner=reuse_preconditioner,
+            petsc_options=tuple(dict(petsc_options).items()),
         )
     if device != "cpu":
         from gfem import _cuda
@@ -379,6 +396,7 @@ def prepare(
 
 def _prepare_on_ranks(
     operator: Operator,
+    layout: DofLayout,
     *,
     symmetry: Symmetry,
     kind: str,
@@ -387,22 +405,39 @@ def _prepare_on_ranks(
     width: int,
     solves: int,
     reuse_preconditioner: bool,
+    petsc_options: PetscOptions,
 ) -> Handle:
     """`prepare` across ranks: a backend that takes a layout, ``A^T = A`` only.
 
     Raises:
         gfem.DistributedUnsupportedError: No distributed backend of ``kind``, or of
             an operator without ``A^T = A``.
+        gfem.SolverUnavailableError: ``direct`` or ``petsc`` without the MPI PETSc
+            stack.
     """
     from gfem import _mpi
     from gfem._linalg.base import equals_its_transpose
     from gfem._linalg.bddc import BddcHandle
 
     is_complex = bool(operator.form.space.is_complex)
-    if kind != "bddc_gmres" or not equals_its_transpose(
-        symmetry, is_complex=is_complex
-    ):
+    if kind not in KINDS or not equals_its_transpose(symmetry, is_complex=is_complex):
         _mpi.refuse_feature("driven")
+    if kind in ("direct", "petsc"):
+        from gfem import _petsc
+
+        _petsc.require_mpi_petsc(kind, layout.comm)
+        from gfem._linalg.petsc import RankPetscHandle
+
+        return RankPetscHandle.from_operator(
+            operator,
+            symmetry,
+            tolerance=tolerance,
+            maxiter=maxiter,
+            layout=layout,
+            kind=kind,
+            options=petsc_options if kind == "petsc" else (),
+            reuse=reuse_preconditioner,
+        )
     return BddcHandle(
         operator,
         symmetry,
@@ -438,18 +473,22 @@ class ResolvedLinearSolver:
     petsc_options: PetscOptions
 
     @classmethod
-    def resolve(cls, options: SolverOptions, *, default: Kind, problem: str) -> Self:
+    def resolve(
+        cls, options: SolverOptions, *, default: Kind, problem: str, comm: Any = None
+    ) -> Self:
         """The linear solver of ``options`` for a ``problem`` problem.
 
         Args:
             options: The solver options.
             default: The problem type's linear solver for ``"auto"``.
             problem: The problem type, for the error message.
+            comm: The resolved communicator of a distributed solve.
 
         Raises:
             NotImplementedError: The linear solver is not available.
             gfem.SolverUnavailableError: ``linear_solver="petsc"`` and PETSc
-                cannot be used.
+                cannot be used, or ``"direct"`` or ``"petsc"`` under ``comm``
+                without the MPI PETSc stack.
         """
         from gfem.options import split_petsc_options
 
@@ -461,10 +500,14 @@ class ResolvedLinearSolver:
                 "in this version of gfem; use one of "
                 f"{', '.join(repr(k) for k in KINDS)}."
             )
-        if kind == "petsc":  # before any assembly, and before any worker
+        if kind == "petsc" or (comm is not None and kind == "direct"):
+            # before any assembly, and before any worker
             from gfem import _petsc
 
-            _petsc.require_petsc("linear_solver")
+            if comm is None:
+                _petsc.require_petsc("linear_solver")
+            else:
+                _petsc.require_mpi_petsc(kind, comm)
         pairs = tuple(dict(options.petsc_options).items())
         return cls(
             kind=kind,

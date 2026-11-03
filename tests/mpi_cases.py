@@ -68,9 +68,10 @@ def refused(key: str, directory: Path):  # noqa: PLR0911
         case "bddc_order_1_auto":
             options = gfem.SolverOptions(order=1)
             return _line(directory), gfem.Driven(FREQUENCY), options
-        # Not built yet: direct under ranks (slice 4).
+        # Not built yet: a kept field (slice 7).
         case "driven":
-            return _line(directory), gfem.Driven(FREQUENCY), direct
+            problem = gfem.Driven(FREQUENCY, keep_fields=[FREQUENCY])
+            return _line(directory), problem, direct
     raise ValueError(key)
 
 
