@@ -26,7 +26,9 @@ An operator may also carry its piece sum (``Operator.piece_sum``, see
 Vectors are NumPy arrays over all DOFs of the operator's space. ``solve``
 reads only the free rows of ``B`` and returns zeros in the fixed (Dirichlet)
 rows, so a Dirichlet lifting ``u_D`` is completed by
-``u = u_D + handle.solve(-handle.apply(u_D))``.
+``u = u_D + handle.solve(-handle.apply(u_D))``. Under ranks they are arrays over
+a rank's DOFs, and each one's role names its status: ``solve`` maps a load to a
+state, ``apply`` a state to a load (`gfem._linalg.layout`).
 
 Backends:
 
@@ -77,6 +79,7 @@ import ngsolve as ngs
 import numpy as np
 
 if TYPE_CHECKING:
+    from gfem._linalg.layout import DofLayout
     from gfem._linalg.pieces import PieceSum
     from gfem.options import PetscOptions, PetscValue, SolverOptions
 
@@ -117,11 +120,15 @@ class Operator:
             assembled once (`gfem._linalg.pieces`), or ``None``. A linear
             solver may sum it instead of assembling ``form`` (``direct`` and
             ``petsc`` do); the others assemble ``form``.
+        layout: How the form's space lies across ranks, on which `prepare`
+            dispatches; ``None`` on one process. It cannot be read off the form,
+            which is not assembled yet.
     """
 
     form: ngs.BilinearForm
     freedofs: ngs.BitArray
     piece_sum: PieceSum | None = None
+    layout: DofLayout | None = None
 
 
 class Handle(Protocol):
@@ -134,10 +141,16 @@ class Handle(Protocol):
     kind: str
     symmetry: Symmetry
     ndof: int
+    #: The products of this handle's columns; `gfem._linalg.layout.ONE_PROCESS`
+    #: unless it runs across ranks, where ``ndof`` is the rank's.
+    layout: DofLayout
 
     @property
     def nbytes(self) -> int:
-        """Host memory held by the matrix and the backend, in bytes."""
+        """Host memory held by the matrix and the backend, in bytes.
+
+        Under ranks, this rank's.
+        """
         ...
 
     def solve_counted(
@@ -302,6 +315,17 @@ def prepare(
         gfem.SolverUnavailableError: ``kind="petsc"`` and PETSc cannot be
             used (checked before assembly).
     """
+    if operator.layout is not None:
+        return _prepare_on_ranks(
+            operator,
+            symmetry=symmetry,
+            kind=kind,
+            tolerance=tolerance,
+            maxiter=maxiter,
+            width=width,
+            solves=solves,
+            reuse_preconditioner=reuse_preconditioner,
+        )
     if device != "cpu":
         from gfem import _cuda
 
@@ -350,6 +374,43 @@ def prepare(
     raise NotImplementedError(
         f"linear_solver={kind!r} is not available in this version of gfem; use "
         f"one of {', '.join(repr(k) for k in KINDS)}."
+    )
+
+
+def _prepare_on_ranks(
+    operator: Operator,
+    *,
+    symmetry: Symmetry,
+    kind: str,
+    tolerance: float,
+    maxiter: int,
+    width: int,
+    solves: int,
+    reuse_preconditioner: bool,
+) -> Handle:
+    """`prepare` across ranks: a backend that takes a layout, ``A^T = A`` only.
+
+    Raises:
+        gfem.DistributedUnsupportedError: No distributed backend of ``kind``, or of
+            an operator without ``A^T = A``.
+    """
+    from gfem import _mpi
+    from gfem._linalg.base import equals_its_transpose
+    from gfem._linalg.bddc import BddcHandle
+
+    is_complex = bool(operator.form.space.is_complex)
+    if kind != "bddc_gmres" or not equals_its_transpose(
+        symmetry, is_complex=is_complex
+    ):
+        _mpi.refuse_feature("driven")
+    return BddcHandle(
+        operator,
+        symmetry,
+        tolerance=tolerance,
+        maxiter=maxiter,
+        reuse=reuse_preconditioner,
+        width=width,
+        solves=solves,
     )
 
 

@@ -9,7 +9,9 @@ from typing import Any, ClassVar, Self
 import ngsolve as ngs
 import numpy as np
 
+from gfem import _mpi
 from gfem._linalg import Operator, Symmetry
+from gfem._linalg.layout import ONE_PROCESS, DofLayout
 
 
 def equals_its_transpose(symmetry: Symmetry, *, is_complex: bool) -> bool:
@@ -28,12 +30,29 @@ def host_bytes(obj) -> int:
     return sum(int(u.host) for u in obj.GetMemoryUsage())
 
 
-def same_pattern(a, b) -> bool:
+def local_matrix(matrix, comm: Any = None) -> Any:
+    """The sparse matrix behind ``matrix``: a rank's own under ``comm``, else itself.
+
+    A ``ParallelMatrix`` has no ``CSR``, ``COO`` or ``nze``; its ``local_mat`` is the
+    unassembled local matrix, which holds both triangles of a symmetric form.
+    """
+    return matrix if comm is None else matrix.local_mat
+
+
+def same_pattern(a, b, comm: Any = None) -> bool:
     """Whether two assembled sparse matrices have one sparsity pattern.
 
     Compares the sizes and nonzero counts, then the CSR row pointers and
-    column indices (no copies: NGSolve's CSR arrays are views).
+    column indices (no copies: NGSolve's CSR arrays are views). Under ``comm`` the
+    local matrices are compared and all ranks get one answer, since it picks new
+    values or a new plan.
     """
+    a, b = local_matrix(a, comm), local_matrix(b, comm)
+    return _mpi.agree_all(comm, flag=_same_local_pattern(a, b))
+
+
+def _same_local_pattern(a, b) -> bool:
+    """`same_pattern` on one process's sparse matrices."""
     if a.height != b.height or a.nze != b.nze:
         return False
     _, cols_a, rowptr_a = a.CSR()
@@ -107,6 +126,8 @@ class NgsHandle:
     kind: str
     #: The backend solves ``A^T X = B`` of a general operator on its factors.
     transposes_general: ClassVar[bool] = False
+    #: The products of this handle's columns: one process's unless set.
+    layout: DofLayout = ONE_PROCESS
 
     def __init__(
         self,
@@ -134,11 +155,12 @@ class NgsHandle:
             )
         return (B[:, None], True) if B.ndim == 1 else (B, False)
 
-    def _map(self, op, B: np.ndarray, after=None) -> np.ndarray:
+    def _map(self, op, B: np.ndarray, after=None, *, states=False) -> np.ndarray:
         """``op`` applied to each column of ``B``.
 
         ``after(op, x, y)`` checks each column's ``y = op * x``, and may
-        change ``y`` in place.
+        change ``y`` in place. Each column is a load and its image a state, or
+        with ``states`` the other way round: the vector picks the status.
         """
         cols, flat = self._columns(B)
         dtype = np.complex128 if self._complex else np.float64
@@ -146,11 +168,18 @@ class NgsHandle:
         matrix = self._matrix
         if matrix is None:
             raise RuntimeError("This solver handle was freed.")
-        x = matrix.CreateColVector()
-        y = matrix.CreateColVector()
+        layout = self.layout
+        if states:
+            x, y = matrix.CreateRowVector(), matrix.CreateColVector()
+            mark_x, mark_y = layout.mark_state, layout.mark_load
+        else:
+            x, y = matrix.CreateColVector(), matrix.CreateRowVector()
+            mark_x, mark_y = layout.mark_load, layout.mark_state
         with self._lock:
             for j in range(cols.shape[1]):
                 x.FV().NumPy()[:] = cols[:, j]
+                mark_x(x)
+                mark_y(y)
                 y.data = op * x
                 if after is not None:
                     after(op, x, y)
@@ -267,7 +296,7 @@ class NgsHandle:
         """
         if self._matrix is None:
             raise RuntimeError("This solver handle was freed.")
-        return self._map(self._matrix.T if transpose else self._matrix, X)
+        return self._map(self._matrix.T if transpose else self._matrix, X, states=True)
 
     # the held NGSolve sparse matrix: its stubs do not declare CSR()
     def _live(self) -> Any:
@@ -375,7 +404,7 @@ class PlannedHandle(NgsHandle):
         new, pattern = self._assemble(operator)  # assembly needs no lock
         with self._lock:
             held = self._live()
-            if same_pattern(held, new):
+            if same_pattern(held, new, self.layout.comm):
                 self._pattern = pattern
 
                 def write(matrix: ngs.BaseMatrix) -> None:

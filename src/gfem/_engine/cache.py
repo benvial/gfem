@@ -147,19 +147,24 @@ class EntryCache:
         self._entries: collections.OrderedDict[int, Entry] = collections.OrderedDict()
         self._keys = itertools.count()
 
-    def put(self, entry: Entry, budget: int) -> int:
+    def put(self, entry: Entry, budget: int, comm: Any = None) -> int:
         """Store ``entry`` and return its key; evict down to ``budget`` bytes.
 
         An entry larger than the budget alone is freed at once and evicts
         nothing (with ``budget=0`` nothing is kept); its key reads as
         evicted, so the backward pass recomputes it.
+
+        Under ``comm`` the bytes are the largest node's and the budget the smallest
+        node's, so all ranks evict alike: a rank's own bytes would leave some ranks
+        to re-run a forward without the others, and hang (ADR 0058).
         """
         key = next(self._keys)
-        if entry.nbytes > budget:
+        budget = _mpi.node_budget(comm, budget)
+        if _mpi.node_bytes(comm, entry.nbytes) > budget:
             entry.free()
             return key
         self._entries[key] = entry
-        while self._entries and self.nbytes > budget:
+        while self._entries and _mpi.node_bytes(comm, self.nbytes) > budget:
             _, old = self._entries.popitem(last=False)
             old.free()
         return key

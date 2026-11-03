@@ -78,6 +78,7 @@ import numpy as np
 import scipy.constants
 import scipy.sparse
 
+from gfem import _mpi
 from gfem._adjoint import adjoint_tolerance
 from gfem._boundaries import (
     LumpedPort,
@@ -99,6 +100,7 @@ from gfem._engine.sweep_outputs import SweepOutputs
 from gfem._engine.system_operator import SystemOperator
 from gfem._engine.wave_ports import PortSurfaceCoupling, wave_port_couplings
 from gfem._linalg import Kind, ResolvedLinearSolver
+from gfem._linalg.layout import DofLayout, RankLayout
 from gfem._periodic import bloch_phases, check_bloch, check_wave_vector
 from gfem._sweep.adaptive import AffineSystem, AffineTerm, adaptive_sweep
 from gfem.errors import (
@@ -184,6 +186,7 @@ class DrivenOperator:
         symmetry: ``"general"`` on a Bloch-phased space (A^T != A),
             ``"complex_symmetric"`` otherwise: declared by the problem's
             wave vector, never read from its value.
+        layout: How ``space`` lies across ranks; ``None`` on one process.
     """
 
     built: EngineMesh
@@ -193,6 +196,7 @@ class DrivenOperator:
     order: int
     expansion: Expansion | None = None
     symmetry: DrivenSymmetry = "complex_symmetric"
+    layout: DofLayout | None = None
 
     def expand(self, x: np.ndarray) -> np.ndarray:
         """``P x``: solve-space coefficients ``(ndof, ...)`` on the unpaired space."""
@@ -285,7 +289,8 @@ class DrivenOperator:
         ``X`` is ``(ndof,)`` or ``(ndof, m)``; fixed DOFs are not special.
         """
         form = self._piece_forms[k]
-        columns = x.reshape(x.shape[0], -1)
+        # no reshape to -1: it raises on a rank with no DOFs
+        columns = x[:, None] if x.ndim == 1 else x
         source = ngs.GridFunction(self.space).vec
         target = source.CreateVector()
         out = np.empty(columns.shape, complex)
@@ -304,6 +309,7 @@ def driven_operator(
     elements: np.ndarray | None = None,
     faces: np.ndarray | None = None,
     paired: bool = True,
+    comm: Any = None,
 ) -> DrivenOperator:
     """The driven operator of ``model`` at its current node positions.
 
@@ -316,10 +322,10 @@ def driven_operator(
     periodicity), with its `expansion`; a wave vector makes the operator
     ``"general"`` (`DrivenOperator.symmetry`). With ``paired=False`` it
     acts on the unpaired space instead, where result fields live (no
-    expansion).
+    expansion). ``comm`` is the resolved communicator of a distributed solve.
     """
     periodic = model._periodic  # noqa: SLF001
-    disc = discretization(model.mesh, periodic)
+    disc = discretization(model.mesh, periodic, comm)
     built = disc.built
     pec = pec_surfaces(model)
     unpaired = disc.space(
@@ -344,7 +350,13 @@ def driven_operator(
     ports = terms.lumped_ports(model, built.scale)
     pieces = terms.pieces(model, built, order, ports, elements=elements, faces=faces)
     symmetry: DrivenSymmetry = "complex_symmetric" if wave_vector is None else "general"
-    return DrivenOperator(built, space, pieces, ports, order, expansion, symmetry)
+    layout = None
+    if comm is not None:
+        key = (*space_key(model, "hcurl", order), "layout")
+        layout = disc.space(key, lambda: RankLayout(space, comm))
+    return DrivenOperator(
+        built, space, pieces, ports, order, expansion, symmetry, layout
+    )
 
 
 #: Entries of the expansion P below this are the round-off of NGSolve's
@@ -390,8 +402,17 @@ class DrivenRule:
     #: touch a wave port face: `unsupported_input`).
     differentiable_outputs = sweep_outputs.DIFFERENTIABLE
 
-    def __init__(self, model: Model, problem: Driven, options: SolverOptions) -> None:
+    def __init__(
+        self,
+        model: Model,
+        problem: Driven,
+        options: SolverOptions,
+        *,
+        comm: Any = None,
+    ) -> None:
         """Check that the problem fits the model (see `gfem.Driven`).
+
+        ``comm`` is the resolved communicator of a distributed solve.
 
         Raises:
             NotImplementedError: A feature this version cannot solve.
@@ -405,6 +426,7 @@ class DrivenRule:
             raise TypeError(f"Expected gfem.Driven, got {problem!r}.")
         self.problem = problem
         self.options = options
+        self.comm = comm
         # before the Bloch refusals: a wave vector without a pair is the
         # first thing to fix
         check_wave_vector(model, problem.wave_vector, "Driven")
@@ -492,8 +514,8 @@ class DrivenRule:
         #: `gfem.solve`'s eager path and by a frequency worker, never under
         #: JAX, where no caller reads it.
         self.keeps_partial = False
-        _check_low_frequency(model, problem.frequency, stacklevel=3)
-        _check_skipped_port_modes(model, stacklevel=3)
+        _check_low_frequency(model, problem.frequency, stacklevel=3, comm=comm)
+        _check_skipped_port_modes(model, stacklevel=3, comm=comm)
 
     def operator(self, model: Model) -> DrivenOperator:
         """The model's driven operator at its current node positions.
@@ -505,7 +527,10 @@ class DrivenRule:
         if last is not None and last[0] is model:
             return last[1]
         op = driven_operator(
-            model, self.options.order, wave_vector=self.problem.wave_vector
+            model,
+            self.options.order,
+            wave_vector=self.problem.wave_vector,
+            comm=self.comm,
         )
         self._last_operator = (model, op)
         return op
@@ -554,7 +579,7 @@ class DrivenRule:
         solutions: list[np.ndarray] = []
         miss: LinearSolverConvergenceError | None = None
         n_solved = len(frequencies)
-        with task_manager(self.options.threads):
+        with task_manager(self.options.threads, self.comm):
             system, ports = self._ports(model)
             s = np.zeros((len(frequencies), len(self.port_names), width), complex)
             previous = None
@@ -731,7 +756,7 @@ class DrivenRule:
             tolerance=self.options.port_mode_tolerance,
         )
         if warn:
-            _check_port_mode_projection(couplings, stacklevel=4)
+            _check_port_mode_projection(couplings, stacklevel=4, comm=self.comm)
         transposed = None
         if self.problem.wave_vector is not None:
             # A(k)^T = A(-k): the adjoint solves' operator
@@ -1050,7 +1075,8 @@ class DrivenRule:
                     g = np.asarray(ct_e)[:, k * width : (k + 1) * width]
                     # the field is P x: its cotangent loads P^T g
                     load += g if op.expansion is None else op.expansion.matrix.T @ g
-                if load.any():
+                # a rank without port DOFs would skip a collective solve
+                if _mpi.agree_any(self.comm, flag=bool(load.any())):
                     try:
                         adjoint += system.solve_adjoint(n, omega, load)
                     except LinearSolverConvergenceError as err:
@@ -1350,7 +1376,7 @@ def check_ports_held(model: Model) -> None:
 
 
 def _check_low_frequency(
-    model: Model, frequencies: tuple[float, ...], *, stacklevel: int
+    model: Model, frequencies: tuple[float, ...], *, stacklevel: int, comm: Any = None
 ) -> None:
     """Warn once if a frequency is below the mesh's low-frequency floor.
 
@@ -1385,7 +1411,7 @@ def _check_low_frequency(
         "gfem.Electrostatic instead of reading it from S; otherwise raise the "
         "lowest frequency or coarsen the smallest elements."
     )
-    warnings.warn(msg, LowFrequencyWarning, stacklevel=stacklevel + 1)
+    _mpi.warn(comm, msg, LowFrequencyWarning, stacklevel=stacklevel + 1)
 
 
 def _modes(ranks: list[int]) -> str:
@@ -1395,7 +1421,9 @@ def _modes(ranks: list[int]) -> str:
     return f"modes {', '.join(map(str, ranks[:-1]))} and {ranks[-1]}"
 
 
-def _check_skipped_port_modes(model: Model, *, stacklevel: int) -> None:
+def _check_skipped_port_modes(
+    model: Model, *, stacklevel: int, comm: Any = None
+) -> None:
     """Warn once per wave port surface that skips a mode below its highest.
 
     A rank below the surface's highest requested ``mode`` propagates
@@ -1421,11 +1449,11 @@ def _check_skipped_port_modes(model: Model, *, stacklevel: int) -> None:
             f"WavePort on surface {surface!r} for each skipped mode, or filter "
             "this warning if the reflection is acceptable."
         )
-        warnings.warn(msg, SkippedPortModeWarning, stacklevel=stacklevel + 1)
+        _mpi.warn(comm, msg, SkippedPortModeWarning, stacklevel=stacklevel + 1)
 
 
 def _check_port_mode_projection(
-    surfaces: list[PortSurfaceCoupling], *, stacklevel: int
+    surfaces: list[PortSurfaceCoupling], *, stacklevel: int, comm: Any = None
 ) -> None:
     """Warn once per shared port surface whose modes project on each other.
 
@@ -1462,7 +1490,7 @@ def _check_port_mode_projection(
             "version of gfem. Make the port line lossless near the port, or "
             "filter this warning if the error is acceptable."
         )
-        warnings.warn(msg, PortModeProjectionWarning, stacklevel=stacklevel + 1)
+        _mpi.warn(comm, msg, PortModeProjectionWarning, stacklevel=stacklevel + 1)
 
 
 def _solve_block(

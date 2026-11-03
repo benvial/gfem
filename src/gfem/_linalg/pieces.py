@@ -11,6 +11,12 @@ The pieces with the full pattern (the volume terms) are summed as NGSolve
 vectors over the matrix values; each other piece (a surface term, whose
 graph couples its surface DOFs only) keeps its compact values and their
 positions in the full pattern, and is added there.
+
+Under ranks each of this runs on a rank's local matrix. No value crosses ranks: a
+local matrix of a rank without elements is empty, and a rank's surface piece may
+share the full pattern where another's does not. Two things are agreed, because
+they decide what every rank does next: the piece the pattern comes from, by summed
+nonzeros, and whether some piece lies outside the pattern.
 """
 
 from __future__ import annotations
@@ -24,7 +30,8 @@ import ngsolve as ngs
 import numpy as np
 from numpy.typing import ArrayLike
 
-from gfem._linalg.base import host_bytes, same_pattern
+from gfem import _mpi
+from gfem._linalg.base import host_bytes, local_matrix, same_pattern
 
 
 class AssembledPieces:
@@ -42,12 +49,15 @@ class AssembledPieces:
         integrands: Sequence[Callable[[Any, Any], Any]],
         *,
         symmetric: bool = True,
+        comm: Any = None,
     ) -> None:
         """Hold ``space`` and each piece's integrand ``(trial, test) -> integrals``.
 
         ``symmetric`` is the forms' flag: False for a general operator (a
-        Bloch phase); the full matrix is stored either way.
+        Bloch phase); the full matrix is stored either way. ``comm`` is the
+        resolved communicator of a distributed ``space``.
         """
+        self._comm = comm
         self._space = space
         self._symmetric = symmetric
         self._integrands = tuple(integrands)
@@ -81,7 +91,7 @@ class AssembledPieces:
         if template is None:  # pragma: no cover - callers check the pattern
             raise ValueError("These pieces have no common sparsity pattern.")
         weights = [complex(w) for w in weights]
-        target = matrix.AsVector()
+        target = local_matrix(matrix, self._comm).AsVector()
         full = [(w, v) for w, (v, at) in zip(weights, parts, strict=True) if at is None]
         (w0, v0), *rest = full
         target.data = w0 * v0
@@ -101,13 +111,14 @@ class AssembledPieces:
             return 0
         # the template's own values are in its matrix; the other full pieces'
         # are copies
-        held = host_bytes(template)
+        comm = self._comm
+        held = host_bytes(local_matrix(template, comm))
         for values, at in parts:
             if at is None:
                 held += int(values.FV().NumPy().nbytes)
             else:
                 held += int(values.nbytes) + int(at.nbytes)
-        return held - int(template.AsVector().FV().NumPy().nbytes)
+        return held - int(local_matrix(template, comm).AsVector().FV().NumPy().nbytes)
 
     def free(self) -> None:
         """Drop the assembled pieces."""
@@ -132,11 +143,16 @@ class AssembledPieces:
             form += integrand(u, v)
             form.Assemble()
             matrices.append(form.mat)
-        template = max(matrices, key=lambda m: m.nze)
+        comm = self._comm
+        local = [local_matrix(m, comm) for m in matrices]
+        nonzeros = _mpi.reduce_bcast(comm, np.array([m.nze for m in local]))
+        first = int(np.argmax(nonzeros))
+        template = local[first]
         _, cols, rowptr = template.CSR()
         parts: list[tuple[Any, np.ndarray | None]] = []
-        for m in matrices:
-            if m is template:
+        outside = False
+        for k, m in enumerate(local):
+            if k == first:
                 parts.append((template.AsVector(), None))
             elif same_pattern(m, template):
                 # a copy, so that the piece's own matrix and graph are released
@@ -147,10 +163,12 @@ class AssembledPieces:
                 data, c, r = m.CSR()
                 at = _positions(rowptr, cols, r, c)
                 if at is None:
-                    self._built = True
-                    return
+                    outside = True
+                    break
                 parts.append((np.array(data), at))
-        self._template, self._parts, self._built = template, parts, True
+        self._built = True
+        if not _mpi.agree_any(comm, flag=outside):
+            self._template, self._parts = matrices[first], parts
 
 
 def _positions(

@@ -35,9 +35,11 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gfem import _mpi
 from gfem._boundaries import LumpedPort, WavePort
 from gfem._engine import terms
 from gfem._engine.wave_ports import PortSurfaceCoupling, WavePortCoupling
+from gfem._linalg.layout import ONE_PROCESS, DofLayout
 from gfem._sweep.adaptive import AffineTerm
 from gfem.model import Model
 
@@ -66,25 +68,32 @@ def resistance(port: LumpedPort | WavePort) -> float:
     return math.nan if r is None else r
 
 
-def parallel_scale(functional: np.ndarray, excitation: np.ndarray) -> complex | None:
+def parallel_scale(
+    functional: np.ndarray, excitation: np.ndarray, layout: DofLayout = ONE_PROCESS
+) -> complex | None:
     """``c`` with ``functional = c excitation`` to `PARALLEL_RTOL`, else ``None``.
 
     True for every lumped port and for a wave port whose mode is real up to
     one phase (lossless); a lossy wave port's S functional projects on the
-    conjugated mode, which is not parallel to its excitation.
+    conjugated mode, which is not parallel to its excitation. Both are load
+    columns, so across ranks each product is the layout's agreed one.
     """
-    norm = np.vdot(excitation, excitation).real
+    norm = np.real(layout.inner(excitation, excitation))
     if norm == 0:  # pragma: no cover - an excited port always has a load
         return None
-    c = np.vdot(excitation, functional) / norm
-    residual = np.linalg.norm(functional - c * excitation)
-    if residual > PARALLEL_RTOL * np.linalg.norm(functional):
+    c = layout.inner(excitation, functional) / norm
+    residual = layout.norm(functional - c * excitation)
+    if residual > PARALLEL_RTOL * layout.norm(functional):
         return None
     return complex(c)
 
 
 def _reciprocal_scale(
-    functional: np.ndarray, i: int, columns: Sequence[int], rhs: np.ndarray
+    functional: np.ndarray,
+    i: int,
+    columns: Sequence[int],
+    rhs: np.ndarray,
+    layout: DofLayout = ONE_PROCESS,
 ) -> complex | None:
     """``c`` if port ``i`` is excited, its S functional ``c`` times its excitation.
 
@@ -99,7 +108,7 @@ def _reciprocal_scale(
     """
     if i not in columns:
         return None
-    return parallel_scale(functional, rhs[:, columns.index(i)])
+    return parallel_scale(functional, rhs[:, columns.index(i)], layout)
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -129,6 +138,7 @@ def split_cotangent(
     functional: np.ndarray,
     *,
     own: tuple[np.ndarray, np.ndarray] | None = None,
+    layout: DofLayout = ONE_PROCESS,
 ) -> CotangentSplit:
     """Split the cotangent ``ct`` on S at one frequency (see `CotangentSplit`).
 
@@ -156,12 +166,13 @@ def split_cotangent(
     undefined = np.zeros(ct.shape[1], bool)
     for i in map(int, np.flatnonzero((ct != 0).any(axis=1))):
         f_i = functional[:, i]
-        if not np.isfinite(f_i).all():  # S row of a port without R
+        # S row of a port without R; a rank without port DOFs sees no NaN
+        if not _mpi.agree_all(layout.comm, flag=bool(np.isfinite(f_i).all())):
             undefined |= ct[i] != 0
             continue
         if own is not None:
             rhs, x = own
-            scale = _reciprocal_scale(f_i, i, columns, rhs)
+            scale = _reciprocal_scale(f_i, i, columns, rhs, layout)
             if scale is not None:  # reciprocity: no solve
                 free += np.outer(scale * x[:, columns.index(i)], ct[i])
                 continue
@@ -182,6 +193,8 @@ class PortNetwork:
         reciprocal: Whether the operator is complex symmetric (no Bloch
             wave vector), so that `pullback` may take S rows from the
             solutions by reciprocity.
+        layout: The DOF layout of the excitation and output vectors, load columns
+            under ranks; S is their pairing with state columns.
         deembedding: ``(n_freq, n_ports)``: S_ij is scaled by ``d_i d_j``
             (1 for lumped; a wave port's ``exp(gamma offset)`` moves its
             reference plane).
@@ -193,6 +206,7 @@ class PortNetwork:
     columns: list[int]
     z_ref: np.ndarray
     reciprocal: bool = True
+    layout: DofLayout = ONE_PROCESS
     deembedding: np.ndarray = dataclasses.field(init=False)
 
     def __post_init__(self) -> None:
@@ -285,6 +299,7 @@ class PortNetwork:
             columns,
             z_ref,
             reciprocal=operator.symmetric,
+            layout=operator.layout or ONE_PROCESS,
         )
 
     def rhs(self, omega: float) -> np.ndarray:
@@ -295,7 +310,8 @@ class PortNetwork:
 
     def outgoing(self, omega: float, x: np.ndarray) -> np.ndarray:
         """``(n_ports, width)``: each port's outgoing wave in the solutions ``x``."""
-        return self._rows(omega, (t.vectors.T @ x for t in self.outputs))
+        pair = self.layout.pair
+        return self._rows(omega, (pair(t.vectors, x) for t in self.outputs))
 
     def reduced_functional(
         self, omega: float, projected: Sequence[np.ndarray]
@@ -350,7 +366,8 @@ class PortNetwork:
             f = functional[:, c.index]
             if (
                 rhs is not None
-                and _reciprocal_scale(f, c.index, self.columns, rhs) is not None
+                and _reciprocal_scale(f, c.index, self.columns, rhs, self.layout)
+                is not None
             ):
                 continue
             loads.append(f)
@@ -372,6 +389,7 @@ class PortNetwork:
             self.columns,
             self.functional(omega),
             own=(self.rhs(omega), x) if self.reciprocal else None,
+            layout=self.layout,
         )
 
     @property

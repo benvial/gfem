@@ -100,6 +100,7 @@ class SystemOperator:
             operator.space,
             [piece.integrand for piece in operator.pieces],
             symmetric=operator.symmetric,
+            comm=operator.built.comm,
         )
         self._handles: dict[int, Handle] = {}
         self._adjoint_sweep: SystemSweep | None = None
@@ -214,6 +215,7 @@ class SystemOperator:
             op.form(omega),
             op.space.FreeDofs(),
             piece_sum=PieceSum(self._pieces, weights),
+            layout=op.layout,
         )
 
     def corrections(self, omega: float) -> tuple[np.ndarray, np.ndarray]:

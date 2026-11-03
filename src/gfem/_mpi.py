@@ -11,13 +11,18 @@ ends the job through `section` or the abort hook.
 
 from __future__ import annotations
 
+import collections
 import collections.abc
 import contextlib
+import hashlib
 import itertools
 import os
+import re
 import sys
+import time
 import traceback
 import warnings
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -33,12 +38,16 @@ __all__ = [
     "AgreedError",
     "agree_all",
     "agree_any",
+    "agree_min",
     "bcast_arrays",
     "comm_key",
+    "default_threads",
+    "entry_check",
     "install_abort_hook",
     "launched_tasks",
     "node_budget",
     "node_bytes",
+    "node_share",
     "rank",
     "reduce_bcast",
     "refuse",
@@ -91,7 +100,11 @@ _REFUSALS = {
         "BDDC at order 1 has a coarse problem as large as the system, so it is "
         f"refused above one rank: use linear_solver='direct' or order=2, {_COPIES}."
     ),
-    "driven": f"A distributed driven solve is not built yet: {_COPIES}.",
+    "driven": (
+        "A distributed driven solve runs on lumped ports with linear_solver='auto' or "
+        "'bddc_gmres' so far, with no gradient, kept field or result bundle: "
+        f"{_COPIES}."
+    ),
     "port_mode": f"A distributed port mode solve is not built yet: {_COPIES}.",
 }
 
@@ -192,6 +205,8 @@ def refuse(model: Any, problem: Any, options: Any) -> None:
     Raises:
         DistributedUnsupportedError: Its ``feature`` names what has no path.
     """
+    from gfem._boundaries import LumpedPort
+    from gfem._checks import is_traced
     from gfem.problems import Driven, Eigenmode, Electrostatic, PortMode
 
     if isinstance(problem, Eigenmode):
@@ -214,8 +229,14 @@ def refuse(model: Any, problem: Any, options: Any) -> None:
             refuse_feature("device")
         if options.order == 1 and options.linear_solver in ("auto", "bddc_gmres"):
             refuse_feature("bddc_order_1")
-        # No distributed solve exists yet: no silent copies either.
-        refuse_feature("driven")
+        # Not built yet: no silent copies either.
+        if (
+            options.linear_solver not in ("auto", "bddc_gmres")
+            or problem.kept_frequencies
+            or not all(isinstance(port, LumpedPort) for port in model.ports)
+            or is_traced((model, problem))
+        ):
+            refuse_feature("driven")
 
 
 def refuse_feature(feature: str) -> None:
@@ -240,6 +261,13 @@ def agree_all(comm: Any, *, flag: bool) -> bool:
     if comm is None:
         return bool(flag)
     return comm.allreduce(bool(flag), op=_load_mpi().LAND)
+
+
+def agree_min(comm: Any, value: int) -> int:
+    """The smallest ``value`` over ranks, the same answer on every rank."""
+    if comm is None:
+        return value
+    return comm.allreduce(value, op=_load_mpi().MIN)
 
 
 def reduce_bcast(comm: Any, values: Any) -> Any:
@@ -322,6 +350,160 @@ def node_budget(comm: Any, local: int) -> int:
     if comm is None:
         return int(local)
     return comm.allreduce(int(local), op=_load_mpi().MIN)
+
+
+def _sibling_core(cpu: int) -> str:
+    """A name of ``cpu``'s physical core; itself when the kernel does not say."""
+    path = f"/sys/devices/system/cpu/cpu{cpu}/topology/thread_siblings_list"
+    try:
+        return Path(path).read_text().strip()
+    except OSError:
+        return str(cpu)
+
+
+def node_share(
+    mask: frozenset[int],
+    node_masks: collections.abc.Sequence[frozenset[int]],
+    core: collections.abc.Callable[[int], collections.abc.Hashable] = _sibling_core,
+) -> int:
+    """A rank's threads: its mask's physical cores over the ranks holding that mask.
+
+    ADR 0056's count alone reads 14 on 7 cores under ``--cpu-bind=cores`` and 224 per
+    rank under ``--cpu-bind=none``.
+
+    Args:
+        mask: The CPUs this rank may run on.
+        node_masks: Each rank's mask on this node, this rank's included.
+        core: The physical core of a CPU.
+
+    Returns:
+        At least 1.
+    """
+    cores = len({core(cpu) for cpu in mask})
+    return max(1, cores // node_masks.count(mask))
+
+
+_DEFAULT_THREADS: dict[int | None, int] = {}
+
+
+def default_threads(comm: Any) -> int:
+    """``threads=None`` across ranks: one count for all, read once (ADR 0077).
+
+    ``NGS_NUM_THREADS`` if set, as ADR 0056 says, else `node_share`; then the minimum
+    over ranks. Collective on the first call on a communicator.
+    """
+    key = comm_key(comm)
+    if key in _DEFAULT_THREADS:
+        return _DEFAULT_THREADS[key]
+    mask = frozenset(os.sched_getaffinity(0))
+    node = comm.Split_type(_load_mpi().COMM_TYPE_SHARED)
+    try:
+        node_masks = node.allgather(mask)
+    finally:
+        node.Free()
+    chosen = os.environ.get("NGS_NUM_THREADS", "")
+    own = int(chosen) if chosen.isdecimal() else node_share(mask, node_masks)
+    _DEFAULT_THREADS[key] = agree_min(comm, max(1, own))
+    return _DEFAULT_THREADS[key]
+
+
+#: Seconds a rank waits at an entry check before it says so, once.
+ENTRY_PATIENCE = 60.0
+_entry_calls: collections.Counter[int | None] = collections.Counter()
+
+
+def _meet(comm: Any, call: str) -> None:
+    """Wait for every rank in Python, saying so on stderr after `ENTRY_PATIENCE`.
+
+    `if rank == 0: gfem.solve(...)` hangs in the first collective with nothing to
+    say. A slow rank is legitimate, so this only reports: it never aborts.
+    """
+    request = comm.Ibarrier()
+    start = time.monotonic()
+    pause, told = 1e-4, False
+    while not request.Test():
+        if not told and time.monotonic() - start > ENTRY_PATIENCE:
+            told = True
+            print(  # noqa: T201
+                f"gfem: rank {comm.rank}: waiting over {ENTRY_PATIENCE:g} s for the "
+                f"other ranks at {call}: every rank must make the same gfem calls.",
+                file=sys.stderr,
+                flush=True,
+            )
+        time.sleep(pause)
+        pause = min(2 * pause, 0.05)
+
+
+def _leaf_digest(leaf: Any) -> str:
+    """A digest of a pytree leaf; a tracer's bytes are not known, its shape is."""
+    from gfem._checks import is_traced
+
+    if is_traced(leaf):
+        return f"traced {leaf.shape} {leaf.dtype}"
+    array = np.asarray(leaf)
+    if array.dtype == object:
+        return _text_digest(repr(leaf))
+    digest = hashlib.blake2b(digest_size=16)
+    digest.update(f"{array.shape} {array.dtype.str}".encode())
+    digest.update(np.ascontiguousarray(array).tobytes())
+    return digest.hexdigest()
+
+
+def _text_digest(text: str) -> str:
+    """A digest of a repr, which may print an object's address."""
+    return hashlib.blake2b(
+        re.sub(r"0x[0-9a-f]+", "", text).encode(), digest_size=16
+    ).hexdigest()
+
+
+def entry_check(comm: Any, call: str, model: Any, problem: Any, options: Any) -> None:
+    """Every rank at this collective call, with the same inputs (ADR 0058).
+
+    Compares a digest of the call's number and name and of the replicated inputs, so
+    a rank that drifted is told at the door and not by a hang or a silent wrong answer.
+
+    Args:
+        comm: The resolved communicator.
+        call: The call's name.
+        model: The model, whose leaves are compared one by one.
+        problem: The problem, by its printed values.
+        options: The solver options, by their printed values.
+
+    Raises:
+        AgreedError: On every rank, naming the first input that differs.
+    """
+    import jax
+
+    _meet(comm, call)
+    key = comm_key(comm)
+    _entry_calls[key] += 1
+    leaves, _ = jax.tree_util.tree_flatten_with_path(model)
+    items = {
+        "the call": f"{_entry_calls[key]} {call}",
+        "the problem": _text_digest(repr(problem)),
+        "the options": _text_digest(repr(options)),
+        "the ports": _text_digest(repr(model.ports)),
+        "the boundaries": _text_digest(repr(model.boundaries)),
+        "the mesh's size": f"{model.mesh.tetrahedra.shape} {model.mesh.nodes.shape}",
+    }
+    items |= {
+        f"the material of {region!r}": _text_digest(repr(material))
+        for region, material in model.materials.items()
+    }
+    items |= {
+        f"the model's {jax.tree_util.keystr(path)}": _leaf_digest(leaf)
+        for path, leaf in leaves
+    }
+    everyone = comm.allgather(items)
+    for other, theirs in enumerate(everyone):
+        for name in sorted(theirs.keys() | everyone[0].keys()):
+            if theirs.get(name) != everyone[0].get(name):
+                raise AgreedError(
+                    f"At {call}, rank {other} and rank 0 hold different values of "
+                    f"{name}. Every rank must make the same gfem calls with the same "
+                    "inputs: a design update computed per rank drifts on unequal "
+                    "masks or BLAS thread counts."
+                )
 
 
 def warn(

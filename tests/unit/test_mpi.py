@@ -253,6 +253,74 @@ def test_a_refusal_under_jax_keeps_its_class(tmp_path, monkeypatch):
         jax.grad(objective)(np.ones(n))
 
 
+def test_a_lumped_port_solve_on_bddc_is_all_that_passes_so_far(tmp_path):
+    line = cases.layered_line(tmp_path)
+    frequency = gfem.Driven(5e9)
+    for solver in ("auto", "bddc_gmres"):
+        options = gfem.SolverOptions(linear_solver=solver)
+        assert _mpi.refuse(line, frequency, options) is None
+    options = gfem.SolverOptions()
+    kept = gfem.Driven(5e9, keep_fields=[5e9])
+    for model, problem, chosen in (
+        (line, frequency, gfem.SolverOptions(linear_solver="direct")),
+        (line, frequency, gfem.SolverOptions(linear_solver="petsc")),
+        (line, kept, options),
+        (line.replace(ports=[gfem.WavePort("w", "port1")]), frequency, options),
+    ):
+        with pytest.raises(gfem.DistributedUnsupportedError) as caught:
+            _mpi.refuse(model, problem, chosen)
+        assert caught.value.feature == "driven"
+
+
+def test_a_bundle_stays_refused_above_one_rank(tmp_path, monkeypatch):
+    line = cases.layered_line(tmp_path)
+    use_mpi(monkeypatch, fake_mpi())
+    with pytest.raises(gfem.DistributedUnsupportedError):
+        gfem.Job(line, gfem.Driven(5e9)).run(tmp_path / "out", comm=Stub(4))
+
+
+#: One MN5 node's hyperthreads (ticket 18): CPU c and c + 112 share a core.
+def _mn5_core(cpu: int) -> int:
+    return cpu % 112
+
+
+def _cpus(text: str) -> frozenset[int]:
+    out = set()
+    for part in text.split(","):
+        first, _, last = part.partition("-")
+        out.update(range(int(first), int(last or first) + 1))
+    return frozenset(out)
+
+
+#: Masks read under each launcher (ticket 18, job 48435924), and each rank's threads.
+RECORDED_MASKS = [
+    ("srun -c7", ["0-6", "56-62"], 7),
+    ("srun -c7 --cpu-bind=cores", ["0-6,112-118", "56-62,168-174"], 7),
+    ("srun --cpu-bind=none, 16 ranks", ["0-223"] * 16, 7),
+    ("mpirun -n 16", ["0-55,112-167", "56-111,168-223"] * 8, 7),
+    ("mpirun -n 16 --bind-to none", ["0-223"] * 16, 7),
+    ("mpirun -n 8 --map-by ppr:4:socket:PE=14", ["0-13,112-125", "14-27,126-139"], 14),
+    ("mpirun -n 2", ["0,112", "1,113"], 1),
+    ("one core, 4 ranks on it", ["0,112"] * 4, 1),
+]
+
+
+@pytest.mark.parametrize(
+    ("masks", "threads"),
+    [row[1:] for row in RECORDED_MASKS],
+    ids=[row[0] for row in RECORDED_MASKS],
+)
+def test_a_ranks_threads_are_its_physical_cores_over_the_ranks_sharing_them(
+    masks, threads
+):
+    node = [_cpus(mask) for mask in masks]
+    assert {_mpi.node_share(mask, node, _mn5_core) for mask in node} == {threads}
+
+
+def test_the_threads_rule_reads_the_kernels_siblings_or_each_cpu_alone():
+    assert _mpi.node_share(frozenset({123456}), [frozenset({123456})]) == 1
+
+
 def test_an_unknown_problem_stays_a_type_error(tmp_path, monkeypatch):
     line = cases.layered_line(tmp_path)
     use_mpi(monkeypatch, fake_mpi())

@@ -23,7 +23,7 @@ from typing import Any
 import jax.numpy as jnp
 import numpy as np
 
-from gfem import _codec
+from gfem import _codec, _mpi
 from gfem._boundaries import (
     PEC,
     PMC,
@@ -125,6 +125,9 @@ class Job:
         options = self.options
         if device is not None:
             options = dataclasses.replace(options, device=device)
+        if out is not None and _mpi.resolve_comm(comm) is not None:
+            # every rank would write one bundle
+            _mpi.refuse_feature("driven")
         start = time.perf_counter()
         result = solve(self.model, self.problem, options=options, comm=comm)
         elapsed = time.perf_counter() - start

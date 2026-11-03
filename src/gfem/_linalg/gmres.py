@@ -25,6 +25,13 @@ pool has at most ``MAX_THREADS`` threads (`_ScipyOpenBlas.max_threads`).
 A lucky breakdown (the new direction in the Krylov space) follows NGSolve
 upstream 3c33638dff: a relative test, the rotation applied and the stopping
 test called before the loop leaves, so the iterate is right.
+
+Under ranks (a `gfem._linalg.layout.RankLayout`) the iteration is the same. Every
+Krylov vector is a state, so its norm and its coefficients are sums over owned
+entries, reduced to rank 0 and broadcast (`_OwnedBasis`): each decision then reads an
+agreed value, and the residual history equals one process's (ADR 0069). NGSolve's own
+``GMRESSolver`` is no substitute: the wheel's parallel inner product conjugates the
+other operand, which still converges, in more iterations.
 """
 
 from __future__ import annotations
@@ -46,6 +53,9 @@ import ngsolve as ngs
 import numpy as np
 from ngsolve import Matrix, Vector
 from ngsolve.krylovspace import GMRESSolver
+
+from gfem import _mpi
+from gfem._linalg.layout import ONE_PROCESS, DofLayout
 
 #: Krylov basis vectors per NumPy block: at most BLOCK - 1 spare vectors
 #: (1.1 GB at 10 M complex DOFs).
@@ -338,6 +348,32 @@ class _Basis:
         return h + h2
 
 
+class _OwnedBasis(_Basis):
+    """The basis under ranks: norms and coefficients sum over owned entries.
+
+    A rank with no DOFs has no column ranges, so its coefficients are a sized zero
+    array here, and it still joins each reduction.
+    """
+
+    def __init__(
+        self, n: int, dtype: np.dtype, cols: _Columns, kernel, layout: DofLayout
+    ) -> None:
+        super().__init__(n, dtype, cols, kernel)
+        self.comm = layout.comm
+        self.owned = np.asarray(layout.owners, dtype=np.float64)
+
+    def norm(self, q: np.ndarray) -> float:
+        """The 2-norm of the state ``q``, the same on every rank."""
+        local = super().norm(q * self.owned)
+        return sqrt(_mpi.reduce_bcast(self.comm, np.array([local * local]))[0])
+
+    def _coefficients(self, q: np.ndarray) -> np.ndarray:
+        h = np.zeros(self.k, self.dtype)
+        if self.n:
+            h[:] = super()._coefficients(q * self.owned)
+        return _mpi.reduce_bcast(self.comm, h)
+
+
 def _zeros(n: int, is_complex: bool) -> Any:
     """An NGSolve vector of ``n`` zeros."""
     out = Vector(n, is_complex)
@@ -386,8 +422,10 @@ class Gmres(GMRESSolver):
         tol: float | None = None,
         atol: float | None = None,
         maxiter: int = 100,
+        layout: DofLayout = ONE_PROCESS,
     ) -> None:
         super().__init__(mat, pre, tol=tol, atol=atol, maxiter=maxiter)
+        self._layout = layout
 
     def _SolveImpl(  # noqa: N802 (NGSolve's name)
         self, rhs: ngs.BaseVector, sol: ngs.BaseVector
@@ -406,6 +444,12 @@ class Gmres(GMRESSolver):
             ) as pool:
                 return self._gmres(rhs, sol, _Columns(n, threads, pool), kernel)
 
+    def _basis(self, n: int, dtype: np.dtype, cols: _Columns, kernel) -> _Basis:
+        """The Krylov basis, whose products are this solve's layout's."""
+        if self._layout.comm is None:
+            return _Basis(n, dtype, cols, kernel)
+        return _OwnedBasis(n, dtype, cols, kernel, self._layout)
+
     def _gmres(self, rhs, sol, cols: _Columns, kernel) -> ngs.BaseVector:
         """NGSolve 6.2.2608's iteration, on the blocked basis."""
         is_complex = rhs.is_complex
@@ -417,7 +461,7 @@ class Gmres(GMRESSolver):
         tmp.data = rhs - A * sol
         r.data = pre * tmp
         ra = r.FV().NumPy()
-        Q = _Basis(len(rhs), ra.dtype, cols, kernel)
+        Q = self._basis(len(rhs), ra.dtype, cols, kernel)
         r_norm = Q.norm(ra)
         if self.CheckResidual(abs(r_norm)):
             return sol

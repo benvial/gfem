@@ -155,7 +155,7 @@ def solve_vjp(rule: Any, model: Any, problem: Any) -> dict[str, jax.Array]:
             budget = rule.options.retain_memory
             if budget is None:
                 budget = default_retain_memory()
-            key = ENTRIES.put(entry, budget)
+            key = ENTRIES.put(entry, budget, getattr(rule, "comm", None))
         arrays = tuple(
             np.asarray(outputs[n], dtype=s.dtype).reshape(s.shape)
             for n, s in zip(names, out_specs, strict=True)

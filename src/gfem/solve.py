@@ -9,7 +9,12 @@ from gfem import _mpi
 from gfem._adjoint import solve_vjp
 from gfem._checks import is_traced
 from gfem._periodic import check_nodes
-from gfem.errors import LinearSolverConvergenceError
+from gfem.errors import (
+    LinearSolverConvergenceError,
+    MeshQualityError,
+    PortGeometryError,
+    RegionNotFoundError,
+)
 from gfem.model import Model
 from gfem.options import SolverOptions
 from gfem.shape import _check_quality
@@ -24,6 +29,9 @@ if TYPE_CHECKING:
     )
 
 __all__ = ["solve"]
+
+#: A forward's errors that every rank raises by itself, from replicated inputs alone.
+_DETERMINISTIC = (MeshQualityError, PortGeometryError, RegionNotFoundError)
 
 
 @overload
@@ -99,6 +107,8 @@ def solve(
             distributed path; ``feature`` names what, the message the remedy.
         SolverUnavailableError: Launched on several ranks without a usable
             mpi4py and Open MPI.
+        gfem._mpi.AgreedError: On several ranks, the ranks hold different inputs;
+            the message names one.
         RegionNotFoundError: The problem names a region the mesh lacks.
         ValueError: The problem does not fit the model; the message gives
             the remedy.
@@ -119,21 +129,33 @@ def solve(
         raise TypeError(
             f"options must be a gfem.SolverOptions, got {type(options).__name__}."
         )
-    if _mpi.resolve_comm(comm) is not None:
+    resolved = _mpi.resolve_comm(comm)
+    if resolved is not None:
         _mpi.refuse(model, problem, options)
-    rule = _rule_class(problem)(model, problem, options)
+    rule_class = _rule_class(problem)
+    if resolved is None:
+        rule = rule_class(model, problem, options)
+    else:
+        _mpi.entry_check(resolved, "solve", model, problem, options)
+        rule = rule_class(model, problem, options, comm=resolved)
     if is_traced((model, problem)):
         return rule.result(solve_vjp(rule, model, problem))
     # A moved mesh must keep its periodic pairs and stay valid on the solve
     # domain.
     check_nodes(model.mesh.nodes, model._periodic)  # noqa: SLF001
-    _check_quality(model.mesh, model._domain.active, stacklevel=3)  # noqa: SLF001
+    _check_quality(
+        model.mesh,
+        model._domain.active,  # noqa: SLF001
+        stacklevel=3,
+        comm=resolved,
+    )
     # a uniform sweep's partial result, built here: never in a JAX callback
     partial_result = getattr(rule, "partial_result", None)
     if partial_result is not None:
         rule.keeps_partial = True
     try:
-        outputs, _ = rule.forward(model, keep=False)
+        with _mpi.section(resolved, agreed=(*_mpi.AGREED_ERRORS, *_DETERMINISTIC)):
+            outputs, _ = rule.forward(model, keep=False)
     except LinearSolverConvergenceError as err:
         if partial_result is not None:
             err.result = partial_result(err)

@@ -10,7 +10,6 @@ recipe in the docs).
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable, Sequence
 from types import ModuleType
 from typing import Any, Literal, get_args
@@ -20,7 +19,7 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as sp
 
-from gfem import _morph, _periodic
+from gfem import _morph, _mpi, _periodic
 from gfem._boundaries import surfaces_of
 from gfem._checks import is_traced
 from gfem._pytree import readonly
@@ -109,7 +108,11 @@ def quality(mesh: Mesh) -> jax.Array:
 
 
 def _check_quality(
-    mesh: Mesh, active: np.ndarray | None = None, *, stacklevel: int = 2
+    mesh: Mesh,
+    active: np.ndarray | None = None,
+    *,
+    stacklevel: int = 2,
+    comm: Any = None,
 ) -> None:
     """Raise on an inverted element, warn on one far below its imported quality.
 
@@ -117,6 +120,7 @@ def _check_quality(
         mesh: The mesh to check, with concrete node coordinates.
         active: Per tet, whether it counts (the solve domain); default all.
         stacklevel: Passed on to `warnings.warn`, counted from the caller.
+        comm: The resolved communicator: rank 0 warns (`gfem._mpi.warn`).
 
     Raises:
         MeshQualityError: An element is inverted or flat.
@@ -151,7 +155,7 @@ def _check_quality(
         msg = _quality_message(
             mesh, nodes=nodes, worst=worst, q=q, q0=q0, what=what, fatal=False
         )
-        warnings.warn(msg, MeshQualityWarning, stacklevel=stacklevel + 1)
+        _mpi.warn(comm, msg, MeshQualityWarning, stacklevel=stacklevel + 1)
 
 
 def _quality_message(

@@ -20,6 +20,12 @@ preconditioner to a tolerance `REUSED_TOLERANCE` times tighter, caps every
 warm solve there from that count, and sets it up again when GMRES iterations
 grow past one setup's worth. A handle prepared without
 reuse sets BDDC up at each `BddcHandle.refactorize`.
+
+Under ranks (an operator with a layout) BDDC's coarse problem is factored on rank
+0 by the same rule, GMRES runs on owned entries (`gfem._linalg.gmres`), and every
+decision above reads an agreed value: the iterations, the residuals and the norms of
+`gfem._linalg.layout`. Each rank's BLAS runs at its threads in a setup and at one
+thread in a solve, whose coarse apply gains nothing from them (ADR 0076).
 """
 
 from __future__ import annotations
@@ -29,11 +35,13 @@ import math
 import ngsolve as ngs
 import numpy as np
 
+from gfem import _mpi
 from gfem._linalg import Operator, Symmetry
 from gfem._linalg.base import (
     NgsHandle,
     equals_its_transpose,
     host_bytes,
+    local_matrix,
     same_free_dofs,
 )
 from gfem._linalg.direct import GENERAL_INVERSE, INVERSE
@@ -108,7 +116,7 @@ def _coarse_inverse(
 
 
 def _set_up(
-    form: ngs.BilinearForm, symmetry: Symmetry, *, columns: int
+    form: ngs.BilinearForm, symmetry: Symmetry, *, columns: int, comm=None
 ) -> ngs.Preconditioner:
     """Register BDDC on ``form`` and assemble it, which sets BDDC up.
 
@@ -116,11 +124,14 @@ def _set_up(
     factorization (`_coarse_inverse`), chosen from NGSolve's threads and the
     ``columns`` the setup is expected to serve. (``coarsetype="direct"`` is
     not set: on the driven H(curl) reference it made the setup 5x slower and
-    GMRES take 68 iterations, not 49.)
+    GMRES take 68 iterations, not 49.) Across ranks, all name one inverse.
     """
     is_complex = bool(form.space.is_complex)
     inverse = _coarse_inverse(
-        symmetry, is_complex=is_complex, threads=ngs.GetNumThreads(), columns=columns
+        symmetry,
+        is_complex=is_complex,
+        threads=_mpi.agree_min(comm, ngs.GetNumThreads()),
+        columns=columns,
     )
     preconditioner = ngs.Preconditioner(form, "bddc", inverse=inverse)
     form.Assemble()
@@ -184,7 +195,10 @@ class BddcHandle(NgsHandle):
         """
         form = operator.form
         space = form.space
-        if not same_free_dofs(operator.freedofs, space.FreeDofs()):
+        if operator.layout is not None:
+            self.layout = operator.layout
+        same = same_free_dofs(operator.freedofs, space.FreeDofs())
+        if not _mpi.agree_all(self.layout.comm, flag=same):
             raise ValueError(
                 "BDDC fixes the Dirichlet DOFs of the space, so the operator's free "
                 "DOFs must be the space's FreeDofs(); build the space with "
@@ -193,7 +207,8 @@ class BddcHandle(NgsHandle):
         self._width = width
         self.reuse = reuse
         self._expected_columns = self._columns_per_setup(solves)
-        preconditioner = _set_up(form, symmetry, columns=self._expected_columns)
+        self.symmetry = symmetry
+        preconditioner = self._set_up(form)
         is_complex = bool(space.is_complex)
         super().__init__(form.mat, operator.freedofs, symmetry, is_complex=is_complex)
         self.tolerance = tolerance
@@ -206,6 +221,16 @@ class BddcHandle(NgsHandle):
         Without reuse every refactorization sets BDDC up for one solve.
         """
         return self._width * (solves if self.reuse else 1)
+
+    def _set_up(self, form: ngs.BilinearForm) -> ngs.Preconditioner:
+        """`_set_up` on ``form``, every BLAS at this rank's threads under ranks."""
+        with self.layout.blas_threads(ngs.GetNumThreads()):
+            return _set_up(
+                form,
+                self.symmetry,
+                columns=self._expected_columns,
+                comm=self.layout.comm,
+            )
 
     def _hold(self, form: ngs.BilinearForm, preconditioner) -> None:
         """Solve ``form``'s matrix on a preconditioner just set up from it."""
@@ -221,7 +246,7 @@ class BddcHandle(NgsHandle):
         """Set BDDC up again on ``form`` (assembled again), and hold it."""
         # release the old setup first
         self._solver = self._preconditioner = self._matrix = self._form = None
-        self._hold(form, _set_up(form, self.symmetry, columns=self._expected_columns))
+        self._hold(form, self._set_up(form))
 
     def _held(self) -> tuple[ngs.BaseMatrix, ngs.Preconditioner, ngs.BilinearForm]:
         """The matrix, its preconditioner and its form.
@@ -274,8 +299,16 @@ class BddcHandle(NgsHandle):
         """
         tolerance = self.tolerance if tolerance is None else tolerance
         if reference is None:
-            return Gmres(matrix, pre.mat, tol=tolerance, maxiter=maxiter)
-        return Gmres(matrix, pre.mat, atol=tolerance * reference, maxiter=maxiter)
+            return Gmres(
+                matrix, pre.mat, tol=tolerance, maxiter=maxiter, layout=self.layout
+            )
+        return Gmres(
+            matrix,
+            pre.mat,
+            atol=tolerance * reference,
+            maxiter=maxiter,
+            layout=self.layout,
+        )
 
     def refactorize(self, operator: Operator, *, solves: int | None = None) -> None:
         """Assemble ``operator`` and solve it on the held preconditioner.
@@ -387,7 +420,7 @@ class BddcHandle(NgsHandle):
         self, B: np.ndarray, tolerance: float | None, x0: np.ndarray | None = None
     ) -> tuple[np.ndarray, tuple[int, ...]]:
         _, _, form = self._held()
-        with self._lock:  # reentrant: _map and _warm take it again
+        with self._lock, self.layout.blas_threads(1):  # reentrant: _map, _warm
             if self._reused and (x0 is None or self.symmetry == "hermitian"):
                 # only a warm start pays for a reused preconditioner
                 self._build(form)
@@ -422,6 +455,22 @@ class BddcHandle(NgsHandle):
         if measure and iterations and self._reference_iterations is None:
             self._reference_iterations = max(iterations)
 
+    def _drop_a_bad_guess(self, matrix, pre, b, x, r) -> float:
+        """``|P b|``, after zeroing ``x`` if its residual exceeds that (worse than 0).
+
+        ``r`` is scratch space.
+        """
+        layout = self.layout
+        r.data = pre.mat * b
+        reference = layout.state_norm(r)
+        r.data = b - matrix * x
+        b_res = r.CreateVector()
+        b_res.data = pre.mat * r
+        if layout.state_norm(b_res) >= reference:
+            x[:] = 0
+            layout.mark_state(x)
+        return reference
+
     def _warm(
         self, B: np.ndarray, x0: np.ndarray, *, measure: bool, prepared: float
     ) -> tuple[np.ndarray, tuple[int, ...]]:
@@ -453,7 +502,13 @@ class BddcHandle(NgsHandle):
         guesses, _ = self._columns(x0)
         matrix, _, _ = self._held()
         out = np.zeros(cols.shape, dtype=np.complex128 if self._complex else float)
-        b, x, r = (matrix.CreateColVector() for _ in range(3))
+        # a load, a state, and what the first preconditioned residual overwrites
+        b, x, r = (
+            matrix.CreateColVector(),
+            matrix.CreateRowVector(),
+            matrix.CreateColVector(),
+        )
+        layout = self.layout
         slack = _slack(cols.shape[1])
         stale: list[int] = []  # per column, on the reused preconditioner
         fresh: list[int] = []  # per column, after a setup at this matrix
@@ -474,14 +529,10 @@ class BddcHandle(NgsHandle):
                     cap = min(cap, n_ref + 2 * slack)
                     tolerance = tight
                 b.FV().NumPy()[:] = cols[:, j]
-                r.data = pre.mat * b
-                reference = ngs.Norm(r)
+                layout.mark_load(b)
                 x.FV().NumPy()[:] = guesses[:, j]
-                r.data = b - matrix * x
-                b_res = r.CreateVector()
-                b_res.data = pre.mat * r
-                if ngs.Norm(b_res) >= reference:
-                    x[:] = 0
+                layout.mark_state(x)
+                reference = self._drop_a_bad_guess(matrix, pre, b, x, r)
                 solver = self._gmres(
                     matrix, pre, maxiter=cap, reference=reference, tolerance=tolerance
                 )
@@ -493,7 +544,7 @@ class BddcHandle(NgsHandle):
                     self._build(form)
                     matrix, pre, _ = self._held()
                     r.data = pre.mat * b
-                    reference = ngs.Norm(r)
+                    reference = layout.state_norm(r)
                     solver = self._gmres(
                         matrix, pre, maxiter=self.maxiter, reference=reference
                     )
@@ -517,7 +568,8 @@ class BddcHandle(NgsHandle):
         pre = self._preconditioner
         if self._solver is None or self._matrix is None or pre is None:
             return 0
-        return host_bytes(self._matrix) + host_bytes(pre.mat)
+        matrix = local_matrix(self._matrix, self.layout.comm)
+        return host_bytes(matrix) + host_bytes(pre.mat)
 
     def _release(self) -> None:
         """Drop the preconditioner and the form; under the lock."""
