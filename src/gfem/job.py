@@ -223,7 +223,8 @@ class Job:
                     raise ValueError(f"{path} is not a gfem job file (no job in it).")  # noqa: TRY004, TRY301
             except (OSError, TypeError, ValueError) as err:
                 # all ranks decode one document, and the mesh's errors were agreed
-                raise _mpi.agreed(err) from err.__cause__
+                _mpi.agreed(err)
+                raise
         return job
 
 
