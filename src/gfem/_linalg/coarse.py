@@ -186,7 +186,7 @@ class CoarseMumps(ngs.BaseMatrix):
         return self._source.CreateColVector()
 
     def Mult(self, x: Any, y: Any) -> None:  # noqa: N802 - NGSolve's name
-        """``y`` = the inverse on ``x``: exchange, owned rows, MUMPS, owned, exchange."""
+        """``y`` = the inverse on ``x``: exchange, owned, MUMPS, owned, exchange."""
         if self._freed:
             raise RuntimeError("This coarse factorization was freed.")
         with _petsc.LOCK:

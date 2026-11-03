@@ -7,6 +7,7 @@ Every test needs complex petsc4py: skipped without it (the ``petsc`` marker).
 
 import dataclasses
 import re
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -48,18 +49,35 @@ def _free(space):
     return np.array(list(space.FreeDofs()))
 
 
+def _scotch_version() -> tuple[int, int, int]:
+    """The version of the stack's Scotch, from its header."""
+    import petsc4py
+
+    header = Path(petsc4py.get_config()["PETSC_DIR"], "include", "scotch.h").read_text()
+    fields = ("SCOTCH_VERSION", "SCOTCH_RELEASE", "SCOTCH_PATCHLEVEL")
+    major, minor, patch = (
+        int(re.search(rf"#define\s+{name}\s+(\d+)", header)[1]) for name in fields
+    )
+    return major, minor, patch
+
+
 def test_the_petsc_stack_is_complex_with_mumps_and_no_non_free_package():
-    # The licence control (no non-free or non-commercial dependency) for a
-    # stack the licence gate cannot see (MUMPS and METIS are compiled into
-    # the petsc wheel): what tools/petsc_wheelhouse.sh builds, and none of
-    # the packages an MPI build pulls in (ParMETIS is not free for
-    # commercial use).
+    # The licence control (no non-free or non-commercial dependency) for a stack the
+    # licence gate cannot see (what tools/petsc_wheelhouse.sh compiles into the petsc
+    # wheel). ParMETIS, which is not free for commercial use, is on neither stack.
     PETSc = _petsc.require_petsc()
     assert np.dtype(PETSc.ScalarType) == np.complex128
     assert PETSc.Sys.hasExternalPackage("mumps")
     assert PETSc.Sys.hasExternalPackage("metis")
-    for package in ("parmetis", "ptscotch", "scalapack"):
-        assert not PETSc.Sys.hasExternalPackage(package), package
+    assert not PETSc.Sys.hasExternalPackage("parmetis")
+    has_mpi = _petsc.has_mpi()
+    for package in ("ptscotch", "scalapack"):
+        assert PETSc.Sys.hasExternalPackage(package) is has_mpi, package
+    if has_mpi:
+        # 2^31 graph entries pass near 54 M DOF; PETSc's own Scotch 7.0.15 crashes
+        # MUMPS's parallel analysis
+        assert np.dtype(PETSc.IntType) == np.int64
+        assert _scotch_version() >= (7, 0, 18)
 
 
 def test_petsc_solves_many_right_hand_sides_on_the_free_dofs(built):

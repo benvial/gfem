@@ -121,15 +121,15 @@ def _on_a_route(directory, frequencies, route):
     """
     factored = []
     if route == "rank 0":
-        bddc._coarse_on_mumps = lambda *_, **__: False  # noqa: SLF001
+        bddc._coarse_on_mumps = lambda *_, **__: False
     else:
         coarse.reduction = REDUCTIONS[route]
         set_up = coarse.CoarseMumps.set_up
 
         def spy(self):
             set_up(self)
-            pc = self._ksp.getPC()  # noqa: SLF001
-            factored.append((pc.getType(), self._factor))  # noqa: SLF001
+            pc = self._ksp.getPC()
+            factored.append((pc.getType(), self._factor))
 
         coarse.CoarseMumps.set_up = spy
     return (*_s_and_iterations(directory, frequencies), factored)
@@ -179,16 +179,16 @@ def test_a_sweep_reusing_bddc_on_either_coarse_route(tmp_path):
 
 
 def _forced_coarse_failures(directory, route, failures):
-    """INFOG(1)=-9 ``failures`` times on the real route: a retry's count, or the error."""
+    """INFOG(1)=-9 ``failures`` times on the real route: a retry's count."""
     coarse.reduction = REDUCTIONS[route]
     calls = []
-    real = coarse.CoarseMumps._agreed_failure  # noqa: SLF001
+    real = coarse.CoarseMumps._agreed_failure
 
     def forced(self):
         calls.append(1)
         return coarse.MUMPS_WORKSPACE_ERROR if len(calls) <= failures else real(self)
 
-    coarse.CoarseMumps._agreed_failure = forced  # noqa: SLF001
+    coarse.CoarseMumps._agreed_failure = forced
     options = cases.tight("bddc_gmres", threads=1)
     problem = gfem.Driven(FREQUENCY)
     try:
@@ -209,27 +209,31 @@ def test_a_coarse_workspace_too_small_retries_on_a_new_ksp(tmp_path, route):
     assert np.abs(s - s_one).max() < S_GATE * np.abs(s_one).max()
 
 
-def _working_memory_of_one_megabyte(directory, route):
+def _a_singular_coarse_problem(directory, route):
     """A real failure in MUMPS, not a forced value: the real paths must see it."""
     coarse.reduction = REDUCTIONS[route]
-    coarse.RANK_MUMPS_OPTIONS = (
-        *coarse.RANK_MUMPS_OPTIONS,
-        ("mat_mumps_icntl_23", 1),
-    )
+    built = coarse.distributed_aij
+
+    def zero(*args):
+        aij, index = built(*args)
+        aij.zeroEntries()
+        return aij, index
+
+    coarse.distributed_aij = zero
     options = cases.tight("bddc_gmres", threads=1)
     problem = gfem.Driven(FREQUENCY)
     try:
         gfem.solve(cases.layered_line(directory), problem, options=options)
     except _mpi.AgreedError as err:
         return str(err), _world().allreduce(1)
-    raise AssertionError("one megabyte factored the coarse problem")
+    raise AssertionError("a zero matrix factored")
 
 
 @needs_stack
 @pytest.mark.parametrize("route", [EVERY_RANK, ONE_RANK])
 def test_a_factorization_that_fails_is_an_agreed_error_with_no_nan(tmp_path, route):
     (text, ranks), *_ = on_ranks(
-        _working_memory_of_one_megabyte, tmp_path, route, ranks=4, limit=300
+        _a_singular_coarse_problem, tmp_path, route, ranks=4, limit=300
     )
     assert "coarse problem failed" in text
     assert ranks == 4

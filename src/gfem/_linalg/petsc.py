@@ -144,7 +144,7 @@ class FreeNumbering:
         return rows
 
     def state(self, rows: np.ndarray) -> np.ndarray:
-        """The state column of owned rows: zero on fixed DOFs, one neighbour exchange."""
+        """The state column of owned rows: 0 on fixed DOFs, one neighbour exchange."""
         fv = self._work.FV().NumPy()
         fv[:] = 0
         values = rows[self._position]
@@ -262,7 +262,7 @@ class PetscHandle(PlannedHandle):
                 raise
 
     def _defaults(self) -> tuple[tuple[str, Any], ...]:
-        """gfem's options on this communicator, under the user's."""
+        """Gfem's options on this communicator, under the user's."""
         return DEFAULTS
 
     def _new_ksp(self) -> None:
@@ -593,9 +593,7 @@ class PetscHandle(PlannedHandle):
 
     def _diverged(self) -> bool:
         """Whether the last solve diverged, the same answer on every rank."""
-        return _mpi.agree_any(
-            self.layout.comm, flag=self._ksp.getConvergedReason() < 0
-        )
+        return _mpi.agree_any(self.layout.comm, flag=self._ksp.getConvergedReason() < 0)
 
     def _solve(self, b, x) -> int:
         """``KSPSolve`` of ``b`` into ``x``; its iterations."""
@@ -768,7 +766,7 @@ class RankPetscHandle(PetscHandle):
         return 0
 
     def _retry_with_more_workspace(self) -> None:
-        """A new KSP, inside the scope of the handle's options, with ICNTL(14) doubled."""
+        """A new KSP, in the scope of the handle's options, with ICNTL(14) doubled."""
         PETSc = _petsc.require_petsc()
         name = "mat_mumps_icntl_14"
         options = dict(self._options)

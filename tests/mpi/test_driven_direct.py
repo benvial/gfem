@@ -145,7 +145,7 @@ def test_a_block_a_column_and_a_transposed_solve_agree(tmp_path):
 def _memory_of_a_handle(directory):
     """This rank's bytes: the sum over ranks must count MUMPS's memory once."""
     comm, _, _, handle = _handle(directory)
-    factor = handle._ksp.getPC().getFactorMatrix()  # noqa: SLF001
+    factor = handle._ksp.getPC().getFactorMatrix()
     info = int(factor.getMumpsInfo(22))
     total = int(factor.getMumpsInfog(22))
     nbytes = handle.nbytes
@@ -166,16 +166,16 @@ def test_a_handle_reports_its_rank_s_memory(tmp_path):
 def _forced_workspace_errors(directory, failures):
     """INFOG(1)=-9 ``failures`` times, on the real path: each new KSP's ICNTL(14)."""
     workspace = []
-    real = petsc_handle.RankPetscHandle._agreed_failure  # noqa: SLF001
+    real = petsc_handle.RankPetscHandle._agreed_failure
 
     def forced(self):
-        factor = self._ksp.getPC().getFactorMatrix()  # noqa: SLF001
+        factor = self._ksp.getPC().getFactorMatrix()
         workspace.append(int(factor.getMumpsIcntl(14)))
         if len(workspace) <= failures:
             return petsc_handle.MUMPS_WORKSPACE_ERROR
         return real(self)
 
-    petsc_handle.RankPetscHandle._agreed_failure = forced  # noqa: SLF001
+    petsc_handle.RankPetscHandle._agreed_failure = forced
     options = cases.tight("direct", threads=1)
     model = cases.layered_line(directory)
     problem = gfem.Driven(FREQUENCY)
@@ -260,9 +260,7 @@ def test_the_users_options_sit_over_gfems(tmp_path):
 
 @needs_stack
 def test_a_krylov_method_runs_across_ranks(tmp_path):
-    _assert_agrees(
-        tmp_path, TWO, "petsc", 3, petsc_options={"ksp_type": "gmres"}
-    )
+    _assert_agrees(tmp_path, TWO, "petsc", 3, petsc_options={"ksp_type": "gmres"})
 
 
 def _blas_in_a_factorization(directory):
@@ -432,7 +430,9 @@ def test_rank_copies_run_on_either_stack(tmp_path):
 def _copy_on_this_stack_one_process(directory):
     model = cases.layered_line(directory)
     options = gfem.SolverOptions(linear_solver="direct")
-    return np.asarray(gfem.solve(model, gfem.Driven(FREQUENCY), options=options).s.values)
+    return np.asarray(
+        gfem.solve(model, gfem.Driven(FREQUENCY), options=options).s.values
+    )
 
 
 #: mpi4py at the top: a spawned worker imports the script again.
@@ -448,7 +448,8 @@ import gradient_cases as cases
 def main():
     model = cases.layered_line(sys.argv[1])
     options = gfem.SolverOptions(linear_solver=sys.argv[2], frequency_workers=2)
-    result = gfem.solve(model, gfem.Driven([4e9, 6e9]), options=options, comm=MPI.COMM_SELF)
+    problem = gfem.Driven([4e9, 6e9])
+    result = gfem.solve(model, problem, options=options, comm=MPI.COMM_SELF)
     print("workers solved", result.s.values.shape, flush=True)
 
 
