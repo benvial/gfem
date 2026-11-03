@@ -260,7 +260,9 @@ runs through `gfem.solve` at scale, each with its machine and commit.
 What has run so far, on MareNostrum 5:
 
 - the launched tests, at 3, 4 and 8 ranks, and 16 for the direct solve, on one node;
-- the two-node job above, at 56 ranks on a small mesh.
+- the two-node job above, at 56 ranks on the 2,880 tetrahedra of `line.msh`, Open MPI
+  4.1.6, gfem at commit 11ae3c6: on each solver, what the script prints agrees with
+  one process to within 3e-12, relative.
 
 ## Limits
 
