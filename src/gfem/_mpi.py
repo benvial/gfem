@@ -106,17 +106,18 @@ _comm_keys = itertools.count()
 
 #: The page that tells how to install and launch a distributed solve.
 RECIPE = "the 'Run a distributed solve' recipe in the gfem docs"
-_COPIES = "or run independent one-process copies with comm=MPI.COMM_SELF"
+_RUN_COPIES = "run independent one-process copies with comm=MPI.COMM_SELF"
+_COPIES = f"or {_RUN_COPIES}"
 
 #: Each refusal's text. The keys are `gfem.DistributedUnsupportedError.feature`.
 _REFUSALS = {
     "adaptive_sweep": (
         f"An adaptive sweep has no distributed path: use a uniform sweep, {_COPIES}."
     ),
-    "eigenmode": f"An eigenmode solve has no distributed path: {_COPIES}.",
-    "electrostatic": f"An electrostatic solve has no distributed path: {_COPIES}.",
-    "periodic": f"A periodic model has no distributed path: {_COPIES}.",
-    "bloch": f"A Bloch wave vector has no distributed path: {_COPIES}.",
+    "eigenmode": f"An eigenmode solve has no distributed path: {_RUN_COPIES}.",
+    "electrostatic": f"An electrostatic solve has no distributed path: {_RUN_COPIES}.",
+    "periodic": f"A periodic model has no distributed path: {_RUN_COPIES}.",
+    "bloch": f"A Bloch wave vector has no distributed path: {_RUN_COPIES}.",
     "frequency_workers": (
         "Frequency workers have no distributed path: use frequency_workers=1, "
         f"one solve per communicator from comm.Split, {_COPIES}."
@@ -128,7 +129,7 @@ _REFUSALS = {
     ),
     "general_operator": (
         "Only a system equal to its transpose has a distributed solver, and this "
-        f"one has none: {_COPIES}."
+        f"one has none: {_RUN_COPIES}."
     ),
     "field_export": (
         "A field across ranks is not sampled into one object, which would hold the "
