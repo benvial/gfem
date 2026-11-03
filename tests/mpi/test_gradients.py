@@ -3,7 +3,9 @@
 Every row compares ranks with the same function in pytest's one process: gradient,
 value and each finite-difference sample bit for bit across ranks (`on_ranks`, since a
 missing rank sum raises nothing and exits 0), the gradient entry by entry to
-`GRADIENT_GATE` against one process, and `tests/finite_differences.py` unchanged.
+its solver's gate in `GATES` against one process on that solver, and
+`tests/finite_differences.py` unchanged. BDDC runs on either stack, its coarse problem
+on MUMPS where the MPI stack is; `direct` is PETSc MUMPS, on that stack only.
 """
 
 import importlib
@@ -22,14 +24,22 @@ from ranks import RanksDiffer, on_ranks
 from solver_misses import adjoint_cannot_converge_at, cannot_converge_at
 
 import gfem
-from gfem import _linalg, _mpi
+from gfem import _linalg, _mpi, _petsc
+from gfem._engine import system_operator
 from gfem._engine.cache import ENTRIES
 from gfem._engine.driven import DrivenRule
 from gfem._mpi import AgreedError
 from gfem.shape import boundary_morph
 
-#: Relative to the largest entry of the one-process gradient: ADR 0070's BDDC gate.
-GRADIENT_GATE = 1e-9
+#: Relative to the largest entry of the one-process gradient: ADR 0070's gates.
+GATES = {"bddc_gmres": 1e-9, "direct": 1e-11}
+SOLVERS = (
+    "bddc_gmres",
+    pytest.param(
+        "direct",
+        marks=pytest.mark.skipif(not _petsc.has_mpi(), reason="needs the MPI stack"),
+    ),
+)
 RANKS = (3, 4, 8)
 FREQUENCIES = (18e9, 27e9)
 WAVE_FREQUENCIES = (12e9, 24e9)
@@ -48,8 +58,21 @@ STEPS = {
 BACKWARD_ERRORS = (jax.errors.JaxRuntimeError, ValueError)
 
 
+#: The solver of the design being built and solved, in this process.
+_SOLVER = {"name": "bddc_gmres"}
+
+
 def _options(**kwargs):
-    return cases.tight("bddc_gmres", threads=1, **kwargs)
+    return cases.tight(_SOLVER["name"], threads=1, **kwargs)
+
+
+def _on(name, solver, *args, **kwargs):
+    """The module's function ``name`` on ``solver``: arguments travel by pickle."""
+    _SOLVER["name"] = solver
+    try:
+        return globals()[name](*args, **kwargs)
+    finally:
+        _SOLVER["name"] = "bddc_gmres"
 
 
 def _world():
@@ -285,20 +308,23 @@ def _relative(a, b) -> float:
     return float(np.abs(np.asarray(a) - np.asarray(b)).max() / np.abs(b).max())
 
 
-def _assert_below_the_gate(a, b, what):
+def _assert_below_the_gate(a, b, what, solver="bddc_gmres"):
     error = _relative(a, b)
-    print(f"{what} error={error:.3g}")  # noqa: T201
-    assert error < GRADIENT_GATE, f"{what} off by {error:.3g} relative"
+    print(f"{what} {solver} error={error:.3g}")  # noqa: T201
+    assert error < GATES[solver], f"{what} off by {error:.3g} relative"
 
 
+@pytest.mark.parametrize("solver", SOLVERS)
 @pytest.mark.parametrize("ranks", RANKS)
 @pytest.mark.parametrize("row", sorted(ROWS))
-def test_a_gradient_matches_one_process_and_differences(tmp_path, row, ranks):
-    _, grad_one, _ = _gradient(row, tmp_path, differences=False)
-    (_, grad, samples), *_ = on_ranks(_gradient, row, tmp_path, ranks=ranks, limit=900)
+def test_a_gradient_matches_one_process_and_differences(tmp_path, row, ranks, solver):
+    _, grad_one, _ = _on("_gradient", solver, row, tmp_path, differences=False)
+    (_, grad, samples), *_ = on_ranks(
+        _on, "_gradient", solver, row, tmp_path, ranks=ranks, limit=900
+    )
     assert np.isfinite(grad).all()
-    assert len(samples) or not ROWS[row](tmp_path)[2]
-    _assert_below_the_gate(grad, grad_one, f"{row} ranks={ranks}")
+    assert len(samples) or row == "big"
+    _assert_below_the_gate(grad, grad_one, f"{row} ranks={ranks}", solver)
 
 
 def _a_rank_without_the_sum(directory):
@@ -352,17 +378,20 @@ def _transforms(directory):
     }
 
 
-@pytest.mark.parametrize("ranks", [3, 4, 8])
-def test_jit_vmap_jacrev_and_a_pullback_twice_match_grad(tmp_path, ranks):
-    got, *_ = on_ranks(_transforms, tmp_path, ranks=ranks, limit=900)
-    one = _transforms(tmp_path)
+@pytest.mark.parametrize("solver", SOLVERS)
+@pytest.mark.parametrize("ranks", RANKS)
+def test_jit_vmap_jacrev_and_a_pullback_twice_match_grad(tmp_path, ranks, solver):
+    got, *_ = on_ranks(_on, "_transforms", solver, tmp_path, ranks=ranks, limit=900)
+    one = _on("_transforms", solver, tmp_path)
     for name in ("grad", "second", "jit", "vmap", "jacrev"):
-        _assert_below_the_gate(got[name], one[name], f"{name} ranks={ranks}")
-    _assert_below_the_gate(got["jit"], got["grad"], "jit against grad")
-    _assert_below_the_gate(got["vmap"][0], got["grad"], "vmap's first")
-    _assert_below_the_gate(got["vmap"][1], got["second"], "vmap's second")
+        _assert_below_the_gate(got[name], one[name], f"{name} ranks={ranks}", solver)
+    _assert_below_the_gate(got["jit"], got["grad"], "jit against grad", solver)
+    _assert_below_the_gate(got["vmap"][0], got["grad"], "vmap's first", solver)
+    _assert_below_the_gate(got["vmap"][1], got["second"], "vmap's second", solver)
     for i in range(2):
-        _assert_below_the_gate(got["pull"][i], got["jacrev"][i], f"pullback {i}")
+        _assert_below_the_gate(
+            got["pull"][i], got["jacrev"][i], f"pullback {i}", solver
+        )
 
 
 def _counted_forwards(function, *args):
@@ -395,58 +424,84 @@ def _retained_nothing(directory):
     return np.asarray(grad), forwards, len(ENTRIES)
 
 
-def test_retain_memory_zero_runs_the_forward_again_on_every_rank(tmp_path):
-    (_, one, _), *_ = on_ranks(_gradient, "eps", tmp_path, ranks=4, limit=300)
+@pytest.mark.parametrize("solver", SOLVERS)
+def test_retain_memory_zero_runs_the_forward_again_on_every_rank(tmp_path, solver):
+    (_, one, _), *_ = on_ranks(
+        _on,
+        "_gradient",
+        solver,
+        "eps",
+        tmp_path,
+        ranks=4,
+        limit=300,
+        differences=False,
+    )
     (grad, forwards, kept), *_ = on_ranks(
-        _retained_nothing, tmp_path, ranks=4, limit=300
+        _on, "_retained_nothing", solver, tmp_path, ranks=4, limit=300
     )
     assert forwards == 2
     assert kept == 0
-    _assert_below_the_gate(grad, one, "retain_memory=0")
+    _assert_below_the_gate(grad, one, "retain_memory=0", solver)
 
 
 def _an_entry_lost_on_one_rank(directory, lost):
     objective, p, _, _ = ROWS["eps"](directory)
     reference = np.asarray(jax.grad(objective)(p))
     _, pull = jax.vjp(objective, p)
+    # the entry reads as gone on one rank alone; freeing is every rank's, together
+    get = ENTRIES.get
     if _world().rank == lost:
-        ENTRIES.discard(max(ENTRIES._entries))
-    grad, forwards = _counted_forwards(pull, jnp.asarray(1.0))
-    return reference, np.asarray(grad[0]), forwards
+        ENTRIES.get = lambda _key: None
+    try:
+        grad, forwards = _counted_forwards(pull, jnp.asarray(1.0))
+    finally:
+        ENTRIES.get = get
+    return reference, np.asarray(grad[0]), forwards, len(ENTRIES)
 
 
+@pytest.mark.parametrize("solver", SOLVERS)
 @pytest.mark.parametrize("lost", [0, 1])
-def test_an_entry_lost_on_one_rank_runs_every_forward_again(tmp_path, lost):
-    (reference, grad, forwards), *_ = on_ranks(
-        _an_entry_lost_on_one_rank, tmp_path, lost, ranks=4, limit=300
+def test_an_entry_lost_on_one_rank_runs_every_forward_again(tmp_path, lost, solver):
+    (reference, grad, forwards, entries), *_ = on_ranks(
+        _on, "_an_entry_lost_on_one_rank", solver, tmp_path, lost, ranks=4, limit=300
     )
     assert forwards == 1
-    _assert_below_the_gate(grad, reference, "after the loss")
+    assert entries == 1  # the first grad's: the pullback's was freed by all
+    _assert_below_the_gate(grad, reference, "after the loss", solver)
 
 
 # --- one base handle per solve --------------------------------------------------------
 
 
 def _counted_prepares(function, *args):
-    """``function(*args)`` and the handles prepared under it."""
-    seen = []
+    """``function(*args)``, the handles prepared and the refactorizations under it."""
+    prepared = []
+    refactorized = []
     prepare = _linalg.prepare
+    refactorize_or_prepare = system_operator.refactorize_or_prepare
 
     def spy(*pargs, **kwargs):
-        seen.append(1)
+        prepared.append(1)
         return prepare(*pargs, **kwargs)
 
+    def spy_refactorize(handle, *pargs, **kwargs):
+        if handle is not None:
+            refactorized.append(1)
+        return refactorize_or_prepare(handle, *pargs, **kwargs)
+
     _linalg.prepare = spy
+    system_operator.refactorize_or_prepare = spy_refactorize
     try:
-        return function(*args), len(seen)
+        return function(*args), len(prepared), len(refactorized)
     finally:
         _linalg.prepare = prepare
+        system_operator.refactorize_or_prepare = refactorize_or_prepare
 
 
 def _prepares_of(row, directory):
     objective, p, _, _ = ROWS[row](directory)
-    grad, prepares = _counted_prepares(jax.grad(objective), p)
-    return np.asarray(grad), prepares
+    grad, prepares, refactorized = _counted_prepares(jax.grad(objective), p)
+    return np.asarray(grad), prepares, refactorized
 
 
 def _prepares_of_one_frequency(directory):
@@ -463,30 +518,40 @@ def _prepares_of_one_frequency(directory):
         design = design.replace(mesh=jax.lax.stop_gradient(design.mesh))
         return _s21(gfem.solve(design, driven, options=_options()))
 
-    grad, prepares = _counted_prepares(jax.grad(objective), values["eps_r"])
-    return np.asarray(grad), prepares
-
-
-def test_a_two_frequency_gradient_prepares_one_base(tmp_path):
-    grad_one, serial = _prepares_of("s21_adjoint", tmp_path)
-    (grad, prepares), *_ = on_ranks(
-        _prepares_of, "s21_adjoint", tmp_path, ranks=4, limit=300
+    grad, prepares, refactorized = _counted_prepares(
+        jax.grad(objective), values["eps_r"]
     )
-    print(f"prepares: {prepares} under ranks, {serial} on one process")  # noqa: T201
+    return np.asarray(grad), prepares, refactorized
+
+
+@pytest.mark.parametrize("solver", SOLVERS)
+def test_a_two_frequency_gradient_prepares_one_base(tmp_path, solver):
+    grad_one, serial, _ = _on("_prepares_of", solver, "s21_adjoint", tmp_path)
+    (grad, prepares, refactorized), *_ = on_ranks(
+        _on, "_prepares_of", solver, "s21_adjoint", tmp_path, ranks=4, limit=300
+    )
+    print(  # noqa: T201
+        f"prepares: {prepares} under ranks, {serial} on one process; "
+        f"refactorizations {refactorized}"
+    )
     assert serial == 3  # the sweep's, and one per frequency for the adjoint
     assert prepares == 1
-    _assert_below_the_gate(grad, grad_one, "one base")
+    # the sweep's second frequency, then the adjoint at each of the two
+    assert refactorized == 3
+    _assert_below_the_gate(grad, grad_one, "one base", solver)
 
 
-def test_a_one_frequency_woodbury_gradient_prepares_one_base(tmp_path):
-    grad_one, serial = _prepares_of_one_frequency(tmp_path)
-    (grad, prepares), *_ = on_ranks(
-        _prepares_of_one_frequency, tmp_path, ranks=4, limit=300
+@pytest.mark.parametrize("solver", SOLVERS)
+def test_a_one_frequency_woodbury_gradient_factorizes_once(tmp_path, solver):
+    grad_one, serial, _ = _on("_prepares_of_one_frequency", solver, tmp_path)
+    (grad, prepares, refactorized), *_ = on_ranks(
+        _on, "_prepares_of_one_frequency", solver, tmp_path, ranks=4, limit=300
     )
     print(f"prepares: {prepares} under ranks, {serial} on one process")  # noqa: T201
     assert serial == 2
     assert prepares == 1
-    _assert_below_the_gate(grad, grad_one, "one base, Woodbury")
+    assert refactorized == 0
+    _assert_below_the_gate(grad, grad_one, "one base, Woodbury", solver)
 
 
 def _bases_held() -> int:
@@ -505,9 +570,9 @@ def _a_design_loop(directory):
     _, second = jax.vjp(objective, p * 1.01)
     held.append(_bases_held())
     entries = len(ENTRIES)
-    (grad_first,), prepares = _counted_prepares(first, jnp.asarray(1.0))
+    (grad_first,), prepares, _ = _counted_prepares(first, jnp.asarray(1.0))
     held.append(_bases_held())
-    (grad_second,), more = _counted_prepares(second, jnp.asarray(1.0))
+    (grad_second,), more, _ = _counted_prepares(second, jnp.asarray(1.0))
     held.append(_bases_held())
     return {
         "held": held,
@@ -519,13 +584,16 @@ def _a_design_loop(directory):
     }
 
 
-def test_a_design_loop_holds_one_factorization(tmp_path):
-    got, *_ = on_ranks(_a_design_loop, tmp_path, ranks=4, limit=300)
+@pytest.mark.parametrize("solver", SOLVERS)
+def test_a_design_loop_holds_one_factorization(tmp_path, solver):
+    got, *_ = on_ranks(_on, "_a_design_loop", solver, tmp_path, ranks=4, limit=300)
     assert got["held"] == [1, 1, 1, 1]
     assert got["entries"] == 2
     # each pullback finds its base gone, and prepares it again
     assert got["prepares"] == (1, 1)
-    _assert_below_the_gate(got["first"], got["fresh"], "after the base was freed")
+    _assert_below_the_gate(
+        got["first"], got["fresh"], "after the base was freed", solver
+    )
     assert np.abs(got["second"] - got["first"]).max() > 0
 
 
@@ -570,7 +638,7 @@ def test_a_forward_miss_gives_a_partial_result_on_every_rank(tmp_path):
     assert got["miss"] == (FREQUENCIES[1], [FREQUENCIES[1]])
     assert got["jaxed"]
     assert got["partial"].shape[0] == 1
-    assert _relative(got["partial"][0], got["whole"][0]) < GRADIENT_GATE
+    assert _relative(got["partial"][0], got["whole"][0]) < GATES["bddc_gmres"]
     assert np.isfinite(got["after"]).all()
 
 

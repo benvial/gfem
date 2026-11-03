@@ -117,7 +117,8 @@ _REFUSALS = {
         f"refused above one rank: use linear_solver='direct' or order=2, {_COPIES}."
     ),
     "driven": (
-        f"A distributed driven solve runs with no kept field or result bundle so far: {_COPIES}."
+        "A distributed driven solve runs with no kept field or result bundle so "
+        f"far: {_COPIES}."
     ),
 }
 
