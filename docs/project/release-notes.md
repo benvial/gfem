@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **Driven solves across MPI ranks.** `mpirun -n N python script.py` or
+  `srun --mpi=pmix` now runs a uniform driven sweep and its gradients across the
+  ranks, with `comm=` on `gfem.solve`, `Job.run`, `Mesh.from_gmsh`, `Job.from_json`
+  and `load_result`. Every other problem and some options raise
+  {py:obj}`gfem.DistributedUnsupportedError`. See {doc}`../recipes/distributed-solve`.
+  - The `mpi` extra is mpi4py; `import gfem` needs neither it nor MPI. Only Open MPI
+    is accepted above one rank.
+  - `tools/petsc_wheelhouse.sh` gains `--mpi`, `--sources` and `--fetch-sources`, for
+    the {term}`MPI PETSc stack`, which sits beside the unchanged no-MPI stack.
+  - **Behaviour change.** A launched solve used to run N complete one-process solves
+    with no warning. It now runs distributed or raises, and a launched install
+    without mpi4py raises `gfem.SolverUnavailableError`.
+    `comm=MPI.COMM_SELF` asks for the copies by name.
+  - **Docs.** A backward error reaches you as `jax.errors.JaxRuntimeError`, or as
+    `ValueError` from a jitted function that has already succeeded. Docs said the
+    first only.
 - **Anisotropic materials.** Driven, eigenmode, electrostatic and port mode
   solves, wave ports, first-order absorbing boundaries, `MaterialField` and
   its gradients, `EigenmodeResult.principal_participation`,

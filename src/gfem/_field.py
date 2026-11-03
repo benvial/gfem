@@ -195,8 +195,9 @@ class Field:
                 the field is not defined: outside its ``support``, or inside
                 a volume the model excludes from the solve (inside metal).
                 Under `jax.jit` with traced points or node coordinates, this
-                surfaces as a ``jax.errors.JaxRuntimeError`` with the same
-                message.
+                surfaces as a ``jax.errors.JaxRuntimeError``, or as ``ValueError``
+                from a jitted function that has already succeeded, with the
+                same message.
         """
         return field_at(self, points)
 

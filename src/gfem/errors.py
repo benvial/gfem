@@ -211,7 +211,8 @@ class DegenerateModeError(ValueError):
     basis: only objectives symmetric in the cluster's modes (their sum or
     mean, a smooth aggregate such as a log-sum-exp in place of ``max``) are
     differentiable. Raised during the backward pass (so under `jax.grad` it
-    reaches the user as ``jax.errors.JaxRuntimeError`` with this message),
+    reaches the user as ``jax.errors.JaxRuntimeError``, or as ``ValueError``
+    from a jitted function that has already succeeded, with this message),
     also when the cluster extends beyond the ``n_modes`` modes asked for.
     The message names the modes, their frequencies and their gap, and the
     remedies: a symmetric objective, ``n_modes`` covering the whole
@@ -273,8 +274,9 @@ class LinearSolverConvergenceError(RuntimeError):
     holds the union of the blocks. An adaptive sweep, an eigenmode or
     electrostatic solve, and any solve under `jax.grad`, `jax.jit` or
     `jax.vmap` (forward or adjoint) return no partial result; under JAX the
-    error reaches the user as ``jax.errors.JaxRuntimeError`` with this
-    message.
+    error reaches the user as ``jax.errors.JaxRuntimeError``, or as
+    ``ValueError`` from a jitted function that has already succeeded, with
+    this message.
 
     Attributes:
         frequency: The frequency in Hz where the solve did not converge

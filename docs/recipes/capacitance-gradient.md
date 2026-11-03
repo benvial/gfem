@@ -106,5 +106,6 @@ The same works on an output that has no gradient: wrap it in
 `stop_gradient` where the objective uses it.
 
 Errors that only the data can reveal are raised on the host during the
-backward pass. JAX re-raises them as `jax.errors.JaxRuntimeError`; the message
+backward pass. JAX re-raises them as `jax.errors.JaxRuntimeError`, or as
+`ValueError` from a jitted function that has already succeeded; the message
 keeps the gfem error name and its remedy.

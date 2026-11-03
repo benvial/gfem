@@ -10,7 +10,10 @@ import dataclasses
 import importlib.util
 from pathlib import Path
 
+import mpi_cases
 import pytest
+
+from gfem import _mpi
 
 REPO = Path(__file__).parents[2]
 _spec = importlib.util.spec_from_file_location(
@@ -293,3 +296,54 @@ def test_a_zero_and_a_raise_in_one_cell_fails(data):
     expected = data[1] | {("electrostatic", "capacitance", kind): "zero"}
     with pytest.raises(caps.CapabilitiesError, match="conflicting"):
         _derive(data, expected=expected)
+
+
+# --- the table of what raises above one rank ---------------------------------------
+
+_MESSAGES = {"a": "a has no path", "b": "b has no path", "guard": "guarded"}
+_LABELS = {"a": "A", "a_auto": "Auto", "b": "B"}
+
+
+def _refusals(monkeypatch, **kwargs):
+    monkeypatch.setattr(caps, "REFUSAL_LABELS", _LABELS)
+    arguments = {
+        "keys": ("a", "a_auto"),
+        "methods": ("b",),
+        "guards": ("guard",),
+        "feature": lambda key: key.removesuffix("_auto"),
+        "messages": _MESSAGES,
+    } | kwargs
+    return caps.distributed_refusals(*arguments.values())
+
+
+def test_each_refusal_row_is_its_case_and_gfems_message(derived):
+    rows = derived["refusals"]
+    assert [r["feature"] for r in rows] == [
+        mpi_cases.feature(k) for k in (*mpi_cases.KEYS, *mpi_cases.METHOD_KEYS)
+    ]
+    assert all(r["message"] == _mpi._REFUSALS[r["feature"]] for r in rows)
+    assert all(r["label"] for r in rows)
+
+
+def test_two_cases_of_one_key_are_two_rows(monkeypatch):
+    rows = _refusals(monkeypatch)
+    assert [(r["label"], r["feature"]) for r in rows] == [
+        ("A", "a"),
+        ("Auto", "a"),
+        ("B", "b"),
+    ]
+    assert rows[0]["message"] == "a has no path"
+
+
+def test_a_guard_no_user_reaches_has_no_row(derived):
+    assert "general_operator" not in {r["feature"] for r in derived["refusals"]}
+
+
+def test_a_case_with_no_label_fails_the_build(monkeypatch):
+    with pytest.raises(caps.CapabilitiesError, match="labelled"):
+        _refusals(monkeypatch, keys=("a", "a_auto", "new"))
+
+
+def test_a_refusal_with_no_case_fails_the_build(monkeypatch):
+    with pytest.raises(caps.CapabilitiesError, match="messages"):
+        _refusals(monkeypatch, messages=_MESSAGES | {"new": "new"})

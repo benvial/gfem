@@ -33,6 +33,10 @@ PETSc and SLEPc are not an extra: gfem needs them built from source with
 complex scalars, which {doc}`recipes/petsc-slepc` does with one script. Then
 select them with `linear_solver="petsc"` and `eigen_solver="slepc"`.
 
+The `mpi` extra (`pip install "gfem[mpi]"`) is mpi4py, for a driven solve across
+the ranks of an MPI job on Linux x86_64. It brings no MPI library: Open MPI comes
+from the machine. See {doc}`recipes/distributed-solve`.
+
 Supported platforms: Linux x86_64 (glibc >= 2.28), macOS arm64 and Windows
 x86_64, Python >= {{ python }}.
 

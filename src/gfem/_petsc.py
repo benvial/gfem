@@ -192,7 +192,7 @@ def require_mpi_petsc(kind: str, comm: Any) -> Any:
         raise SolverUnavailableError(
             f"linear_solver={kind!r} above one rank needs the MPI PETSc stack, and "
             "this environment does not have it. Build it with "
-            f"tools/petsc_wheelhouse.sh --mpi as {_RECIPE} describes, use "
+            f"tools/petsc_wheelhouse.sh --mpi as {_mpi.RECIPE} describes, use "
             "linear_solver='bddc_gmres', or pass comm=MPI.COMM_SELF for independent "
             "one-process copies."
         )

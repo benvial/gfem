@@ -92,7 +92,8 @@ derivative of the cluster's sum, from a basis-invariant trace formula;
 otherwise the backward pass raises `gfem.DegenerateModeError`, naming the
 modes, their frequencies and gap, and the remedies. The error is raised on the
 host during the backward pass, so under `jax.grad` it reaches you as a
-`jax.errors.JaxRuntimeError` carrying that message. It can also raise when
+`jax.errors.JaxRuntimeError`, or as a `ValueError` from a jitted function that
+has already succeeded, carrying that message. It can also raise when
 the cluster extends beyond the `n_modes` modes you asked for. The guard mode
 comes from the seed solve's remaining pairs, so a cut cluster is detected
 when its next member is among them, and it is not guaranteed: ask for

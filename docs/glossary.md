@@ -166,9 +166,10 @@ Eigen solver
   both.
 
 PETSc stack
-  Complex PETSc and SLEPc with their Python bindings, built without MPI as
+  Complex PETSc and SLEPc with their Python bindings, built as
   {doc}`recipes/petsc-slepc` describes: what `linear_solver="petsc"` and
-  `eigen_solver="slepc"` need.
+  `eigen_solver="slepc"` need. It comes in two builds, the
+  {term}`no-MPI PETSc stack` and the {term}`MPI PETSc stack`.
 
 Periodic pair
   Two exterior surfaces of a {term}`model` related by a translation, whose
@@ -357,4 +358,54 @@ Cluster-symmetric objective
 Non-differentiable quantity
   A result value or model input that gfem refuses to differentiate in a given
   version, raising an error instead of returning a zero gradient.
+```
+
+## Distributed runs
+
+```{glossary}
+Distributed solve
+  A solve whose mesh and linear system are split across the ranks of a communicator
+  with more than one rank; every rank calls it with the same values and gets the
+  same result.
+
+Rank copies
+  Independent complete solves, one per launched process, each on its own single-rank
+  communicator, asked for by name.
+
+Agreed value
+  A value every rank holds bitwise: a replicated input, the result of a reduction, or
+  a broadcast. The only kind of value that may decide what a {term}`distributed solve`
+  does next.
+
+Agreed error
+  A failure all ranks decide on together, so that it raises on every rank and the
+  script may catch it; any other failure on a rank ends the job.
+
+Field piece
+  The part of a field's values one rank holds; a value shared between ranks is the
+  same on every rank holding it.
+
+Rank agreement
+  A distributed result that is bitwise the same on every rank and equal, within its
+  stated tolerance, to the one-process result of the same model and options.
+
+Distributed refusal
+  A solve or method call on more than one rank that raises on every rank, naming what
+  has no distributed path and the remedy; it never runs on fewer ranks instead.
+
+No-MPI PETSc stack
+  The {term}`PETSc stack` with MUMPS and METIS and no MPI: it runs in one process, or
+  as {term}`rank copies`, needs no MPI library, and has no part in a
+  {term}`distributed solve`.
+
+MPI PETSc stack
+  The {term}`PETSc stack` built on one Open MPI, with MUMPS, ScaLAPACK, PT-Scotch and
+  METIS, 64-bit indices and no ParMETIS: what a {term}`distributed solve` through
+  PETSc needs. It also runs one-process solves.
+
+Distributed coarse factorization
+  BDDC's coarse factorization across ranks on PETSc MUMPS.
+
+Rank-0 coarse factorization
+  BDDC's coarse factorization gathered to rank 0, the only route without PETSc.
 ```

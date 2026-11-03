@@ -24,13 +24,24 @@ wheels of the optional extras. The base install is OSI-licensed.
   `linear_solver="direct"` uses NGSolve's sparse Cholesky and gives the same
   results, more slowly.
 
+- `mpi` pulls mpi4py (BSD-3-Clause). It brings no MPI library: Open MPI comes from
+  the machine, and is not gfem's to ship. PyPI's `openmpi` wheel declares a licence
+  (`LicenseRef-OpenMPI`) the gate cannot read, and stays outside the extra.
+
 ## PETSc and SLEPc
 
 `linear_solver="petsc"` and `eigen_solver="slepc"` use libraries you build
 with {doc}`../recipes/petsc-slepc`; gfem neither ships nor declares them, so
 the licence gate does not see them. The script builds PETSc, SLEPc and their
-Python bindings (BSD-2-Clause) with MUMPS (CeCILL-C), METIS (Apache-2.0) and
-OpenBLAS (BSD-3-Clause), without MPI, so ParMETIS (not free for commercial
-use) is never built; a `petsc`-marked test checks that ParMETIS, PT-Scotch and
-ScaLAPACK are absent. conda-forge's PETSc depends on ParMETIS, which is why the
-recipe builds from source.
+Python bindings (BSD-2-Clause) with:
+
+- on the {term}`no-MPI PETSc stack`, MUMPS (CeCILL-C), METIS (Apache-2.0) and
+  OpenBLAS (BSD-3-Clause);
+- on the {term}`MPI PETSc stack`, the same, with ScaLAPACK (BSD-3-Clause) and
+  PT-Scotch (CeCILL-C), on the machine's Open MPI.
+
+ParMETIS (not free for commercial use) is never built, on either stack: a
+`petsc`-marked test checks that it is absent, and that PT-Scotch and ScaLAPACK are
+absent from the no-MPI stack. The MPI stack's `libptscotchparmetisv3` is Scotch's
+own ParMETIS-compatible interface, not ParMETIS. conda-forge's PETSc depends on
+ParMETIS, which is why the recipe builds from source.

@@ -85,6 +85,12 @@ KEYS = (
 )
 
 
+#: What a method refuses, after a solve; `tests/mpi` raises each one on every rank.
+METHOD_KEYS = ("field_export", "load_result_fields", "power_flow")
+#: A guard no public call reaches while Bloch and eigenmode raise, so no page lists it.
+GUARD_KEYS = ("general_operator",)
+
+
 def feature(key: str) -> str:
     """The ``feature`` a case raises."""
     return key.removesuffix("_auto")

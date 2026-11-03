@@ -13,6 +13,7 @@ import jax
 import mpi_cases
 import numpy as np
 import pytest
+import ranks
 
 import gfem
 from gfem import _mpi
@@ -430,3 +431,9 @@ def test_a_communicator_is_not_written_with_a_field(tmp_path):
     from gfem.job import _field_args
 
     assert "_comm" not in _field_args(_piece(tmp_path), None)
+
+
+def test_a_launch_above_the_cap_skips(monkeypatch):
+    monkeypatch.setenv(ranks.MAX_RANKS, "4")
+    with pytest.raises(pytest.skip.Exception, match="8 ranks"):
+        ranks.on_ranks_argv(["never-run"], ranks=8)

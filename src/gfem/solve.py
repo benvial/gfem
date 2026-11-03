@@ -99,7 +99,7 @@ def solve(
             distributed path; ``feature`` names what, the message the remedy.
         SolverUnavailableError: Launched on several ranks without a usable
             mpi4py and Open MPI.
-        gfem._mpi.AgreedError: On several ranks, the ranks hold different inputs;
+        RuntimeError: On several ranks, the ranks hold different inputs;
             the message names one.
         RegionNotFoundError: The problem names a region the mesh lacks.
         ValueError: The problem does not fit the model; the message gives

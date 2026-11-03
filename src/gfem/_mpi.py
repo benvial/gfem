@@ -104,6 +104,8 @@ FORWARD_ERRORS: tuple[type[BaseException], ...] = (
 _comm_keyval: Any = None
 _comm_keys = itertools.count()
 
+#: The page that tells how to install and launch a distributed solve.
+RECIPE = "the 'Run a distributed solve' recipe in the gfem docs"
 _COPIES = "or run independent one-process copies with comm=MPI.COMM_SELF"
 
 #: Each refusal's text. The keys are `gfem.DistributedUnsupportedError.feature`.
@@ -175,8 +177,8 @@ def _load_mpi() -> Any:
         raise SolverUnavailableError(
             f"gfem was launched on several ranks but cannot load MPI ({err}). A "
             'distributed solve needs Open MPI and mpi4py: pip install "gfem[mpi]", '
-            "with Open MPI's module or package loaded. Without a launcher gfem runs "
-            "on one process and needs neither."
+            f"with Open MPI's module or package loaded, as {RECIPE} describes. "
+            "Without a launcher gfem runs on one process and needs neither."
         ) from err
     return MPI
 
@@ -223,8 +225,8 @@ def resolve_comm(comm: Any = None) -> Any:
         raise SolverUnavailableError(
             f"A solve above one rank needs Open MPI, but mpi4py runs on {vendor}: "
             "the NGSolve wheel gives silently wrong numbers on other MPIs. Load "
-            "Open MPI and reinstall mpi4py against it, or pass comm=MPI.COMM_SELF "
-            "for independent one-process copies."
+            f"Open MPI as {RECIPE} describes, or pass comm=MPI.COMM_SELF for "
+            "independent one-process copies."
         )
     install_abort_hook()
     return comm

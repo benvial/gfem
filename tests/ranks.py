@@ -13,7 +13,8 @@ the process group, sends SIGKILL after a grace, then sweeps what is left by a
 per-launch tag, because a rank can outlive its launcher.
 
 The launcher is ``GFEM_TEST_MPI_LAUNCH`` (for example ``srun --mpi=pmix``), or
-`DEFAULT_LAUNCH`; ``-n N`` follows it either way.
+`DEFAULT_LAUNCH`; ``-n N`` follows it either way. ``GFEM_TEST_MPI_MAX_RANKS`` skips
+a launch above that many ranks, for a machine with few cores (GitHub's runners).
 """
 
 import contextlib
@@ -35,6 +36,8 @@ import numpy as np
 #: none``: a bound rank could not use ``threads`` above 1. Yielding: 8 ranks on 4
 #: cores take 34 s with it and pass a 120 s limit without.
 DEFAULT_LAUNCH = "mpirun --oversubscribe --bind-to none --mca mpi_yield_when_idle 1"
+#: The variable that caps a launch's ranks.
+MAX_RANKS = "GFEM_TEST_MPI_MAX_RANKS"
 #: Seconds between SIGTERM and SIGKILL.
 GRACE = 15
 #: The environment variable that marks a launch's processes.
@@ -164,7 +167,9 @@ def on_ranks(
     return values
 
 
-def on_ranks_argv(argv, *, ranks=4, threads=1, limit=120, env=None) -> tuple[int, str]:
+def on_ranks_argv(
+    argv, *, ranks=4, threads=1, limit=120, env=None, cwd=None
+) -> tuple[int, str]:
     """Launch a command as it is, for a script or ``python -m gfem run``.
 
     Args:
@@ -173,6 +178,7 @@ def on_ranks_argv(argv, *, ranks=4, threads=1, limit=120, env=None) -> tuple[int
         threads: The thread count each rank's libraries are told.
         limit: Seconds before the job is ended as hung.
         env: Extra environment variables.
+        cwd: The folder the command runs in; ``None`` is this process's.
 
     Returns:
         The launcher's return code and the job's merged output.
@@ -181,7 +187,7 @@ def on_ranks_argv(argv, *, ranks=4, threads=1, limit=120, env=None) -> tuple[int
         RanksHung: The job passed ``limit``.
     """
     with _Workdir() as work:
-        return work.launch(list(argv), ranks, threads, limit, env)
+        return work.launch(list(argv), ranks, threads, limit, env=env, cwd=cwd)
 
 
 def assert_same_bits(values: list) -> None:
@@ -229,7 +235,14 @@ class _Workdir:
     def __exit__(self, *_):
         shutil.rmtree(self.path, ignore_errors=True)
 
-    def launch(self, argv, ranks, threads, limit, env=None) -> tuple[int, str]:
+    def launch(
+        self, argv, ranks, threads, limit, *, env=None, cwd=None
+    ) -> tuple[int, str]:
+        cap = os.environ.get(MAX_RANKS)
+        if cap is not None and ranks > int(cap):
+            import pytest  # not on the ranks, which import this module
+
+            pytest.skip(f"{ranks} ranks is above {MAX_RANKS}={cap}")
         words = launcher()
         words[0] = _find(words[0]) or words[0]
         command = [*words, "-n", str(ranks), *argv]
@@ -246,6 +259,7 @@ class _Workdir:
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
                 env=environment,
+                cwd=cwd,
                 start_new_session=True,
             )
             try:

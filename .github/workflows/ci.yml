@@ -103,6 +103,47 @@ jobs:
     - name: ${{ matrix.tier }} tier
       run: uv run pytest -m ${{ matrix.tier }} -rs
 
+  mpi:
+    # The launched tier on the wheel's BDDC, at most 4 ranks on a runner's 4 cores,
+    # and Open MPI's refusal of another MPI. Direct solves under ranks need the MPI
+    # PETSc stack, whose cold build is too long for every pull request: petsc.yml.
+    # Pinned, not ubuntu-latest: apt's Open MPI 4.1.6 is MareNostrum 5's version.
+    name: launched tests (ubuntu-24.04, py3.12, Open MPI)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GFEM_TEST_MPI_MAX_RANKS: "4"
+    steps:
+    - uses: actions/checkout@v6
+    - uses: astral-sh/setup-uv@v6
+      with:
+        version: ${{ env.UV_VERSION }}
+        python-version: "3.12"
+        enable-cache: true
+        cache-suffix: mpi
+    - name: Open MPI
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev
+    - name: Install
+      run: uv sync --locked --extra mpi
+    - name: MPI is usable
+      # Fail rather than skip every launched test.
+      run: >-
+        mpirun -n 2 --oversubscribe .venv/bin/python -c "from mpi4py import MPI;
+        size, vendor = MPI.COMM_WORLD.size, MPI.get_vendor();
+        assert size == 2 and vendor[0] == 'Open MPI', (size, vendor);
+        print(vendor)"
+    - name: Unit tier
+      run: uv run pytest -m unit
+    - name: Launched tier
+      run: uv run pytest -m "mpi and not reference and not petsc" -rs
+    - name: Another MPI is refused
+      # A throwaway environment: PyPI's mpich is no dependency of gfem's, and the
+      # licence gate never sees it.
+      run: |
+        uv venv .venv-mpich --python 3.12
+        uv pip install --python .venv-mpich ".[mpi]" mpich
+        .venv-mpich/bin/mpiexec -n 2 .venv-mpich/bin/python tools/mpi_refusal.py
+
   tutorials:
     name: tutorial notebooks (ubuntu, py3.12)
     runs-on: ubuntu-latest
@@ -183,6 +224,9 @@ jobs:
         - {os: ubuntu-latest, python: "3.12", extra: mkl}
         - {os: windows-latest, python: "3.12", extra: mkl}
         - {os: macos-latest, python: "3.12", extra: mkl}
+        # The MPI extra is Linux x86_64 only (no-op on macOS).
+        - {os: ubuntu-latest, python: "3.12", extra: mpi}
+        - {os: macos-latest, python: "3.12", extra: mpi}
     defaults:
       run:
         shell: bash

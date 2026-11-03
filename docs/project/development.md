@@ -8,9 +8,9 @@ uv run pytest -m "unit or verification"
 ```
 
 Test tiers are pytest markers set by directory: `tests/unit`,
-`tests/verification`, `tests/reference`, `tests/benchmark` and `tests/cuda`.
-The `reference`, `benchmark` and `cuda` tiers are deselected by default; run
-them with `uv run pytest -m reference` (and so on). Reference tests read their
+`tests/verification`, `tests/reference`, `tests/benchmark`, `tests/cuda` and
+`tests/mpi`. The `reference`, `benchmark`, `cuda` and `mpi` tiers are deselected by
+default; run them with `uv run pytest -m reference` (and so on). Reference tests read their
 data from `GFEM_REFERENCE_DIR` and skip when it is unset.
 
 Tests marked `petsc` and `slepc` sit in the unit and verification tiers and
@@ -27,6 +27,31 @@ uv run pytest -m "unit or (verification and (petsc or slepc))" -rs
 below included, removes them again, since the lock file does not list them.
 Sync with `uv sync --inexact` to keep them, or rerun the `uv pip install` line
 after an exact sync.
+
+Launched tests, in `tests/mpi`, start each test's function on several ranks from a
+pytest that stays one process. They need Open MPI on `PATH` and the `mpi` extra, and
+skip without them:
+
+```bash
+uv sync --extra mpi
+uv run pytest -m "mpi and not petsc" -rs
+```
+
+`GFEM_TEST_MPI_LAUNCH` replaces the launcher (`srun --mpi=pmix`), and
+`GFEM_TEST_MPI_MAX_RANKS` skips launches above a count, for a machine with few cores.
+The direct cases need the {term}`MPI PETSc stack`, which the script builds with
+`--mpi`:
+
+```bash
+uv sync --extra mpi
+uv pip install --no-index --find-links wheelhouse-mpi petsc petsc4py slepc slepc4py
+uv run pytest -m "unit or (verification and (petsc or slepc))" -rs
+uv run pytest -m "mpi and petsc" -rs
+```
+
+Run `mpi` and `petsc` selections as separate pytest commands, as above: one mixed
+`-m "mpi or petsc"` run failed a launch under `srun` and then did not exit, for a
+cause not found.
 
 ## Docs
 
