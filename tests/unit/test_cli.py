@@ -52,6 +52,7 @@ def test_device_override_is_recorded(model, tmp_path):
     run = json.loads((out / "result.json").read_text())["run"]
     assert run["device"] == "cpu"
     assert run["device_override"] == "cpu"
+    assert run["ranks"] == 1
     assert run["options"]["device"] == "cpu"
 
 

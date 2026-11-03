@@ -5,8 +5,9 @@ error message goes to stderr: a changed mesh file, a newer schema version,
 a device that cannot run, a physics error, ...); 2 for command-line usage
 errors, including a job file that does not exist.
 
-Under a launcher all ranks exit together, with rank 0 reporting; a failure that
-only one rank sees ends the whole job, because its peers may never reach an exit.
+Under a launcher rank 0 reads the job and writes the result, all ranks exit together,
+with rank 0 reporting; a failure that only one rank sees ends the whole job, because
+its peers may never reach an exit.
 """
 
 from __future__ import annotations
@@ -73,7 +74,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     try:
         with _mpi.section(comm):
-            Job.from_json(args.job).run(args.out, device=args.device, comm=comm)
+            job = Job.from_json(args.job, comm=comm)
+            job.run(args.out, device=args.device, comm=comm)
     except Exception as err:  # noqa: BLE001 (report any failure as exit code 1)
         if _mpi.rank(comm) == 0:
             print(f"gfem: error: {type(err).__name__}: {err}", file=sys.stderr)  # noqa: T201

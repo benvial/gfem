@@ -421,7 +421,7 @@ def _prepare_on_ranks(
 
     is_complex = bool(operator.form.space.is_complex)
     if kind not in KINDS or not equals_its_transpose(symmetry, is_complex=is_complex):
-        _mpi.refuse_feature("driven")
+        _mpi.refuse_feature("general_operator")
     if kind in ("direct", "petsc"):
         from gfem import _petsc
 

@@ -9,6 +9,10 @@ leaf path. A result bundle is a directory with ``result.json`` and
 
 Run a job bundle with ``python -m gfem run job.json --out results/`` (or
 `Job.run`), and read the result back with `load_result`.
+
+Across ranks rank 0 reads and writes the files, and a result bundle holds its fields
+in one-process numbering, so a bundle from any rank count is an ordinary one that a
+laptop reads (ADR 0064).
 """
 
 from __future__ import annotations
@@ -63,6 +67,8 @@ _JOB_FORMAT = "gfem.job"
 _RESULT_FORMAT = "gfem.result"
 RESULT_JSON = "result.json"
 RESULT_NPZ = "result.npz"
+#: A job's JSON among its arrays on the way across ranks; leaf paths start with ".".
+_DOCUMENT = "$document"
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -114,6 +120,7 @@ class Job:
         Args:
             out: If given, a directory to write the result bundle to
                 (``result.json`` and ``result.npz``, read by `load_result`).
+                Across ranks this is collective and rank 0 writes.
             device: Overrides ``options.device`` (e.g. a job written for a
                 GPU run on a CPU machine). The bundle records the device used.
             comm: The communicator, as for `gfem.solve`; not part of the job,
@@ -121,27 +128,31 @@ class Job:
 
         Returns:
             The problem type's result.
+
+        Raises:
+            OSError: Rank 0 cannot write the bundle; on every rank.
         """
         options = self.options
         if device is not None:
             options = dataclasses.replace(options, device=device)
-        if out is not None and _mpi.resolve_comm(comm) is not None:
-            # every rank would write one bundle
-            _mpi.refuse_feature("driven")
+        resolved = _mpi.resolve_comm(comm)
         start = time.perf_counter()
         result = solve(self.model, self.problem, options=options, comm=comm)
         elapsed = time.perf_counter() - start
         if out is not None:
-            _write_result(
-                Path(out),
-                result,
-                {
-                    "device": options.device,
-                    "device_override": device,
-                    "options": options,
-                    "wall_time_s": elapsed,
-                },
-            )
+            with _mpi.section(resolved):
+                _write_result(
+                    Path(out),
+                    result,
+                    {
+                        "device": options.device,
+                        "device_override": device,
+                        "options": options,
+                        "ranks": 1 if resolved is None else resolved.size,
+                        "wall_time_s": elapsed,
+                    },
+                    resolved,
+                )
         return result
 
     def to_json(self, path: str | Path) -> Path:
@@ -154,6 +165,8 @@ class Job:
         JSON file, holds every array leaf of the job (material fields,
         moved mesh nodes) under its pytree leaf path; it is written only
         when there are arrays.
+
+        Not collective: across ranks a script calls it on rank 0.
 
         Args:
             path: The JSON file to write; its directory is created.
@@ -179,22 +192,38 @@ class Job:
         return path
 
     @classmethod
-    def from_json(cls, path: str | Path) -> Job:
+    def from_json(cls, path: str | Path, *, comm: Any = None) -> Job:
         """Read a job bundle written by `to_json`.
 
-        The mesh is read again and its sha256 checked.
+        The mesh is read again and its sha256 checked. Across ranks this is
+        collective: rank 0 reads the files, and every rank gets the same job or
+        the same error.
+
+        Args:
+            path: The JSON file.
+            comm: The communicator, as for `gfem.solve`. Ranks reading job files
+                of their own pass ``MPI.COMM_SELF``.
 
         Raises:
             FileNotFoundError: The JSON file, its sidecar or its mesh is
                 missing.
             ValueError: Not a job file, a newer schema version, a type this
                 gfem does not know, or a mesh file that changed.
+            RuntimeError: Ranks asked for different paths.
         """
         path = Path(path)
-        doc = _codec.check_header(_read_json(path), _JOB_FORMAT, "gfem job file", path)
-        job = _decode(doc, "job", path)
-        if not isinstance(job, cls):
-            raise ValueError(f"{path} is not a gfem job file (no job in it).")  # noqa: TRY004
+        resolved = _mpi.resolve_comm(comm)
+        with _mpi.section(resolved):
+            if resolved is not None:
+                _mpi.check_call(resolved, "Job.from_json", {"the path": str(path)})
+            doc, arrays = _read_job(path, resolved)
+            try:
+                job = _decode(doc, arrays, "job", path, comm)
+                if not isinstance(job, cls):
+                    raise ValueError(f"{path} is not a gfem job file (no job in it).")  # noqa: TRY004, TRY301
+            except (OSError, TypeError, ValueError) as err:
+                # all ranks decode one document, and the mesh's errors were agreed
+                raise _mpi.agreed(err) from err.__cause__
         return job
 
 
@@ -202,11 +231,16 @@ class Job:
 register_fields(Job, ("model", "problem"))
 
 
-def load_result(path: str | Path) -> Any:
+def load_result(path: str | Path, *, comm: Any = None) -> Any:
     """Read a result bundle written by ``python -m gfem run`` or `Job.run`.
+
+    A bundle from any rank count reads on one process. Under a launcher a bundle
+    with no fields holds no mesh and is read with no communication, on any rank.
 
     Args:
         path: The result directory, or its ``result.json``.
+        comm: The communicator, as for `gfem.solve`. ``MPI.COMM_SELF`` under a
+            launcher reads a bundle with fields as one-process fields.
 
     Returns:
         The result, e.g. a `gfem.ElectrostaticResult`, with the same values
@@ -215,30 +249,76 @@ def load_result(path: str | Path) -> Any:
     Raises:
         FileNotFoundError: No ``result.json``, or its sidecar is missing.
         ValueError: Not a result file, or a newer schema version.
+        gfem.DistributedUnsupportedError: A bundle with fields, above one rank.
     """
     path = Path(path)
     if path.is_dir():
         path /= RESULT_JSON
+    resolved = _mpi.resolve_comm(comm)
     doc = _codec.check_header(
         _read_json(path), _RESULT_FORMAT, "gfem result file", path
     )
-    return _decode(doc, "result", path)
+    if resolved is not None and _holds_a_mesh(doc.get("result")):
+        _mpi.refuse_feature("load_result_fields")
+    return _decode(doc, _read_arrays(doc, path), "result", path, comm)
 
 
-def _write_result(out: Path, result: Any, run: dict[str, Any]) -> None:
-    out.mkdir(parents=True, exist_ok=True)
-    encoder = _codec.Encoder(_codec.Context(out.resolve()))
-    body = encoder.encode(result)
-    run_json = encoder.encode(run, ".run")
-    doc = _codec.header(_RESULT_FORMAT) | {
-        "arrays": RESULT_NPZ if encoder.arrays else None,
-        "run": run_json,
-        "result": body,
-    }
-    if encoder.arrays:
-        _save_npz(out / RESULT_NPZ, encoder.arrays)
-    # result.json last: its presence means the bundle is complete.
-    (out / RESULT_JSON).write_text(json.dumps(doc, indent=1, allow_nan=False) + "\n")
+def _holds_a_mesh(value: Any) -> bool:
+    """Whether a JSON form holds a mesh: a field's, the only one a result has."""
+    if isinstance(value, dict):
+        return value.get("$type") == "Mesh" or any(map(_holds_a_mesh, value.values()))
+    return isinstance(value, list) and any(map(_holds_a_mesh, value))
+
+
+def _write_result(out: Path, result: Any, run: dict[str, Any], comm: Any) -> None:
+    """Write the bundle on rank 0, each field gathered in one-process numbering."""
+    if comm is not None:
+        if is_traced(result):
+            raise _mpi.agreed(
+                TypeError(
+                    "Cannot write a result traced by JAX (inside jax.grad, jax.jit "
+                    "or jax.vmap). Write results from concrete values."
+                )
+            )
+        _mpi.check_call(comm, "Job.run's bundle", {"the directory": str(out)})
+        if isinstance(result, DrivenResult):
+            result = dataclasses.replace(
+                result,
+                e_fields=tuple(field._gathered() for field in result.e_fields),  # noqa: SLF001
+            )
+
+    def write() -> dict[str, np.ndarray]:
+        out.mkdir(parents=True, exist_ok=True)
+        encoder = _codec.Encoder(_codec.Context(out.resolve()))
+        body = encoder.encode(result)
+        run_json = encoder.encode(run, ".run")
+        doc = _codec.header(_RESULT_FORMAT) | {
+            "arrays": RESULT_NPZ if encoder.arrays else None,
+            "run": run_json,
+            "result": body,
+        }
+        if encoder.arrays:
+            _save_npz(out / RESULT_NPZ, encoder.arrays)
+        # result.json last: its presence means the bundle is complete.
+        (out / RESULT_JSON).write_text(
+            json.dumps(doc, indent=1, allow_nan=False) + "\n"
+        )
+        return {}
+
+    _mpi.on_root(comm, write, agreed=(OSError, TypeError, ValueError))
+
+
+def _read_job(path: Path, comm: Any) -> tuple[dict, dict[str, np.ndarray]]:
+    """A job's document and arrays, read by rank 0 alone."""
+
+    def read() -> dict[str, np.ndarray]:
+        doc = _codec.check_header(_read_json(path), _JOB_FORMAT, "gfem job file", path)
+        arrays = _read_arrays(doc, path)
+        text = np.frombuffer(json.dumps(doc).encode(), dtype=np.uint8)
+        return {_DOCUMENT: text, **arrays}
+
+    shared = _mpi.on_root(comm, read, agreed=(OSError, ValueError))
+    return json.loads(shared.pop(_DOCUMENT).tobytes()), shared
 
 
 def _read_json(path: Path) -> Any:
@@ -250,19 +330,24 @@ def _read_json(path: Path) -> Any:
         raise ValueError(f"{path} is not valid JSON: {err}.") from None
 
 
-def _decode(doc: dict, key: str, path: Path) -> Any:
-    arrays: dict[str, np.ndarray] = {}
-    if doc.get("arrays"):
-        sidecar = path.parent / doc["arrays"]
-        if not sidecar.is_file():
-            raise FileNotFoundError(
-                f"{path} keeps its arrays in {sidecar}, which is missing."
-            )
-        with np.load(sidecar, allow_pickle=False) as npz:
-            arrays = {k: npz[k] for k in npz.files}
+def _read_arrays(doc: dict, path: Path) -> dict[str, np.ndarray]:
+    if not doc.get("arrays"):
+        return {}
+    sidecar = path.parent / doc["arrays"]
+    if not sidecar.is_file():
+        raise FileNotFoundError(
+            f"{path} keeps its arrays in {sidecar}, which is missing."
+        )
+    with np.load(sidecar, allow_pickle=False) as npz:
+        return {k: npz[k] for k in npz.files}
+
+
+def _decode(
+    doc: dict, arrays: dict[str, np.ndarray], key: str, path: Path, comm: Any
+) -> Any:
     if key not in doc:
         raise ValueError(f"{path} has no {key!r} entry.")
-    decoder = _codec.Decoder(_codec.Context(path.parent.resolve()), arrays)
+    decoder = _codec.Decoder(_codec.Context(path.parent.resolve(), comm), arrays)
     return decoder.decode(doc[key])
 
 
@@ -309,19 +394,24 @@ def _mesh_args(mesh: Mesh, context: _codec.Context) -> dict[str, Any]:
 
 def _mesh_from_args(args: dict[str, Any], context: _codec.Context) -> Mesh:
     path = context.base / args["path"]
-    if not path.is_file():
-        raise FileNotFoundError(
-            f"The mesh file {path} is missing; a job bundle needs its mesh "
-            f"({args['path']}) next to the job file."
-        )
-    digest = _sha256(path)
-    if digest != args["sha256"]:
-        raise ValueError(
-            f"The mesh file {path} has changed since the job was written: its "
-            f"sha256 is {digest}, the job expects {args['sha256']}. Restore the "
-            "mesh, or build the model again and rewrite the job."
-        )
-    mesh = Mesh.from_gmsh(path, length_unit=args["length_unit"])
+
+    def check() -> dict[str, np.ndarray]:
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"The mesh file {path} is missing; a job bundle needs its mesh "
+                f"({args['path']}) next to the job file."
+            )
+        digest = _sha256(path)
+        if digest != args["sha256"]:
+            raise ValueError(
+                f"The mesh file {path} has changed since the job was written: its "
+                f"sha256 is {digest}, the job expects {args['sha256']}. Restore the "
+                "mesh, or build the model again and rewrite the job."
+            )
+        return {}
+
+    _mpi.on_root(_mpi.resolve_comm(context.comm), check, agreed=(OSError, ValueError))
+    mesh = Mesh.from_gmsh(path, length_unit=args["length_unit"], comm=context.comm)
     if args.get("nodes") is not None:
         nodes = jnp.asarray(args["nodes"])
         if nodes.shape != mesh.imported_nodes.shape:

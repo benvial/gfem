@@ -68,9 +68,6 @@ def refused(key: str, directory: Path):  # noqa: PLR0911
         case "bddc_order_1_auto":
             options = gfem.SolverOptions(order=1)
             return _line(directory), gfem.Driven(FREQUENCY), options
-        # Not refused by a solve: a job's bundle (slice 8).
-        case "driven":
-            return _line(directory), gfem.Driven(FREQUENCY), direct
     raise ValueError(key)
 
 

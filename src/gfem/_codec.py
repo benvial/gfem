@@ -53,9 +53,11 @@ class Context:
     Attributes:
         base: The directory of the JSON document; file references (the mesh)
             are relative to it when they lie inside it.
+        comm: The communicator a reader was given, as it was given.
     """
 
     base: Path
+    comm: Any = None
 
 
 ToArgs = Callable[[Any, Context], Mapping[str, Any]]

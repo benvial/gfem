@@ -217,21 +217,40 @@ class Field:
                 outside `jax.jit` / `jax.grad`.
             gfem.DistributedUnsupportedError: The field is a piece across ranks.
         """
-        import meshio
-
         self._refuse_export()
         self._check_concrete("to_meshio")
-        points, cells, point_data, cell_data = _engine().sample(self)
-        return meshio.Mesh(
-            points,
-            [("tetra", cells)],
-            point_data=point_data,
-            cell_data={k: [v] for k, v in cell_data.items()},
-        )
+        return _meshio_mesh(_engine().sample(self))
 
     def to_vtu(self, path: str | Path) -> None:
-        """Write the field to a VTU file for ParaView (see `to_meshio`)."""
-        self.to_meshio().write(Path(path), file_format="vtu")
+        """Write the field to a VTU file for ParaView (see `to_meshio`).
+
+        Across ranks this is collective: rank 0 gathers the samples and writes the
+        one file, the same as one process's but for round-off.
+
+        Raises:
+            TypeError: The field holds JAX tracers: export concrete values,
+                outside `jax.jit` / `jax.grad`.
+            OSError: Rank 0 cannot write the file; on every rank.
+        """
+        comm = self._communicator
+        if comm is None:
+            self.to_meshio().write(Path(path), file_format="vtu")
+            return
+        self._check_concrete("to_vtu")
+        with _mpi.section(comm):
+            shape = np.asarray(self.coefficients.shape)
+            _mpi.check_call(
+                comm,
+                "Field.to_vtu",
+                {"the shape of a piece": shape, "the path": str(path)},
+            )
+            sampled = _engine().sample(self)
+
+            def write() -> dict[str, np.ndarray]:
+                _meshio_mesh(sampled).write(Path(path), file_format="vtu")
+                return {}
+
+            _mpi.on_root(comm, write, agreed=(OSError, ValueError))
 
     def to_pyvista(self) -> Any:
         """The field as a ``pyvista.UnstructuredGrid`` (see `to_meshio`).
@@ -249,6 +268,16 @@ class Field:
                 'to_pyvista needs pyvista: pip install "gfem[viz]".'
             ) from None
         return pyvista.from_meshio(self.to_meshio())
+
+    def _gathered(self) -> Field:
+        """A piece as a one-process field: whole on rank 0, empty elsewhere.
+
+        Collective. Its DOFs are in one process's numbering (ADR 0064).
+        """
+        column = _engine().one_process_column(self)
+        if column is None:
+            column = np.zeros(0, self.coefficients.dtype)
+        return dataclasses.replace(self, coefficients=column, _comm=None)
 
     def _refuse_export(self) -> None:
         if self._comm is not None:
@@ -421,6 +450,19 @@ def _unflatten_map(aux, children) -> FieldMap:
 
 
 jax.tree_util.register_pytree_with_keys(FieldMap, _flatten_map, _unflatten_map)
+
+
+def _meshio_mesh(sampled: Any) -> meshio.Mesh:
+    """A `meshio.Mesh` of what `gfem._engine.fields.sample` returned."""
+    import meshio
+
+    points, cells, point_data, cell_data = sampled
+    return meshio.Mesh(
+        points,
+        [("tetra", cells)],
+        point_data=point_data,
+        cell_data={k: [v] for k, v in cell_data.items()},
+    )
 
 
 def _engine() -> Any:

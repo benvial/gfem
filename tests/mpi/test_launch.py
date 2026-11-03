@@ -455,7 +455,7 @@ def test_only_rank_0_shows_a_warning():
 
 
 def _job_file(tmp_path) -> Path:
-    model, problem, options = mpi_cases.refused("driven", tmp_path)
+    model, problem, options = mpi_cases.refused("eigenmode", tmp_path)
     return gfem.Job(model, problem, options).to_json(tmp_path / "job.json")
 
 
@@ -483,21 +483,36 @@ def test_a_job_missing_on_one_rank_exits_2_everywhere(tmp_path):
     assert on_ranks(_cli_with_a_job_missing_on_rank_1, job, ranks=3, limit=120)[0] == 2
 
 
-def _cli_with_a_job_broken_on_rank_1(job, broken):
+def _cli_with_another_job_on_rank_1(job, broken):
     path = broken if _world().rank == 1 else job
     return main(["run", path, "--out", f"{job}.out"])
 
 
-def test_a_job_broken_on_one_rank_ends_the_job(tmp_path):
+def test_another_job_on_one_rank_exits_1_everywhere(tmp_path):
     job = _job_file(tmp_path)
     broken = tmp_path / "broken.json"
     broken.write_text(json.dumps({"format": "not a job"}))
-    with pytest.raises(RanksFailed) as caught:
-        on_ranks(
-            _cli_with_a_job_broken_on_rank_1,
-            str(job),
+    codes = on_ranks(
+        _cli_with_another_job_on_rank_1, str(job), str(broken), ranks=3, limit=120
+    )
+    assert codes[0] == 1
+
+
+def test_a_job_rank_0_cannot_read_exits_1_with_one_report(tmp_path):
+    broken = tmp_path / "broken.json"
+    broken.write_text(json.dumps({"format": "not a job"}))
+    code, log = on_ranks_argv(
+        [
+            sys.executable,
+            "-m",
+            "gfem",
+            "run",
             str(broken),
-            ranks=3,
-            limit=120,
-        )
-    assert "gfem: rank 1:" in caught.value.log
+            "--out",
+            str(tmp_path / "o"),
+        ],
+        ranks=3,
+        limit=120,
+    )
+    assert code == 1, log
+    assert log.count("gfem: error: ValueError") == 1, log

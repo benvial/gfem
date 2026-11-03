@@ -285,11 +285,19 @@ def test_a_port_solve_is_all_that_passes_so_far(tmp_path):
     assert _mpi.refuse(line, kept, gfem.SolverOptions()) is None
 
 
-def test_a_bundle_stays_refused_above_one_rank(tmp_path, monkeypatch):
+def test_load_result_above_one_rank_refuses_a_bundle_with_fields(tmp_path, monkeypatch):
+    options = gfem.SolverOptions(order=1, linear_solver="direct")
+    kept = gfem.Driven(5e9, keep_fields=True)
     line = cases.layered_line(tmp_path)
+    gfem.Job(line, kept, options).run(tmp_path / "fields")
+    gfem.Job(line, gfem.Driven(5e9), options).run(tmp_path / "plain")
     use_mpi(monkeypatch, fake_mpi())
-    with pytest.raises(gfem.DistributedUnsupportedError):
-        gfem.Job(line, gfem.Driven(5e9)).run(tmp_path / "out", comm=Stub(4))
+    with pytest.raises(gfem.DistributedUnsupportedError) as caught:
+        gfem.load_result(tmp_path / "fields", comm=Stub(4))
+    assert caught.value.feature == "load_result_fields"
+    assert "COMM_SELF" in str(caught.value)
+    assert gfem.load_result(tmp_path / "plain", comm=Stub(4)).e_fields == ()
+    assert gfem.load_result(tmp_path / "fields", comm=Stub(1)).e_fields
 
 
 #: One MN5 node's hyperthreads (ticket 18): CPU c and c + 112 share a core.
@@ -401,6 +409,7 @@ def test_a_field_from_ranks_refuses_export_on_a_stub(tmp_path):
         with pytest.raises(gfem.DistributedUnsupportedError) as caught:
             method()
         assert caught.value.feature == "field_export"
+        assert "Field.to_vtu" in str(caught.value)
     with pytest.raises(gfem.DistributedUnsupportedError) as caught:
         gfem.power_flow(piece, "sub", model=cases.layered_line(tmp_path))
     assert caught.value.feature == "power_flow"

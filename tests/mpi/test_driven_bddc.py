@@ -458,7 +458,7 @@ def _prepare_a_general_operator(directory):
 
 def test_a_general_operator_is_refused_on_every_rank(tmp_path):
     feature, *_ = on_ranks(_prepare_a_general_operator, tmp_path, ranks=3)
-    assert feature == "driven"
+    assert feature == "general_operator"
 
 
 # --- what a job sees ----------------------------------------------------------------

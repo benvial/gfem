@@ -53,6 +53,7 @@ __all__ = [
     "comm_key",
     "default_threads",
     "entry_check",
+    "gather_rows",
     "install_abort_hook",
     "launched_tasks",
     "max_bcast",
@@ -123,11 +124,19 @@ _REFUSALS = {
         "BDDC at order 1 has a coarse problem as large as the system, so it is "
         f"refused above one rank: use linear_solver='direct' or order=2, {_COPIES}."
     ),
-    "driven": f"A distributed driven solve writes no result bundle so far: {_COPIES}.",
+    "general_operator": (
+        "Only a system equal to its transpose has a distributed solver, and this "
+        f"one has none: {_COPIES}."
+    ),
     "field_export": (
         "A field across ranks is not sampled into one object, which would hold the "
-        "whole sampled mesh in one process: read values with Field.at, or solve with "
-        "comm=MPI.COMM_SELF."
+        "whole sampled mesh in one process: write one file with Field.to_vtu, read "
+        "values with Field.at, or solve with comm=MPI.COMM_SELF."
+    ),
+    "load_result_fields": (
+        "load_result of a bundle with fields reads the mesh and holds whole columns "
+        "on each rank, so it is refused above one rank: read it on one process, or "
+        "pass comm=MPI.COMM_SELF for one-process fields on each rank."
     ),
     "power_flow": (
         f"gfem.power_flow has no distributed path: read Field.at, {_COPIES}."
@@ -341,6 +350,39 @@ def bcast_arrays(comm: Any, arrays: dict[str, np.ndarray] | None) -> dict:
     for array in arrays.values():
         comm.Bcast(array, root=0)
     return arrays
+
+
+#: Elements of one message of `gather_rows`: past 2^31 a count overflows, and a
+#: ``Gatherv`` of 3.2e9 doubles raised ``MPI_ERR_ARG`` (ADR 0064).
+GATHER_MESSAGE = 2**30
+
+
+def gather_rows(comm: Any, rows: np.ndarray) -> np.ndarray | None:
+    """Every rank's ``rows`` on rank 0, in rank order; ``None`` elsewhere.
+
+    Point to point, so the total has no limit. Every rank's rows have one shape past
+    the first axis and one type.
+
+    Args:
+        comm: The resolved communicator, above one rank.
+        rows: This rank's rows, perhaps none.
+    """
+    rows = np.ascontiguousarray(rows)
+    flat = rows.reshape(-1)
+    sizes = comm.gather(flat.size, root=0)
+    if comm.rank != 0:
+        for start in range(0, flat.size, GATHER_MESSAGE):
+            comm.Send(flat[start : start + GATHER_MESSAGE], dest=0)
+        return None
+    gathered = np.empty(sum(sizes), rows.dtype)
+    gathered[: flat.size] = flat
+    position = flat.size
+    for source, size in enumerate(sizes[1:], start=1):
+        for start in range(0, size, GATHER_MESSAGE):
+            part = gathered[position : position + min(GATHER_MESSAGE, size - start)]
+            comm.Recv(part, source=source)
+            position += part.size
+    return gathered.reshape(-1, *rows.shape[1:])
 
 
 def comm_key(comm: Any) -> int | None:
@@ -640,7 +682,7 @@ def on_root(
         with section(comm, agreed=()), warnings.catch_warnings(record=True) as seen:
             warnings.simplefilter("always")
             try:
-                arrays = {k: np.ascontiguousarray(a) for k, a in compute().items()}
+                arrays = {k: np.asarray(a, order="C") for k, a in compute().items()}
             except agreed as error:
                 failure = error
         outcome = (failure, [(str(w.message), w.category) for w in seen])

@@ -128,6 +128,17 @@ def to_ngsolve(
     )
 
 
+def tetrahedron_domains(mesh: Mesh) -> tuple[np.ndarray, np.ndarray]:
+    """The ``(physical tag, entity tag)`` of each domain, and each tet's 1-based domain.
+
+    One process's volume elements are the tets in order of their domain, each domain
+    in file order.
+    """
+    keys = np.stack([mesh.tetrahedron_tags, mesh.tetrahedron_entities], axis=1)
+    domains, tet_domain = np.unique(keys, axis=0, return_inverse=True)
+    return domains, tet_domain.ravel() + 1
+
+
 def _netgen_mesh(
     mesh: Mesh, points: np.ndarray, periodic: tuple[Pairing, ...]
 ) -> tuple[Any, tuple[tuple[int, int], ...], np.ndarray, np.ndarray]:
@@ -136,9 +147,7 @@ def _netgen_mesh(
     ngmesh = ngm.Mesh(dim=3)  # ty: ignore[unresolved-attribute]
     ngmesh.AddPoints(np.ascontiguousarray(points))
 
-    keys = np.stack([mesh.tetrahedron_tags, mesh.tetrahedron_entities], axis=1)
-    domains, tet_domain = np.unique(keys, axis=0, return_inverse=True)
-    tet_domain = tet_domain.ravel() + 1
+    domains, tet_domain = tetrahedron_domains(mesh)
     tet_order = np.argsort(tet_domain, kind="stable")
     for k, (tag, _) in enumerate(domains, start=1):
         ngmesh.SetMaterial(k, names[3, int(tag)])
