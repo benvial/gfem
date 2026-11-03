@@ -30,11 +30,7 @@ REFERENCE_ENV = "GFEM_REFERENCE_DIR"
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Add the tier marker before pytest's `-m` deselection runs.
-
-    Then skip the `petsc` / `slepc` tests where gfem cannot use PETSc /
-    SLEPc.
-    """
+    """Add the tier marker before pytest's `-m` deselection runs."""
     for item in items:
         tier = item.path.relative_to(TESTS_DIR).parts[0]
         if tier not in TIERS:
@@ -48,8 +44,16 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
                 "slepc marker would start PETSc, and on the MPI stack MPI, in this "
                 "process, which launched jobs then inherit"
             )
-    _skip_without_petsc(items)
-    _skip_without_mpi(items)
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    """Skip what cannot run here, among the tests `-m` left.
+
+    Probing a deselected test would start PETSc in this process for nothing, and on
+    the MPI PETSc stack load MPI here, which launched jobs inherit.
+    """
+    _skip_without_petsc(session.items)
+    _skip_without_mpi(session.items)
 
 
 def _uses_petsc_marker(item: pytest.Item) -> bool:
