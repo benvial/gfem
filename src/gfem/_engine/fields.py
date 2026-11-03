@@ -315,12 +315,19 @@ def curl_matrix(field: Field) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     )
     rows, cols, values = (op if comm is None else op.local_mat).COO()
     rows = np.asarray(rows, dtype=np.int64)
+    cols = np.asarray(cols, dtype=np.int64)
     values = np.asarray(values, dtype=float)
     if comm is not None:
         values = values * _holders(hdiv)[rows]
+        if rows.size == 0:
+            # A rank with no entry would read no coefficient and no cotangent, and
+            # under jit JAX drops a callback whose outputs go unread on that rank
+            # alone: its peers then wait for it (ADR 0063). A zero entry reads them.
+            rows, cols = np.zeros(1, np.int64), np.zeros(1, np.int64)
+            values = np.zeros(1)
     matrix = (
         rows,
-        np.asarray(cols, dtype=np.int64),
+        cols,
         values,
         dof_shape(still, support, excluded, "hdiv", order, comm=comm)[0],
     )

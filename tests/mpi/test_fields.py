@@ -191,8 +191,8 @@ def test_a_gradient_on_a_moved_mesh_matches_one_process(tmp_path, ranks, solver)
 # --- under jit and vmap ---------------------------------------------------------------
 
 
-def _transformed(directory):
-    objective, p, _, _ = _row("eps_r", directory, "bddc_gmres")
+def _transformed(row, directory):
+    objective, p, _, _ = _row(row, directory, "bddc_gmres")
     eager = objective(p)
     jitted = jax.jit(objective)(p)
     twice = jax.vmap(objective)(jnp.stack([p, 1.01 * p]))
@@ -207,9 +207,10 @@ def _transformed(directory):
     }
 
 
+@pytest.mark.parametrize("row", ["eps_r", "b"])
 @pytest.mark.parametrize("ranks", RANKS)
-def test_jit_of_a_field_only_objective_runs_on_every_rank(tmp_path, ranks):
-    got, *_ = on_ranks(_transformed, tmp_path, ranks=ranks, limit=300)
+def test_jit_of_a_field_only_objective_runs_on_every_rank(tmp_path, ranks, row):
+    got, *_ = on_ranks(_transformed, row, tmp_path, ranks=ranks, limit=300)
     assert np.abs(got["jit"] - got["eager"]) <= 1e-12 * np.abs(got["eager"])
     assert np.abs(got["vmap"][0] - got["eager"]) <= 1e-12 * np.abs(got["eager"])
     assert got["vmap"][1] != got["vmap"][0]
