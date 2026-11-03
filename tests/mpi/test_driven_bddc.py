@@ -24,6 +24,8 @@ from gfem._engine.runtime import task_manager
 from gfem._engine.system_operator import SystemOperator
 from gfem._linalg import ResolvedLinearSolver, bddc, blas, coarse, prepare
 from gfem._linalg.base import local_matrix
+from gfem._linalg.direct import INVERSE
+from gfem._linalg.pardiso import pardiso_inverse
 from gfem._linalg.pieces import AssembledPieces
 
 #: Relative to the largest entry of the one-process S: ADR 0070's BDDC gate.
@@ -176,6 +178,34 @@ def test_telescoping_changes_neither_iterations_nor_s(tmp_path, ranks):
 @needs_stack
 def test_a_sweep_reusing_bddc_on_either_coarse_route(tmp_path):
     _assert_routes_agree(tmp_path, SWEEP, 4, routes=[EVERY_RANK, ONE_RANK])
+
+
+def _rank_0_flags(directory):
+    """The flags BDDC is given when the coarse problem stays on rank 0."""
+    import ngsolve as ngs
+
+    seen = []
+    made = ngs.Preconditioner
+
+    def spy(form, kind, **flags):
+        seen.append(flags)
+        return made(form, kind, **flags)
+
+    bddc._coarse_on_mumps = lambda *_, **__: False
+    bddc.ngs.Preconditioner = spy
+    _s_and_iterations(directory, (FREQUENCY,))
+    return seen
+
+
+def test_the_rank_0_route_names_its_inverse(tmp_path):
+    # the coarse rule of one process: PARDISO with the mkl extra, else sparse Cholesky
+    (flags,), *_ = on_ranks(_rank_0_flags, tmp_path, ranks=3)
+    print(f"rank 0 inverse: {flags}")  # noqa: T201
+    assert flags.keys() == {"inverse"}
+    assert flags["inverse"] in (
+        pardiso_inverse("complex_symmetric", is_complex=True),
+        INVERSE,
+    )
 
 
 def _forced_coarse_failures(directory, route, failures):

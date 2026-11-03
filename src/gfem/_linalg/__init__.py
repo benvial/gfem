@@ -326,7 +326,9 @@ def prepare(
             operator, or an option PETSc cannot apply).
         gfem.DeviceUnavailableError: The GPU cannot be used.
         gfem.SolverUnavailableError: ``kind="petsc"`` and PETSc cannot be
-            used (checked before assembly).
+            used (checked before assembly), or ``"direct"`` or ``"petsc"`` under
+            ranks without the MPI PETSc stack.
+        gfem._mpi.AgreedError: Under ranks, MUMPS failed on every retry.
     """
     if operator.layout is not None:
         return _prepare_on_ranks(

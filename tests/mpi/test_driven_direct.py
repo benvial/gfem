@@ -72,6 +72,28 @@ def test_a_second_frequency_replaces_the_first_ones_values(tmp_path):
     _assert_agrees(tmp_path, TWO, "direct", 4)
 
 
+def _on_half_of_the_ranks(directory, solver):
+    """Two solves side by side, on two communicators of two ranks."""
+    world = _world()
+    half = world.Split(world.rank % 2)
+    model = cases.layered_line(directory)
+    options = cases.tight(solver, threads=1)
+    result = gfem.solve(model, gfem.Driven(FREQUENCY), options=options, comm=half)
+    half.Free()
+    return np.asarray(result.s.values)
+
+
+@needs_stack
+@pytest.mark.parametrize(("solver", "gate"), [("direct", S_GATE), ("bddc_gmres", 1e-9)])
+def test_a_solve_runs_on_a_split_communicator(tmp_path, solver, gate):
+    s_one = _s(tmp_path, (FREQUENCY,), cases.tight("direct", threads=1))
+    pieces = on_ranks(
+        _on_half_of_the_ranks, tmp_path, solver, ranks=4, replicated=False, limit=300
+    )
+    for s in pieces:
+        assert np.abs(s - s_one).max() < gate * np.abs(s_one).max()
+
+
 # --- under the solve ----------------------------------------------------------------
 
 
