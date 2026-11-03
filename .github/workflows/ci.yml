@@ -109,8 +109,9 @@ jobs:
     # PETSc stack, whose cold build is too long for every pull request: petsc.yml.
     # Pinned, not ubuntu-latest: apt's Open MPI 4.1.6 is MareNostrum 5's version.
     name: launched tests (ubuntu-24.04, py3.12, Open MPI)
+    # The tier took 53 min on 8 cores, on Open MPI 5.0.11: a liveness bound, no gate.
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 120
     env:
       GFEM_TEST_MPI_MAX_RANKS: "4"
     steps:
