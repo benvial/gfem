@@ -138,6 +138,28 @@ class DeviceUnavailableError(RuntimeError):
     """
 
 
+class DistributedUnsupportedError(NotImplementedError):
+    """This solve has no path above one MPI rank.
+
+    Raised on every rank, before any mesh is built, so a script can catch it and
+    the job goes on. Rank copies (``comm=MPI.COMM_SELF``) run every feature as
+    one process. Existing one-process refusals keep their classes.
+
+    Attributes:
+        feature: What has no path, e.g. ``"eigenmode"`` or ``"periodic"``.
+    """
+
+    def __init__(self, feature: str, message: str) -> None:
+        """Store the key and the message, which gives the remedy."""
+        super().__init__(feature, message)
+        self.feature = feature
+        self.message = message
+
+    def __str__(self) -> str:
+        """The message, without the key."""
+        return self.message
+
+
 class SolverUnavailableError(RuntimeError):
     """``SolverOptions`` names PETSc or SLEPc, which this Python cannot use.
 
@@ -150,6 +172,10 @@ class SolverUnavailableError(RuntimeError):
     version older than gfem supports) and the fix: build them as the "Solve
     with PETSc and SLEPc" recipe in the gfem docs describes, or choose
     another solver.
+
+    Also raised when a solve is launched on several ranks and cannot use them:
+    mpi4py or an MPI library cannot be loaded, the launcher did not start MPI
+    (``srun --mpi=none``), or the MPI is not Open MPI.
     """
 
 

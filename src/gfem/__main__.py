@@ -4,6 +4,9 @@ Exit codes: 0 on success; 1 when the job cannot be read or solved (the
 error message goes to stderr: a changed mesh file, a newer schema version,
 a device that cannot run, a physics error, ...); 2 for command-line usage
 errors, including a job file that does not exist.
+
+Under a launcher all ranks exit together, with rank 0 reporting; a failure that
+only one rank sees ends the whole job, because its peers may never reach an exit.
 """
 
 from __future__ import annotations
@@ -54,15 +57,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
     parser = _parser()
     args = parser.parse_args(argv)
-    if not args.job.is_file():
-        parser.error(f"job file {args.job} does not exist")
 
+    from gfem import _mpi
+    from gfem.errors import SolverUnavailableError
     from gfem.job import Job
 
     try:
-        Job.from_json(args.job).run(args.out, device=args.device)
-    except Exception as err:  # noqa: BLE001 (report any failure as exit code 1)
+        comm = _mpi.resolve_comm()
+    except SolverUnavailableError as err:  # no communicator, so each rank reports
         print(f"gfem: error: {type(err).__name__}: {err}", file=sys.stderr)  # noqa: T201
+        return 1
+    if _mpi.agree_any(comm, flag=not args.job.is_file()):
+        if _mpi.rank(comm) == 0:
+            parser.error(f"job file {args.job} does not exist")
+        return 2
+    try:
+        with _mpi.section(comm):
+            Job.from_json(args.job).run(args.out, device=args.device, comm=comm)
+    except Exception as err:  # noqa: BLE001 (report any failure as exit code 1)
+        if _mpi.rank(comm) == 0:
+            print(f"gfem: error: {type(err).__name__}: {err}", file=sys.stderr)  # noqa: T201
         return 1
     return 0
 

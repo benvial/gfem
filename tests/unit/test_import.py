@@ -48,7 +48,7 @@ def test_double_precision_holds_when_jax_was_imported_first():
 
 def test_importing_gfem_never_imports_petsc():
     out = _run_fresh(
-        "import gfem, sys; print([m for m in ('petsc4py', 'slepc4py') "
+        "import gfem, sys; print([m for m in ('petsc4py', 'slepc4py', 'mpi4py') "
         "if m in sys.modules])"
     )
     assert out == "[]"
@@ -60,6 +60,17 @@ def test_petsc_is_imported_only_by_gfem_petsc():
         str(p.relative_to(root))
         for p in root.rglob("*.py")
         if p.name != "_petsc.py" and {"petsc4py", "slepc4py"} & _imports(p)
+    ]
+    assert offenders == []
+
+
+def test_mpi4py_is_imported_only_by_gfem_mpi():
+    root = Path(gfem.__file__).parent
+    assert "mpi4py" in _imports(root / "_mpi.py")
+    offenders = [
+        str(p.relative_to(root))
+        for p in root.rglob("*.py")
+        if p.name != "_mpi.py" and "mpi4py" in _imports(p)
     ]
     assert offenders == []
 

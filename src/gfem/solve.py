@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 from typing import TYPE_CHECKING, Any, overload
 
+from gfem import _mpi
 from gfem._adjoint import solve_vjp
 from gfem._checks import is_traced
 from gfem._periodic import check_nodes
@@ -27,21 +28,43 @@ __all__ = ["solve"]
 
 @overload
 def solve(
-    model: Model, problem: Electrostatic, *, options: SolverOptions | None = None
+    model: Model,
+    problem: Electrostatic,
+    *,
+    options: SolverOptions | None = None,
+    comm: Any = None,
 ) -> ElectrostaticResult: ...
 @overload
 def solve(
-    model: Model, problem: Driven, *, options: SolverOptions | None = None
+    model: Model,
+    problem: Driven,
+    *,
+    options: SolverOptions | None = None,
+    comm: Any = None,
 ) -> DrivenResult: ...
 @overload
 def solve(
-    model: Model, problem: Eigenmode, *, options: SolverOptions | None = None
+    model: Model,
+    problem: Eigenmode,
+    *,
+    options: SolverOptions | None = None,
+    comm: Any = None,
 ) -> EigenmodeResult: ...
 @overload
 def solve(
-    model: Model, problem: PortMode, *, options: SolverOptions | None = None
+    model: Model,
+    problem: PortMode,
+    *,
+    options: SolverOptions | None = None,
+    comm: Any = None,
 ) -> PortModeResult: ...
-def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -> Any:
+def solve(
+    model: Model,
+    problem: Any,
+    *,
+    options: SolverOptions | None = None,
+    comm: Any = None,
+) -> Any:
     """Solve one problem type on a model.
 
     A pure function of its inputs: the model and problem are not changed,
@@ -61,6 +84,10 @@ def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -
         model: The device.
         problem: What to solve, e.g. `gfem.Electrostatic`.
         options: The numerics; ``None`` is ``SolverOptions()``.
+        comm: An mpi4py communicator. ``None`` lets the launcher decide: one
+            process without one, the world communicator under ``mpiexec`` or
+            ``srun``, where every rank makes the same call. A communicator of
+            size 1, such as ``MPI.COMM_SELF``, runs one independent copy.
 
     Returns:
         The problem type's result, e.g. `gfem.ElectrostaticResult` for an
@@ -68,6 +95,10 @@ def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -
 
     Raises:
         TypeError: An argument has the wrong type.
+        DistributedUnsupportedError: On several ranks, this solve has no
+            distributed path; ``feature`` names what, the message the remedy.
+        SolverUnavailableError: Launched on several ranks without a usable
+            mpi4py and Open MPI.
         RegionNotFoundError: The problem names a region the mesh lacks.
         ValueError: The problem does not fit the model; the message gives
             the remedy.
@@ -88,6 +119,8 @@ def solve(model: Model, problem: Any, *, options: SolverOptions | None = None) -
         raise TypeError(
             f"options must be a gfem.SolverOptions, got {type(options).__name__}."
         )
+    if _mpi.resolve_comm(comm) is not None:
+        _mpi.refuse(model, problem, options)
     rule = _rule_class(problem)(model, problem, options)
     if is_traced((model, problem)):
         return rule.result(solve_vjp(rule, model, problem))

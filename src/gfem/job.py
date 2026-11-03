@@ -102,7 +102,13 @@ class Job:
                 f"{type(self.options).__name__}."
             )
 
-    def run(self, out: str | Path | None = None, *, device: str | None = None) -> Any:
+    def run(
+        self,
+        out: str | Path | None = None,
+        *,
+        device: str | None = None,
+        comm: Any = None,
+    ) -> Any:
         """Solve the job: ``gfem.solve(model, problem, options=options)``.
 
         Args:
@@ -110,6 +116,8 @@ class Job:
                 (``result.json`` and ``result.npz``, read by `load_result`).
             device: Overrides ``options.device`` (e.g. a job written for a
                 GPU run on a CPU machine). The bundle records the device used.
+            comm: The communicator, as for `gfem.solve`; not part of the job,
+                which does not say where it runs.
 
         Returns:
             The problem type's result.
@@ -118,7 +126,7 @@ class Job:
         if device is not None:
             options = dataclasses.replace(options, device=device)
         start = time.perf_counter()
-        result = solve(self.model, self.problem, options=options)
+        result = solve(self.model, self.problem, options=options, comm=comm)
         elapsed = time.perf_counter() - start
         if out is not None:
             _write_result(

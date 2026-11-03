@@ -1,8 +1,8 @@
 """Mark every test with its tier, taken from its directory under tests/.
 
 tests/unit -> unit, tests/verification -> verification, tests/reference ->
-reference, tests/benchmark -> benchmark, tests/cuda -> cuda. A test file
-outside these directories is a collection error, so each test has one tier.
+reference, tests/benchmark -> benchmark, tests/cuda -> cuda, tests/mpi -> mpi. A
+test file outside these directories is a collection error, so each test has one tier.
 
 The reference data (Palace runs, imported meshes) is found through the
 ``GFEM_REFERENCE_DIR`` environment variable: the `reference_dir` fixture
@@ -12,6 +12,7 @@ gives its path and skips the test when it is unset, and a test taking a
 
 Tests marked ``petsc`` or ``slepc`` need gfem's PETSc or SLEPc solver: they
 are skipped, with the user-facing reason, where `gfem._petsc` cannot use it.
+Tests in tests/mpi are skipped where mpi4py or the launcher is missing.
 
 A test that sets NGSolve's thread count uses the `ngsolve_threads` fixture,
 which puts the count back afterwards.
@@ -22,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-TIERS = ("unit", "verification", "reference", "benchmark", "cuda")
+TIERS = ("unit", "verification", "reference", "benchmark", "cuda", "mpi")
 TESTS_DIR = Path(__file__).parent
 REFERENCE_ENV = "GFEM_REFERENCE_DIR"
 
@@ -42,6 +43,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             )
         item.add_marker(tier)
     _skip_without_petsc(items)
+    _skip_without_mpi(items)
 
 
 def _skip_without_petsc(items: list[pytest.Item]) -> None:
@@ -67,6 +69,23 @@ def _skip_without_petsc(items: list[pytest.Item]) -> None:
             probes[name]()
         except SolverUnavailableError as err:
             item.add_marker(pytest.mark.skip(reason=str(err)))
+
+
+def _skip_without_mpi(items: list[pytest.Item]) -> None:
+    """Skip the launched tests where they cannot launch.
+
+    The probe runs only when some test carries the marker, and in `ranks`, so
+    this one-process pytest never loads MPI.
+    """
+    marked = [item for item in items if item.get_closest_marker("mpi") is not None]
+    if not marked:
+        return
+    import ranks
+
+    reason = ranks.unavailable()
+    if reason is not None:
+        for item in marked:
+            item.add_marker(pytest.mark.skip(reason=reason))
 
 
 @pytest.fixture

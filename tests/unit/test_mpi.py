@@ -1,0 +1,297 @@
+"""Launcher resolution and refusals, with no MPI: stub communicators, fake mpi4py."""
+
+import pickle
+import subprocess
+import sys
+import textwrap
+import types
+from pathlib import Path
+
+import gradient_cases as cases
+import jax
+import mpi_cases
+import numpy as np
+import pytest
+
+import gfem
+from gfem import _mpi
+
+TASK_VARIABLES = ("OMPI_COMM_WORLD_SIZE", "SLURM_STEP_NUM_TASKS", "PMI_SIZE")
+TESTS = Path(__file__).resolve().parents[1]
+
+
+class Stub:
+    """As much of a communicator as resolution reads."""
+
+    rank = 0
+
+    def __init__(self, size: int) -> None:
+        self.size = size
+
+
+def fake_mpi(vendor: str = "Open MPI", world: int = 4) -> types.SimpleNamespace:
+    return types.SimpleNamespace(
+        COMM_WORLD=Stub(world),
+        COMM_SELF=Stub(1),
+        get_vendor=lambda: (vendor, (0, 0, 0)),
+        Is_initialized=lambda: True,
+        Is_finalized=lambda: False,
+    )
+
+
+@pytest.fixture(autouse=True)
+def no_launcher(monkeypatch):
+    for name in TASK_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delitem(sys.modules, "mpi4py", raising=False)
+    monkeypatch.delitem(sys.modules, "mpi4py.MPI", raising=False)
+    # the hook a distributed solve chains must not outlive the test
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+
+
+def use_mpi(monkeypatch, mpi) -> None:
+    module = types.ModuleType("mpi4py")
+    module.MPI = mpi
+    monkeypatch.setitem(sys.modules, "mpi4py", module)
+    monkeypatch.setitem(sys.modules, "mpi4py.MPI", mpi)
+
+
+# --- launched tasks ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("environment", "tasks"),
+    [
+        pytest.param({}, 1, id="no launcher"),
+        pytest.param({"SLURM_NTASKS": "16"}, 1, id="batch script, no launcher"),
+        pytest.param({"SLURM_PROCID": "3"}, 1, id="only a task id"),
+        pytest.param({"SLURM_STEP_NUM_TASKS": "1"}, 1, id="srun -n 1"),
+        pytest.param({"SLURM_STEP_NUM_TASKS": "4"}, 4, id="srun -n 4"),
+        pytest.param(
+            {"OMPI_COMM_WORLD_SIZE": "1", "SLURM_NTASKS": "16"},
+            1,
+            id="mpirun -n 1 in a batch job",
+        ),
+        pytest.param(
+            {"OMPI_COMM_WORLD_SIZE": "4", "SLURM_NTASKS": "16"},
+            4,
+            id="mpirun -n 4 in a batch job",
+        ),
+        pytest.param(
+            {"OMPI_COMM_WORLD_SIZE": "4", "SLURM_STEP_NUM_TASKS": "1"},
+            4,
+            id="mpirun inside an srun step",
+        ),
+        pytest.param({"PMI_SIZE": "3"}, 3, id="Hydra"),
+        pytest.param({"OMPI_COMM_WORLD_SIZE": ""}, 1, id="empty"),
+    ],
+)
+def test_launched_tasks_reads_the_launcher_variables(environment, tasks):
+    assert _mpi.launched_tasks(environment) == tasks
+
+
+def test_launched_tasks_reads_the_world_size_of_a_loaded_mpi4py(monkeypatch):
+    use_mpi(monkeypatch, fake_mpi(world=8))
+    assert _mpi.launched_tasks({}) == 8
+
+
+# --- resolution -------------------------------------------------------------------
+
+
+def test_one_task_resolves_to_the_one_process_path_without_mpi4py():
+    assert _mpi.resolve_comm(None) is None
+    assert "mpi4py" not in sys.modules
+
+
+def test_a_communicator_of_size_one_needs_no_mpi4py():
+    assert _mpi.resolve_comm(Stub(1)) is None
+    assert "mpi4py" not in sys.modules
+
+
+def test_a_non_communicator_is_a_type_error():
+    with pytest.raises(TypeError, match="communicator"):
+        _mpi.resolve_comm("world")
+
+
+def test_launched_resolves_to_the_world(monkeypatch):
+    mpi = fake_mpi()
+    use_mpi(monkeypatch, mpi)
+    monkeypatch.setenv("OMPI_COMM_WORLD_SIZE", "4")
+    assert _mpi.resolve_comm(None) is mpi.COMM_WORLD
+
+
+def test_a_launched_world_of_one_names_pmix_and_comm_self(monkeypatch):
+    use_mpi(monkeypatch, fake_mpi(world=1))
+    monkeypatch.setenv("SLURM_STEP_NUM_TASKS", "4")
+    with pytest.raises(gfem.SolverUnavailableError, match=r"--mpi=pmix.*COMM_SELF"):
+        _mpi.resolve_comm(None)
+
+
+@pytest.mark.parametrize("vendor", ["MPICH", "Intel MPI"])
+def test_any_mpi_but_open_mpi_is_refused_above_one_rank(vendor, monkeypatch):
+    use_mpi(monkeypatch, fake_mpi(vendor))
+    with pytest.raises(gfem.SolverUnavailableError, match=vendor):
+        _mpi.resolve_comm(Stub(2))
+
+
+def test_no_vendor_refusal_at_size_one(monkeypatch):
+    use_mpi(monkeypatch, fake_mpi("MPICH"))
+    assert _mpi.resolve_comm(Stub(1)) is None
+
+
+def _child(code: str, *paths, **environment) -> subprocess.CompletedProcess:
+    python_path = ":".join(str(p) for p in paths)
+    env = {"JAX_PLATFORMS": "cpu", "PYTHONPATH": python_path, **environment}
+    return subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(code)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+
+RESOLVE = """
+    import sys
+    {block}
+    from gfem import _mpi
+    from gfem.errors import SolverUnavailableError
+    try:
+        _mpi.resolve_comm(None)
+    except SolverUnavailableError as err:
+        print(err)
+    else:
+        print("resolved")
+"""
+
+
+def test_launched_without_mpi4py_is_unavailable():
+    block = "sys.modules['mpi4py'] = None"
+    proc = _child(RESOLVE.format(block=block), OMPI_COMM_WORLD_SIZE="2")
+    assert proc.returncode == 0, proc.stderr
+    assert "gfem[mpi]" in proc.stdout
+    assert "Open MPI" in proc.stdout
+
+
+def test_launched_with_a_library_less_mpi4py_is_unavailable(tmp_path):
+    package = tmp_path / "mpi4py"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "MPI.py").write_text("raise RuntimeError('cannot load MPI library')\n")
+    proc = _child(RESOLVE.format(block=""), tmp_path, OMPI_COMM_WORLD_SIZE="2")
+    assert proc.returncode == 0, proc.stderr
+    assert "cannot load MPI library" in proc.stdout
+    assert "Open MPI" in proc.stdout
+
+
+@pytest.mark.parametrize("environment", [{}, {"OMPI_COMM_WORLD_SIZE": "1"}])
+def test_a_one_process_solve_never_imports_mpi4py(environment, tmp_path):
+    code = f"""
+    import sys
+    import gfem, mpi_cases
+    gfem.solve(
+        mpi_cases.stack({str(tmp_path)!r}),
+        gfem.Electrostatic(terminals=mpi_cases.TERMINALS),
+        options=gfem.SolverOptions(order=1),
+    )
+    print([m for m in sys.modules if m.startswith("mpi4py")])
+    """
+    proc = _child(code, TESTS, TESTS.parent / "tools", **environment)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "[]"
+
+
+# --- refusals ---------------------------------------------------------------------
+
+
+def test_the_error_is_a_not_implemented_error_with_its_key():
+    err = gfem.DistributedUnsupportedError("eigenmode", "no path; use COMM_SELF")
+    assert isinstance(err, NotImplementedError)
+    assert err.feature == "eigenmode"
+    assert str(err) == "no path; use COMM_SELF"
+    copy = pickle.loads(pickle.dumps(err))  # noqa: S301
+    assert (copy.feature, str(copy)) == (err.feature, str(err))
+
+
+@pytest.mark.parametrize("key", mpi_cases.KEYS)
+def test_a_solve_above_one_rank_raises_its_key_and_a_remedy(key, tmp_path, monkeypatch):
+    use_mpi(monkeypatch, fake_mpi())
+    model, problem, options = mpi_cases.refused(key, tmp_path)
+    with pytest.raises(gfem.DistributedUnsupportedError, match="COMM_SELF") as caught:
+        gfem.solve(model, problem, options=options, comm=Stub(4))
+    assert caught.value.feature == mpi_cases.feature(key)
+
+
+def test_a_launched_job_raises_without_being_given_a_communicator(
+    tmp_path, monkeypatch
+):
+    use_mpi(monkeypatch, fake_mpi())
+    monkeypatch.setenv("OMPI_COMM_WORLD_SIZE", "4")
+    model, problem, options = mpi_cases.refused("eigenmode", tmp_path)
+    with pytest.raises(gfem.DistributedUnsupportedError) as caught:
+        gfem.solve(model, problem, options=options)
+    assert caught.value.feature == "eigenmode"
+
+
+def test_a_job_passes_its_communicator_on(tmp_path, monkeypatch):
+    use_mpi(monkeypatch, fake_mpi())
+    model, problem, options = mpi_cases.refused("driven", tmp_path)
+    with pytest.raises(gfem.DistributedUnsupportedError):
+        gfem.Job(model, problem, options).run(comm=Stub(4))
+
+
+def test_a_refusal_under_jax_keeps_its_class(tmp_path, monkeypatch):
+    use_mpi(monkeypatch, fake_mpi())
+    line = cases.layered_line(tmp_path)
+    n = len(line.mesh.elements("sub")) + len(line.mesh.elements("cover"))
+
+    def objective(eps):
+        model = cases.with_fields(line, {"eps_r": eps})
+        return gfem.solve(model, gfem.Driven(5e9), comm=Stub(4)).s.values.real.sum()
+
+    with pytest.raises(gfem.DistributedUnsupportedError):
+        jax.grad(objective)(np.ones(n))
+
+
+def test_an_unknown_problem_stays_a_type_error(tmp_path, monkeypatch):
+    use_mpi(monkeypatch, fake_mpi())
+    line = cases.layered_line(tmp_path)
+    with pytest.raises(TypeError, match="problem type"):
+        gfem.solve(line, object(), comm=Stub(4))
+
+
+def test_a_communicator_of_size_one_runs_what_ranks_refuse(tmp_path):
+    model = mpi_cases.stack(tmp_path)
+    problem = gfem.Electrostatic(terminals=mpi_cases.TERMINALS)
+    options = gfem.SolverOptions(order=1)
+    expected = gfem.solve(model, problem, options=options).capacitance
+    result = gfem.solve(model, problem, options=options, comm=Stub(1))
+    np.testing.assert_allclose(result.capacitance, expected, rtol=1e-12)
+    job = gfem.Job(model, problem, options).run(comm=Stub(1))
+    np.testing.assert_allclose(job.capacitance, expected, rtol=1e-12)
+
+
+# --- agreement, trivial at one process --------------------------------------------
+
+
+def test_agreement_is_trivial_at_one_process():
+    assert _mpi.agree_any(None, flag=True) is True
+    assert _mpi.agree_any(None, flag=False) is False
+    assert _mpi.agree_all(None, flag=True) is True
+    assert _mpi.agree_all(None, flag=False) is False
+    values = np.array([1.0 + 2.0j, 3.0])
+    assert _mpi.reduce_bcast(None, values) is values
+    assert _mpi.node_bytes(None, 7) == 7
+    assert _mpi.node_budget(None, 9) == 9
+    assert _mpi.rank(None) == 0
+
+
+def test_a_section_at_one_process_lets_any_error_through():
+    with pytest.raises(ValueError, match="local"), _mpi.section(None):
+        raise ValueError("local")
+
+
+def test_a_warning_at_one_process_warns_at_the_callers_line():
+    with pytest.warns(UserWarning, match="once") as caught:
+        _mpi.warn(None, "once", UserWarning)
+    assert caught[0].filename == __file__
