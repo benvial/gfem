@@ -206,6 +206,27 @@ def test_a_workspace_too_small_for_every_retry_is_an_agreed_error(tmp_path):
     assert ranks == 4
 
 
+def _working_memory_of_one_megabyte(directory):
+    """MUMPS itself out of memory, not a forced value."""
+    options = gfem.SolverOptions(
+        linear_solver="petsc", petsc_options={"mat_mumps_icntl_23": 1}
+    )
+    model = cases.layered_line(directory)
+    try:
+        gfem.solve(model, gfem.Driven(FREQUENCY), options=options)
+    except _mpi.AgreedError as err:
+        return str(err), _world().allreduce(1)
+    raise AssertionError("one megabyte factored the system")
+
+
+@needs_stack
+def test_a_real_factorization_failure_is_an_agreed_error_with_no_nan(tmp_path):
+    (text, ranks), *_ = on_ranks(_working_memory_of_one_megabyte, tmp_path, ranks=4)
+    assert "INFOG(1)=-" in text
+    assert ranks == 4
+    print(text)  # noqa: T201
+
+
 def _a_misnamed_option(directory):
     options = gfem.SolverOptions(
         linear_solver="petsc", petsc_options={"mat_mumps_icntl_not_one": 1}

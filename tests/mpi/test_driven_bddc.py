@@ -209,15 +209,31 @@ def test_a_coarse_workspace_too_small_retries_on_a_new_ksp(tmp_path, route):
     assert np.abs(s - s_one).max() < S_GATE * np.abs(s_one).max()
 
 
-@needs_stack
-def test_a_coarse_workspace_too_small_for_every_retry_is_an_agreed_error(tmp_path):
-    limit = coarse.MUMPS_RETRIES + 1
-    (named, calls, ranks), *_ = on_ranks(
-        _forced_coarse_failures, tmp_path, ONE_RANK, limit, ranks=4, limit=300
+def _working_memory_of_one_megabyte(directory, route):
+    """A real failure in MUMPS, not a forced value: the real paths must see it."""
+    coarse.reduction = REDUCTIONS[route]
+    coarse.RANK_MUMPS_OPTIONS = (
+        *coarse.RANK_MUMPS_OPTIONS,
+        ("mat_mumps_icntl_23", 1),
     )
-    assert named
-    assert calls == limit
+    options = cases.tight("bddc_gmres", threads=1)
+    problem = gfem.Driven(FREQUENCY)
+    try:
+        gfem.solve(cases.layered_line(directory), problem, options=options)
+    except _mpi.AgreedError as err:
+        return str(err), _world().allreduce(1)
+    raise AssertionError("one megabyte factored the coarse problem")
+
+
+@needs_stack
+@pytest.mark.parametrize("route", [EVERY_RANK, ONE_RANK])
+def test_a_factorization_that_fails_is_an_agreed_error_with_no_nan(tmp_path, route):
+    (text, ranks), *_ = on_ranks(
+        _working_memory_of_one_megabyte, tmp_path, route, ranks=4, limit=300
+    )
+    assert "coarse problem failed" in text
     assert ranks == 4
+    print(text)  # noqa: T201
 
 
 # --- what lies under the solve ------------------------------------------------------
