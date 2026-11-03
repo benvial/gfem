@@ -22,7 +22,7 @@ from gfem._engine.driven import DrivenRule, driven_operator
 from gfem._engine.port_network import parallel_scale
 from gfem._engine.runtime import task_manager
 from gfem._engine.system_operator import SystemOperator
-from gfem._linalg import ResolvedLinearSolver, blas, prepare
+from gfem._linalg import ResolvedLinearSolver, bddc, blas, prepare
 from gfem._linalg.base import local_matrix
 from gfem._linalg.pieces import AssembledPieces
 
@@ -46,9 +46,14 @@ def _largest(comm, values: np.ndarray) -> float:
 
 
 def _s_and_iterations(directory, frequencies):
-    """S and the Krylov iterations of `layered_line`, one thread per process."""
-    seen = {}
+    """S, the Krylov iterations and BDDC's setups of `layered_line`, one thread each."""
+    seen = {"setups": 0}
     forward = DrivenRule.forward
+    set_up = bddc._set_up
+
+    def count_setups(*args, **kwargs):
+        seen["setups"] += 1
+        return set_up(*args, **kwargs)
 
     def spy(self, model, *, keep):
         outputs, entry = forward(self, model, keep=keep)
@@ -56,6 +61,7 @@ def _s_and_iterations(directory, frequencies):
         return outputs, entry
 
     DrivenRule.forward = spy
+    bddc._set_up = count_setups
     try:
         result = gfem.solve(
             cases.layered_line(directory),
@@ -64,18 +70,24 @@ def _s_and_iterations(directory, frequencies):
         )
     finally:
         DrivenRule.forward = forward
-    return np.asarray(result.s.values), np.asarray(seen["iterations"])
+        bddc._set_up = set_up
+    return np.asarray(result.s.values), np.asarray(seen["iterations"]), seen["setups"]
 
 
 def _assert_agrees(directory, frequencies, ranks):
-    s_one, iterations_one = _s_and_iterations(directory, frequencies)
-    (s, iterations), *_ = on_ranks(
+    s_one, iterations_one, setups_one = _s_and_iterations(directory, frequencies)
+    (s, iterations, setups), *_ = on_ranks(
         _s_and_iterations, directory, frequencies, ranks=ranks, limit=300
     )
     error = np.abs(s - s_one).max() / np.abs(s_one).max()
-    print(f"ranks={ranks} S error={error:.3g} iterations={iterations.tolist()}")  # noqa: T201
+    print(  # noqa: T201
+        f"ranks={ranks} S error={error:.3g} iterations={iterations.tolist()} "
+        f"one process={iterations_one.tolist()} setups={setups}"
+    )
     assert error < S_GATE, f"S off by {error:.3g} relative"
     np.testing.assert_array_equal(iterations, iterations_one)
+    assert setups == setups_one
+    return setups
 
 
 @pytest.mark.parametrize("ranks", [3, 4, 8])
@@ -85,7 +97,7 @@ def test_lumped_s_and_iterations_match_one_process(tmp_path, ranks):
 
 @pytest.mark.parametrize("ranks", [3, 4])
 def test_a_sweep_reusing_bddc_matches_one_process(tmp_path, ranks):
-    _assert_agrees(tmp_path, SWEEP, ranks)
+    assert _assert_agrees(tmp_path, SWEEP, ranks) < len(SWEEP)
 
 
 # --- what lies under the solve ------------------------------------------------------
@@ -343,7 +355,6 @@ def _physical_cores() -> int:
 def _blas_in_each_phase(directory):
     """Each loaded BLAS's count in a setup, in a solve, and after: ADR 0076's phases."""
     import gfem._linalg.gmres as krylov
-    from gfem._linalg import bddc
 
     seen = {"setup": set(), "solve": set()}
     set_up, solve = bddc._set_up, krylov.Gmres._gmres
