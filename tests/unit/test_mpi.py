@@ -215,8 +215,8 @@ def test_the_error_is_a_not_implemented_error_with_its_key():
 
 @pytest.mark.parametrize("key", mpi_cases.KEYS)
 def test_a_solve_above_one_rank_raises_its_key_and_a_remedy(key, tmp_path, monkeypatch):
-    use_mpi(monkeypatch, fake_mpi())
     model, problem, options = mpi_cases.refused(key, tmp_path)
+    use_mpi(monkeypatch, fake_mpi())
     with pytest.raises(gfem.DistributedUnsupportedError, match="COMM_SELF") as caught:
         gfem.solve(model, problem, options=options, comm=Stub(4))
     assert caught.value.feature == mpi_cases.feature(key)
@@ -225,24 +225,24 @@ def test_a_solve_above_one_rank_raises_its_key_and_a_remedy(key, tmp_path, monke
 def test_a_launched_job_raises_without_being_given_a_communicator(
     tmp_path, monkeypatch
 ):
+    model, problem, options = mpi_cases.refused("eigenmode", tmp_path)
     use_mpi(monkeypatch, fake_mpi())
     monkeypatch.setenv("OMPI_COMM_WORLD_SIZE", "4")
-    model, problem, options = mpi_cases.refused("eigenmode", tmp_path)
     with pytest.raises(gfem.DistributedUnsupportedError) as caught:
         gfem.solve(model, problem, options=options)
     assert caught.value.feature == "eigenmode"
 
 
 def test_a_job_passes_its_communicator_on(tmp_path, monkeypatch):
-    use_mpi(monkeypatch, fake_mpi())
     model, problem, options = mpi_cases.refused("driven", tmp_path)
+    use_mpi(monkeypatch, fake_mpi())
     with pytest.raises(gfem.DistributedUnsupportedError):
         gfem.Job(model, problem, options).run(comm=Stub(4))
 
 
 def test_a_refusal_under_jax_keeps_its_class(tmp_path, monkeypatch):
-    use_mpi(monkeypatch, fake_mpi())
     line = cases.layered_line(tmp_path)
+    use_mpi(monkeypatch, fake_mpi())
     n = len(line.mesh.elements("sub")) + len(line.mesh.elements("cover"))
 
     def objective(eps):
@@ -254,8 +254,8 @@ def test_a_refusal_under_jax_keeps_its_class(tmp_path, monkeypatch):
 
 
 def test_an_unknown_problem_stays_a_type_error(tmp_path, monkeypatch):
-    use_mpi(monkeypatch, fake_mpi())
     line = cases.layered_line(tmp_path)
+    use_mpi(monkeypatch, fake_mpi())
     with pytest.raises(TypeError, match="problem type"):
         gfem.solve(line, object(), comm=Stub(4))
 

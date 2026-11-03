@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import collections.abc
 import contextlib
+import itertools
 import os
 import sys
 import traceback
@@ -29,8 +30,11 @@ from gfem.errors import (
 
 __all__ = [
     "AGREED_ERRORS",
+    "AgreedError",
     "agree_all",
     "agree_any",
+    "bcast_arrays",
+    "comm_key",
     "install_abort_hook",
     "launched_tasks",
     "node_budget",
@@ -47,12 +51,25 @@ __all__ = [
 #: also has, and never a task id.
 _TASK_VARIABLES = ("OMPI_COMM_WORLD_SIZE", "SLURM_STEP_NUM_TASKS", "PMI_SIZE")
 
+
+class AgreedError(RuntimeError):
+    """Ranks found together, on an agreed value, that they cannot go on.
+
+    Each rank raises it after the same collective, so the job can catch it and go
+    on, unlike a failure one rank alone sees.
+    """
+
+
 #: Raised by every rank together: what `section` lets through.
 AGREED_ERRORS: tuple[type[BaseException], ...] = (
+    AgreedError,
     DistributedUnsupportedError,
     LinearSolverConvergenceError,
     SolverUnavailableError,
 )
+
+_comm_keyval: Any = None
+_comm_keys = itertools.count()
 
 _COPIES = "or run independent one-process copies with comm=MPI.COMM_SELF"
 
@@ -178,30 +195,31 @@ def refuse(model: Any, problem: Any, options: Any) -> None:
     from gfem.problems import Driven, Eigenmode, Electrostatic, PortMode
 
     if isinstance(problem, Eigenmode):
-        _refuse("eigenmode")
+        refuse_feature("eigenmode")
     if isinstance(problem, Electrostatic):
-        _refuse("electrostatic")
+        refuse_feature("electrostatic")
     # No distributed solve exists yet. Runs on rank 0 and broadcasts by ADR 0059.
     if isinstance(problem, PortMode):
-        _refuse("port_mode")
+        refuse_feature("port_mode")
     if isinstance(problem, Driven):
         if problem.sweep == "adaptive":
-            _refuse("adaptive_sweep")
+            refuse_feature("adaptive_sweep")
         if problem.wave_vector is not None:
-            _refuse("bloch")
+            refuse_feature("bloch")
         if model._periodic:  # noqa: SLF001
-            _refuse("periodic")
+            refuse_feature("periodic")
         if min(options.frequency_workers, len(problem.frequency)) > 1:
-            _refuse("frequency_workers")
+            refuse_feature("frequency_workers")
         if options.device.startswith("cuda"):
-            _refuse("device")
+            refuse_feature("device")
         if options.order == 1 and options.linear_solver in ("auto", "bddc_gmres"):
-            _refuse("bddc_order_1")
+            refuse_feature("bddc_order_1")
         # No distributed solve exists yet: no silent copies either.
-        _refuse("driven")
+        refuse_feature("driven")
 
 
-def _refuse(feature: str) -> None:
+def refuse_feature(feature: str) -> None:
+    """Raise the refusal of ``feature``, also from a path below `refuse`."""
     raise DistributedUnsupportedError(feature, _REFUSALS[feature])
 
 
@@ -239,6 +257,44 @@ def reduce_bcast(comm: Any, values: Any) -> Any:
     comm.Reduce(local, total, op=_load_mpi().SUM, root=0)
     comm.Bcast(total, root=0)
     return total
+
+
+def bcast_arrays(comm: Any, arrays: dict[str, np.ndarray] | None) -> dict:
+    """Rank 0's named arrays on every rank, without pickling them.
+
+    Pickling would copy each array and stop at 2 GiB in one message.
+
+    Args:
+        comm: The resolved communicator, above one rank.
+        arrays: The arrays, C-contiguous, on rank 0; ``None`` elsewhere.
+    """
+    if arrays is None:
+        meta = comm.bcast(None, root=0)
+        arrays = {name: np.empty(*m) for name, m in meta.items()}
+    else:
+        comm.bcast({n: (a.shape, a.dtype.str) for n, a in arrays.items()}, root=0)
+    for array in arrays.values():
+        comm.Bcast(array, root=0)
+    return arrays
+
+
+def comm_key(comm: Any) -> int | None:
+    """A hashable name of this communicator, for a cache in this process.
+
+    The handle is no such name, since MPI reuses it after ``Free``: the key is kept
+    on the communicator as an attribute, which dies with it. A duplicate gets its
+    own. ``None`` is the one-process path.
+    """
+    global _comm_keyval  # noqa: PLW0603
+    if comm is None:
+        return None
+    if _comm_keyval is None:
+        _comm_keyval = _load_mpi().Comm.Create_keyval()
+    key = comm.Get_attr(_comm_keyval)
+    if key is None:
+        key = next(_comm_keys)
+        comm.Set_attr(_comm_keyval, key)
+    return key
 
 
 def node_bytes(comm: Any, local: int) -> int:

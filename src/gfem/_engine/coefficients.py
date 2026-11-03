@@ -336,9 +336,36 @@ def coefficient(built: EngineMesh, values: np.ndarray) -> ngs.CoefficientFunctio
 def surface_p0(built: EngineMesh, values: np.ndarray) -> ngs.GridFunction:
     """A face-wise constant field with ``values`` per gfem triangle."""
     is_complex = np.iscomplexobj(values)
+    if built.comm is not None:
+        space, dofs = _facet_space(built, is_complex=is_complex)
+        gf = ngs.GridFunction(space)
+        gf.vec.FV().NumPy()[dofs] = np.asarray(values)[built.triangle_order]
+        return gf
     gf = ngs.GridFunction(ngs.SurfaceL2(built.mesh, order=0, complex=is_complex))
     gf.vec.FV().NumPy()[:] = np.asarray(values)[built.triangle_order]
     return gf
+
+
+def _facet_space(
+    built: EngineMesh, *, is_complex: bool
+) -> tuple[ngs.FESpace, np.ndarray]:
+    """Surface P0 under ranks: the space, and the DOF of each local surface element.
+
+    `ngs.SurfaceL2` deadlocks in its constructor when a surface triangle lies on
+    the cut between two ranks and only one of them holds such triangles (ADR 0066),
+    so it never runs above one rank. One space per discretization; collective.
+    """
+    found = built.surface_spaces.get(is_complex)
+    if found is None:
+        space = ngs.FacetFESpace(built.mesh, order=0, complex=is_complex)
+        n = built.mesh.GetNE(ngs.BND)
+        dofs = np.fromiter(
+            (space.GetDofNrs(ngs.ElementId(ngs.BND, i))[0] for i in range(n)),
+            dtype=np.int64,
+            count=n,
+        )
+        found = built.surface_spaces[is_complex] = (space, dofs)
+    return found
 
 
 def surface_coefficient(

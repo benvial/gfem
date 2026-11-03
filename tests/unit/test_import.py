@@ -54,6 +54,16 @@ def test_importing_gfem_never_imports_petsc():
     assert out == "[]"
 
 
+def test_a_one_process_mesh_never_imports_mpi4py():
+    path = Path(__file__).parent / "data" / "two_box_msh22.msh"
+    out = _run_fresh(
+        "import gfem, sys; from gfem._engine.cache import discretization;"
+        f"discretization(gfem.Mesh.from_gmsh({str(path)!r}));"
+        "print('mpi4py' in sys.modules)"
+    )
+    assert out == "False"
+
+
 def test_petsc_is_imported_only_by_gfem_petsc():
     root = Path(gfem.__file__).parent
     offenders = [

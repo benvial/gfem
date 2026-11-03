@@ -61,7 +61,7 @@ from gfem._boundaries import (
     wave_port_surfaces,
 )
 from gfem._engine import terms
-from gfem._engine.mesh import EngineMesh
+from gfem._engine.mesh import EngineMesh, inverse_order
 from gfem._engine.port_mode import PortModeSpace
 from gfem._linalg.base import free_mask
 from gfem._port_section import PortSection, port_section
@@ -356,8 +356,7 @@ def trace_dofs(
     if section.faces is None:  # pragma: no cover - sections built by gfem have them
         raise ValueError("The port section does not record its mesh triangles.")
     used = np.unique(model.mesh.triangles[section.faces])
-    bnd_of = np.empty(len(built.triangle_order), int)
-    bnd_of[built.triangle_order] = np.arange(len(built.triangle_order))
+    bnd_of = inverse_order(built.triangle_order, len(model.mesh.triangles))
     nd = modes.space.components[0]
     mesh3, mesh2 = built.mesh, modes.mesh
     pairs: dict[int, int] = {}

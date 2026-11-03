@@ -29,7 +29,7 @@ import ngsolve as ngs
 import numpy as np
 
 from gfem._engine.fields import LENGTH_POWER, fe_space
-from gfem._engine.mesh import EngineMesh
+from gfem._engine.mesh import EngineMesh, inverse_order
 from gfem.mesh import Mesh
 
 __all__ = [
@@ -176,8 +176,7 @@ class Probe:
         self._built: EngineMesh = built
         self._fes = fes
         self.factor = built.scale ** LENGTH_POWER[layout.space]
-        inverse = np.empty_like(built.tetrahedron_order)
-        inverse[built.tetrahedron_order] = np.arange(len(inverse))
+        inverse = inverse_order(built.tetrahedron_order, len(mesh.tetrahedra))
         self._elements = inverse[located.tetrahedra]
         n = len(self._elements)
         mips = built.mesh(np.zeros(1), np.zeros(1), np.zeros(1))

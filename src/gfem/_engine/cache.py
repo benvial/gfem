@@ -26,6 +26,7 @@ from typing import Any
 
 import numpy as np
 
+from gfem import _mpi
 from gfem._engine.mesh import EngineMesh, to_ngsolve
 from gfem._periodic import Pairing, pair_names
 from gfem.mesh import Mesh
@@ -73,21 +74,25 @@ def _digest(nodes: np.ndarray) -> str:
     ).hexdigest()
 
 
-def discretization(mesh: Mesh, periodic: tuple[Pairing, ...] = ()) -> Discretization:
+def discretization(
+    mesh: Mesh, periodic: tuple[Pairing, ...] = (), comm: Any = None
+) -> Discretization:
     """The cached discretization of ``mesh`` at its current node coordinates.
 
     With ``periodic`` (a model's periodic pairs) the NGSolve mesh carries
     their point identifications (`to_ngsolve`); the pairs are part of the
-    key, so a model with pairs and one without do not share a mesh.
+    key, so a model with pairs and one without do not share a mesh. So is the
+    resolved ``comm``. Above one rank a miss is collective, and all ranks miss
+    together: their key's nodes and history are the same.
     """
     topology = mesh._topology  # noqa: SLF001
     nodes = np.asarray(mesh.nodes, dtype=float)
-    key = (id(topology), _digest(nodes), pair_names(periodic))
+    key = (id(topology), _digest(nodes), pair_names(periodic), _mpi.comm_key(comm))
     found = _DISCRETIZATIONS.get(key)
     if found is not None and found.topology is topology:
         _DISCRETIZATIONS.move_to_end(key)
         return found
-    entry = Discretization(built=to_ngsolve(mesh, periodic), topology=topology)
+    entry = Discretization(built=to_ngsolve(mesh, periodic, comm), topology=topology)
     _DISCRETIZATIONS[key] = entry
     while len(_DISCRETIZATIONS) > _MAX_DISCRETIZATIONS:
         _DISCRETIZATIONS.popitem(last=False)

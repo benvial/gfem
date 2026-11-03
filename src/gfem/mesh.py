@@ -11,11 +11,27 @@ import jax.numpy as jnp
 import meshio
 import numpy as np
 
+from gfem import _mpi
 from gfem._pytree import readonly
 from gfem.errors import RegionNotFoundError
 
 #: Supported ``length_unit`` values and their size in metres.
 LENGTH_UNITS = {"m": 1.0, "cm": 1e-2, "mm": 1e-3, "um": 1e-6, "nm": 1e-9}
+
+#: What a failed read raises on one process, so on every rank above one.
+_READ_ERRORS = (ValueError, OSError, meshio.ReadError)
+
+_TOPOLOGY_STATICS = ("length_unit", "regions", "source")
+_TOPOLOGY_ARRAYS = (
+    "imported_nodes",
+    "tetrahedra",
+    "tet_tags",
+    "tet_entities",
+    "triangles",
+    "tri_tags",
+    "tri_entities",
+    "tri_neighbours",
+)
 
 # Local face k of a tetrahedron is the one opposite its vertex k.
 _TET_FACES = np.array([[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]])
@@ -59,6 +75,74 @@ class _Topology:
     source: Path | None = None
 
 
+def _read_gmsh(path: Path, length_unit: str) -> _Topology:
+    """Parse the file: what `Mesh.from_gmsh` does on one process."""
+    if length_unit not in LENGTH_UNITS:
+        raise ValueError(
+            f"Unknown length_unit {length_unit!r}; use one of "
+            f"{', '.join(repr(u) for u in LENGTH_UNITS)}."
+        )
+    raw = meshio.read(path, file_format="gmsh")
+    regions = _regions(raw)
+    cells = _cells(raw, path)
+    tets, tet_tags, tet_entities = cells["tetra"]
+    tris, tri_tags, tri_entities = cells["triangle"]
+    points = np.asarray(raw.points, dtype=float)
+    neighbours = _triangle_neighbours(points, tets, tris, path)
+    topology = _Topology(
+        length_unit=length_unit,
+        imported_nodes=readonly(points * LENGTH_UNITS[length_unit]),
+        regions=regions,
+        tetrahedra=readonly(tets),
+        tet_tags=readonly(tet_tags),
+        tet_entities=readonly(tet_entities),
+        triangles=readonly(tris),
+        tri_tags=readonly(tri_tags),
+        tri_entities=readonly(tri_entities),
+        tri_neighbours=readonly(neighbours),
+        source=path.resolve(),
+    )
+    _check_tags(topology, path)
+    return topology
+
+
+def _read_on_rank_0(path: Path, length_unit: str, comm) -> _Topology:
+    """Parse on rank 0 and broadcast (ADR 0060); a failed read raises on every rank.
+
+    Raises:
+        _mpi.AgreedError: Ranks asked for different paths or units.
+    """
+    asked = comm.allgather((str(path.resolve()), length_unit))
+    if len(set(asked)) > 1:
+        raise _mpi.AgreedError(
+            f"Mesh.from_gmsh is collective, but ranks asked for {sorted(set(asked))}. "
+            "Ranks reading files of their own pass comm=MPI.COMM_SELF."
+        )
+    topology, error = None, None
+    # a read error is sent to every rank; anything else on rank 0 ends the job
+    with _mpi.section(comm, agreed=()):
+        if comm.rank == 0:
+            try:
+                topology = _read_gmsh(path, length_unit)
+            except _READ_ERRORS as err:
+                error = err
+        error = comm.bcast(error, root=0)
+        if error is None:
+            statics, arrays = None, None
+            if topology is not None:
+                statics = {f: getattr(topology, f) for f in _TOPOLOGY_STATICS}
+                arrays = {f: getattr(topology, f) for f in _TOPOLOGY_ARRAYS}
+            statics = comm.bcast(statics, root=0)
+            arrays = _mpi.bcast_arrays(comm, arrays)
+    if error is not None:
+        raise error
+    if topology is not None:
+        return topology
+    for array in arrays.values():
+        array.flags.writeable = False
+    return _Topology(**statics, **arrays)
+
+
 @jax.tree_util.register_pytree_with_keys_class
 class Mesh:
     """A straight-sided tetrahedral mesh with named regions.
@@ -91,17 +175,22 @@ class Mesh:
         return cls(children[0], topology)
 
     @classmethod
-    def from_gmsh(cls, path: str | Path, length_unit: str = "um") -> Mesh:
+    def from_gmsh(cls, path: str | Path, length_unit: str = "um", *, comm=None) -> Mesh:
         """Read a gmsh ``.msh`` file (format 2.2 ASCII or 4.1).
 
         Every physical group becomes a region with its gmsh name and number:
         3D groups are volumes, 2D groups are surfaces. Elements outside any
         physical group, points and lines are ignored.
 
+        Above one rank this is collective: rank 0 reads the file once and every
+        rank ends up with the same whole mesh, so a call on one rank alone hangs.
+
         Args:
             path: The ``.msh`` file.
             length_unit: The length unit of the file's coordinates, one of
                 `LENGTH_UNITS`. gsim writes micrometres.
+            comm: The mpi4py communicator, resolved as `gfem.solve` resolves its
+                own. Ranks reading files of their own pass ``MPI.COMM_SELF``.
 
         Returns:
             The mesh, with node coordinates in metres.
@@ -110,36 +199,15 @@ class Mesh:
             ValueError: The unit is unknown, the mesh is second order (curved),
                 has elements other than tetrahedra and triangles, or its
                 physical groups cannot be addressed by name.
+            RuntimeError: Ranks asked for different paths or units.
         """
-        if length_unit not in LENGTH_UNITS:
-            raise ValueError(
-                f"Unknown length_unit {length_unit!r}; use one of "
-                f"{', '.join(repr(u) for u in LENGTH_UNITS)}."
-            )
+        comm = _mpi.resolve_comm(comm)
         path = Path(path)
-        raw = meshio.read(path, file_format="gmsh")
-        regions = _regions(raw)
-        cells = _cells(raw, path)
-        tets, tet_tags, tet_entities = cells["tetra"]
-        tris, tri_tags, tri_entities = cells["triangle"]
-        points = np.asarray(raw.points, dtype=float)
-        neighbours = _triangle_neighbours(points, tets, tris, path)
-        nodes = points * LENGTH_UNITS[length_unit]
-        topology = _Topology(
-            length_unit=length_unit,
-            imported_nodes=readonly(nodes),
-            regions=regions,
-            tetrahedra=readonly(tets),
-            tet_tags=readonly(tet_tags),
-            tet_entities=readonly(tet_entities),
-            triangles=readonly(tris),
-            tri_tags=readonly(tri_tags),
-            tri_entities=readonly(tri_entities),
-            tri_neighbours=readonly(neighbours),
-            source=path.resolve(),
-        )
-        _check_tags(topology, path)
-        return cls(jnp.asarray(nodes), topology)
+        if comm is None:
+            topology = _read_gmsh(path, length_unit)
+        else:
+            topology = _read_on_rank_0(path, length_unit, comm)
+        return cls(jnp.asarray(topology.imported_nodes), topology)
 
     def __repr__(self) -> str:
         return (

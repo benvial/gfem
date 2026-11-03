@@ -1,7 +1,7 @@
 """Launching: refusals raise on every rank, one rank's failure ends the job.
 
 No distributed solve exists yet, so every launched solve above one rank raises.
-Each mesh is written per rank until `gfem.Mesh.from_gmsh` takes a communicator.
+Every rank writes one mesh file, by rename, and `gfem.Mesh.from_gmsh` reads it once.
 """
 
 import json
@@ -34,19 +34,12 @@ from gfem.__main__ import main
 TESTS = Path(__file__).resolve().parents[1]
 #: Importable by a launched script, as `rank_main` makes them for a function.
 PYTHON_PATH = {"PYTHONPATH": f"{TESTS}{os.pathsep}{TESTS.parent / 'tools'}"}
-RANK_DIR = """Path(sys.argv[1]) / f"rank-{MPI.COMM_WORLD.rank}" """
 
 
 def _world():
     from mpi4py import MPI
 
     return MPI.COMM_WORLD
-
-
-def _own_dir(directory) -> Path:
-    path = Path(directory) / f"rank-{_world().rank}"
-    path.mkdir(exist_ok=True)
-    return path
 
 
 # --- one rank's failure ends the job ---------------------------------------------
@@ -111,8 +104,7 @@ import gfem
 import mpi_cases
 
 world = MPI.COMM_WORLD
-directory = {rank_dir}
-directory.mkdir(exist_ok=True)
+directory = Path(sys.argv[1])
 model, problem, options = mpi_cases.refused("eigenmode", directory)
 try:
     gfem.solve(model, problem, options=options)
@@ -127,7 +119,7 @@ world.Barrier()
 @pytest.mark.parametrize("failing", [0, 1])
 def test_a_solve_chains_a_hook_that_aborts_on_user_code(failing, tmp_path):
     script = tmp_path / "script.py"
-    script.write_text(HOOK_SCRIPT.format(rank_dir=RANK_DIR))
+    script.write_text(HOOK_SCRIPT)
     code, log = on_ranks_argv(
         [sys.executable, str(script), str(tmp_path), str(failing)],
         ranks=4,
@@ -166,8 +158,7 @@ from mpi4py import MPI
 import gfem
 import mpi_cases
 
-directory = {rank_dir}
-directory.mkdir(exist_ok=True)
+directory = Path(sys.argv[1])
 model, problem, options = mpi_cases.refused("driven", directory)
 gfem.solve(model, problem, options=options)
 """
@@ -175,7 +166,7 @@ gfem.solve(model, problem, options=options)
 
 def test_an_uncaught_refusal_ends_the_job(tmp_path):
     script = tmp_path / "script.py"
-    script.write_text(UNCAUGHT_SCRIPT.format(rank_dir=RANK_DIR))
+    script.write_text(UNCAUGHT_SCRIPT)
     code, log = on_ranks_argv(
         [sys.executable, str(script), str(tmp_path)],
         ranks=3,
@@ -191,7 +182,7 @@ def test_an_uncaught_refusal_ends_the_job(tmp_path):
 
 def _refused_then_a_collective(key, directory):
     world = _world()
-    model, problem, options = mpi_cases.refused(key, _own_dir(directory))
+    model, problem, options = mpi_cases.refused(key, Path(directory))
     try:
         gfem.solve(model, problem, options=options)
     except gfem.DistributedUnsupportedError as err:
@@ -279,7 +270,7 @@ def test_srun_without_mpi_never_runs_silent_copies():
 def _copy(directory, frequency, workers=1):
     from mpi4py import MPI
 
-    line = cases.layered_line(_own_dir(directory))
+    line = cases.layered_line(Path(directory))
     options = gfem.SolverOptions(
         linear_solver="direct", threads=1, frequency_workers=workers
     )
@@ -331,7 +322,7 @@ def _electrostatic_copy(directory):
     from mpi4py import MPI
 
     result = gfem.solve(
-        mpi_cases.stack(_own_dir(directory)),
+        mpi_cases.stack(Path(directory)),
         gfem.Electrostatic(terminals=mpi_cases.TERMINALS),
         options=gfem.SolverOptions(order=1, threads=1),
         comm=MPI.COMM_SELF,

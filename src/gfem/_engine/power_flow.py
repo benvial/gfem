@@ -36,6 +36,7 @@ import scipy.constants as const
 from gfem._boundaries import surfaces_of
 from gfem._engine import probe
 from gfem._engine.driven import DrivenOperator, driven_operator
+from gfem._engine.mesh import inverse_order
 from gfem._periodic import tie_classes
 from gfem.mesh import _TET_EDGES, Mesh
 
@@ -232,7 +233,7 @@ def _dofs(
     the edges and faces themselves.
     """
     space, ngmesh = op.space, op.built.mesh
-    ngs_index = np.argsort(op.built.tetrahedron_order)
+    ngs_index = inverse_order(op.built.tetrahedron_order, len(elements))
     out = np.zeros(space.ndof, bool)
 
     def mark(node: ngs.NodeId) -> None:
