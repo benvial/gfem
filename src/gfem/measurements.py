@@ -36,7 +36,7 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.constants as const
 
-from gfem import _periodic, _probe
+from gfem import _mpi, _periodic, _probe
 from gfem._checks import check_fixed, is_traced
 from gfem._materials import Material, field_principal_values
 from gfem._pytree import register_fields
@@ -528,8 +528,11 @@ def power_flow(
             of the support, or all of them; the field is not a driven
             electric field, or was not solved on ``model``; or the
             surface is within one element of a port's surface.
+        gfem.DistributedUnsupportedError: The field is a piece across ranks.
         NonDifferentiableError: ``field`` or ``model`` is traced by JAX.
     """
+    if getattr(field, "_comm", None) is not None:
+        _mpi.refuse_feature("power_flow")
     from gfem._field import Field
     from gfem.model import Model
 

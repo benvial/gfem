@@ -91,7 +91,7 @@ from gfem._boundaries import (
 from gfem._engine import sweep_outputs, terms, workers
 from gfem._engine.cache import ENTRIES, Entry, discretization
 from gfem._engine.domain import em_region, hcurl_space, pec_surfaces, space_key
-from gfem._engine.fields import fe_space
+from gfem._engine.fields import dof_shape
 from gfem._engine.mesh import EngineMesh
 from gfem._engine.port_network import PortNetwork, resistance, split_cotangent
 from gfem._engine.runtime import task_manager
@@ -110,7 +110,7 @@ from gfem.errors import (
     PortModeProjectionWarning,
     SkippedPortModeWarning,
 )
-from gfem.mesh import Mesh, _shortest_edges
+from gfem.mesh import _shortest_edges
 from gfem.model import Model
 from gfem.options import SolverOptions
 from gfem.problems import Driven
@@ -612,7 +612,9 @@ class DrivenRule:
             s=ports.scattering(s),
             z_ref=ports.z_ref,
             iterations=iterations,
-            e_field=np.concatenate(fields, axis=1) if fields else None,
+            e_field=self._piece(model, np.concatenate(fields, axis=1))
+            if fields
+            else None,
             waves=ports.waves,
         )
         if miss is not None:
@@ -897,6 +899,25 @@ class DrivenRule:
             )
         return out.outputs(), entry
 
+    def _field_shape(self, model: Model) -> tuple[int, int]:
+        """``(width, ndof)`` of a kept field: `gfem._engine.fields.dof_shape`."""
+        return dof_shape(
+            model.mesh,
+            self.regions,
+            self._excluded,
+            "hcurl",
+            self.options.order,
+            comm=self.comm,
+        )
+
+    def _piece(self, model: Model, columns: np.ndarray) -> np.ndarray:
+        """Kept columns padded with zero rows to one shape on all ranks (ADR 0063)."""
+        if self.comm is None:
+            return columns
+        piece = np.zeros((self._field_shape(model)[0], columns.shape[1]), complex)
+        piece[: columns.shape[0]] = columns
+        return piece
+
     def _padded_size(self) -> int:
         """Most basis vectors frozen samples give.
 
@@ -925,13 +946,8 @@ class DrivenRule:
             )
         ndof = None
         if self.kept:
-            mesh = model.mesh
-            still = Mesh(mesh.imported_nodes, mesh._topology)  # noqa: SLF001
-            with task_manager(self.options.threads):
-                _, space, _ = fe_space(
-                    still, self.regions, self._excluded, "hcurl", self.options.order
-                )
-            ndof = space.ndof
+            with task_manager(self.options.threads, self.comm):
+                ndof = self._field_shape(model)[0]
         return SweepOutputs.specs(
             n_freq=len(self.problem.frequency),
             n_ports=len(model.ports),
@@ -1078,7 +1094,8 @@ class DrivenRule:
                     undefined = np.zeros(width, bool)
                 if ct_e is not None and n in self.kept:
                     k = self.kept.index(n)
-                    g = np.asarray(ct_e)[:, k * width : (k + 1) * width]
+                    # a rank's rows, then its padding (ADR 0063): a load column
+                    g = np.asarray(ct_e)[: x.shape[0], k * width : (k + 1) * width]
                     # the field is P x: its cotangent loads P^T g
                     load += g if op.expansion is None else op.expansion.matrix.T @ g
                 # a rank without port DOFs would skip a collective solve
@@ -1184,6 +1201,7 @@ class DrivenRule:
                     support=self.regions,
                     omega=jnp.asarray(2 * math.pi * f),
                     _excluded=self._excluded,
+                    _comm=_mpi.static_comm(self.comm),
                 )
                 for k, (f, _) in enumerate(kept)
             ]

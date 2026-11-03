@@ -352,6 +352,15 @@ def _electrostatic_args(problem: Electrostatic, _: _codec.Context) -> dict[str, 
     return {"terminals": dict(problem.terminals), "ground": problem.ground}
 
 
+def _field_args(field: Field, _: _codec.Context) -> dict[str, Any]:
+    """A field's arguments: a communicator is not part of what it is."""
+    return {
+        f.name: getattr(field, f.name)
+        for f in dataclasses.fields(field)
+        if f.name != "_comm"
+    }
+
+
 def _port_mode_field_args(field: PortModeField, _: _codec.Context) -> dict[str, Any]:
     space = field._space  # noqa: SLF001
     return {
@@ -410,7 +419,6 @@ for _cls in (
     WavePort,
     PortMode,
     ElectrostaticResult,
-    Field,
     PortModeResult,
     Driven,
     DrivenResult,
@@ -422,6 +430,7 @@ for _cls in (
     InterfaceParticipation,
 ):
     _codec.register(_cls)
+_codec.register(Field, to_args=_field_args)
 _codec.register(SolverOptions, to_args=_options_args)
 _codec.register(PortSection, from_args=_port_section_from_args)
 _codec.register(Electrostatic, to_args=_electrostatic_args)

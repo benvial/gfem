@@ -252,7 +252,7 @@ def test_a_launched_job_raises_without_being_given_a_communicator(
 
 
 def test_a_job_passes_its_communicator_on(tmp_path, monkeypatch):
-    model, problem, options = mpi_cases.refused("driven", tmp_path)
+    model, problem, options = mpi_cases.refused("eigenmode", tmp_path)
     use_mpi(monkeypatch, fake_mpi())
     with pytest.raises(gfem.DistributedUnsupportedError):
         gfem.Job(model, problem, options).run(comm=Stub(4))
@@ -281,12 +281,8 @@ def test_a_port_solve_is_all_that_passes_so_far(tmp_path):
         assert _mpi.refuse(line, frequency, options) is None
         assert _mpi.refuse(wave, frequency, options) is None
     assert _mpi.refuse(wave, gfem.PortMode("w", 5e9), gfem.SolverOptions()) is None
-    options = gfem.SolverOptions()
     kept = gfem.Driven(5e9, keep_fields=[5e9])
-    for model, problem, chosen in ((line, kept, options),):
-        with pytest.raises(gfem.DistributedUnsupportedError) as caught:
-            _mpi.refuse(model, problem, chosen)
-        assert caught.value.feature == "driven"
+    assert _mpi.refuse(line, kept, gfem.SolverOptions()) is None
 
 
 def test_a_bundle_stays_refused_above_one_rank(tmp_path, monkeypatch):
@@ -380,3 +376,48 @@ def test_a_warning_at_one_process_warns_at_the_callers_line():
     with pytest.warns(UserWarning, match="once") as caught:
         _mpi.warn(None, "once", UserWarning)
     assert caught[0].filename == __file__
+
+
+# --- a kept field's communicator -------------------------------------------------
+
+
+def _piece(tmp_path) -> gfem.Field:
+    return gfem.Field(
+        coefficients=np.zeros(3, complex),
+        mesh=cases.layered_line(tmp_path).mesh,
+        quantity="E",
+        unit="V/m",
+        space="hcurl",
+        order=2,
+        support=("sub", "cover"),
+        omega=1.0,
+        _comm=_mpi.StaticComm(5, Stub(4)),
+    )
+
+
+def test_a_field_from_ranks_refuses_export_on_a_stub(tmp_path):
+    piece = _piece(tmp_path)
+    for method in (piece.to_meshio, piece.to_pyvista):
+        with pytest.raises(gfem.DistributedUnsupportedError) as caught:
+            method()
+        assert caught.value.feature == "field_export"
+    with pytest.raises(gfem.DistributedUnsupportedError) as caught:
+        gfem.power_flow(piece, "sub", model=cases.layered_line(tmp_path))
+    assert caught.value.feature == "power_flow"
+
+
+def test_a_communicator_is_a_static_value_of_a_field(tmp_path):
+    piece = _piece(tmp_path)
+    leaves, structure = jax.tree_util.tree_flatten(piece)
+    again = jax.tree_util.tree_unflatten(structure, leaves)
+    assert again._communicator is piece._communicator
+    other = _mpi.StaticComm(5, Stub(4))
+    assert other == piece._comm
+    assert hash(other) == hash(piece._comm)
+    assert other != _mpi.StaticComm(6, Stub(4))
+
+
+def test_a_communicator_is_not_written_with_a_field(tmp_path):
+    from gfem.job import _field_args
+
+    assert "_comm" not in _field_args(_piece(tmp_path), None)

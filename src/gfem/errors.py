@@ -142,8 +142,9 @@ class DistributedUnsupportedError(NotImplementedError):
     """This solve has no path above one MPI rank.
 
     Raised on every rank, before any mesh is built, so a script can catch it and
-    the job goes on. Rank copies (``comm=MPI.COMM_SELF``) run every feature as
-    one process. Existing one-process refusals keep their classes.
+    the job goes on; a method of a kept field raises it the same way. Rank copies
+    (``comm=MPI.COMM_SELF``) run every feature as one process. Existing one-process
+    refusals keep their classes.
 
     Attributes:
         feature: What has no path, e.g. ``"eigenmode"`` or ``"periodic"``.

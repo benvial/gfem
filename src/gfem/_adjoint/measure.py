@@ -22,6 +22,10 @@ A kernel provides ``output_specs`` (name -> ``jax.ShapeDtypeStruct``),
 or the reason the input cannot be differentiated), ``forward(values)`` and
 ``backward(values, cotangents, wanted)`` (gradients of the ``wanted``
 inputs, by name), all on NumPy values, and ``describe(name)`` for errors.
+
+A kernel may name a ``comm``, the communicator of a field it reads; it is then a
+collective host call, and ``pieces`` names its inputs that are a rank's own (ADR 0063).
+Each such input has one shape on all ranks, so that every rank runs each callback.
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax.custom_derivatives import SymbolicZero
 
+from gfem import _mpi
 from gfem._checks import is_traced
 from gfem.errors import NonDifferentiableError
 
@@ -50,7 +55,7 @@ def measure(kernel: Any, inputs: Mapping[str, Any]) -> dict[str, jax.Array]:
     if is_traced(dict(inputs)):
         return measure_vjp(kernel, inputs)
     values = {k: np.asarray(v) for k, v in inputs.items()}
-    outputs = kernel.forward(values)
+    outputs = _forward(kernel, values)
     specs = kernel.output_specs
     return {
         n: jnp.asarray(np.asarray(outputs[n], dtype=s.dtype).reshape(s.shape))
@@ -67,8 +72,8 @@ def measure_vjp(kernel: Any, inputs: Mapping[str, Any]) -> dict[str, jax.Array]:
     state: dict[str, Any] = {}
 
     def host_forward(*values: Any) -> tuple:
-        outputs = kernel.forward(
-            {n: np.asarray(v) for n, v in zip(names, values, strict=True)}
+        outputs = _forward(
+            kernel, {n: np.asarray(v) for n, v in zip(names, values, strict=True)}
         )
         return tuple(
             np.asarray(outputs[n], dtype=s.dtype).reshape(s.shape)
@@ -137,6 +142,24 @@ def measure_vjp(kernel: Any, inputs: Mapping[str, Any]) -> dict[str, jax.Array]:
     return dict(zip(out_names, outputs, strict=True))
 
 
+def _forward(kernel: Any, values: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """``kernel.forward``, as a collective call under the kernel's communicator."""
+    comm = getattr(kernel, "comm", None)
+    with _mpi.section(comm):
+        if comm is not None:
+            _mpi.check_call(
+                comm, f"the forward of {kernel.name}", _replicated(kernel, values)
+            )
+        return kernel.forward(values)
+
+
+def _replicated(kernel: Any, values: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """What the ranks must hold alike: each input, or a rank's piece's shape."""
+    return {
+        n: np.asarray(v.shape) if n in kernel.pieces else v for n, v in values.items()
+    }
+
+
 def _host_backward(
     *args: Any,
     kernel: Any,
@@ -146,7 +169,16 @@ def _host_backward(
 ) -> tuple:
     values = {n: np.asarray(v) for n, v in zip(names, args[: len(names)], strict=True)}
     cts = {n: np.asarray(c) for n, c in zip(live, args[len(names) :], strict=True)}
-    grads = kernel.backward(values, cts, tuple(names[i] for i in wanted))
+    comm = getattr(kernel, "comm", None)
+    with _mpi.section(comm):
+        if comm is not None:
+            cotangent = {f"the cotangent of {n}": c for n, c in cts.items()}
+            _mpi.check_call(
+                comm,
+                f"the backward of {kernel.name}",
+                _replicated(kernel, values) | cotangent,
+            )
+        grads = kernel.backward(values, cts, tuple(names[i] for i in wanted))
     out = []
     for i in wanted:
         leaf = values[names[i]]

@@ -12,11 +12,13 @@ covariant (1/length), H(div) values contravariant (1/area).
 from __future__ import annotations
 
 import collections
-from typing import TYPE_CHECKING
+import weakref
+from typing import TYPE_CHECKING, Any
 
 import ngsolve as ngs
 import numpy as np
 
+from gfem import _mpi
 from gfem._engine.cache import discretization
 from gfem._engine.coefficients import p0
 from gfem._engine.mesh import EngineMesh
@@ -25,7 +27,14 @@ from gfem.mesh import Mesh
 if TYPE_CHECKING:
     from gfem._field import Field
 
-__all__ = ["LENGTH_POWER", "curl_matrix", "fe_space", "sample", "support_region"]
+__all__ = [
+    "LENGTH_POWER",
+    "curl_matrix",
+    "dof_shape",
+    "fe_space",
+    "sample",
+    "support_region",
+]
 
 LENGTH_POWER = {"h1": 0, "l2": 0, "hcurl": -1, "hdiv": -2}
 
@@ -68,14 +77,16 @@ def fe_space(
     excluded: tuple[tuple[int, int], ...],
     space: str,
     order: int,
+    *,
+    comm: Any = None,
 ) -> tuple[EngineMesh, ngs.FESpace, ngs.Region]:
     """The real NGSolve space of this layout on ``mesh`` at its node positions.
 
     Its DOF numbering is that of every compressed space of the same kind
     and order on the same region, real or complex, so solves and fields
-    agree.
+    agree. Under ``comm`` it is this rank's part, and a miss is collective.
     """
-    disc = discretization(mesh)
+    disc = discretization(mesh, (), comm)
     built = disc.built
     key = (("field", tuple(support), tuple(excluded)), space, order)
 
@@ -87,13 +98,58 @@ def fe_space(
     return built, fes, region
 
 
-def _check_size(field: Field, fes: ngs.FESpace) -> None:
-    if fes.ndof != field.coefficients.shape[0]:
-        raise ValueError(
-            f"The field has {field.coefficients.shape[0]} coefficients but its "
-            f"{field.space} order-{field.order} space on {list(field.support)} has "
-            f"{fes.ndof} DOFs: the field does not belong to this mesh."
+_SHAPES: weakref.WeakKeyDictionary[Any, dict[tuple, tuple[int, int]]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def dof_shape(
+    mesh: Mesh,
+    support: tuple[str, ...],
+    excluded: tuple[tuple[int, int], ...],
+    space: str,
+    order: int,
+    *,
+    comm: Any = None,
+) -> tuple[int, int]:
+    """``(width, ndof)`` of a layout: a piece's rows at the JAX seam, and its own.
+
+    ``width`` is the same on every rank, the largest ``ndof``, since a callback whose
+    read outputs are all empty does not run on that rank (ADR 0063); on one process
+    it is ``ndof``. A shape step's nodes are tracers when this is needed, so it reads
+    the imported nodes, and is memoized: a topology and a rank count have one
+    partition. A miss is collective.
+    """
+    topology = mesh._topology  # noqa: SLF001
+    memo = _SHAPES.setdefault(topology, {})
+    key = (_mpi.comm_key(comm), tuple(support), tuple(excluded), space, order)
+    if key not in memo:
+        still = Mesh(mesh.imported_nodes, topology)
+        _, fes, _ = fe_space(still, support, excluded, space, order, comm=comm)
+        memo[key] = (_mpi.agree_max(comm, int(fes.ndof)), int(fes.ndof))
+    return memo[key]
+
+
+def _check_size(field: Field, fes: ngs.FESpace, width: int | None = None) -> None:
+    """Raise if the field's size is not its space's: ``width`` under ranks."""
+    expected = fes.ndof if width is None else width
+    if expected != field.coefficients.shape[0]:
+        raise _mpi.agreed(
+            ValueError(
+                f"The field has {field.coefficients.shape[0]} coefficients but its "
+                f"{field.space} order-{field.order} space on {list(field.support)} "
+                f"has {expected} DOFs: the field does not belong to this mesh."
+            )
         )
+
+
+def _holders(space: ngs.FESpace) -> np.ndarray:
+    """Per local DOF of ``space``, the number of ranks holding it: one exchange."""
+    ones = ngs.GridFunction(space).vec.CreateVector()
+    ones.SetParallelStatus(ngs.la.PARALLEL_STATUS.DISTRIBUTED)
+    ones.FV().NumPy()[:] = 1.0
+    ones.Cumulate()
+    return np.array(ones.FV().NumPy())
 
 
 # --- sampling ------------------------------------------------------------------
@@ -225,30 +281,48 @@ def curl_matrix(field: Field) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     mesh topology (the Piola maps cancel), so it is built at the imported
     node positions and serves moved and traced meshes alike.
 
+    Across ranks it is this rank's part, and a miss is collective. Each row of
+    ``local_mat`` is multiplied by the number of ranks holding its H(div) DOF: only
+    that matched one process, ``Cumulate`` did not (ADR 0063). ``n_rows`` is then the
+    seam's width, the same on every rank.
+
     Returns:
         ``(rows, cols, values, n_rows)`` of the sparse matrix.
     """
     mesh = field.mesh
     topology = mesh._topology  # noqa: SLF001
-    key = (id(topology), field.support, field._excluded, field.order)  # noqa: SLF001
+    comm = field._communicator  # noqa: SLF001
+    key = (
+        id(topology),
+        field.support,
+        field._excluded,  # noqa: SLF001
+        field.order,
+        _mpi.comm_key(comm),
+    )
     found = _CURLS.get(key)
     if found is not None and found[0] is topology:
         _CURLS.move_to_end(key)
         return found[1]
     still = Mesh(mesh.imported_nodes, topology)
     support, excluded = field.support, field._excluded  # noqa: SLF001
-    _, hcurl, _ = fe_space(still, support, excluded, "hcurl", field.order)
-    _check_size(field, hcurl)
-    _, hdiv, _ = fe_space(still, support, excluded, "hdiv", max(field.order - 1, 0))
+    order = max(field.order - 1, 0)
+    _, hcurl, _ = fe_space(still, support, excluded, "hcurl", field.order, comm=comm)
+    width = dof_shape(still, support, excluded, "hcurl", field.order, comm=comm)[0]
+    _check_size(field, hcurl, width)
+    _, hdiv, _ = fe_space(still, support, excluded, "hdiv", order, comm=comm)
     op = ngs.ConvertOperator(
         spacea=hcurl, spaceb=hdiv, trial_proxy=ngs.curl(hcurl.TrialFunction())
     )
-    rows, cols, values = op.COO()
+    rows, cols, values = (op if comm is None else op.local_mat).COO()
+    rows = np.asarray(rows, dtype=np.int64)
+    values = np.asarray(values, dtype=float)
+    if comm is not None:
+        values = values * _holders(hdiv)[rows]
     matrix = (
-        np.asarray(rows, dtype=np.int64),
+        rows,
         np.asarray(cols, dtype=np.int64),
-        np.asarray(values, dtype=float),
-        int(hdiv.ndof),
+        values,
+        dof_shape(still, support, excluded, "hdiv", order, comm=comm)[0],
     )
     _CURLS[key] = (topology, matrix)
     while len(_CURLS) > _MAX_CURLS:

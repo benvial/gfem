@@ -76,6 +76,8 @@ from gfem.errors import NonDifferentiableError
 __all__ = ["adjoint_tolerance", "input_kind", "solve_vjp"]
 
 _KEY = jax.ShapeDtypeStruct((), jnp.int64)
+#: Outputs that are a rank's own piece under ranks (ADR 0063).
+_PIECES = frozenset({"e_field"})
 
 
 def adjoint_tolerance(options: Any) -> float:
@@ -326,7 +328,7 @@ def _host_backward(
                 model,
                 rule.problem,
                 rule.options,
-                arrays={f"the cotangent of {n}": c for n, c in cotangents.items()},
+                arrays=_replicated_cotangents(cotangents),
             )
         grads = _local_cotangents(
             key, rule, model, cotangents, wants={kinds[i] for i in wanted}, comm=comm
@@ -347,6 +349,14 @@ def _host_backward(
             g = np.real(g)
         out.append(np.asarray(g, dtype=leaf.dtype))
     return tuple(out)
+
+
+def _replicated_cotangents(cotangents: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """What the ranks must hold alike: a cotangent, or a rank's piece's shape."""
+    return {
+        f"the cotangent of {n}": np.asarray(c.shape) if n in _PIECES else c
+        for n, c in cotangents.items()
+    }
 
 
 def _local_cotangents(

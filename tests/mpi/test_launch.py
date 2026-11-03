@@ -159,7 +159,7 @@ import gfem
 import mpi_cases
 
 directory = Path(sys.argv[1])
-model, problem, options = mpi_cases.refused("driven", directory)
+model, problem, options = mpi_cases.refused("eigenmode", directory)
 gfem.solve(model, problem, options=options)
 """
 

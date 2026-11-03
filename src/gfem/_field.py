@@ -10,7 +10,9 @@ from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
+from gfem import _mpi
 from gfem._checks import is_traced
 from gfem._probe import field_at
 from gfem._pytree import register_fields
@@ -47,11 +49,16 @@ class Field:
     A field is a JAX pytree: its leaves are ``coefficients``, the mesh node
     coordinates and ``omega``; the rest is static.
 
+    From a solve across ranks each of a field's methods is collective: every rank
+    makes the same calls in the same order, and `at` gives each the same bits.
+
     Attributes:
         coefficients: The finite-element coefficients, shape ``(n_dofs,)``,
             float64 or complex128. Their order is the engine's for this mesh
             topology, support, space and order: read values through the
-            field's methods, not by index.
+            field's methods, not by index. Across ranks they are this rank's
+            piece, padded with zeros to the largest rank's size, so a function
+            of them differs per rank.
         mesh: The mesh the field lives on (the model's mesh, as solved).
         quantity: What the field is: ``"V"`` (electric potential), ``"E"``
             (electric field), ``"B"`` (magnetic flux density), and later
@@ -76,6 +83,7 @@ class Field:
     support: tuple[str, ...]
     omega: jax.Array | None = None
     _excluded: tuple[tuple[int, int], ...] = ()
+    _comm: _mpi.StaticComm | None = None
 
     def __post_init__(self) -> None:
         """Check the descriptor against the mesh."""
@@ -107,6 +115,11 @@ class Field:
         object.__setattr__(self, "coefficients", coefficients)
         if self.omega is not None:
             object.__setattr__(self, "omega", jnp.asarray(self.omega))
+
+    @property
+    def _communicator(self) -> Any:
+        """The communicator of a piece across ranks; ``None`` on one process."""
+        return None if self._comm is None else self._comm.comm
 
     @property
     def is_complex(self) -> bool:
@@ -142,7 +155,12 @@ class Field:
                 "b() needs the angular frequency of a time-harmonic field; this "
                 "electric field is static (omega is None)."
             )
-        rows, cols, values, size = _engine().curl_matrix(self)
+        comm = self._communicator
+        with _mpi.section(comm):
+            if comm is not None:
+                shape = np.asarray(self.coefficients.shape)
+                _mpi.check_call(comm, "Field.b", {"the shape of a piece": shape})
+            rows, cols, values, size = _engine().curl_matrix(self)
         curl = jax.ops.segment_sum(
             values * self.coefficients[cols], rows, num_segments=size
         )
@@ -197,9 +215,11 @@ class Field:
         Raises:
             TypeError: The field holds JAX tracers: export concrete values,
                 outside `jax.jit` / `jax.grad`.
+            gfem.DistributedUnsupportedError: The field is a piece across ranks.
         """
         import meshio
 
+        self._refuse_export()
         self._check_concrete("to_meshio")
         points, cells, point_data, cell_data = _engine().sample(self)
         return meshio.Mesh(
@@ -217,7 +237,11 @@ class Field:
         """The field as a ``pyvista.UnstructuredGrid`` (see `to_meshio`).
 
         Needs the optional ``viz`` extra: ``pip install "gfem[viz]"``.
+
+        Raises:
+            gfem.DistributedUnsupportedError: The field is a piece across ranks.
         """
+        self._refuse_export()
         try:
             pyvista = importlib.import_module("pyvista")
         except ImportError:
@@ -225,6 +249,10 @@ class Field:
                 'to_pyvista needs pyvista: pip install "gfem[viz]".'
             ) from None
         return pyvista.from_meshio(self.to_meshio())
+
+    def _refuse_export(self) -> None:
+        if self._comm is not None:
+            _mpi.refuse_feature("field_export")
 
     def _check_concrete(self, method: str) -> None:
         if is_traced(self):

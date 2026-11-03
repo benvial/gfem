@@ -17,6 +17,12 @@ respect to the element's first three vertices (gfem's tetrahedron vertex
 order, which the engine mesh keeps). Points on a face shared by two
 elements are therefore evaluated from the element they are given with: a
 one-sided value of a field that jumps across the face.
+
+Under ranks (ADR 0063) a tetrahedron lies on one rank, which holds the points in it:
+``Phi c`` is the rank sum of what each rank evaluates, and ``Phi^T g`` is a
+``DISTRIBUTED`` load, each point counted once. Near a face a point's tetrahedron
+depends on the partition, one process included. Coefficients are a rank's piece at
+the seam's width (`gfem._engine.fields.dof_shape`).
 """
 
 from __future__ import annotations
@@ -24,11 +30,13 @@ from __future__ import annotations
 import collections
 import dataclasses
 import threading
+from typing import Any
 
 import ngsolve as ngs
 import numpy as np
 
-from gfem._engine.fields import LENGTH_POWER, fe_space
+from gfem import _mpi
+from gfem._engine.fields import LENGTH_POWER, dof_shape, fe_space
 from gfem._engine.mesh import EngineMesh, inverse_order
 from gfem.mesh import Mesh
 
@@ -80,42 +88,68 @@ def in_support(mesh: Mesh, layout: Layout) -> np.ndarray:
     return inside
 
 
-def locate(mesh: Mesh, layout: Layout, points: np.ndarray) -> Located:
+def locate(mesh: Mesh, layout: Layout, points: np.ndarray, comm: Any = None) -> Located:
     """The tetrahedra holding ``points`` (``(n, 3)``, m).
+
+    Under ``comm`` it is collective, and all ranks get the same location.
 
     Raises:
         ValueError: A point lies outside the mesh, or in a tetrahedron where
             the field is not defined (a volume outside its support, or one
-            removed from the solve by the model's ``excluded=``).
+            removed from the solve by the model's ``excluded=``). Under ``comm``
+            on every rank.
     """
     from gfem._engine.cache import discretization
 
-    built = discretization(mesh).built
+    built = discretization(mesh, (), comm).built
     p = np.asarray(points, float).reshape(-1, 3) / built.scale
     found = built.mesh(p[:, 0].copy(), p[:, 1].copy(), p[:, 2].copy())
     nr = np.asarray(found["nr"], dtype=np.int64)
-    outside = nr < 0
+    held = nr >= 0
+    tets = np.full(len(nr), -1, dtype=np.int64)
+    tets[held] = np.asarray(built.tetrahedron_order)[nr[held]]
+    ref = np.stack([found["x"], found["y"], found["z"]], axis=1)
+    bary = np.concatenate([ref, 1.0 - ref.sum(axis=1, keepdims=True)], axis=1)
+    tets, bary = _agree_location(comm, tets, bary)
+    outside = tets < 0
     if outside.any():
         worst = points.reshape(-1, 3)[int(np.flatnonzero(outside)[0])]
-        raise ValueError(
-            f"Point {_fmt(worst)} m is outside the mesh: a field has no value there."
+        raise _mpi.agreed(
+            ValueError(
+                f"Point {_fmt(worst)} m is outside the mesh: a field has no value "
+                "there."
+            )
         )
-    tets = np.asarray(built.tetrahedron_order)[nr]
     inside = in_support(mesh, layout)[tets]
     if not inside.all():
         k = int(np.flatnonzero(~inside)[0])
         names = {r.tag: r.name for r in mesh.regions if r.dim == 3}
         region = names[int(mesh.tetrahedron_tags[tets[k]])]
-        raise ValueError(
-            f"Point {_fmt(points.reshape(-1, 3)[k])} m lies in volume region "
-            f"{region!r}, where the field is not defined (its support is "
-            f"{list(layout.support)}, minus the volumes the model excludes from "
-            "the solve). A point on the boundary of the support may be found in "
-            "the neighbouring volume: move it inside."
+        raise _mpi.agreed(
+            ValueError(
+                f"Point {_fmt(points.reshape(-1, 3)[k])} m lies in volume region "
+                f"{region!r}, where the field is not defined (its support is "
+                f"{list(layout.support)}, minus the volumes the model excludes from "
+                "the solve). A point on the boundary of the support may be found in "
+                "the neighbouring volume: move it inside."
+            )
         )
-    ref = np.stack([found["x"], found["y"], found["z"]], axis=1)
-    bary = np.concatenate([ref, 1.0 - ref.sum(axis=1, keepdims=True)], axis=1)
     return Located(tets, bary)
+
+
+def _agree_location(
+    comm: Any, tets: np.ndarray, bary: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """One location on all ranks: the largest gfem tetrahedron any rank found.
+
+    Any rule held by all ranks serves. This one does not depend on the rank count.
+    ``-1`` is a point no rank found.
+    """
+    if comm is None:
+        return tets, bary
+    agreed_tets = _mpi.max_bcast(comm, tets)
+    holder = (tets >= 0) & (tets == agreed_tets)
+    return agreed_tets, _mpi.reduce_bcast(comm, np.where(holder[:, None], bary, 0.0))
 
 
 def face_points(
@@ -167,51 +201,78 @@ def _fmt(p: np.ndarray) -> str:
 class Probe:
     """``Phi`` of one field layout at fixed points of one mesh state."""
 
-    def __init__(self, mesh: Mesh, layout: Layout, located: Located) -> None:
-        """Build the engine space and the points (the mesh's node positions)."""
+    def __init__(
+        self, mesh: Mesh, layout: Layout, located: Located, comm: Any = None
+    ) -> None:
+        """Build the engine space and the points (the mesh's node positions).
+
+        Under ``comm`` it is collective, also on a rank that holds none of the points.
+        """
         self.layout = layout
+        self.comm = comm
         built, fes, _ = fe_space(
-            mesh, layout.support, layout.excluded, layout.space, layout.order
+            mesh, layout.support, layout.excluded, layout.space, layout.order, comm=comm
         )
         self._built: EngineMesh = built
         self._fes = fes
         self.factor = built.scale ** LENGTH_POWER[layout.space]
         inverse = inverse_order(built.tetrahedron_order, len(mesh.tetrahedra))
         self._elements = inverse[located.tetrahedra]
-        n = len(self._elements)
-        mips = built.mesh(np.zeros(1), np.zeros(1), np.zeros(1))
-        mips = np.repeat(mips, n)
-        mips["nr"] = self._elements
-        mips["VorB"] = 0
-        bary = located.barycentric
-        mips["x"], mips["y"], mips["z"] = bary[:, 0], bary[:, 1], bary[:, 2]
-        self._mips = mips
-        self.n_points = n
+        self.n_points = len(self._elements)
+        self._own = np.flatnonzero(self._elements >= 0)
+        self._mips = None
+        if self._own.size:
+            mips = built.mesh(np.zeros(1), np.zeros(1), np.zeros(1))
+            mips = np.repeat(mips, self._own.size)
+            mips["nr"] = self._elements[self._own]
+            mips["VorB"] = 0
+            bary = located.barycentric[self._own]
+            mips["x"], mips["y"], mips["z"] = bary[:, 0], bary[:, 1], bary[:, 2]
+            self._mips = mips
         self._local: tuple | None = None
+        # a collective call, so no rank may leave it for its first point
+        self._discontinuous = None if comm is None else ngs.Discontinuous(fes)
+        self.width = int(fes.ndof)
+        if comm is not None:
+            self.width = dof_shape(
+                mesh,
+                layout.support,
+                layout.excluded,
+                layout.space,
+                layout.order,
+                comm=comm,
+            )[0]
         self._lock = threading.Lock()
 
     @property
     def ndof(self) -> int:
-        """The number of field coefficients."""
+        """The number of field coefficients this rank holds."""
         return int(self._fes.ndof)
 
     def _evaluate(self, fes: ngs.FESpace, values: np.ndarray) -> np.ndarray:
+        """Values at this rank's points, ``(its points, dim)``."""
         gf = ngs.GridFunction(fes)
-        if self.n_points == 0:
+        if self._mips is None:
             return np.zeros((0, gf.dim))
         gf.vec.FV().NumPy()[:] = values
         out = np.asarray(gf(self._mips))
-        return out.reshape(self.n_points, -1)
+        return out.reshape(self._own.size, -1)
 
     def values(self, coefficients: np.ndarray) -> np.ndarray:
-        """``Phi c`` in SI units, ``(m, n_points, dim)`` for ``(m, ndof)``."""
+        """``Phi c`` in SI units, ``(m, n_points, dim)`` for ``(m, width)``.
+
+        Under ranks it is collective, with the same bits on every rank.
+        """
         c = np.atleast_2d(coefficients)
-        if c.shape[1] != self.ndof:
-            raise ValueError(
-                f"The field has {c.shape[1]} coefficients but its "
-                f"{self.layout.space} order-{self.layout.order} space has "
-                f"{self.ndof} DOFs: the field does not belong to this mesh."
+        if c.shape[1] != self.width:
+            raise _mpi.agreed(
+                ValueError(
+                    f"The field has {c.shape[1]} coefficients but its "
+                    f"{self.layout.space} order-{self.layout.order} space has "
+                    f"{self.width} DOFs: the field does not belong to this mesh."
+                )
             )
+        c = c[:, : self.ndof]
         parts = [np.real(c)] + ([np.imag(c)] if np.iscomplexobj(c) else [])
         with self._lock:
             out = [
@@ -219,13 +280,20 @@ class Probe:
                 for part in parts
             ]
         values = out[0] if len(out) == 1 else out[0] + 1j * out[1]
-        return values * self.factor
+        values = values * self.factor
+        if self.comm is None:
+            return values
+        whole = np.zeros((c.shape[0], self.n_points, values.shape[2]), values.dtype)
+        whole[:, self._own] = values
+        return _mpi.reduce_bcast(self.comm, whole)
 
     def _local_dofs(self) -> tuple:
         if self._local is None:
             fes = self._fes
-            dfes = ngs.Discontinuous(fes)
-            unique, position = np.unique(self._elements, return_inverse=True)
+            dfes = self._discontinuous
+            if dfes is None:
+                dfes = ngs.Discontinuous(fes)
+            unique, position = np.unique(self._elements[self._own], return_inverse=True)
             cont = np.array(
                 [list(fes.GetDofNrs(ngs.ElementId(ngs.VOL, int(e)))) for e in unique],
                 dtype=np.int64,
@@ -238,24 +306,29 @@ class Probe:
         return self._local
 
     def transpose(self, cotangent: np.ndarray) -> np.ndarray:
-        """``Phi^T g`` (SI scaling included), ``(m, ndof)`` for ``(m, n, dim)``."""
+        """``Phi^T g`` (SI scaling included), ``(m, width)`` for ``(m, n, dim)``.
+
+        Under ranks a ``DISTRIBUTED`` load, and no rank communicates: ``g`` is
+        replicated, and each rank writes only for the points it holds.
+        """
         g = np.asarray(cotangent).reshape(-1, self.n_points, cotangent.shape[-1])
-        if self.n_points == 0:
-            return np.zeros((len(g), self.ndof), dtype=g.dtype)
+        out = np.zeros((len(g), self.width), dtype=g.dtype)
+        if self._own.size == 0:
+            return out
+        g = g[:, self._own]
         with self._lock:
             dfes, cont, disc = self._local_dofs()
-            out = np.zeros((len(g), self.ndof), dtype=g.dtype)
             for k in range(cont.shape[1]):
                 unit = np.zeros(dfes.ndof)
                 unit[disc[:, k]] = 1.0
                 shape = self._evaluate(dfes, unit) * self.factor  # (n, dim)
                 contribution = np.einsum("pd,mpd->mp", shape, g)
                 for j in range(len(g)):
-                    out[j] += np.bincount(
+                    out[j, : self.ndof] += np.bincount(
                         cont[:, k], weights=contribution[j].real, minlength=self.ndof
                     )
                     if np.iscomplexobj(g):
-                        out[j] += 1j * np.bincount(
+                        out[j, : self.ndof] += 1j * np.bincount(
                             cont[:, k],
                             weights=contribution[j].imag,
                             minlength=self.ndof,
@@ -267,10 +340,14 @@ _PROBES: collections.OrderedDict[tuple, tuple] = collections.OrderedDict()
 _MAX_PROBES = 4
 
 
-def probe(mesh: Mesh, layout: Layout, located: Located) -> Probe:
-    """The `Probe` of a layout at points, cached for the backward pass."""
+def probe(mesh: Mesh, layout: Layout, located: Located, comm: Any = None) -> Probe:
+    """The `Probe` of a layout at points, cached for the backward pass.
+
+    Under ``comm`` a miss is collective, and all ranks miss together.
+    """
     key = (
         id(mesh._topology),  # noqa: SLF001
+        _mpi.comm_key(comm),
         _digest(np.asarray(mesh.nodes)),
         layout,
         _digest(located.tetrahedra),
@@ -280,7 +357,7 @@ def probe(mesh: Mesh, layout: Layout, located: Located) -> Probe:
     if found is not None and found[0] is mesh._topology:  # noqa: SLF001
         _PROBES.move_to_end(key)
         return found[1]
-    made = Probe(mesh, layout, located)
+    made = Probe(mesh, layout, located, comm)
     _PROBES[key] = (mesh._topology, made)  # noqa: SLF001
     while len(_PROBES) > _MAX_PROBES:
         _PROBES.popitem(last=False)

@@ -14,6 +14,7 @@ from __future__ import annotations
 import collections
 import collections.abc
 import contextlib
+import dataclasses
 import hashlib
 import itertools
 import os
@@ -41,15 +42,20 @@ __all__ = [
     "AGREED_ERRORS",
     "FORWARD_ERRORS",
     "AgreedError",
+    "StaticComm",
     "agree_all",
     "agree_any",
+    "agree_max",
     "agree_min",
+    "agreed",
     "bcast_arrays",
+    "check_call",
     "comm_key",
     "default_threads",
     "entry_check",
     "install_abort_hook",
     "launched_tasks",
+    "max_bcast",
     "node_budget",
     "node_bytes",
     "node_share",
@@ -59,6 +65,7 @@ __all__ = [
     "refuse",
     "resolve_comm",
     "section",
+    "static_comm",
     "warn",
 ]
 
@@ -116,9 +123,14 @@ _REFUSALS = {
         "BDDC at order 1 has a coarse problem as large as the system, so it is "
         f"refused above one rank: use linear_solver='direct' or order=2, {_COPIES}."
     ),
-    "driven": (
-        "A distributed driven solve runs with no kept field or result bundle so "
-        f"far: {_COPIES}."
+    "driven": f"A distributed driven solve writes no result bundle so far: {_COPIES}.",
+    "field_export": (
+        "A field across ranks is not sampled into one object, which would hold the "
+        "whole sampled mesh in one process: read values with Field.at, or solve with "
+        "comm=MPI.COMM_SELF."
+    ),
+    "power_flow": (
+        f"gfem.power_flow has no distributed path: read Field.at, {_COPIES}."
     ),
 }
 
@@ -238,9 +250,6 @@ def refuse(model: Any, problem: Any, options: Any) -> None:
             refuse_feature("device")
         if options.order == 1 and options.linear_solver in ("auto", "bddc_gmres"):
             refuse_feature("bddc_order_1")
-        # Not built yet: no silent copies either.
-        if problem.kept_frequencies:
-            refuse_feature("driven")
 
 
 def refuse_feature(feature: str) -> None:
@@ -274,6 +283,19 @@ def agree_min(comm: Any, value: int) -> int:
     return comm.allreduce(value, op=_load_mpi().MIN)
 
 
+def agree_max(comm: Any, value: int) -> int:
+    """The largest ``value`` over ranks, the same answer on every rank."""
+    if comm is None:
+        return value
+    return comm.allreduce(value, op=_load_mpi().MAX)
+
+
+def agreed[E: BaseException](error: E) -> E:
+    """``error``, marked as raised by every rank together, so `section` lets it pass."""
+    error._gfem_agreed = True  # ty: ignore[unresolved-attribute]  # noqa: SLF001
+    return error
+
+
 def reduce_bcast(comm: Any, values: Any) -> Any:
     """The rank sum of ``values``, with the same bits on every rank.
 
@@ -289,6 +311,17 @@ def reduce_bcast(comm: Any, values: Any) -> Any:
     comm.Reduce(local, total, op=_load_mpi().SUM, root=0)
     comm.Bcast(total, root=0)
     return total
+
+
+def max_bcast(comm: Any, values: np.ndarray) -> np.ndarray:
+    """The entrywise maximum of ``values`` over ranks, the same on every rank."""
+    if comm is None:
+        return values
+    local = np.ascontiguousarray(values)
+    largest = np.empty_like(local)
+    comm.Reduce(local, largest, op=_load_mpi().MAX, root=0)
+    comm.Bcast(largest, root=0)
+    return largest
 
 
 def bcast_arrays(comm: Any, arrays: dict[str, np.ndarray] | None) -> dict:
@@ -327,6 +360,24 @@ def comm_key(comm: Any) -> int | None:
         key = next(_comm_keys)
         comm.Set_attr(_comm_keyval, key)
     return key
+
+
+@dataclasses.dataclass(frozen=True)
+class StaticComm:
+    """A communicator as a static pytree value: hashable, equal by `comm_key`.
+
+    Attributes:
+        key: The communicator's `comm_key`.
+        comm: The communicator.
+    """
+
+    key: int | None
+    comm: Any = dataclasses.field(compare=False)
+
+
+def static_comm(comm: Any) -> StaticComm | None:
+    """``comm`` as a static pytree value; ``None`` is the one-process path."""
+    return None if comm is None else StaticComm(comm_key(comm), comm)
 
 
 def node_bytes(comm: Any, local: int) -> int:
@@ -488,11 +539,8 @@ def entry_check(
     import jax
 
     _meet(comm, call)
-    key = comm_key(comm)
-    _entry_calls[key] += 1
     leaves, _ = jax.tree_util.tree_flatten_with_path(model)
     items = {
-        "the call": f"{_entry_calls[key]} {call}",
         "the problem": _text_digest(repr(problem)),
         "the options": _text_digest(repr(options)),
         "the ports": _text_digest(repr(model.ports)),
@@ -508,7 +556,30 @@ def entry_check(
         for path, leaf in leaves
     }
     items |= {name: _leaf_digest(value) for name, value in (arrays or {}).items()}
-    everyone = comm.allgather(items)
+    _compare(comm, call, items)
+
+
+def check_call(comm: Any, call: str, arrays: collections.abc.Mapping[str, Any]) -> None:
+    """`entry_check` of a collective call with no model: a method of a kept field.
+
+    Args:
+        comm: The resolved communicator.
+        call: The call's name.
+        arrays: The call's replicated values, by name. A rank's piece of a field is
+            no such value: its shape stands for it (ADR 0063).
+
+    Raises:
+        AgreedError: On every rank, naming the first input that differs.
+    """
+    _meet(comm, call)
+    _compare(comm, call, {n: _leaf_digest(v) for n, v in arrays.items()})
+
+
+def _compare(comm: Any, call: str, items: dict[str, str]) -> None:
+    """Raise on every rank if this call's number, name or ``items`` differ."""
+    key = comm_key(comm)
+    _entry_calls[key] += 1
+    everyone = comm.allgather({"the call": f"{_entry_calls[key]} {call}", **items})
     for other, theirs in enumerate(everyone):
         for name in sorted(theirs.keys() | everyone[0].keys()):
             if theirs.get(name) != everyone[0].get(name):
