@@ -177,11 +177,11 @@ class CoarseMumps(ngs.BaseMatrix):
         """The wirebasket's local DOFs."""
         return self._source.width
 
-    def CreateRowVector(self) -> Any:  # noqa: N802 - NGSolve's name
+    def CreateRowVector(self) -> Any:  # ty: ignore[invalid-method-override]  # noqa: N802
         """A vector of the wirebasket."""
         return self._source.CreateRowVector()
 
-    def CreateColVector(self) -> Any:  # noqa: N802 - NGSolve's name
+    def CreateColVector(self) -> Any:  # ty: ignore[invalid-method-override]  # noqa: N802
         """A vector of the wirebasket."""
         return self._source.CreateColVector()
 

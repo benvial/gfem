@@ -331,6 +331,7 @@ def prepare(
     if operator.layout is not None:
         return _prepare_on_ranks(
             operator,
+            operator.layout,
             symmetry=symmetry,
             kind=kind,
             tolerance=tolerance,
@@ -393,6 +394,7 @@ def prepare(
 
 def _prepare_on_ranks(
     operator: Operator,
+    layout: DofLayout,
     *,
     symmetry: Symmetry,
     kind: str,
@@ -421,7 +423,7 @@ def _prepare_on_ranks(
     if kind in ("direct", "petsc"):
         from gfem import _petsc
 
-        _petsc.require_mpi_petsc(kind, operator.layout.comm)
+        _petsc.require_mpi_petsc(kind, layout.comm)
         from gfem._linalg.petsc import RankPetscHandle
 
         return RankPetscHandle.from_operator(
@@ -429,7 +431,7 @@ def _prepare_on_ranks(
             symmetry,
             tolerance=tolerance,
             maxiter=maxiter,
-            layout=operator.layout,
+            layout=layout,
             kind=kind,
             options=petsc_options if kind == "petsc" else (),
             reuse=reuse_preconditioner,

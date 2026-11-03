@@ -351,7 +351,7 @@ class PetscHandle(PlannedHandle):
         self._set_up()
         self._pc_is_current = not self._reuses  # a reused preconditioner was kept
 
-    def _refresh(self, matrix: ngs.BaseMatrix) -> None:
+    def _refresh(self, matrix: Any) -> None:
         """Move the held matrix's new values to the AIJ; under the lock."""
         self._gather(matrix.CSR()[0], self._index, self._values)
         self._mat.assemble()  # marks the new values: PETSc sets up again
@@ -732,7 +732,7 @@ class RankPetscHandle(PetscHandle):
         nothing = np.zeros(0, dtype=np.int64)
         return _Block(aij, nothing, nothing, index, nothing)
 
-    def _refresh(self, matrix: ngs.BaseMatrix) -> None:
+    def _refresh(self, matrix: Any) -> None:
         local = local_matrix(matrix, self.layout.comm)
         set_values(self._mat, local.CSR()[0], self._index)
         self._ksp.setOperators(self._mat)
@@ -769,7 +769,7 @@ class RankPetscHandle(PetscHandle):
         """A new KSP, in the scope of the handle's options, with ICNTL(14) doubled."""
         PETSc = _petsc.require_petsc()
         name = "mat_mumps_icntl_14"
-        options = dict(self._options)
+        options: dict[str, Any] = dict(self._options)
         options[name] = 2 * max(int(options[name]), 20)
         self._options = tuple(options.items())
         # `scoped_options` deletes this name on exit whatever it holds
