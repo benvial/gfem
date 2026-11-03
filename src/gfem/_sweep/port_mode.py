@@ -685,7 +685,7 @@ class _Greedy:
                     "modes at each frequency would switch modes there, so its "
                     "S-parameters differ beyond the crossing.",
                     PortModeTrackingWarning,
-                    stacklevel=6,
+                    stacklevel=9,
                 )
                 return
 
