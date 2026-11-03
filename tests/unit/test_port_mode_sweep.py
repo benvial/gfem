@@ -140,8 +140,9 @@ def test_the_mode_phase_is_continuous_over_the_band(slab_mesh):
 def test_a_mode_crossing_warns_and_follows_the_physical_mode(slab_mesh):
     model = slab(slab_mesh)
     grid = np.linspace(16e9, 40e9, 60)
-    with pytest.warns(gfem.PortModeTrackingWarning, match="mode crossing"):
+    with pytest.warns(gfem.PortModeTrackingWarning, match="mode crossing") as record:
         result = gfem.solve(model, gfem.PortMode("p1", grid, mode=4))
+    assert record[0].filename == __file__  # it points at the solve call
     n_eff = np.asarray(result.n_eff).real
     # continuous along the physical branch ...
     assert np.abs(np.diff(n_eff)).max() < 0.05

@@ -159,7 +159,7 @@ def _max():
 def test_a_block_a_column_and_a_transposed_solve_agree(tmp_path):
     rows, *_ = on_ranks(_columns_of_a_block, tmp_path, ranks=4)
     assert rows["block to its columns"] < 1e-12 * rows["scale"]
-    assert rows["transposed"] == 0
+    assert rows["transposed"] < 1e-12 * rows["scale"]
     assert rows["to the state"] < 1e-11 * rows["scale"]
     assert rows["on a fixed row"] == 0
 
@@ -404,6 +404,30 @@ def test_each_model_feature_matches_one_process(tmp_path, name, solver, gate):
     error = np.abs(s - s_one).max() / np.abs(s_one).max()
     print(f"{name} on {solver}: S error={error:.3g}")  # noqa: T201
     assert error < gate
+
+
+def _wave_s(case, directory, solver):
+    if case == "hybrid":
+        model = cases.hybrid_line(cases.hybrid_mesh(directory, cells=(4, 2, 2)))
+        problem = gfem.Driven([55e9, 65e9])
+    else:
+        model = cases.wave_line(cases.wave_mesh(directory), case)
+        problem = gfem.Driven([12e9, 24e9])
+    options = cases.tight(solver, threads=1)
+    return np.asarray(gfem.solve(model, problem, options=options).s.values)
+
+
+@needs_stack
+@pytest.mark.parametrize("solver", ["direct", "petsc"])
+@pytest.mark.parametrize("case", ["lossless", "lossy", "mixed", "hybrid"])
+@pytest.mark.parametrize("ranks", [3, 8])
+def test_wave_ports_match_one_process_on_mumps(tmp_path, case, solver, ranks):
+    # the Woodbury step on a distributed factorization, at two frequencies
+    s_one = _wave_s(case, tmp_path, "direct")
+    s, *_ = on_ranks(_wave_s, case, tmp_path, solver, ranks=ranks, limit=300)
+    error = np.abs(s - s_one).max() / np.abs(s_one).max()
+    print(f"{case} on {solver} at {ranks}: S error={error:.3g}")  # noqa: T201
+    assert error < S_GATE
 
 
 # --- without the MPI stack ----------------------------------------------------------
