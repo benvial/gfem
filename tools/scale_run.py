@@ -838,7 +838,7 @@ def main() -> int:
     one = commands.add_parser("run")
     one.add_argument("case", type=Path)
     one.add_argument("name", type=Path, help="the record's path, with no suffix")
-    one.add_argument("--solver", choices=tuple(GATES), required=True)
+    one.add_argument("--solver", choices=(*GATES, "petsc"), required=True)
     one.add_argument("--ghz", default="50")
     one.add_argument("--tol", type=float, default=1e-8)
     one.add_argument("--order", type=int, default=2)
