@@ -27,7 +27,7 @@ DIAGONALS = (
     ((5, 8), (4, 6, 9, 7)),
     ((6, 7), (4, 5, 9, 8)),
 )
-#: A triangle's three edges, and its four children by column of ``[corners, midpoints]``.
+#: A triangle's three edges, and its children by column of ``[corners, midpoints]``.
 TRIANGLE_EDGES = ((0, 1), (0, 2), (1, 2))
 TRIANGLE_CHILDREN = ((0, 3, 4), (3, 1, 5), (4, 5, 2), (3, 5, 4))
 
@@ -123,9 +123,7 @@ def split(mesh: meshio.Mesh) -> meshio.Mesh:
     nodes = np.concatenate([tets, tet_mid], axis=1)
     corners = np.stack([nodes[:, list(c)] for c in CORNERS], axis=1)
     inner = _inner_children(new_points, nodes)
-    children = _same_way_as(
-        new_points, tets, np.concatenate([corners, inner], axis=1)
-    )
+    children = _same_way_as(new_points, tets, np.concatenate([corners, inner], axis=1))
     corner_nodes = np.concatenate([tris, tri_mid], axis=1)
     faces = np.stack([corner_nodes[:, list(c)] for c in TRIANGLE_CHILDREN], axis=1)
 
@@ -152,7 +150,7 @@ def main() -> None:
     out = split(meshio.read(args.source, file_format="gmsh"))
     meshio.gmsh.write(args.target, out, fmt_version="2.2", binary=True)
     tets, tris = out.cells_dict["tetra"], out.cells_dict["triangle"]
-    print(  # noqa: T201
+    print(
         f"{args.target}: {len(tets)} tetrahedra, {len(tris)} triangles, "
         f"{len(out.points)} nodes"
     )

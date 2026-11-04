@@ -1,4 +1,4 @@
-"""One run on a gsim case through the real `gfem.solve`, its record, and the agreement gates.
+"""A run on a gsim case through the real `gfem.solve`, its record, its agreement gates.
 
 Run it under the launcher, once per node count and solver, or with no launcher for the
 one-process reference (ADR 0073). Layout and limits belong to the job script; only the
@@ -17,7 +17,8 @@ across ranks, and a difference ends the run with exit code 1 once the record is 
 
 ``--design`` replaces the plain solve by two steps of `jax.value_and_grad` on the
 permittivity of the highest-permittivity volume and the fill of a resistive sheet on the
-largest interface between two volumes, since a sheet needs the domain on both sides. ``--spaces-only`` stops once the space is built, for the DOFs per rank.
+largest interface between two volumes, since a sheet needs the domain on both sides.
+``--spaces-only`` stops once the space is built, for the DOFs per rank.
 
 ``check`` compares a run with its reference at ADR 0070's gates: 1e-11 on ``direct``,
 1e-9 and the exact iteration count on ``bddc_gmres``, S and gradient entries relative to
@@ -65,11 +66,13 @@ class Phases:
     """Seconds and calls per phase on this rank; the record keeps the slowest rank."""
 
     def __init__(self) -> None:
+        """No phase has run yet."""
         self.seconds: dict[str, float] = defaultdict(float)
         self.calls: dict[str, int] = defaultdict(int)
 
     @contextlib.contextmanager
     def timed(self, name: str):
+        """Count the block as phase ``name``."""
         start = time.perf_counter()
         try:
             yield
@@ -107,6 +110,7 @@ class Facts:
     """What the wrappers read on the way: DOF counts, factors, residuals, one apply."""
 
     def __init__(self) -> None:
+        """Nothing is read yet."""
         self.dofs: dict[str, Any] = {}
         self.factors: list[dict[str, Any]] = []
         self.coarse: list[dict[str, Any]] = []
@@ -134,12 +138,18 @@ def _record_dofs(comm: Any, facts: Facts, layout: Any, space: Any) -> None:
 
 def _instrument(phases: Phases, facts: Facts, comm: Any) -> None:
     """Put the wrappers on gfem's functions: see the module's docstring."""
+    _instrument_phases(phases, facts, comm)
+    _instrument_solve(phases, facts)
+    _instrument_gmres(phases, facts)
+
+
+def _instrument_phases(phases: Phases, facts: Facts, comm: Any) -> None:
+    """The plain phases, the DOFs of a rank's layout, and PETSc's under ranks."""
     import ngsolve as ngs
 
     import gfem
-    from gfem import _mpi
     from gfem._engine import driven, mesh, system_operator
-    from gfem._linalg import ResolvedLinearSolver, bddc, gmres, layout
+    from gfem._linalg import ResolvedLinearSolver, bddc, layout
 
     phases.wrap(gfem.Mesh, "from_gmsh", "mesh_read")
     phases.wrap(mesh, "_distributed", "partition")
@@ -168,13 +178,17 @@ def _instrument(phases: Phases, facts: Facts, comm: Any) -> None:
         if _petsc.has_mpi():
             _instrument_petsc(phases, facts)
 
-    # the solve, with a true residual per column
+
+def _instrument_solve(phases: Phases, facts: Facts) -> None:
+    """Each sweep solve, with a true residual per column."""
+    from gfem._engine import system_operator
+
     sweep_solve = system_operator.SystemSweep.solve
 
     def solve(self, omega, rhs, *, x0=None):
         with phases.timed("sweep_solve"):
             x, iterations = sweep_solve(self, omega, rhs, x0=x0)
-        handle = self._last[1]  # noqa: SLF001
+        handle = self._last[1]
         with phases.timed("true_residual"):
             residual = handle.apply(x) - rhs
             norm = facts.layout.norm if facts.layout else np.linalg.norm
@@ -191,7 +205,12 @@ def _instrument(phases: Phases, facts: Facts, comm: Any) -> None:
 
     system_operator.SystemSweep.solve = solve
 
-    # GMRES: the vector work, the reductions inside it, one apply and one matvec
+
+def _instrument_gmres(phases: Phases, facts: Facts) -> None:
+    """GMRES: the vector work, the reductions inside it, one apply and one matvec."""
+    from gfem import _mpi
+    from gfem._linalg import gmres
+
     depth = {"vector": 0, "gmres": 0}
 
     def vector_work(owner, attribute):
@@ -262,7 +281,7 @@ def _instrument_petsc(phases: Phases, facts: Facts) -> None:
     def timed_set_up(self):
         with phases.timed("mumps_setup"):
             set_up_now(self)
-        factor = self._ksp.getPC().getFactorMatrix()  # noqa: SLF001
+        factor = self._ksp.getPC().getFactorMatrix()
         facts.factors.append(
             {
                 "infog29": int(factor.getMumpsInfog(29)),
@@ -278,12 +297,12 @@ def _instrument_petsc(phases: Phases, facts: Facts) -> None:
     def timed_coarse(self):
         with phases.timed("coarse_setup"):
             set_up(self)
-        fact = {"dofs": int(self._numbering.total), "reduction": int(self._factor)}  # noqa: SLF001
+        fact = {"dofs": int(self._numbering.total), "reduction": int(self._factor)}
         with contextlib.suppress(Exception):  # the inner KSP is absent on some ranks
-            pc = self._ksp.getPC()  # noqa: SLF001
+            pc = self._ksp.getPC()
             matrix = (
                 pc.getFactorMatrix()
-                if self._factor == 1  # noqa: SLF001
+                if self._factor == 1
                 else pc.getTelescopeSubKSP().getPC().getFactorMatrix()
             )
             fact["infog29"] = int(matrix.getMumpsInfog(29))
@@ -323,6 +342,7 @@ class Case:
     """A gsim case as `tests/reference/test_driven.py` builds it."""
 
     def __init__(self, directory: Path) -> None:
+        """Read ``config.json`` and the mesh it names."""
         import gfem
 
         self.gfem = gfem
@@ -362,18 +382,24 @@ class Case:
 
     @property
     def design_region(self) -> str:
+        """The volume of highest permittivity."""
         return max(self.materials, key=lambda k: self.materials[k][0])
 
     @property
     def design_surface(self) -> str:
+        """The largest surface between two different volumes."""
+
         def is_interface(name: str) -> bool:
             sides = self.mesh.adjacency(name)
             return all(a and b and a != b for a, b in sides)
 
-        names = [r.name for r in self.mesh.regions if r.dim == 2 and is_interface(r.name)]
+        names = [
+            r.name for r in self.mesh.regions if r.dim == 2 and is_interface(r.name)
+        ]
         return max(names, key=lambda n: (len(self.mesh.elements(n)), n))
 
     def model(self, eps=None, fill=None):
+        """The case's model, with a design's permittivity and sheet if given."""
         gfem = self.gfem
         materials = {
             name: gfem.Material(eps_r=eps_r, tan_delta=tan_delta)
@@ -435,7 +461,7 @@ def _capture_iterations(store: list) -> None:
     DrivenRule.forward = spy
 
 
-def _plain(case: Case, args, frequencies, arrays, phases, iterations) -> dict:
+def _plain(case: Case, args, frequencies, *, arrays, phases, iterations) -> dict:
     import gfem
 
     with phases.timed("solve"):
@@ -447,7 +473,7 @@ def _plain(case: Case, args, frequencies, arrays, phases, iterations) -> dict:
     return {}
 
 
-def _design(case: Case, args, frequencies, arrays, phases, iterations, comm) -> dict:
+def _design(case: Case, args, frequencies, *, arrays, phases, iterations, comm) -> dict:
     """Two steps of `value_and_grad`, each design from the last gradient."""
     import jax
     import jax.numpy as jnp
@@ -490,8 +516,7 @@ def _design(case: Case, args, frequencies, arrays, phases, iterations, comm) -> 
         steps.append(spent if comm is None or comm.rank == 0 else {})
         design = {
             "eps": jnp.maximum(
-                design["eps"]
-                - 0.01 * gradient["eps"] / jnp.abs(gradient["eps"]).max(),
+                design["eps"] - 0.01 * gradient["eps"] / jnp.abs(gradient["eps"]).max(),
                 1.0,
             ),
             "fill": jnp.clip(
@@ -553,7 +578,9 @@ def _environment(comm: Any) -> dict[str, Any]:
     for package in PACKAGES:
         with contextlib.suppress(importlib.metadata.PackageNotFoundError):
             versions[package] = importlib.metadata.version(package)
-    hosts = [socket.gethostname()] if comm is None else comm.allgather(socket.gethostname())
+    hosts = (
+        [socket.gethostname()] if comm is None else comm.allgather(socket.gethostname())
+    )
     library = None
     if comm is not None:
         from mpi4py import MPI
@@ -580,7 +607,46 @@ def _environment(comm: Any) -> dict[str, Any]:
     }
 
 
+def _observed(args, phases, facts, comm) -> dict[str, Any]:
+    """What the record reads across ranks once the solve is done: collective."""
+    gathered = phases.gathered(comm)
+    gmres = gathered.get("gmres", {}).get("max_s", 0.0)
+    krylov = None
+    if gmres:
+        vector = gathered.get("gmres_vector", {}).get("max_s", 0.0)
+        reduction = gathered.get("gmres_reduction", {}).get("max_s", 0.0)
+        krylov = {
+            "vector_share": vector / gmres,
+            "reduction_wait_s": reduction,
+            "reduction_share": reduction / gmres,
+        }
+    apply_time = dict(facts.apply)
+    events = _factor_events() if args.solver == "direct" and comm is not None else {}
+    if comm is not None:
+        apply_time = max(comm.allgather(apply_time), key=lambda d: d.get("apply_s", 0))
+        if events:
+            everyone = comm.allgather(events)
+            events = {k: max(e.get(k, 0.0) for e in everyone) for k in events}
+    factors: dict[str, Any] = {"factors": facts.factors}
+    if comm is not None and facts.factors:
+        info = comm.allgather([f["info22_mb"] for f in facts.factors])
+        factors["info22_mb_sum"] = [int(sum(r)) for r in zip(*info, strict=True)]
+        factors["info22_mb_max"] = [int(max(r)) for r in zip(*info, strict=True)]
+    return {
+        "dofs": facts.dofs,
+        "phases": gathered,
+        "krylov": krylov,
+        "one_apply": apply_time,
+        "petsc_events": events,
+        "factors": factors,
+        "coarse": facts.coarse,
+        "residuals": facts.residuals,
+        "memory": _memory(comm),
+    }
+
+
 def run(args: argparse.Namespace) -> int:
+    """One solve, design or space on this launch's ranks: see the module's docstring."""
     os.environ.setdefault("JAX_ENABLE_X64", "1")
     os.environ.setdefault("JAX_PLATFORMS", "cpu")
     started = time.perf_counter()
@@ -595,7 +661,7 @@ def run(args: argparse.Namespace) -> int:
 
     def say(text: str) -> None:
         if rank == 0:
-            print(f"{time.perf_counter() - started:9.1f} s  {text}", flush=True)  # noqa: T201
+            print(f"{time.perf_counter() - started:9.1f} s  {text}", flush=True)
 
     if args.dump_after and rank < 2:
         faulthandler.dump_traceback_later(args.dump_after, exit=False)
@@ -606,7 +672,7 @@ def run(args: argparse.Namespace) -> int:
     if not args.spaces_only:
         _capture_iterations(iterations)
     environment = _environment(comm)
-    say(f"import done, {environment['ranks']} ranks on {environment['node_count']} nodes")
+    say(f"{environment['ranks']} ranks on {environment['node_count']} nodes")
 
     frequencies = [float(g) * 1e9 for g in args.ghz.split(",")]
     case = Case(args.case)
@@ -618,9 +684,19 @@ def run(args: argparse.Namespace) -> int:
         with phases.timed("spaces_only"):
             _spaces(case, args, frequencies, comm)
     elif args.design:
-        extra = _design(case, args, frequencies, arrays, phases, iterations, comm)
+        extra = _design(
+            case,
+            args,
+            frequencies,
+            arrays=arrays,
+            phases=phases,
+            iterations=iterations,
+            comm=comm,
+        )
     else:
-        extra = _plain(case, args, frequencies, arrays, phases, iterations)
+        extra = _plain(
+            case, args, frequencies, arrays=arrays, phases=phases, iterations=iterations
+        )
     say("solved")
 
     digests = _digest(arrays)
@@ -628,32 +704,7 @@ def run(args: argparse.Namespace) -> int:
     differing = sorted({k for d in every for k in d if d.get(k) != digests.get(k)})
     bitwise = not differing
 
-    gathered_phases = phases.gathered(comm)
-    gmres = gathered_phases.get("gmres", {}).get("max_s", 0.0)
-    krylov = None
-    if gmres:
-        vector = gathered_phases.get("gmres_vector", {}).get("max_s", 0.0)
-        reduction = gathered_phases.get("gmres_reduction", {}).get("max_s", 0.0)
-        krylov = {
-            "vector_share": vector / gmres,
-            "reduction_wait_s": reduction,
-            "reduction_share": reduction / gmres,
-        }
-    apply_time = dict(facts.apply)
-    events = _factor_events() if args.solver == "direct" and comm is not None else {}
-    if comm is not None:
-        apply_time = max(comm.allgather(apply_time), key=lambda d: d.get("apply_s", 0))
-        if events:
-            everyone = comm.allgather(events)
-            events = {k: max(e.get(k, 0.0) for e in everyone) for k in events}
-
-    all_facts: dict[str, Any] = {"factors": facts.factors}
-    if comm is not None and facts.factors:
-        info = comm.allgather([f["info22_mb"] for f in facts.factors])
-        all_facts["info22_mb_sum"] = [int(sum(r)) for r in zip(*info, strict=True)]
-        all_facts["info22_mb_max"] = [int(max(r)) for r in zip(*info, strict=True)]
-
-    memory = _memory(comm)
+    observed = _observed(args, phases, facts, comm)
     threads_read = args.threads if comm is None else _mpi.default_threads(comm)
     if rank == 0:
         record = {
@@ -661,20 +712,20 @@ def run(args: argparse.Namespace) -> int:
             "case": str(args.case),
             "tetrahedra": len(case.mesh.tetrahedra),
             "solver": args.solver,
-            "options": {"tolerance": args.tol, "threads": args.threads, "order": args.order},
+            "options": {
+                "tolerance": args.tol,
+                "threads": args.threads,
+                "order": args.order,
+            },
             "frequencies_ghz": [f / 1e9 for f in frequencies],
-            "mode": "spaces" if args.spaces_only else "design" if args.design else "solve",
+            "mode": "spaces"
+            if args.spaces_only
+            else "design"
+            if args.design
+            else "solve",
             **environment,
             "threads_read": threads_read,
-            "dofs": facts.dofs,
-            "phases": gathered_phases,
-            "krylov": krylov,
-            "one_apply": apply_time,
-            "petsc_events": events,
-            "factors": all_facts,
-            "coarse": facts.coarse,
-            "residuals": facts.residuals,
-            "memory": memory,
+            **observed,
             "iterations": {k: arrays[k].tolist() for k in arrays if "iterations" in k},
             "s": _printable(arrays.get("s")),
             "ranks_bitwise": bitwise,
@@ -707,9 +758,7 @@ def check(args: argparse.Namespace) -> int:
     there = np.load(reference_path.with_suffix(".npz"))
     record = json.loads(run_path.with_suffix(".json").read_text())
     gate = GATES[args.gate] if args.gate else None
-    names = [
-        k for k in here.files if k == "s" or k.startswith(("grad_", "value_"))
-    ]
+    names = [k for k in here.files if k == "s" or k.startswith(("grad_", "value_"))]
     differences = {k: _difference(here[k], there[k]) for k in names if k in there.files}
     passed = bitwise = bool(record["ranks_bitwise"])
     same_iterations = None
@@ -717,9 +766,11 @@ def check(args: argparse.Namespace) -> int:
         passed = passed and all(d < gate for d in differences.values())
         passed = passed and set(names) <= set(there.files)
         if args.gate == "bddc_gmres":
-            keys = [k for k in here.files if "iterations" in k]
-            same_iterations = all(np.array_equal(here[k], there[k]) for k in keys)
-            passed = passed and same_iterations
+            # a direct reference has no iterations: only its S compares
+            keys = [k for k in here.files if "iterations" in k and there[k].size > 0]
+            if keys:
+                same_iterations = all(np.array_equal(here[k], there[k]) for k in keys)
+                passed = passed and same_iterations
     result = {
         "reference": str(reference_path),
         "gate": gate,
@@ -730,25 +781,26 @@ def check(args: argparse.Namespace) -> int:
     }
     record.setdefault("checks", []).append(result)
     run_path.with_suffix(".json").write_text(json.dumps(record, indent=1) + "\n")
-    print(json.dumps({"run": record["name"], **result}))  # noqa: T201
+    print(json.dumps({"run": record["name"], **result}))
     return 0 if passed else 1
 
 
 def table(args: argparse.Namespace) -> int:
     """A Markdown table of records, in the order given."""
-    print(  # noqa: T201
+    print(
         "| Nodes | Ranks x threads | DOF per rank | Solver | Frequencies | "
         "Iterations | `gfem.solve`, s | Largest node, GiB | Job |"
     )
-    print("|---|---|---|---|---|---|---|---|---|")  # noqa: T201
+    print("|---|---|---|---|---|---|---|---|---|")
     for path in args.records:
         r = json.loads(path.read_text())
         dofs = r["dofs"].get("owned_sum", 0)
         per_rank = round(dofs / r["ranks"] / 1e3)
         solve = r["phases"].get("solve", {}).get("max_s", float("nan"))
         its = sorted({i for row in r["iterations"].get("iterations", []) for i in row})
-        print(  # noqa: T201
-            f"| {r['node_count']} | {r['ranks']} x {r['threads_read']} | {per_rank} k | "
+        print(
+            f"| {r['node_count']} | {r['ranks']} x {r['threads_read']} | "
+            f"{per_rank} k | "
             f"`{r['solver']}` | {len(r['frequencies_ghz'])} | "
             f"{'-' if not its else ', '.join(map(str, its))} | {solve:.0f} | "
             f"{r['memory']['peak_rss_largest_node_gib']:.0f} | {r['job']} |"
@@ -757,6 +809,7 @@ def table(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+    """Parse the command and run it."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -771,8 +824,12 @@ def main() -> int:
     one.add_argument("--design", action="store_true")
     one.add_argument("--seed", type=int, default=0)
     one.add_argument("--spaces-only", action="store_true")
-    one.add_argument("--dump-after", type=float, default=0.0,
-                     help="print rank 0's and 1's stacks after this many seconds")
+    one.add_argument(
+        "--dump-after",
+        type=float,
+        default=0.0,
+        help="print rank 0's and 1's stacks after this many seconds",
+    )
     one.set_defaults(call=run)
 
     against = commands.add_parser("check")
