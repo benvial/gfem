@@ -72,8 +72,9 @@ SHEET_SIGMA, SHEET_THICKNESS = 1e3, 1e-6
 class Phases:
     """Seconds and calls per phase on this rank; the record keeps the slowest rank."""
 
-    def __init__(self) -> None:
-        """No phase has run yet."""
+    def __init__(self, *, trace: bool = False) -> None:
+        """No phase has run yet; ``trace`` prints each phase's start and end."""
+        self.trace = trace
         self.seconds: dict[str, float] = defaultdict(float)
         self.calls: dict[str, int] = defaultdict(int)
 
@@ -81,11 +82,15 @@ class Phases:
     def timed(self, name: str):
         """Count the block as phase ``name``."""
         start = time.perf_counter()
+        if self.trace:
+            print(f"{name} starts at {_peak_gib():.1f} GiB peak", flush=True)
         try:
             yield
         finally:
             self.seconds[name] += time.perf_counter() - start
             self.calls[name] += 1
+            if self.trace:
+                print(f"{name} ends at {_peak_gib():.1f} GiB peak", flush=True)
 
     def wrap(self, owner: Any, attribute: str, name: str) -> None:
         """Count every call of ``owner.attribute`` as phase ``name``."""
@@ -320,6 +325,19 @@ def _instrument_petsc(phases: Phases, facts: Facts) -> None:
 
     coarse.CoarseMumps.set_up = timed_coarse
     phases.wrap(coarse.CoarseMumps, "Mult", "coarse_apply")
+
+
+def _print_coarse_mumps() -> None:
+    """MUMPS's own statistics of the coarse problem: its estimates before a factor."""
+    from gfem._linalg import coarse
+
+    options = coarse.CoarseMumps._options  # noqa: SLF001
+
+    def with_printing(self, workspace):
+        prefix = "telescope_" if self._factor > 1 else ""
+        return (*options(self, workspace), (f"{prefix}mat_mumps_icntl_4", 2))
+
+    coarse.CoarseMumps._options = with_printing  # noqa: SLF001
 
 
 def _factor_events() -> dict[str, float]:
@@ -697,8 +715,10 @@ def run(args: argparse.Namespace) -> int:
     if args.dump_after and rank < 2:
         faulthandler.dump_traceback_later(args.dump_after, exit=False)
 
-    phases, facts = Phases(), Facts()
+    phases, facts = Phases(trace=args.trace and rank == 0), Facts()
     _instrument(phases, facts, comm)
+    if args.mumps_print:
+        _print_coarse_mumps()
     iterations: list[np.ndarray] = []
     if not args.spaces_only:
         _capture_iterations(iterations)
@@ -859,6 +879,10 @@ def main() -> int:
     one.add_argument("--design", action="store_true")
     one.add_argument("--seed", type=int, default=0)
     one.add_argument("--spaces-only", action="store_true")
+    one.add_argument("--trace", action="store_true", help="print phases on rank 0")
+    one.add_argument(
+        "--mumps-print", action="store_true", help="MUMPS statistics of the coarse"
+    )
     one.add_argument(
         "--dump-after",
         type=float,
