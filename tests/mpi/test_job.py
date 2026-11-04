@@ -16,7 +16,7 @@ import mpi_cases
 import ngsolve as ngs
 import numpy as np
 import pytest
-from ranks import on_ranks, on_ranks_argv
+from ranks import RanksFailed, on_ranks, on_ranks_argv
 
 import gfem
 from gfem import _mpi, _petsc
@@ -430,6 +430,24 @@ def _load_on_rank_0_alone(out):
         s = np.asarray(gfem.load_result(out).s.values)
     comm.Barrier()
     return comm.bcast(s, root=0)
+
+
+def _load_missing_on_rank_1(out):
+    path = Path(out) / "missing" if _world().rank == 1 else out
+    gfem.load_result(path)
+    _world().Barrier()
+
+
+def test_a_bundle_missing_on_one_rank_ends_the_job(tmp_path):
+    out = tmp_path / "out"
+    line = cases.layered_line(tmp_path)
+    gfem.Job(line, gfem.Driven(FREQUENCIES[1]), _options("bddc_gmres")).run(out)
+    with pytest.raises(RanksFailed) as caught:
+        on_ranks(_load_missing_on_rank_1, out, ranks=3, limit=120)
+    # the section ended the job: nothing reached the worker's own handler
+    assert caught.value.tracebacks == {}
+    assert "gfem: rank 1:" in caught.value.log
+    assert "FileNotFoundError" in caught.value.log
 
 
 def test_a_bundle_without_fields_reads_on_one_rank_alone(tmp_path):

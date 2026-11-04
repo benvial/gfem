@@ -5,13 +5,17 @@ piece is returned with ``replicated=False`` and summed here. Reference values co
 from this one-process pytest.
 """
 
+import os
+import sys
+from pathlib import Path
+
 import gradient_cases as cases
 import mpi_cases
 import ngsolve as ngs
 import numpy as np
 import pytest
 import structured_meshes as sm
-from ranks import on_ranks
+from ranks import on_ranks, on_ranks_argv
 
 import gfem
 from gfem import _mpi
@@ -540,3 +544,35 @@ def test_surface_p0_builds_on_a_one_sided_cut():
     # the case still is the one that hangs `SurfaceL2` on the wheel
     assert cuts
     _assert_agree(values, expected)
+
+
+WAITING = """
+import sys
+import time
+
+from mpi4py import MPI
+
+import gfem
+from gfem import _mpi
+
+_mpi.ENTRY_PATIENCE = 0.2
+if MPI.COMM_WORLD.rank == 1:
+    time.sleep(2)
+gfem.Mesh.from_gmsh(sys.argv[1])
+"""
+
+
+def test_a_long_wait_in_from_gmsh_says_so_on_the_waiting_ranks(tmp_path):
+    path = _write_line(tmp_path)
+    script = tmp_path / "script.py"
+    script.write_text(WAITING)
+    tests = Path(__file__).parents[1]
+    code, log = on_ranks_argv(
+        [sys.executable, str(script), str(path)],
+        ranks=3,
+        limit=60,
+        env={"PYTHONPATH": os.pathsep.join(map(str, (tests, tests.parent / "tools")))},
+    )
+    assert code == 0, log
+    assert log.count("waiting over 0.2 s") == 2, log
+    assert "Mesh.from_gmsh" in log

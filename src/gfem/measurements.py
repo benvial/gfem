@@ -531,13 +531,13 @@ def power_flow(
         gfem.DistributedUnsupportedError: The field is a piece across ranks.
         NonDifferentiableError: ``field`` or ``model`` is traced by JAX.
     """
-    if getattr(field, "_comm", None) is not None:
-        _mpi.refuse_feature("power_flow")
     from gfem._field import Field
     from gfem.model import Model
 
     if not isinstance(field, Field):
         raise TypeError(f"power_flow needs a gfem.Field, got {type(field).__name__}.")
+    if field._communicator is not None:  # noqa: SLF001
+        _mpi.refuse_feature("power_flow")
     if not isinstance(model, Model):
         raise TypeError(
             f"power_flow needs model= a gfem.Model, got {type(model).__name__}."

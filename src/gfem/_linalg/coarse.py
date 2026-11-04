@@ -57,7 +57,7 @@ def reduction(dofs: int, size: int) -> int:
 
 
 class CoarseMumps(ngs.BaseMatrix):
-    """The wirebasket's inverse: a ``ParallelMatrix`` factored by MUMPS across ranks.
+    """The coarse factorization: a ``ParallelMatrix`` factored by MUMPS across ranks.
 
     NGSolve calls the creator twice per setup, first with the form's whole matrix,
     which is not assembled yet, and last with the wirebasket, so nothing is factored

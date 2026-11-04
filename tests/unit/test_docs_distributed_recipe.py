@@ -50,9 +50,9 @@ def test_the_page_takes_its_refusals_from_the_generator(page):
     assert "```{gfem-distributed-refusals}\n```" in page
 
 
-def test_the_scale_section_waits_for_its_runs(page):
+def test_the_layout_section_links_to_the_scale_section(page):
     assert "(distributed-scale)=\n## Scale" in page
-    assert "To be filled" in page
+    assert "{ref}`distributed-scale`" in page
 
 
 def test_the_page_includes_the_script_it_downloads(page):

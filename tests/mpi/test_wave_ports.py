@@ -359,7 +359,7 @@ def _root_fails(directory):
     def compute():
         raise OSError("rank 0's own failure")
 
-    _mpi.on_root(_world(), compute, agreed=(ValueError,))
+    _mpi.on_root(_world(), compute, results=(ValueError,))
 
 
 def test_any_other_failure_on_rank_0_ends_the_job(tmp_path):

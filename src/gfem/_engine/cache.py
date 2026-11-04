@@ -9,7 +9,8 @@ members on one mesh share them. Bounded by count.
 its backward pass, a solver `Handle` (factors or preconditioner) and the
 forward fields, under an integer key that travels with the JAX residuals.
 Bounded in bytes by ``SolverOptions.retain_memory``, least recently used out
-first; an entry is never freed by being read, so repeated pullbacks work.
+first, and only an entry of the storing solve's communicator goes out, since freeing
+may be collective; an entry is never freed by being read, so repeated pullbacks work.
 A missing entry is not an error: the backward pass recomputes it from the
 design state in its residuals (time, never correctness).
 """
@@ -145,6 +146,7 @@ class EntryCache:
     def __init__(self) -> None:
         """An empty cache."""
         self._entries: collections.OrderedDict[int, Entry] = collections.OrderedDict()
+        self._comms: dict[int, int | None] = {}
         self._keys = itertools.count()
 
     def put(self, entry: Entry, budget: int, comm: Any = None) -> int:
@@ -156,7 +158,10 @@ class EntryCache:
 
         Under ``comm`` the bytes are the largest node's and the budget the smallest
         node's, so all ranks evict alike: a rank's own bytes would leave some ranks
-        to re-run a forward without the others, and hang (ADR 0058).
+        to re-run a forward without the others, and hang (ADR 0058). All entries count
+        against the budget, but only ``comm``'s are evicted: freeing a base may be
+        collective on a communicator whose ranks are not here, so the budget does not
+        bound what a solve on another communicator keeps.
         """
         key = next(self._keys)
         budget = _mpi.node_budget(comm, budget)
@@ -164,9 +169,13 @@ class EntryCache:
             entry.free()
             return key
         self._entries[key] = entry
-        while self._entries and _mpi.node_bytes(comm, self.nbytes) > budget:
-            _, old = self._entries.popitem(last=False)
-            old.free()
+        owner = self._comms[key] = _mpi.comm_key(comm)
+        while _mpi.node_bytes(comm, self.nbytes) > budget:
+            oldest = next((k for k in self._entries if self._comms[k] == owner), None)
+            if oldest is None:
+                break
+            del self._comms[oldest]
+            self._entries.pop(oldest).free()
         return key
 
     def get(self, key: int) -> Entry | None:
@@ -180,6 +189,7 @@ class EntryCache:
         """Free the entry under ``key``, if this process still holds it."""
         entry = self._entries.pop(int(key), None)
         if entry is not None:
+            del self._comms[int(key)]
             entry.free()
 
     def free_bases(self, comm: Any, keep: Entry | None = None) -> None:
@@ -206,6 +216,7 @@ class EntryCache:
 
     def clear(self) -> None:
         """Free every entry."""
+        self._comms.clear()
         while self._entries:
             _, old = self._entries.popitem(last=False)
             old.free()

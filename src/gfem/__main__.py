@@ -73,7 +73,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error(f"job file {args.job} does not exist")
         return 2
     try:
-        with _mpi.section(comm):
+        with _mpi.section(comm, agreed=_mpi.FORWARD_ERRORS):
             job = Job.from_json(args.job, comm=comm)
             job.run(args.out, device=args.device, comm=comm)
     except Exception as err:  # noqa: BLE001 (report any failure as exit code 1)

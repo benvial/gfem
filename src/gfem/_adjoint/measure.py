@@ -146,10 +146,9 @@ def _forward(kernel: Any, values: dict[str, np.ndarray]) -> dict[str, np.ndarray
     """``kernel.forward``, as a collective call under the kernel's communicator."""
     comm = getattr(kernel, "comm", None)
     with _mpi.section(comm):
-        if comm is not None:
-            _mpi.check_call(
-                comm, f"the forward of {kernel.name}", _replicated(kernel, values)
-            )
+        _mpi.check_call(
+            comm, f"the forward of {kernel.name}", _replicated(kernel, values)
+        )
         return kernel.forward(values)
 
 
@@ -171,13 +170,12 @@ def _host_backward(
     cts = {n: np.asarray(c) for n, c in zip(live, args[len(names) :], strict=True)}
     comm = getattr(kernel, "comm", None)
     with _mpi.section(comm):
-        if comm is not None:
-            cotangent = {f"the cotangent of {n}": c for n, c in cts.items()}
-            _mpi.check_call(
-                comm,
-                f"the backward of {kernel.name}",
-                _replicated(kernel, values) | cotangent,
-            )
+        cotangent = {f"the cotangent of {n}": c for n, c in cts.items()}
+        _mpi.check_call(
+            comm,
+            f"the backward of {kernel.name}",
+            _replicated(kernel, values) | cotangent,
+        )
         grads = kernel.backward(values, cts, tuple(names[i] for i in wanted))
     out = []
     for i in wanted:

@@ -98,6 +98,19 @@ def test_launched_tasks_reads_the_world_size_of_a_loaded_mpi4py(monkeypatch):
     assert _mpi.launched_tasks({}) == 8
 
 
+# --- the one-process path ---------------------------------------------------------
+
+
+def test_every_call_is_trivial_on_the_one_process_path():
+    rows = np.arange(6.0).reshape(3, 2)
+    _mpi.check_call(None, "a call", {"the rows": rows})
+    _mpi.entry_check(None, "a call", None, None, None)
+    assert _mpi.gather_rows(None, rows) is rows
+    arrays = {"rows": rows}
+    assert _mpi.bcast_arrays(None, arrays) is arrays
+    assert "mpi4py" not in sys.modules
+
+
 # --- resolution -------------------------------------------------------------------
 
 
@@ -114,6 +127,29 @@ def test_a_communicator_of_size_one_needs_no_mpi4py():
 def test_a_non_communicator_is_a_type_error():
     with pytest.raises(TypeError, match="communicator"):
         _mpi.resolve_comm("world")
+
+
+@pytest.mark.parametrize("variable", TASK_VARIABLES)
+def test_a_given_world_of_one_under_more_tasks_raises(variable, monkeypatch):
+    mpi = fake_mpi(world=1)
+    use_mpi(monkeypatch, mpi)
+    monkeypatch.setenv(variable, "4")
+    with pytest.raises(gfem.SolverUnavailableError, match=r"--mpi=pmix.*COMM_SELF"):
+        _mpi.resolve_comm(mpi.COMM_WORLD)
+
+
+def test_comm_self_under_more_tasks_stays_a_copy(monkeypatch):
+    mpi = fake_mpi(world=1)
+    use_mpi(monkeypatch, mpi)
+    monkeypatch.setenv("OMPI_COMM_WORLD_SIZE", "4")
+    assert _mpi.resolve_comm(mpi.COMM_SELF) is None
+    assert _mpi.resolve_comm(Stub(1)) is None
+
+
+def test_a_given_world_of_one_alone_is_the_one_process_path(monkeypatch):
+    mpi = fake_mpi(world=1)
+    use_mpi(monkeypatch, mpi)
+    assert _mpi.resolve_comm(mpi.COMM_WORLD) is None
 
 
 def test_launched_resolves_to_the_world(monkeypatch):

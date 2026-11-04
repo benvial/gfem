@@ -1,10 +1,11 @@
 """The one module that touches mpi4py: launch resolution, agreement, failures.
 
 A distributed solve is SPMD (ADR 0057). A resolved communicator of ``None`` is
-the one-process path: every function here is then trivial, mpi4py is never
-imported, and a call site reads the same on one rank or many. A value that
-decides control flow must be held bitwise by all ranks, so it goes through
-`agree_any`, `agree_all` or `reduce_bcast` (ADR 0058). A failure one rank alone
+the one-process path: every function here that takes one is then trivial, except
+`default_threads`, which has no count to read there, mpi4py is never imported, and
+a call site reads the same on one rank or many. A value that decides control flow
+must be held bitwise by all ranks, so it goes through `agree_any`, `agree_all` or
+`reduce_bcast` (ADR 0058). A failure one rank alone
 sees cannot be raised, because its peers may sit in a C++ collective, so it
 ends the job through `section` or the abort hook.
 """
@@ -57,6 +58,7 @@ __all__ = [
     "install_abort_hook",
     "launched_tasks",
     "max_bcast",
+    "meet",
     "node_budget",
     "node_bytes",
     "node_share",
@@ -64,6 +66,7 @@ __all__ = [
     "rank",
     "reduce_bcast",
     "refuse",
+    "refuse_feature",
     "resolve_comm",
     "section",
     "static_comm",
@@ -184,14 +187,26 @@ def _load_mpi() -> Any:
     return MPI
 
 
+def _world_of_one(tasks: int) -> SolverUnavailableError:
+    """The error of a launcher's tasks that each see a world of size 1."""
+    return SolverUnavailableError(
+        f"The launcher started {tasks} tasks, but each one sees an MPI world "
+        "of size 1, so they cannot solve together. Under Slurm launch with "
+        "srun --mpi=pmix, or pass comm=MPI.COMM_SELF for independent "
+        "one-process copies."
+    )
+
+
 def resolve_comm(comm: Any = None) -> Any:
     """The communicator a solve runs on; ``None`` is the one-process path.
 
-    A given communicator is distributed if and only if its size is above 1. With
-    ``None`` the launcher decides: at one task mpi4py is not imported, above one
-    the solve is on the world communicator or raises. Above size 1 only Open MPI
-    passes, because the NGSolve wheel gives silently wrong numbers on the MPICH
-    ABI, and the abort hook is chained.
+    A given communicator is distributed if and only if its size is above 1, but a
+    world of size 1 while the launcher reports more tasks raises, as with ``None``:
+    those are silent copies nobody asked for, and ``COMM_SELF`` asks for them by
+    name. With ``None`` the launcher decides: at one task mpi4py is not imported,
+    above one the solve is on the world communicator or raises. Above size 1 only
+    Open MPI passes, because the NGSolve wheel gives silently wrong numbers on the
+    MPICH ABI, and the abort hook is chained.
 
     Args:
         comm: An mpi4py intracommunicator, or ``None``.
@@ -207,18 +222,17 @@ def resolve_comm(comm: Any = None) -> Any:
             return None
         comm = _load_mpi().COMM_WORLD
         if comm.size == 1:
-            raise SolverUnavailableError(
-                f"The launcher started {tasks} tasks, but each one sees an MPI world "
-                "of size 1, so they cannot solve together. Under Slurm launch with "
-                "srun --mpi=pmix, or pass comm=MPI.COMM_SELF for independent "
-                "one-process copies."
-            )
+            raise _world_of_one(tasks)
     else:
         if not isinstance(getattr(comm, "size", None), int):
             raise TypeError(
                 f"comm must be an mpi4py communicator, got {type(comm).__name__}."
             )
         if comm.size == 1:
+            mpi = sys.modules.get("mpi4py.MPI")
+            tasks = launched_tasks()
+            if mpi is not None and tasks > 1 and comm == mpi.COMM_WORLD:
+                raise _world_of_one(tasks)
             return None
     mpi = _load_mpi()
     vendor = mpi.get_vendor()[0]
@@ -342,9 +356,11 @@ def bcast_arrays(comm: Any, arrays: dict[str, np.ndarray] | None) -> dict:
     Pickling would copy each array and stop at 2 GiB in one message.
 
     Args:
-        comm: The resolved communicator, above one rank.
+        comm: The resolved communicator.
         arrays: The arrays, C-contiguous, on rank 0; ``None`` elsewhere.
     """
+    if comm is None:
+        return {} if arrays is None else arrays
     if arrays is None:
         meta = comm.bcast(None, root=0)
         arrays = {name: np.empty(*m) for name, m in meta.items()}
@@ -367,9 +383,11 @@ def gather_rows(comm: Any, rows: np.ndarray) -> np.ndarray | None:
     the first axis and one type.
 
     Args:
-        comm: The resolved communicator, above one rank.
+        comm: The resolved communicator.
         rows: This rank's rows, perhaps none.
     """
+    if comm is None:
+        return rows
     rows = np.ascontiguousarray(rows)
     flat = rows.reshape(-1)
     sizes = comm.gather(flat.size, root=0)
@@ -491,6 +509,10 @@ def default_threads(comm: Any) -> int:
 
     ``NGS_NUM_THREADS`` if set, as ADR 0056 says, else `node_share`; then the minimum
     over ranks. Collective on the first call on a communicator.
+
+    Args:
+        comm: The resolved communicator, never ``None``: on one process ``threads=None``
+            keeps NGSolve's own setting, so there is no count to read.
     """
     key = comm_key(comm)
     if key in _DEFAULT_THREADS:
@@ -512,12 +534,14 @@ ENTRY_PATIENCE = 60.0
 _entry_calls: collections.Counter[int | None] = collections.Counter()
 
 
-def _meet(comm: Any, call: str) -> None:
+def meet(comm: Any, call: str) -> None:
     """Wait for every rank in Python, saying so on stderr after `ENTRY_PATIENCE`.
 
     `if rank == 0: gfem.solve(...)` hangs in the first collective with nothing to
     say. A slow rank is legitimate, so this only reports: it never aborts.
     """
+    if comm is None:
+        return
     request = comm.Ibarrier()
     start = time.monotonic()
     pause, told = 1e-4, False
@@ -581,9 +605,11 @@ def entry_check(
     Raises:
         AgreedError: On every rank, naming the first input that differs.
     """
+    if comm is None:
+        return
     import jax
 
-    _meet(comm, call)
+    meet(comm, call)
     leaves, _ = jax.tree_util.tree_flatten_with_path(model)
     items = {
         "the problem": _text_digest(repr(problem)),
@@ -616,7 +642,9 @@ def check_call(comm: Any, call: str, arrays: collections.abc.Mapping[str, Any]) 
     Raises:
         AgreedError: On every rank, naming the first input that differs.
     """
-    _meet(comm, call)
+    if comm is None:
+        return
+    meet(comm, call)
     _compare(comm, call, {n: _leaf_digest(v) for n, v in arrays.items()})
 
 
@@ -653,7 +681,7 @@ def warn(
         with warnings.catch_warnings(record=True):
             warnings.warn(message, category, stacklevel=stacklevel + 1)
     except Warning as raised:
-        raised._gfem_agreed = True  # ty: ignore[unresolved-attribute]  # noqa: SLF001
+        agreed(raised)
         raise
 
 
@@ -661,20 +689,20 @@ def on_root(
     comm: Any,
     compute: collections.abc.Callable[[], dict[str, np.ndarray]],
     *,
-    agreed: tuple[type[Exception], ...] = (),
+    results: tuple[type[Exception], ...] = (),
 ) -> dict[str, np.ndarray]:
     """``compute()``'s named arrays on every rank, computed once on rank 0.
 
     Placement of a whole computation (ADR 0059): every rank must call this, a rank
     holding no DOFs too, so no local test may stand in front of it. Warnings are
     recorded on rank 0 whatever its filters say and replayed by `warn`, and one of
-    the ``agreed`` errors is raised on every rank after them, and `section` lets it
+    the ``results`` errors is raised on every rank after them, and `section` lets it
     through. Anything else ends the job. On the one-process path this is ``compute()``.
 
     Args:
         comm: The resolved communicator.
         compute: The computation; run on rank 0 alone.
-        agreed: The errors that are a result of the computation, for all ranks.
+        results: The errors that are a result of the computation, for all ranks.
     """
     if comm is None:
         return compute()
@@ -686,7 +714,7 @@ def on_root(
             warnings.simplefilter("always")
             try:
                 arrays = {k: np.asarray(a, order="C") for k, a in compute().items()}
-            except agreed as error:
+            except results as error:
                 failure = error
         outcome = (failure, [(str(w.message), w.category) for w in seen])
     failure, recorded = comm.bcast(outcome, root=0)
@@ -694,8 +722,7 @@ def on_root(
     for message, category in recorded:
         warn(comm, message, category, stacklevel=2)
     if failure is not None:
-        failure._gfem_agreed = True  # noqa: SLF001
-        raise failure
+        raise agreed(failure)
     return shared
 
 

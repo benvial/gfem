@@ -30,6 +30,8 @@ from ranks import (
 import gfem
 from gfem import _mpi
 from gfem.__main__ import main
+from gfem._engine.cache import Entry, EntryCache
+from gfem.design import LayerGrid
 
 TESTS = Path(__file__).resolve().parents[1]
 #: Importable by a launched script, as `rank_main` makes them for a function.
@@ -451,6 +453,62 @@ def test_only_rank_0_shows_a_warning():
     assert seen == [1, 0, 0]
 
 
+def _pixels_with_no_element(directory):
+    mesh = cases.layered_line(directory).mesh
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        LayerGrid(mesh, "sub", pitch=0.05e-3)
+    return len(seen)
+
+
+def test_only_rank_0_shows_a_layer_grid_warning(tmp_path):
+    seen = on_ranks(
+        _pixels_with_no_element, tmp_path, ranks=3, limit=60, replicated=False
+    )
+    assert seen == [1, 0, 0]
+
+
+# --- the solve entries of two communicators ---------------------------------------
+
+
+class _Held:
+    """A solver handle that records being freed."""
+
+    nbytes = 40
+
+    def __init__(self) -> None:
+        self.freed = False
+
+    def free(self) -> None:
+        self.freed = True
+
+
+def _a_copy_evicts_on_rank_0_alone():
+    world = _world()
+    cache = EntryCache()
+    base = _Held()
+    key = cache.put(Entry(physics="em", handle=base), 10**6, world)
+    if world.rank == 0:  # a COMM_SELF solve: its communicator resolves to None
+        cache.put(Entry(physics="em", handle=_Held()), _Held.nbytes, None)
+    held = not base.freed
+    # the world's own solve still evicts its entry, on every rank together
+    copy = _Held()
+    copy_key = cache.put(Entry(physics="em", handle=copy), 10**6, None)
+    budget = _mpi.node_bytes(world, _Held.nbytes)
+    cache.put(Entry(physics="em", handle=_Held()), budget, world)
+    return held, base.freed, cache.get(key) is None, cache.get(copy_key) is not None
+
+
+def test_a_copy_evicts_no_entry_of_the_world():
+    held, freed, evicted, kept = on_ranks(
+        _a_copy_evicts_on_rank_0_alone, ranks=3, limit=60
+    )[0]
+    assert held
+    assert freed
+    assert evicted
+    assert kept
+
+
 # --- the command line ------------------------------------------------------------
 
 
@@ -468,6 +526,20 @@ def test_the_cli_exits_1_on_every_rank_with_one_report(tmp_path):
     )
     assert code == 1, log
     assert log.count("gfem: error: DistributedUnsupportedError") == 1, log
+
+
+def test_a_job_with_no_ports_exits_1_with_one_report(tmp_path):
+    model = cases.layered_line(tmp_path).replace(ports=[])
+    job = gfem.Job(model, gfem.Driven(5e9)).to_json(tmp_path / "job.json")
+    code, log = on_ranks_argv(
+        [sys.executable, "-m", "gfem", "run", str(job), "--out", str(tmp_path / "out")],
+        ranks=3,
+        limit=120,
+    )
+    assert code == 1, log
+    assert log.count("gfem: error: ValueError") == 1, log
+    assert "no ports" in log
+    assert "ends the job" not in log
 
 
 def _cli_with_a_job_missing_on_rank_1(job):

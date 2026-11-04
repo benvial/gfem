@@ -115,8 +115,8 @@ class FreeNumbering:
         numbers, total = pardofs.EnumerateGlobally(freedofs)
         self.numbers = np.asarray(numbers, dtype=np.int64)
         self.total = int(total)
-        master = free_mask(pardofs.MasterDofs(), len(self.numbers))
-        self._owned = master & (self.numbers >= 0)
+        counted_here = free_mask(pardofs.MasterDofs(), len(self.numbers))
+        self._owned = counted_here & (self.numbers >= 0)
         self.count = int(self._owned.sum())
         start = comm.exscan(self.count) or 0
         owned = self.numbers[self._owned]
