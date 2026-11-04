@@ -16,8 +16,8 @@ holds S, iterations and gradients. S, iterations and gradients are compared bit 
 across ranks, and a difference ends the run with exit code 1 once the record is written.
 
 ``--design`` replaces the plain solve by two steps of `jax.value_and_grad` on the
-permittivity of the highest-permittivity volume and the fill of the first conductor
-surface. ``--spaces-only`` stops once the space is built, for the DOFs per rank.
+permittivity of the highest-permittivity volume and the fill of a resistive sheet on the
+largest interface between two volumes, since a sheet needs the domain on both sides. ``--spaces-only`` stops once the space is built, for the DOFs per rank.
 
 ``check`` compares a run with its reference at ADR 0070's gates: 1e-11 on ``direct``,
 1e-9 and the exact iteration count on ``bddc_gmres``, S and gradient entries relative to
@@ -54,8 +54,11 @@ GATES = {"direct": 1e-11, "bddc_gmres": 1e-9}
 PACKAGES = ("gfem", "ngsolve", "petsc", "petsc4py", "mpi4py", "numpy", "scipy", "jax")
 #: PETSc's log events of a Cholesky factorization: analysis, numeric.
 FACTOR_EVENTS = {"analysis": "MatCholFctrSym", "factor": "MatCholFctrNum"}
-#: Weights of the objective on S, as in the gradient tests.
-WEIGHTS = np.array([[0.7, 1.3], [1.1, 0.4]])
+#: Weights of the design objective on S with one excited port, whose S21 asks for an
+#: adjoint solve on the other port.
+WEIGHTS = np.array([[0.7], [1.1]])
+#: The design's sheet: S/m and m, a film of 1 kilo-ohm per square at fill 1.
+SHEET_SIGMA, SHEET_THICKNESS = 1e3, 1e-6
 
 
 class Phases:
@@ -363,7 +366,12 @@ class Case:
 
     @property
     def design_surface(self) -> str:
-        return self.shells[0][0]
+        def is_interface(name: str) -> bool:
+            sides = self.mesh.adjacency(name)
+            return all(a and b and a != b for a, b in sides)
+
+        names = [r.name for r in self.mesh.regions if r.dim == 2 and is_interface(r.name)]
+        return max(names, key=lambda n: (len(self.mesh.elements(n)), n))
 
     def model(self, eps=None, fill=None):
         gfem = self.gfem
@@ -376,12 +384,16 @@ class Case:
             materials[region] = gfem.MaterialField(
                 eps_r=eps, tan_delta=float(self.materials[region][1]), region=region
             )
-        shells = []
-        for surface, sigma, thickness in self.shells:
-            sheet = None
-            if fill is not None and surface == self.design_surface:
-                sheet = gfem.SheetField(fill=fill)
-            shells.append(gfem.Conductor(surface, sigma, thickness, fill=sheet))
+        shells = [gfem.Conductor(*shell) for shell in self.shells]
+        if fill is not None:
+            shells.append(
+                gfem.Conductor(
+                    self.design_surface,
+                    SHEET_SIGMA,
+                    SHEET_THICKNESS,
+                    fill=gfem.SheetField(fill=fill),
+                )
+            )
         excluded = ()
         if not self.voided:
             excluded = tuple(
@@ -448,9 +460,9 @@ def _design(case: Case, args, frequencies, arrays, phases, iterations, comm) -> 
     n_fill = len(case.mesh.elements(case.design_surface))
     design = {
         "eps": jnp.asarray(base * rng.uniform(0.99, 1.01, n_eps)),
-        "fill": jnp.asarray(rng.uniform(0.9, 1.0, n_fill)),
+        "fill": jnp.asarray(rng.uniform(0.2, 0.8, n_fill)),
     }
-    driven = gfem.Driven(list(frequencies))
+    driven = gfem.Driven(list(frequencies), excite=[case.ports[0].name])
     options = _options(args)
     weights = jnp.asarray(WEIGHTS)
 
@@ -489,7 +501,15 @@ def _design(case: Case, args, frequencies, arrays, phases, iterations, comm) -> 
                 1.0,
             ),
         }
-    return {"steps_rank0": steps}
+    return {
+        "steps_rank0": steps,
+        "design": {
+            "volume": case.design_region,
+            "volume_elements": n_eps,
+            "sheet": case.design_surface,
+            "sheet_faces": n_fill,
+        },
+    }
 
 
 def _spaces(case: Case, args, frequencies, comm) -> None:
