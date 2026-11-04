@@ -21,8 +21,8 @@ largest interface between two volumes, since a sheet needs the domain on both si
 ``--spaces-only`` stops once the space is built, for the DOFs per rank.
 
 ``check`` compares a run with its reference at ADR 0070's gates: 1e-11 on ``direct``,
-1e-9 and the exact iteration count on ``bddc_gmres``, S and gradient entries relative to
-the largest of the reference's. The result goes into the run's record. ``--observe``
+1e-9 and the exact iteration count on ``bddc_gmres``, S entries relative to the largest
+of the reference's. Gradient entries read `GRADIENT_GATE` on a real mesh. The result goes into the run's record. ``--observe``
 reports the same difference with no gate, for a run on another mesh.
 
 A phase is read through a wrapper around gfem's own functions. These are private names:
@@ -51,6 +51,12 @@ import numpy as np
 
 #: ADR 0070's gates, relative to the largest entry of the reference.
 GATES = {"direct": 1e-11, "bddc_gmres": 1e-9}
+#: Gradient entries on a real mesh, either solver, relative to the reference's largest.
+#: ADR 0070's 1e-11 for ``direct`` holds on the launched tier's tiny meshes. On r10M_void
+#: gradients differ beyond it with no ranks at all: one-process PARDISO at 56 threads
+#: against 112 differs by 6.5e-11 in eps_r (job 48473913), the size of MUMPS on 112 ranks
+#: against one process, 1.4e-10 (48473421), while S agrees to 7e-13 there.
+GRADIENT_GATE = 1e-9
 #: The packages a record names.
 PACKAGES = ("gfem", "ngsolve", "petsc", "petsc4py", "mpi4py", "numpy", "scipy", "jax")
 #: PETSc's log events of a Cholesky factorization: analysis, numeric.
@@ -292,6 +298,8 @@ def _instrument_petsc(phases: Phases, facts: Facts) -> None:
 
     petsc.RankPetscHandle._set_up_now = timed_set_up  # noqa: SLF001
 
+    phases.wrap(petsc.RankPetscHandle, "_retry_with_more_workspace", "mumps_retry")
+    phases.wrap(coarse.CoarseMumps, "_options", "coarse_attempt")
     set_up = coarse.CoarseMumps.set_up
 
     def timed_coarse(self):
@@ -785,7 +793,10 @@ def check(args: argparse.Namespace) -> int:
     passed = bitwise = bool(record["ranks_bitwise"])
     same_iterations = None
     if gate is not None:
-        passed = passed and all(d < gate for d in differences.values())
+        passed = passed and all(
+            d < (GRADIENT_GATE if k.startswith("grad_") else gate)
+            for k, d in differences.items()
+        )
         passed = passed and set(names) <= set(there.files)
         if args.gate == "bddc_gmres":
             # a direct reference has no iterations: only its S compares
@@ -796,6 +807,7 @@ def check(args: argparse.Namespace) -> int:
     result = {
         "reference": str(reference_path),
         "gate": gate,
+        "gradient_gate": GRADIENT_GATE if gate is not None else None,
         "differences": differences,
         "same_iterations": same_iterations,
         "ranks_bitwise": bitwise,
