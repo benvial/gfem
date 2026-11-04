@@ -370,7 +370,7 @@ class Case:
             for tag in boundaries["Absorbing"]["Attributes"]
         ]
         self.ports = []
-        for port in sorted(boundaries["LumpedPort"], key=lambda p: p["Index"]):
+        for port in sorted(boundaries.get("LumpedPort", []), key=lambda p: p["Index"]):
             elements = port["Elements"]
             surfaces = tuple(self.name[2, e["Attributes"][0]] for e in elements)
             directions = tuple(_direction(e["Direction"]) for e in elements)
@@ -379,6 +379,28 @@ class Case:
                     f"p{port['Index']}", surfaces, directions, impedance=port["R"]
                 )
             )
+
+        # gsim's WavePortPEC: perfect conductors in the port mode problem only
+        pec_edges = tuple(
+            self.name[2, t]
+            for t in boundaries.get("WavePortPEC", {}).get("Attributes", [])
+        )
+        self.ports += [
+            gfem.WavePort(
+                f"p{port['Index']}",
+                self.name[2, port["Attributes"][0]],
+                mode=port["Mode"],
+                offset=port["Offset"] * self.unit,
+                pec_edges=pec_edges,
+            )
+            for port in sorted(boundaries.get("WavePort", []), key=lambda p: p["Index"])
+        ]
+        # with wave ports the metal reaches the line's end faces, which absorb
+        self.ends = (
+            tuple(a.surface for a in self.absorbing)
+            if boundaries.get("WavePort")
+            else ()
+        )
 
     @property
     def design_region(self) -> str:
@@ -423,7 +445,7 @@ class Case:
         excluded = ()
         if not self.voided:
             excluded = tuple(
-                gfem.enclosed_by(s[0], s[0].replace("_xy", "_z"))
+                gfem.enclosed_by(s[0], s[0].replace("_xy", "_z"), *self.ends)
                 for s in self.shells
                 if s[0].endswith("_xy")
             )
