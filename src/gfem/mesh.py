@@ -112,6 +112,7 @@ def _read_on_rank_0(path: Path, length_unit: str, comm) -> _Topology:
     Raises:
         _mpi.AgreedError: Ranks asked for different paths or units.
     """
+    _mpi.meet(comm, "Mesh.from_gmsh")
     asked = comm.allgather((str(path.resolve()), length_unit))
     if len(set(asked)) > 1:
         raise _mpi.AgreedError(

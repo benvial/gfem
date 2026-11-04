@@ -129,7 +129,12 @@ def solve(
         rule = rule_class(model, problem, options)
     else:
         _mpi.entry_check(resolved, "solve", model, problem, options)
-        rule = rule_class(model, problem, options, comm=resolved)
+        try:
+            rule = rule_class(model, problem, options, comm=resolved)
+        except (TypeError, ValueError) as err:
+            # the rule reads inputs the entry check has just found equal
+            _mpi.agreed(err)
+            raise
     if is_traced((model, problem)):
         return rule.result(solve_vjp(rule, model, problem))
     # A moved mesh must keep its periodic pairs and stay valid on the solve

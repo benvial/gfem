@@ -157,9 +157,8 @@ class Field:
             )
         comm = self._communicator
         with _mpi.section(comm):
-            if comm is not None:
-                shape = np.asarray(self.coefficients.shape)
-                _mpi.check_call(comm, "Field.b", {"the shape of a piece": shape})
+            shape = np.asarray(self.coefficients.shape)
+            _mpi.check_call(comm, "Field.b", {"the shape of a piece": shape})
             rows, cols, values, size = _engine().curl_matrix(self)
         curl = jax.ops.segment_sum(
             values * self.coefficients[cols], rows, num_segments=size
@@ -251,7 +250,7 @@ class Field:
                 _meshio_mesh(sampled).write(Path(path), file_format="vtu")
                 return {}
 
-            _mpi.on_root(comm, write, agreed=(OSError, ValueError))
+            _mpi.on_root(comm, write, results=(OSError, ValueError))
 
     def to_pyvista(self) -> Any:
         """The field as a ``pyvista.UnstructuredGrid`` (see `to_meshio`).

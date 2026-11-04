@@ -214,8 +214,7 @@ class Job:
         path = Path(path)
         resolved = _mpi.resolve_comm(comm)
         with _mpi.section(resolved):
-            if resolved is not None:
-                _mpi.check_call(resolved, "Job.from_json", {"the path": str(path)})
+            _mpi.check_call(resolved, "Job.from_json", {"the path": str(path)})
             doc, arrays = _read_job(path, resolved)
             try:
                 job = _decode(doc, arrays, "job", path, comm)
@@ -236,7 +235,9 @@ def load_result(path: str | Path, *, comm: Any = None) -> Any:
     """Read a result bundle written by ``python -m gfem run`` or `Job.run`.
 
     A bundle from any rank count reads on one process. Under a launcher a bundle
-    with no fields holds no mesh and is read with no communication, on any rank.
+    with no fields holds no mesh and is read with no communication, on any rank, so
+    a read that fails is one rank's failure: it ends the job (ADR 0058), and the
+    errors below raise only on one process.
 
     Args:
         path: The result directory, or its ``result.json``.
@@ -256,12 +257,13 @@ def load_result(path: str | Path, *, comm: Any = None) -> Any:
     if path.is_dir():
         path /= RESULT_JSON
     resolved = _mpi.resolve_comm(comm)
-    doc = _codec.check_header(
-        _read_json(path), _RESULT_FORMAT, "gfem result file", path
-    )
-    if resolved is not None and _holds_a_mesh(doc.get("result")):
-        _mpi.refuse_feature("load_result_fields")
-    return _decode(doc, _read_arrays(doc, path), "result", path, comm)
+    with _mpi.section(resolved):
+        doc = _codec.check_header(
+            _read_json(path), _RESULT_FORMAT, "gfem result file", path
+        )
+        if resolved is not None and _holds_a_mesh(doc.get("result")):
+            _mpi.refuse_feature("load_result_fields")
+        return _decode(doc, _read_arrays(doc, path), "result", path, comm)
 
 
 def _holds_a_mesh(value: Any) -> bool:
@@ -306,7 +308,7 @@ def _write_result(out: Path, result: Any, run: dict[str, Any], comm: Any) -> Non
         )
         return {}
 
-    _mpi.on_root(comm, write, agreed=(OSError, TypeError, ValueError))
+    _mpi.on_root(comm, write, results=(OSError, TypeError, ValueError))
 
 
 def _read_job(path: Path, comm: Any) -> tuple[dict, dict[str, np.ndarray]]:
@@ -318,7 +320,7 @@ def _read_job(path: Path, comm: Any) -> tuple[dict, dict[str, np.ndarray]]:
         text = np.frombuffer(json.dumps(doc).encode(), dtype=np.uint8)
         return {_DOCUMENT: text, **arrays}
 
-    shared = _mpi.on_root(comm, read, agreed=(OSError, ValueError))
+    shared = _mpi.on_root(comm, read, results=(OSError, ValueError))
     return json.loads(shared.pop(_DOCUMENT).tobytes()), shared
 
 
@@ -411,7 +413,7 @@ def _mesh_from_args(args: dict[str, Any], context: _codec.Context) -> Mesh:
             )
         return {}
 
-    _mpi.on_root(_mpi.resolve_comm(context.comm), check, agreed=(OSError, ValueError))
+    _mpi.on_root(_mpi.resolve_comm(context.comm), check, results=(OSError, ValueError))
     mesh = Mesh.from_gmsh(path, length_unit=args["length_unit"], comm=context.comm)
     if args.get("nodes") is not None:
         nodes = jnp.asarray(args["nodes"])

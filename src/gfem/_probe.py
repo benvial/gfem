@@ -155,8 +155,7 @@ def field_at(field: Field, points: Any) -> jax.Array:
     located = None
     if not is_traced((mesh.nodes, p)):
         with _mpi.section(comm):
-            if comm is not None:
-                _mpi.check_call(comm, "Field.at", {"the points": np.asarray(p)})
+            _mpi.check_call(comm, "Field.at", {"the points": np.asarray(p)})
             located = engine().locate(mesh, where, np.asarray(p), comm)
     kernel = _PointKernel(
         mesh._topology,  # noqa: SLF001
