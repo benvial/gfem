@@ -64,6 +64,7 @@ class LowRankUpdate:
         self.kind = handle.kind
         self.symmetry = handle.symmetry
         self.ndof = handle.ndof
+        self.layout = handle.layout
         self.vectors = vectors
         self.coefficients = coefficients
         self._base: Handle | None = handle
@@ -128,8 +129,10 @@ class LowRankUpdate:
             Y, Z = out[:, :k], out[:, k:]
             self._z[key] = Z
         C = self.coefficients.T if transpose else self.coefficients
-        small = np.eye(C.shape[0]) + C @ (U.T @ Z)
-        X = Y - Z @ np.linalg.solve(small, C @ (U.T @ Y))
+        # U is a load, Z and Y states; a rank sum makes the small system agreed
+        pair = self.layout.pair
+        small = np.eye(C.shape[0]) + C @ pair(U, Z)
+        X = Y - Z @ np.linalg.solve(small, C @ pair(U, Y))
         return (X[:, 0] if flat else X), its[:k]
 
     def apply(self, X: np.ndarray, *, transpose: bool = False) -> np.ndarray:
@@ -142,7 +145,7 @@ class LowRankUpdate:
         X = np.asarray(X)
         C = self.coefficients.T if transpose else self.coefficients
         return self._base.apply(X, transpose=transpose) + self.vectors @ (
-            C @ (self.vectors.T @ X)
+            C @ self.layout.pair(self.vectors, X)
         )
 
     def free(self) -> None:

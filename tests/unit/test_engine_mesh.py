@@ -3,10 +3,11 @@
 from pathlib import Path
 
 import ngsolve as ngs
+import numpy as np
 import pytest
 
 import gfem
-from gfem._engine.mesh import to_ngsolve
+from gfem._engine.mesh import inverse_order, to_ngsolve
 
 DATA = Path(__file__).parent / "data"
 
@@ -93,3 +94,21 @@ def test_exterior_triangles_facing_into_the_mesh_are_flipped(tmp_path):
         1, built.mesh, ngs.BND, definedon=built.mesh.Boundaries("sub__None")
     )
     assert area == pytest.approx(4 + 4 * 2, rel=1e-12)  # bottom + four 2 x 1 sides
+
+
+def test_one_process_holds_every_node_in_gfem_order(two_box):
+    built = to_ngsolve(two_box)
+    assert built.comm is None
+    assert np.array_equal(built.node_order, np.arange(len(two_box.nodes)))
+    assert built.mesh.nv == len(two_box.nodes)
+
+
+def test_the_inverse_of_a_whole_order_undoes_it(two_box):
+    order = to_ngsolve(two_box).tetrahedron_order
+    inverse = inverse_order(order, len(order))
+    assert np.array_equal(inverse, np.argsort(order))
+
+
+def test_the_inverse_of_a_part_marks_what_a_rank_does_not_hold():
+    inverse = inverse_order(np.array([4, 1]), 6)
+    assert inverse.tolist() == [-1, 1, -1, -1, 0, -1]

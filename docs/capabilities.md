@@ -62,6 +62,12 @@ gradient that would be wrong:
   covers the direct and BDDC solvers.
 - **Eigen solvers**: ARPACK, or SLEPc ({doc}`recipes/petsc-slepc`); mode
   refinement, Q and gradients are the same for both.
+- **Across MPI ranks**: a driven uniform sweep and its gradients, on Open MPI and
+  Linux x86_64, compared with one process by launched tests. Adaptive sweeps,
+  eigenmode, electrostatic and periodic problems, frequency workers, the GPU and
+  BDDC at order 1 raise {py:obj}`gfem.DistributedUnsupportedError` there, and run
+  as one process per rank when asked by name. The table and what has been run:
+  {doc}`recipes/distributed-solve`.
 
 ## Limits
 

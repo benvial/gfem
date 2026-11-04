@@ -5,6 +5,8 @@ never typed by hand: they come from the verification tests' module-level
 data, imported by path without running a solve: ``CELLS``
 (tests/verification/test_gradient_matrix.py), ``EXPECTED`` and
 ``OUT_OF_SCOPE`` (tests/verification/test_gradient_matrix_raise_table.py).
+The table of what raises above one rank comes the same way: its rows are the
+cases of tests/mpi_cases.py, its text gfem's own refusal messages.
 
 A cell input with the suffix ``_axes`` (``eps_r_axes``) is the same
 property per principal value of a field with fixed axes: it folds into its
@@ -34,8 +36,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 MATRIX_TEST = "tests/verification/test_gradient_matrix.py"
 RAISE_TEST = "tests/verification/test_gradient_matrix_raise_table.py"
+REFUSAL_CASES = "tests/mpi_cases.py"
 CAPABILITIES_DOC = "capabilities"
 FRONT_DOC = "index"  # the gfem-home layout renders the compact matrix
+DISTRIBUTED_DOC = "recipes/distributed-solve"
 CONTEXT_KEY = "gfem_capabilities"  # the template context name
 
 
@@ -378,8 +382,9 @@ def _error(error: type, match: str) -> dict:
     """The error a raises row names.
 
     A gfem error raised in the backward pass reaches the caller wrapped in
-    JAX's runtime error, so its own name (the head of the test's ``match``)
-    is the one to publish.
+    JAX's runtime error (a ``ValueError`` once a jitted function has already
+    succeeded, which no test of the raise table reaches), so its own name (the
+    head of the test's ``match``) is the one to publish.
     """
     if error.__name__ == "JaxRuntimeError":
         head = re.match(r"\w+Error\b", match)
@@ -389,11 +394,89 @@ def _error(error: type, match: str) -> dict:
     return {"error": error.__name__, "when": ""}
 
 
+# --- What raises above one rank --------------------------------------------------
+
+#: What each refusal case asks for, in the site's words. A case with no label here,
+#: or a label with no case, fails the build.
+REFUSAL_LABELS = {
+    "adaptive_sweep": '`Driven(sweep="adaptive")`, with or without `samples`',
+    "eigenmode": "`Eigenmode`, nonlinear ones included",
+    "electrostatic": "`Electrostatic`",
+    "periodic": "A `Periodic` boundary on a `Driven` problem, on any number of axes",
+    "bloch": "`Driven(wave_vector=...)`",
+    "frequency_workers": "`frequency_workers` above 1, on more than one frequency",
+    "device": '`device="cuda"`',
+    "bddc_order_1": '`linear_solver="bddc_gmres"` at `order=1`',
+    "bddc_order_1_auto": '`linear_solver="auto"` at `order=1`',
+    "field_export": "`Field.to_meshio`, `Field.to_pyvista`",
+    "load_result_fields": "`load_result` of a bundle with fields",
+    "power_flow": "`power_flow`",
+}
+
+
+def distributed_refusals(keys, methods, guards, feature, messages) -> list[dict]:
+    """One row per refusal case: what it asks for, its ``feature``, its message.
+
+    Args:
+        keys: The solves refused, ``tests/mpi_cases.py``'s ``KEYS``.
+        methods: The method calls refused, its ``METHOD_KEYS``.
+        guards: The refusal keys no public call reaches, its ``GUARD_KEYS``. No row.
+        feature: The ``feature`` a case raises.
+        messages: gfem's own refusal messages by ``feature``.
+
+    Raises:
+        CapabilitiesError: The cases, the labels and the messages differ.
+    """
+    cases = [*keys, *methods]
+    if set(cases) != set(REFUSAL_LABELS):
+        raise CapabilitiesError(
+            f"{REFUSAL_CASES}: the cases {sorted(cases)} are not the labelled ones "
+            f"{sorted(REFUSAL_LABELS)}"
+        )
+    features = {feature(case) for case in cases} | set(guards)
+    if features != set(messages):
+        raise CapabilitiesError(
+            f"{REFUSAL_CASES}: the cases raise {sorted(features)}, and gfem has "
+            f"messages for {sorted(messages)}"
+        )
+    return [
+        {
+            "label": REFUSAL_LABELS[case],
+            "feature": feature(case),
+            "message": messages[feature(case)],
+        }
+        for case in cases
+    ]
+
+
 def _display(label: str) -> str:
     return label.replace(" x ", " \N{MULTIPLICATION SIGN} ")
 
 
 # --- Loading the verification tests --------------------------------------------
+
+
+def load_refusals(repo: Path) -> list[dict]:
+    """The rows of `distributed_refusals`, from the cases under ``repo``."""
+    from gfem import _mpi
+
+    paths = [str(repo / "tests"), str(repo / "tools")]
+    sys.path[:0] = paths
+    try:
+        cases = _import(repo / REFUSAL_CASES)
+    finally:
+        for p in paths:
+            sys.path.remove(p)
+    try:
+        return distributed_refusals(
+            cases.KEYS,
+            cases.METHOD_KEYS,
+            cases.GUARD_KEYS,
+            cases.feature,
+            _mpi._REFUSALS,  # noqa: SLF001
+        )
+    except AttributeError as exc:
+        raise CapabilitiesError(f"the refusal cases are gone: {exc}") from exc
 
 
 def load_verification(repo: Path) -> tuple[list, dict, list]:
@@ -435,9 +518,9 @@ def derive(repo: Path = REPO) -> dict:
 
     Returns:
         ``columns``, ``rows``, ``counts``, ``provenance`` and ``raises`` (see
-        `gradient_matrix`).
+        `gradient_matrix`), and ``refusals`` (see `distributed_refusals`).
     """
-    return gradient_matrix(*load_verification(repo))
+    return gradient_matrix(*load_verification(repo)) | {"refusals": load_refusals(repo)}
 
 
 # --- Sphinx --------------------------------------------------------------------
@@ -462,9 +545,10 @@ def setup(app):
         context[CONTEXT_KEY] = app.env.gfem_capabilities
 
     def reread(_app, env, *_changes) -> list[str]:
-        # Both pages render the tests' data, not their own source: read them
+        # These pages render the tests' data, not their own source: read them
         # again on every build so an incremental build never serves stale claims.
-        return [d for d in (CAPABILITIES_DOC, FRONT_DOC) if d in env.found_docs]
+        pages = (CAPABILITIES_DOC, FRONT_DOC, DISTRIBUTED_DOC)
+        return [d for d in pages if d in env.found_docs]
 
     app.add_config_value("gfem_capabilities_source_url", "", "html", str)
     app.connect("builder-inited", derive_claims)
@@ -583,10 +667,43 @@ def _directives() -> dict:
                 items += nodes.list_item("", para)
             return [items]
 
+    class DistributedRefusals(_Claims):
+        """What raises above one rank, with its ``feature`` and gfem's message."""
+
+        def run(self):
+            table = nodes.table()
+            group = nodes.tgroup(cols=3)
+            table += group
+            group += nodes.colspec(colwidth=30)
+            group += nodes.colspec(colwidth=15)
+            group += nodes.colspec(colwidth=55)
+            head = nodes.row()
+            for title in ("You ask for", "feature", "The error says"):
+                head += _entry(nodes.Text(title))
+            group += nodes.thead("", head)
+            body = nodes.tbody()
+            for row in self.data["refusals"]:
+                line = nodes.row()
+                line += _entry(*_with_code(row["label"]))
+                line += _entry(nodes.literal(text=row["feature"]))
+                line += _entry(nodes.Text(row["message"]))
+                body += line
+            group += body
+            return [table]
+
+    def _with_code(text: str) -> list:
+        """``text``'s backticked parts as literals."""
+        return [
+            nodes.literal(text=part) if i % 2 else nodes.Text(part)
+            for i, part in enumerate(text.split("`"))
+            if part
+        ]
+
     def _entry(*children):
         return nodes.entry("", nodes.paragraph("", "", *children))
 
     return {
         "gfem-gradient-matrix": GradientMatrix,
         "gfem-raises": Raises,
+        "gfem-distributed-refusals": DistributedRefusals,
     }

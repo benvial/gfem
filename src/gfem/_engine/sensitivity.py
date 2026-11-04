@@ -93,10 +93,11 @@ from typing import Any, Literal
 import ngsolve as ngs
 import numpy as np
 
+from gfem import _mpi
 from gfem._boundaries import Conductor, Impedance
 from gfem._engine import quadrature
 from gfem._engine.cache import discretization
-from gfem._engine.coefficients import element_axes, per_axis_elements
+from gfem._engine.coefficients import element_axes, facet_space, per_axis_elements
 from gfem._engine.domain import boundary_region
 from gfem._materials import MaterialField
 from gfem.errors import NonDifferentiableError
@@ -366,15 +367,56 @@ def _pair_integrand(
     return sum(parts[1:], parts[0])
 
 
+def _rows(copies: int, n: int) -> Callable[[ngs.LinearForm], np.ndarray]:
+    """What reads a form on ``copies`` of a space of ``n`` DOFs as ``(copies, n)``.
+
+    With the count given, not inferred: a rank with no elements has ``n = 0``.
+    """
+    return lambda form: form.vec.FV().NumPy().reshape(copies, n)
+
+
+def _surface_tests(
+    built: Any, *, is_complex: bool, copies: int = 1
+) -> tuple[ngs.FESpace, list, Callable[[ngs.LinearForm], np.ndarray]]:
+    """A P0 space on the surface elements, as a pass needs it.
+
+    Returns:
+        The space (``copies`` of it, compound, above 1); its test functions, one
+        per copy; and what reads an assembled form as ``(copies, n)``, one value per
+        local surface element. Under ranks the space is `facet_space`, whose DOFs
+        are not the elements' (ADR 0066).
+    """
+    if built.comm is None:
+        one = ngs.SurfaceL2(built.mesh, order=0, complex=is_complex)
+        dofs = None
+    else:
+        one, dofs = facet_space(built, is_complex=is_complex)
+    space = one if copies == 1 else ngs.FESpace([one] * copies)
+    tests = space.TestFunction()
+    tests = [tests] if copies == 1 else list(tests)
+    if dofs is not None:
+        tests = [q.Trace() for q in tests]
+
+    rows = _rows(copies, one.ndof)
+    if dofs is None:
+        return space, tests, rows
+    return space, tests, lambda form: rows(form)[:, dofs]
+
+
 def _element_pass(
-    model: Model, pairs: list[FieldPair], term: Term, length_power: int
+    model: Model,
+    pairs: list[FieldPair],
+    term: Term,
+    length_power: int,
+    comm: Any = None,
 ) -> np.ndarray:
     """``sum_pairs theta_t sum_k a_t,e(left_k, right_k)`` per gfem tetrahedron.
 
     Times ``scale ** length_power``. A face term's integrals per triangle
-    are summed into each triangle's owning tetrahedron (`Term.owner`).
+    are summed into each triangle's owning tetrahedron (`Term.owner`), which may
+    lie on another rank: the sum at the backward's end takes care of that.
     """
-    built = discretization(model.mesh, model._periodic).built  # noqa: SLF001
+    built = discretization(model.mesh, model._periodic, comm).built  # noqa: SLF001
     integrand = INTEGRANDS[term.kind]
     name = term.name
     pairs = [p for p in pairs if name in p.weights]
@@ -398,22 +440,25 @@ def _element_pass(
         form.Assemble()
         out[built.tetrahedron_order] = form.vec.FV().NumPy()
         return out * built.scale**length_power
-    p0 = ngs.SurfaceL2(built.mesh, order=0, complex=is_complex)
-    q = p0.TestFunction()
+    p0, (q,), read = _surface_tests(built, is_complex=is_complex)
     form = ngs.LinearForm(p0)
     for pair in pairs:
         ds = quadrature.ds(pair.order, definedon=term.region)
         form += pair.weights[name] * _pair_integrand(integrand, pair) * q * ds
     form.Assemble()
     per_face = np.zeros(len(owner), dtype=out.dtype)
-    per_face[built.triangle_order] = form.vec.FV().NumPy()
+    per_face[built.triangle_order] = read(form)[0]
     on = owner >= 0
     np.add.at(out, owner[on], per_face[on])
     return out * built.scale**length_power
 
 
 def _moment_pass(
-    model: Model, pairs: list[FieldPair], term: Term, length_power: int
+    model: Model,
+    pairs: list[FieldPair],
+    term: Term,
+    length_power: int,
+    comm: Any = None,
 ) -> np.ndarray:
     """``sum_pairs theta_t sum_k int sym(left_k (x) right_k)``, per element.
 
@@ -423,7 +468,7 @@ def _moment_pass(
     face term (not summed into the owners: its derivative is per face).
     The trace of each moment is `_element_pass`'s integral.
     """
-    built = discretization(model.mesh).built
+    built = discretization(model.mesh, (), comm).built
     moment = MOMENTS[term.kind]
     name = term.name
     pairs = [p for p in pairs if name in p.weights]
@@ -440,13 +485,16 @@ def _moment_pass(
     if not pairs:
         return out
     if face:
-        p0 = ngs.SurfaceL2(built.mesh, order=0, complex=is_complex)
+        space, tests, read = _surface_tests(
+            built, is_complex=is_complex, copies=len(_SYMMETRIC)
+        )
         order = built.triangle_order
     else:
         p0 = ngs.L2(built.mesh, order=0, complex=is_complex)
+        space = ngs.FESpace([p0] * len(_SYMMETRIC))
+        tests = space.TestFunction()
+        read = _rows(len(_SYMMETRIC), p0.ndof)
         order = built.tetrahedron_order
-    space = ngs.FESpace([p0] * len(_SYMMETRIC))
-    tests = space.TestFunction()
     form = ngs.LinearForm(space)
     for pair in pairs:
         if face:
@@ -460,7 +508,7 @@ def _moment_pass(
         ]
         form += pair.weights[name] * sum(parts[1:], parts[0]) * measure
     form.Assemble()
-    values = form.vec.FV().NumPy().reshape(len(_SYMMETRIC), -1)
+    values = read(form)
     for c, (i, j) in enumerate(_SYMMETRIC):
         out[order, i, j] = values[c]
         out[order, j, i] = values[c]
@@ -468,7 +516,11 @@ def _moment_pass(
 
 
 def _sheet_pass(
-    model: Model, pairs: list[FieldPair], index: int, terms: Sequence[Term]
+    model: Model,
+    pairs: list[FieldPair],
+    index: int,
+    terms: Sequence[Term],
+    comm: Any = None,
 ) -> np.ndarray:
     """``sum_pairs sum_p theta_p c_p int_f left_t . right_t`` per face of a sheet.
 
@@ -480,7 +532,7 @@ def _sheet_pass(
     if not isinstance(boundary, (Conductor, Impedance)):  # pragma: no cover
         msg = f"model.boundaries[{index}] carries no sheet field."
         raise TypeError(msg)
-    built = discretization(model.mesh, model._periodic).built  # noqa: SLF001
+    built = discretization(model.mesh, model._periodic, comm).built  # noqa: SLF001
     factors = [
         (t.name, t.sheet[1])
         for t in terms
@@ -495,15 +547,14 @@ def _sheet_pass(
     if not weighted:
         return np.zeros(len(faces), dtype=complex)
     region = boundary_region(built, (boundary.surface,))
-    p0 = ngs.SurfaceL2(built.mesh, order=0, complex=True)
-    q = p0.TestFunction()
+    p0, (q,), read = _surface_tests(built, is_complex=True)
     form = ngs.LinearForm(p0)
     for weight, pair in weighted:
         ds = quadrature.ds(pair.order, definedon=region)
         form += weight * _pair_integrand(_tangential, pair) * q * ds
     form.Assemble()
     per_face = np.zeros(len(model.mesh.triangles), dtype=complex)
-    per_face[built.triangle_order] = form.vec.FV().NumPy()
+    per_face[built.triangle_order] = read(form)[0]
     return per_face[faces]
 
 
@@ -614,20 +665,23 @@ def _trace_shape(terms: Sequence[tuple[Term, complex]], pair: FieldPair, w: Any)
     return out
 
 
-def _real_parts(space: ngs.FESpace, vectors: np.ndarray) -> list[tuple[float, list]]:
+def _real_parts(
+    space: ngs.FESpace, vectors: np.ndarray, comm: Any = None
+) -> list[tuple[float, list]]:
     """``vectors`` as ``[(sign, real fields on space)]``: ``Re(l . s)`` pieces.
 
     ``Re(a(l, s)) = a(Re l, Re s) - a(Im l, Im s)`` for a real bilinear form,
     so the left fields carry the sign (+1 real part, -1 imaginary part).
     """
     out = [(1.0, _gridfunctions(space, np.ascontiguousarray(vectors.real)))]
-    if np.iscomplexobj(vectors) and vectors.imag.any():
+    has_imaginary = np.iscomplexobj(vectors) and bool(vectors.imag.any())
+    if _mpi.agree_any(comm, flag=has_imaginary):
         out.append((-1.0, _gridfunctions(space, np.ascontiguousarray(vectors.imag))))
     return out
 
 
 def _surface_shape(
-    terms: Sequence[tuple[Term, complex]], pair: FieldPair, w: Any
+    terms: Sequence[tuple[Term, complex]], pair: FieldPair, w: Any, comm: Any = None
 ) -> Any:
     """``DiffShape`` of ``Re(sum_t theta_t sum_k a_t(left_k, right_k))``.
 
@@ -642,7 +696,7 @@ def _surface_shape(
             msg = f"The surface shape term {term.name!r} has no space or integrand."
             raise ValueError(msg)
         if id(space) not in lefts:
-            lefts[id(space)] = _real_parts(space, _columns(pair.left))
+            lefts[id(space)] = _real_parts(space, _columns(pair.left), comm)
         right = theta * _columns(pair.right)
         rights = [
             _gridfunctions(space, np.ascontiguousarray(right.real)),
@@ -657,10 +711,13 @@ def _surface_shape(
 
 
 def _node_pass(
-    model: Model, pairs: list[FieldPair], terms: Sequence[Term]
+    model: Model, pairs: list[FieldPair], terms: Sequence[Term], comm: Any = None
 ) -> np.ndarray:
-    """``sum_pairs sum_t theta_t d a_t(left, right) / dX``, (n_nodes, 3), per m."""
-    built = discretization(model.mesh, model._periodic).built  # noqa: SLF001
+    """``sum_pairs sum_t theta_t d a_t(left, right) / dX``, (n_nodes, 3), per m.
+
+    The form holds a load: a rank's part at each of its vertices, shared ones too.
+    """
+    built = discretization(model.mesh, model._periodic, comm).built  # noqa: SLF001
     n_nodes = len(model.mesh.imported_nodes)
     space = ngs.VectorH1(built.mesh, order=1)
     w = space.TestFunction()
@@ -683,17 +740,20 @@ def _node_pass(
         for part in (
             _volume_shape(volume, pair, gw) if volume else None,
             _trace_shape(traces, pair, w) if traces else None,
-            _surface_shape(surface, pair, w) if surface else None,
+            _surface_shape(surface, pair, w, comm) if surface else None,
         ):
             if part is not None:
                 form += part
                 empty = False
+    out = np.zeros((n_nodes, 3))
     if empty:
-        return np.zeros((n_nodes, 3))
+        return out
     form.Assemble()
-    values = form.vec.FV().NumPy().reshape(3, -1).T[:n_nodes]
+    # a rank with no elements has no vertices: its count is not to be inferred
+    values = form.vec.FV().NumPy().reshape(3, space.ndof // 3).T
+    np.add.at(out, built.node_order, values[: len(built.node_order)])
     # per metre: the engine mesh is in file units of `scale` metres
-    return values / built.scale
+    return out / built.scale
 
 
 def sensitivity(
@@ -703,6 +763,7 @@ def sensitivity(
     *,
     form: str,
     terms: Callable[[bool], Sequence[Term]] | None = None,
+    comm: Any = None,
 ) -> dict[Hashable, np.ndarray]:
     """The cotangent of every wanted design input, from the rule's pairs.
 
@@ -715,6 +776,9 @@ def sensitivity(
         terms: ``terms(nodes)`` returns the operator's `Term` list, called
             once when anything is wanted; ``nodes`` is whether the node
             coordinates are.
+        comm: The resolved communicator, which names the pairs' discretization. The
+            passes are local: under ranks each result holds this rank's elements in
+            global zeros, and the caller sums over ranks.
 
     Returns:
         Per wanted material kind, one value per tetrahedron of the region
@@ -742,12 +806,12 @@ def sensitivity(
     operator = terms(("nodes",) in wants)
     for kind in wants:
         if is_sheet(kind):  # ty: ignore[invalid-argument-type]
-            out[kind] = _sheet_pass(model, pairs, kind[1], operator)  # ty: ignore[not-subscriptable]
+            out[kind] = _sheet_pass(model, pairs, kind[1], operator, comm)  # ty: ignore[not-subscriptable]
     if ("nodes",) in wants:
-        out["nodes",] = _node_pass(model, pairs, operator)
+        out["nodes",] = _node_pass(model, pairs, operator, comm)
     materials = {k for k in wants if k[0] == "material"}  # ty: ignore[not-subscriptable]
     if materials:
-        out |= _material_sensitivity(model, pairs, materials, operator)
+        out |= _material_sensitivity(model, pairs, materials, operator, comm)
     return out
 
 
@@ -760,7 +824,11 @@ def _per_axis(model: Model, kind: tuple) -> bool:
 
 
 def _material_sensitivity(
-    model: Model, pairs: list[FieldPair], wants: set[Hashable], terms: Sequence[Term]
+    model: Model,
+    pairs: list[FieldPair],
+    wants: set[Hashable],
+    terms: Sequence[Term],
+    comm: Any = None,
 ) -> dict[Hashable, np.ndarray]:
     """The material part of `sensitivity`: each property's terms, in their order."""
     axis_kinds = {k for k in wants if _per_axis(model, k)}  # ty: ignore[invalid-argument-type]
@@ -774,7 +842,7 @@ def _material_sensitivity(
                 continue
             key = (term.name, term.length_power + derivative.length_power)
             if key not in integrals:
-                integrals[key] = _element_pass(model, pairs, term, key[1])
+                integrals[key] = _element_pass(model, pairs, term, key[1], comm)
             part = derivative.evaluated() * integrals[key]
             if not derivative.holomorphic:
                 part = np.real(part)
@@ -787,6 +855,7 @@ def _material_sensitivity(
         pairs,
         {k[2] for k in axis_kinds},  # ty: ignore[not-subscriptable]
         terms,
+        comm,
     )
     return {
         kind: (per_axis if kind in axis_kinds else per_property)[kind[2]][  # ty: ignore[not-subscriptable]
@@ -797,7 +866,11 @@ def _material_sensitivity(
 
 
 def _per_axis_sensitivity(
-    model: Model, pairs: list[FieldPair], props: set[str], terms: Sequence[Term]
+    model: Model,
+    pairs: list[FieldPair],
+    props: set[str],
+    terms: Sequence[Term],
+    comm: Any = None,
 ) -> dict[str, np.ndarray]:
     """Each property's cotangent per tetrahedron and principal axis, ``(n, 3)``.
 
@@ -832,7 +905,7 @@ def _per_axis_sensitivity(
                 raise NotImplementedError(msg)  # pragma: no cover - rule bug
             key = (term.name, term.length_power + axis.length_power)
             if key not in moments:
-                moments[key] = _moment_pass(model, pairs, term, key[1])
+                moments[key] = _moment_pass(model, pairs, term, key[1], comm)
             moment = moments[key]
             if term.owner is None:
                 # s_k a_k^T M a_k per tetrahedron and axis

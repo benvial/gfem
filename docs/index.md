@@ -54,6 +54,7 @@ recipes/shared-port-surface
 recipes/measurements
 recipes/gpu-direct-solver
 recipes/petsc-slepc
+recipes/distributed-solve
 recipes/gsim
 ```
 

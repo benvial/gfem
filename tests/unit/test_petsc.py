@@ -6,6 +6,7 @@ modules or replace them by fakes, so they hold on any machine, with or
 without PETSc.
 """
 
+import os
 import re
 import shutil
 import subprocess
@@ -19,7 +20,7 @@ import pytest
 import structured_meshes as sm
 
 import gfem
-from gfem import _linalg, _petsc
+from gfem import _linalg, _mpi, _petsc
 from gfem._eigen import rule as eigen_rule
 from gfem._engine import driven, quadrature, workers
 from gfem._engine.mesh import to_ngsolve
@@ -30,6 +31,7 @@ F1 = 7.49e9  # the line's first half-wave resonance, Hz
 def _clear():
     _petsc.require_petsc.cache_clear()
     _petsc.require_slepc.cache_clear()
+    _petsc.has_mpi.cache_clear()
 
 
 def fake(name, *, version="3.26.0", scalar=np.complex128, error=None):
@@ -328,24 +330,125 @@ def _pin(name):
     return tuple(int(part) for part in version.split("."))
 
 
+def _with_conf(petsc, directory, *, mpiuni):
+    """``petsc`` whose ``PETSC_DIR`` holds a ``petscconf.h`` of one of the stacks."""
+    (directory / "include").mkdir()
+    line = "#define PETSC_HAVE_MPIUNI 1\n" if mpiuni else "#define PETSC_HAVE_MUMPS 1\n"
+    (directory / "include" / "petscconf.h").write_text(line)
+    petsc.get_config = lambda: {"PETSC_DIR": str(directory), "PETSC_ARCH": ""}
+    return petsc
+
+
+@pytest.mark.parametrize("mpiuni", [True, False])
+def test_has_mpi_reads_the_stacks_header_before_init(stack, tmp_path, mpiuni):
+    petsc = _with_conf(fake("petsc4py"), tmp_path, mpiuni=mpiuni)
+    stack(petsc=petsc)
+    assert _petsc.has_mpi() is not mpiuni
+    assert petsc.calls == []
+
+
+def test_has_mpi_is_false_without_petsc4py(stack):
+    stack()
+    assert _petsc.has_mpi() is False
+
+
+def _launched(monkeypatch, tasks):
+    monkeypatch.setenv("OMPI_COMM_WORLD_SIZE", str(tasks))
+    monkeypatch.delitem(sys.modules, "mpi4py.MPI", raising=False)
+
+
+def test_rank_copies_on_the_no_mpi_stack_pass_petsc_its_launch_option(
+    stack, tmp_path, monkeypatch
+):
+    petsc = _with_conf(fake("petsc4py"), tmp_path, mpiuni=True)
+    stack(petsc=petsc)
+    _launched(monkeypatch, 2)
+    _petsc.require_petsc()
+    assert petsc.calls == [["-mpiuni-allow-multiprocess-launch"]]
+
+
+@pytest.mark.parametrize(("mpiuni", "tasks"), [(False, 2), (True, 1)])
+def test_no_other_stack_or_launch_gets_the_option(
+    stack, tmp_path, monkeypatch, mpiuni, tasks
+):
+    petsc = _with_conf(fake("petsc4py"), tmp_path, mpiuni=mpiuni)
+    stack(petsc=petsc)
+    _launched(monkeypatch, tasks)
+    _petsc.require_petsc()
+    assert petsc.calls == [[]]
+
+
+class _Ranks:
+    """A communicator of several ranks that reduces to this rank's own value."""
+
+    size = 4
+
+    def allreduce(self, value, op=None):  # noqa: ARG002
+        return value
+
+
+@pytest.mark.parametrize("kind", ["direct", "petsc"])
+def test_a_distributed_solver_refuses_the_no_mpi_stack_before_init(
+    stack, tmp_path, monkeypatch, kind
+):
+    petsc = _with_conf(fake("petsc4py"), tmp_path, mpiuni=True)
+    stack(petsc=petsc)
+    monkeypatch.setattr(_mpi, "_load_mpi", lambda: types.SimpleNamespace(LAND=None))
+    with pytest.raises(gfem.SolverUnavailableError, match=r"petsc_wheelhouse.sh --mpi"):
+        _petsc.require_mpi_petsc(kind, _Ranks())
+    assert petsc.calls == []
+
+
+def test_a_distributed_solver_without_petsc4py_names_the_stack(stack, monkeypatch):
+    stack()
+    monkeypatch.setattr(_mpi, "_load_mpi", lambda: types.SimpleNamespace(LAND=None))
+    with pytest.raises(gfem.SolverUnavailableError, match=r"linear_solver='direct'"):
+        _petsc.require_mpi_petsc("direct", _Ranks())
+
+
+def test_a_worker_starts_without_the_launchers_variables(monkeypatch):
+    names = (
+        "OMPI_COMM_WORLD_SIZE",
+        "OMPI_MCA_pml",
+        "PMIX_RANK",
+        "PMI_SIZE",
+        "SLURM_STEP_NUM_TASKS",
+    )
+    for name in names:
+        monkeypatch.setenv(name, "4")
+    monkeypatch.setenv("SLURM_JOB_ID", "7")  # the job's: no launcher reads it
+    seen = workers.run(
+        os.getenv,
+        [(name,) for name in (*names, "SLURM_JOB_ID")],
+        [f"worker {i}" for i in range(len(names) + 1)],
+        threads=1,
+    )
+    assert seen == [None] * len(names) + ["7"]
+    assert all(os.environ[name] == "4" for name in names)  # the parent's stay
+
+
 def test_the_version_floor_is_the_minor_the_build_script_pins():
     # bumping the script to a new PETSc minor raises the floor in the same commit
     assert _pin("PETSC_VERSION")[:2] == _pin("SLEPC_VERSION")[:2] == _petsc.MIN_VERSION
 
 
-def test_the_build_script_downloads_only_mumps_metis_and_openblas():
-    # The licence control (no non-free or non-commercial dependency): the
-    # stack holds what these downloads build and nothing else, the set the
-    # licence page names. No ParMETIS, PT-Scotch or ScaLAPACK, which an MPI
-    # build would pull in.
+def _packages(name):
+    """The words of a bash array in the build script."""
     code = "\n".join(_script_lines())
-    options = re.findall(r"--download-([\w-]+)", code)
-    assert {option.split("-")[0] for option in options} == {
+    return re.search(rf"^{name}=\((.*)\)$", code, re.MULTILINE)[1].split()
+
+
+def test_the_build_script_downloads_only_what_the_licence_page_names():
+    # The licence control (no non-free or non-commercial dependency): a stack holds
+    # what these downloads build and nothing else. ParMETIS on neither.
+    assert set(_packages("NO_MPI_PACKAGES")) == {"mumps", "metis", "openblas"}
+    assert set(_packages("MPI_PACKAGES")) == {
         "mumps",
+        "scalapack",
+        "ptscotch",
         "metis",
         "openblas",
     }
-    assert "--with-mpi=0" in code
 
 
 def test_the_build_script_ignores_the_shells_compilers_and_flags():
@@ -395,8 +498,8 @@ def _stub(folder, name, body):
     path.chmod(0o755)
 
 
-def _check(tmp_path, path=(), **env):
-    """Run the script's --check on stub tools.
+def _check(tmp_path, path=(), flags=(), **env):
+    """Run the script's --check on stub tools, after ``flags``.
 
     A system folder holds every prerequisite; its uv finds PYTHON, or else
     the Python running the tests, and saves the environment the script gives
@@ -412,12 +515,102 @@ def _check(tmp_path, path=(), **env):
     _stub(system, "uv", f'env > "{seen}"; echo "${{3:-{sys.executable}}}"')
     folders = [*map(str, path), str(system), "/usr/bin", "/bin"]
     return subprocess.run(
-        [shutil.which("bash"), str(WHEELHOUSE_SCRIPT), "--check"],
+        [shutil.which("bash"), str(WHEELHOUSE_SCRIPT), *flags, "--check"],
         env={"HOME": str(tmp_path), "PATH": ":".join(folders), **env},
         capture_output=True,
         text=True,
         check=False,
     )
+
+
+def _options(stdout):
+    (line,) = (x for x in stdout.splitlines() if x.startswith("configure options: "))
+    return line.removeprefix("configure options: ").split()
+
+
+def _mpi_tools(tmp_path, *, showme="Open MPI 4.1.6", bison="3.7.4", cmake="3.30.5"):
+    """Stub tools of an Open MPI build; returns the folder to put on PATH."""
+    tools = tmp_path / "mpi" / "bin"
+    for tool in ("mpicc", "mpicxx", "mpifort"):
+        _stub(
+            tools, tool, f'[ "$1" = --showme:version ] && echo "{showme}" || echo gcc'
+        )
+    _stub(tools, "bison", f'echo "bison (GNU Bison) {bison}"')
+    _stub(tools, "flex", 'echo "flex 2.6.4"')
+    _stub(tools, "cmake", f'echo "cmake version {cmake}"')
+    return tools
+
+
+NOT_CONDA = pytest.mark.skipif(
+    (Path(sys.base_prefix) / "conda-meta").is_dir(),
+    reason="a conda Python runs the tests, and the script refuses it as target",
+)
+
+
+@NOT_CONDA
+def test_the_no_mpi_stacks_configure_options_do_not_change(tmp_path):
+    result = _check(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert _options(result.stdout) == [
+        "--with-scalar-type=complex",
+        "--with-mpi=0",
+        "--download-mumps",
+        "--download-metis",
+        "--download-openblas",
+        "--download-openblas-use-pthreads",
+        "--with-x=0",
+    ]
+
+
+@NOT_CONDA
+def test_the_mpi_stack_has_64_bit_indices_and_scotch_over_petscs_pin(tmp_path):
+    result = _check(tmp_path, path=[_mpi_tools(tmp_path)], flags=["--mpi"])
+    assert result.returncode == 0, result.stderr
+    options = _options(result.stdout)
+    assert "--with-mpi=0" not in options
+    for option in (
+        "--with-64-bit-indices",
+        "--with-parmetis=0",
+        "--download-scalapack",
+        "COPTFLAGS=-O2",
+    ):
+        assert option in options
+    (scotch,) = (o for o in options if o.startswith("--download-ptscotch="))
+    assert scotch.endswith("/scotch-v7.0.18.tar.gz")
+
+
+@NOT_CONDA
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"showme": "mpicc: unknown option"}, "not Open MPI"),
+        ({"bison": "2.3"}, "bison 3"),
+        ({"cmake": "3.20.0"}, "cmake 3.26"),
+    ],
+)
+def test_the_mpi_check_refuses_what_is_known_not_to_work(tmp_path, kwargs, message):
+    tools = _mpi_tools(tmp_path, **kwargs)
+    result = _check(tmp_path, path=[tools], flags=["--mpi"])
+    assert result.returncode != 0
+    assert message in result.stderr
+
+
+@NOT_CONDA
+def test_the_mpi_check_names_what_is_missing(tmp_path):
+    result = _check(tmp_path, flags=["--mpi"])
+    assert result.returncode != 0
+    # bison and flex may be in /usr/bin, which the stub PATH keeps
+    assert "mpicc mpicxx mpifort" in result.stderr
+
+
+@NOT_CONDA
+def test_a_source_folder_is_checked_file_by_file(tmp_path):
+    sources = tmp_path / "sources"
+    (sources / "wheels").mkdir(parents=True)
+    flags = ["--sources", str(sources)]
+    result = _check(tmp_path, flags=flags)
+    assert result.returncode != 0
+    assert "petsc-3.26.0.tar.gz is missing" in result.stderr
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the build script is bash")

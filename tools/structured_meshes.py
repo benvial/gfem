@@ -11,6 +11,8 @@ parameter space.
 from __future__ import annotations
 
 import itertools
+import os
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -141,7 +143,13 @@ def write_msh22(path: str | Path, mesh: tuple) -> Path:
         t = tag[3, name]
         lines.append(f"{k} 4 2 {t} {t} " + " ".join(str(v + 1) for v in tet))
     lines.append("$EndElements")
-    path.write_text("\n".join(lines) + "\n")
+    # by rename: every rank of a launched test may write this same file, and rank 0
+    # must not read another rank's half
+    handle, partial = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    with os.fdopen(handle, "w") as out:
+        out.write("\n".join(lines) + "\n")
+    Path(partial).chmod(0o644)
+    Path(partial).replace(path)
     return path
 
 

@@ -6,6 +6,9 @@ JAX entry point that measurements integrating fields on surfaces build on.
 Both run `gfem._engine.probe` behind gfem's gradient wrapper
 (`gfem._adjoint.measure`): differentiable in the field coefficients, while
 mesh-node and point perturbations raise `gfem.NonDifferentiableError`.
+
+Under ranks a field's coefficients are a rank's piece (ADR 0063), and each of these
+calls is collective.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from gfem import _mpi
 from gfem._adjoint.measure import measure
 from gfem._checks import is_traced
 from gfem.mesh import Mesh
@@ -53,6 +57,8 @@ class _PointKernel:
     """Field values at points: ``Phi c`` and its transpose."""
 
     name = "a field probe"
+    #: A rank's own piece under ranks: the entry check reads its shape alone.
+    pieces = frozenset({"coefficients"})
 
     def __init__(
         self,
@@ -61,10 +67,13 @@ class _PointKernel:
         shape: tuple[int, ...],
         dtype: Any,
         located: Any = None,
+        *,
+        comm: Any = None,
     ) -> None:
         self.topology = topology
         self.layout = layout
         self.located = located
+        self.comm = comm
         self.output_specs = {"values": jax.ShapeDtypeStruct(shape, dtype)}
 
     def role(self, name: str) -> str:
@@ -89,8 +98,8 @@ class _PointKernel:
         mesh = Mesh(values["nodes"], self.topology)
         located = self.located
         if located is None:
-            located = probe.locate(mesh, self.layout, values["points"])
-        return probe.probe(mesh, self.layout, located)
+            located = probe.locate(mesh, self.layout, values["points"], self.comm)
+        return probe.probe(mesh, self.layout, located, self.comm)
 
     def forward(self, values: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         return {"values": self._probe(values).values(values["coefficients"])}
@@ -114,15 +123,17 @@ def evaluate(
     mesh: Mesh,
     layout: Any,
     located: Any,
+    comm: Any = None,
 ) -> jax.Array:
     """``(m, n_points, components)`` values of ``(m, ndof)`` coefficients.
 
     The points are fixed (gfem tetrahedra and barycentric coordinates); a
-    JAX function of the coefficients and the node coordinates.
+    JAX function of the coefficients and the node coordinates. Under ``comm`` it is
+    collective, and the coefficients are a rank's piece.
     """
     c = jnp.asarray(field_coefficients)
     shape = (c.shape[0], len(located.tetrahedra), COMPONENTS[layout.space])
-    kernel = _PointKernel(mesh._topology, layout, shape, c.dtype, located)  # noqa: SLF001
+    kernel = _PointKernel(mesh._topology, layout, shape, c.dtype, located, comm=comm)  # noqa: SLF001
     return measure(kernel, {"coefficients": c, "nodes": mesh.nodes})["values"]
 
 
@@ -140,15 +151,19 @@ def field_at(field: Field, points: Any) -> jax.Array:
     mesh = field.mesh
     c = field.coefficients
     n_comp = COMPONENTS[field.space]
+    comm = field._communicator  # noqa: SLF001
     located = None
     if not is_traced((mesh.nodes, p)):
-        located = engine().locate(mesh, where, np.asarray(p))
+        with _mpi.section(comm):
+            _mpi.check_call(comm, "Field.at", {"the points": np.asarray(p)})
+            located = engine().locate(mesh, where, np.asarray(p), comm)
     kernel = _PointKernel(
         mesh._topology,  # noqa: SLF001
         where,
         (p.shape[0], n_comp),
         c.dtype,
         located,
+        comm=comm,
     )
     inputs = {"coefficients": c, "nodes": mesh.nodes}
     if located is None:

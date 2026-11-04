@@ -9,8 +9,10 @@ eigenmode problem's modes near the target with SLEPc's Krylov-Schur instead of
 ARPACK; gfem refines them, computes their Q and differentiates them as it does
 after ARPACK, so you get the same modes.
 
-Both run on the CPU, in one process, without MPI. `"auto"` never picks either,
-and neither is a pip extra: you build the {term}`PETSc stack` once, from source.
+Both run on the CPU. This page's stack is the {term}`no-MPI PETSc stack`, which
+runs in one process. `"auto"` never picks either, and neither is a pip extra: you
+build the {term}`PETSc stack` once, from source. For solves across ranks, see
+{ref}`petsc-with-mpi`.
 
 (petsc-when-to-choose)=
 ## When to choose PETSc
@@ -40,9 +42,8 @@ You need Linux (macOS is not tested, Windows is not supported), uv, curl,
 make, cmake, the system's gcc, g++ and gfortran compilers, and a Python not
 built by conda (for example `uv python install 3.13` and a uv virtual
 environment). The script takes an active conda environment off `PATH`. gfem
-needs PETSc with complex scalars and without MPI, and conda-forge's PETSc
-depends on ParMETIS, which is not free for commercial use
-({doc}`../project/licence`).
+needs PETSc with complex scalars, and conda-forge's PETSc depends on ParMETIS,
+which is not free for commercial use ({doc}`../project/licence`).
 
 The script `tools/petsc_wheelhouse.sh` in the repository
 ({download}`download it <../../tools/petsc_wheelhouse.sh>`, or read it at the
@@ -65,6 +66,26 @@ pip install --no-index --find-links wheelhouse petsc petsc4py slepc slepc4py
   leaves them in place.
 - Rebuild for another Python version, and when gfem raises the PETSc version
   it supports: the error message names the oldest one it accepts.
+
+(petsc-with-mpi)=
+### With MPI
+
+`bash petsc_wheelhouse.sh --mpi wheelhouse` builds the {term}`MPI PETSc stack`
+beside the no-MPI one, on the Open MPI whose `mpicc`, `mpicxx` and `mpifort` are on
+`PATH`. {doc}`distributed-solve` is what it is for. It has complex scalars, 64-bit
+indices, MUMPS, METIS, ScaLAPACK and PT-Scotch from Scotch 7.0.18 (the script takes
+that tarball itself, since PETSc 3.26.0's pinned Scotch crashes MUMPS's parallel
+analysis), compiled at `-O2`, and no ParMETIS. It also needs bison 3 or newer, flex
+and cmake 3.26 or newer; `--check` names what is missing, and refuses another MPI.
+
+- `--fetch-sources DIR` downloads what a build needs, on a machine with internet;
+  `--sources DIR` builds from it, offline. {doc}`distributed-solve` shows both, on
+  MareNostrum 5, where this form ran. The online form has not run yet.
+- The stack runs one-process solves too, through the same `linear_solver="petsc"`.
+- A stack runs under the Open MPI it was built on: load the same one to use it.
+- The no-MPI stack under a launcher serves {term}`rank copies` only, and a
+  {term}`distributed solve` naming PETSc refuses it, with
+  `gfem.SolverUnavailableError`.
 
 ## Check the build
 
@@ -225,8 +246,9 @@ each worker its share of the threads.
 
 ## Limits
 
-- CPU only, one process: no MPI; spread a uniform sweep with
-  `frequency_workers`. Tested on Linux only.
+- CPU only. One process on the no-MPI stack: spread a uniform sweep with
+  `frequency_workers`, or see {doc}`distributed-solve` for the MPI stack. Tested on
+  Linux only.
 - SLEPc's polynomial and nonlinear eigensolvers are not used: damped and
   nonlinear eigenmode problems go through the same shift-invert iteration as
   with ARPACK.
@@ -238,7 +260,8 @@ each worker its share of the threads.
 ## Next
 
 {py:obj}`gfem.SolverOptions`, {py:obj}`gfem.SolverUnavailableError`,
-{doc}`eigenmode-gradient`, {doc}`gpu-direct-solver`, {doc}`../project/licence`.
+{doc}`eigenmode-gradient`, {doc}`gpu-direct-solver`, {doc}`distributed-solve`,
+{doc}`../project/licence`.
 
 ## The build script
 

@@ -27,9 +27,8 @@ is the user's own (optax, nlopt, scipy, ...).
 from __future__ import annotations
 
 import math
-import warnings
 from collections.abc import Callable
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -37,7 +36,7 @@ import numpy as np
 import scipy.sparse as sp
 from jax.scipy import fft
 
-from gfem import _morph, _sparse
+from gfem import _morph, _mpi, _sparse
 from gfem._checks import is_traced, static_float
 from gfem.mesh import Mesh
 
@@ -184,7 +183,9 @@ class LayerGrid:
             on a volume.
     """
 
-    def __init__(self, mesh: Mesh, region: str, *, pitch: float) -> None:
+    def __init__(
+        self, mesh: Mesh, region: str, *, pitch: float, comm: Any = None
+    ) -> None:
         """Lay a pixel grid over a volume or horizontal surface's footprint.
 
         Args:
@@ -192,6 +193,8 @@ class LayerGrid:
             region: A volume region, or a surface whose faces are all
                 horizontal (normal along mesh z).
             pitch: Pixel side (m), > 0.
+            comm: The communicator, as for `gfem.solve`: only rank 0 shows the
+                warning. ``MPI.COMM_SELF`` under a launcher shows it on each rank.
 
         Raises:
             RegionNotFoundError: The mesh has no such region.
@@ -202,6 +205,7 @@ class LayerGrid:
             UserWarning: Some pixels are sampled by no element (face)
                 centroid.
         """
+        comm = _mpi.resolve_comm(comm)
         r = mesh.region(region)
         pitch = static_float(pitch, "LayerGrid.pitch", "The pixel grid is fixed.")
         if pitch <= 0:
@@ -244,7 +248,8 @@ class LayerGrid:
             a.flags.writeable = False
         dead = int((~self.sampled).sum())
         if dead:
-            warnings.warn(
+            _mpi.warn(
+                comm,
                 f"LayerGrid on {region!r}: {dead} of {self.sampled.size} pixels "
                 f"are sampled by no {self._what} centroid, so they get no gradient and "
                 "do not reach the solve. Refine the mesh in the region, or coarsen "

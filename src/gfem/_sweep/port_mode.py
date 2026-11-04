@@ -38,6 +38,8 @@ import dataclasses
 import itertools
 import math
 import warnings
+from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -45,6 +47,7 @@ import numpy as np
 import scipy.constants
 import scipy.linalg
 
+from gfem import _mpi
 from gfem._boundaries import (
     WavePort,
     lead_port,
@@ -63,7 +66,13 @@ from gfem.options import SolverOptions
 from gfem.problems import PortMode
 from gfem.results import PortModeField, PortModeResult
 
-__all__ = ["PortModeRule", "PortModeSweep", "path_voltage", "port_mode_sweep"]
+__all__ = [
+    "PortModeRule",
+    "PortModeSweep",
+    "path_voltage",
+    "port_mode_sweep",
+    "swept_once",
+]
 
 # The shift is this factor above the largest bulk (Re eps)(Re mu), as in Palace.
 _TARGET = 1.1
@@ -92,6 +101,8 @@ _EXACT_ONLY = 3
 # this fraction of the mode (rounding noise). It must be tiny: a smooth mode
 # has |A x| << |A| |x|, so a part of 1e-8 still carries a backward error ~1e-6.
 _NEW_DIRECTION = 1e-12
+# The fields of a `PortModeSweep` that differ between the modes of one surface.
+_PER_MODE = ("gamma", "residual", "floor", "coords", "voltage")
 # Gauss-Legendre rule for voltage line integrals: points per piece, pieces.
 _GAUSS = np.polynomial.legendre.leggauss(4)
 _PIECES = 32
@@ -155,8 +166,18 @@ class PortModeRule:
     #: No output has a gradient (`unsupported_input` raises for read inputs).
     differentiable_outputs = frozenset()
 
-    def __init__(self, model: Model, problem: PortMode, options: SolverOptions) -> None:
+    def __init__(
+        self,
+        model: Model,
+        problem: PortMode,
+        options: SolverOptions,
+        *,
+        comm: Any = None,
+    ) -> None:
         """Check that the problem fits the model (see `gfem.PortMode`).
+
+        ``comm`` is the resolved communicator of a distributed solve: every result
+        is the one sweep rank 0 ran (ADR 0059).
 
         Raises:
             ValueError: ``problem.port`` is not a wave port of the model, or
@@ -177,6 +198,7 @@ class PortModeRule:
             )
         self.problem = problem
         self.options = options
+        self.comm = comm
         self.port = _wave_port(model, problem.port)
         self.mode = self.port.mode if problem.mode is None else problem.mode
         # its own mode: the surface's joint sweep, with the surface's wave
@@ -241,9 +263,10 @@ class PortModeRule:
         modes = [self.mode] if len(ports) == 1 else [p.mode for p in ports]
         lead = lead_port(ports)
         section = port_section(model, lead)
-        with task_manager(self.options.threads):
+        with task_manager(self.options.threads, self.comm):
             space = PortModeSpace(section, self.options.order)
-            sweeps = port_mode_sweep(
+            sweeps, _ = swept_once(
+                self.comm,
                 space,
                 self.problem.frequency,
                 modes,
@@ -377,6 +400,62 @@ def port_mode_sweep(
         )
         for k in range(len(modes))
     ]
+
+
+def swept_once(
+    comm: Any,
+    space: PortModeSpace,
+    frequency: tuple[float, ...] | np.ndarray,
+    modes: list[int],
+    *,
+    tolerance: float,
+    ports: list[WavePort],
+    derived: Callable[[np.ndarray], dict[str, np.ndarray]] | None = None,
+) -> tuple[list[PortModeSweep], dict[str, np.ndarray]]:
+    """`port_mode_sweep` once, on rank 0 of ``comm``, with its arrays on every rank.
+
+    A `PortModeError` and the sweep's warnings reach every rank (ADR 0059), and each
+    rank's sweeps stand on its own ``space``. Collective, on every rank of ``comm``.
+
+    Args:
+        comm: The resolved communicator.
+        space: The surface's discrete port mode problem, built on every rank.
+        frequency: The output grid, Hz.
+        modes: As `port_mode_sweep`.
+        tolerance: As `port_mode_sweep`.
+        ports: As `port_mode_sweep`.
+        derived: More arrays read off the sweep's basis, computed beside it and
+            sent with it, since an assembled form may round differently per rank.
+
+    Returns:
+        The sweeps and ``derived``'s arrays.
+    """
+
+    def compute() -> dict[str, np.ndarray]:
+        sweeps = port_mode_sweep(
+            space, frequency, modes, tolerance=tolerance, ports=ports
+        )
+        first = sweeps[0]
+        arrays = {
+            name: np.stack([getattr(sweep, name) for sweep in sweeps])
+            for name in _PER_MODE
+        }
+        arrays |= {"basis": first.basis, "solved": first.solved}
+        return arrays | (derived(first.basis) if derived is not None else {})
+
+    # ValueError: a voltage path off the port, on replicated inputs
+    arrays = _mpi.on_root(comm, compute, results=(PortModeError, ValueError))
+    sweeps = [
+        PortModeSweep(
+            space=space,
+            frequency=np.asarray(frequency, float),
+            basis=arrays["basis"],
+            solved=arrays["solved"],
+            **{name: arrays[name][k] for name in _PER_MODE},
+        )
+        for k in range(len(modes))
+    ]
+    return sweeps, arrays
 
 
 @dataclasses.dataclass(frozen=True)
@@ -606,7 +685,7 @@ class _Greedy:
                     "modes at each frequency would switch modes there, so its "
                     "S-parameters differ beyond the crossing.",
                     PortModeTrackingWarning,
-                    stacklevel=6,
+                    stacklevel=9,
                 )
                 return
 

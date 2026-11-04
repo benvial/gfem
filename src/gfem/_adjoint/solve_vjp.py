@@ -34,7 +34,13 @@ host; this module owns everything JAX sees:
 Host calls go through ``jax.pure_callback(..., vmap_method="sequential")``,
 so ``vmap`` runs one solve per batch member. Errors raised on the host
 during the backward reach the user as ``jax.errors.JaxRuntimeError`` with
-the message kept.
+the message kept, or as ``ValueError`` once a jitted function has succeeded.
+
+Under ranks (ADR 0065) every rank runs this whole function and its callbacks on
+replicated values; only host calls communicate. The integer key is a rank's own
+number, and the backward agrees on whether every rank still holds its entry. The
+kernel writes each rank's elements into global zeros, and each wanted leaf is summed
+over ranks once, where the backward returns. A missing sum raises nothing.
 
 A rule provides: ``form`` (its operator family, a key of
 `gfem._engine.sensitivity.PROPERTIES`), ``differentiable_outputs``,
@@ -56,7 +62,7 @@ from __future__ import annotations
 
 import copy
 import functools
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 from typing import Any
 
 import jax
@@ -64,11 +70,14 @@ import jax.numpy as jnp
 import numpy as np
 from jax.custom_derivatives import SymbolicZero
 
+from gfem import _mpi
 from gfem.errors import NonDifferentiableError
 
 __all__ = ["adjoint_tolerance", "input_kind", "solve_vjp"]
 
 _KEY = jax.ShapeDtypeStruct((), jnp.int64)
+#: Outputs that are a rank's own piece under ranks (ADR 0063).
+_PIECES = frozenset({"e_field"})
 
 
 def adjoint_tolerance(options: Any) -> float:
@@ -146,16 +155,19 @@ def solve_vjp(rule: Any, model: Any, problem: Any) -> dict[str, jax.Array]:
     )
 
     def host_forward(keep: bool, *values: Any) -> tuple:
-        from gfem._engine.cache import ENTRIES, default_retain_memory
-
+        comm = getattr(rule, "comm", None)
         host_rule, host_model = rebuild(values)
-        outputs, entry = _forward(host_rule, host_model, keep=keep)
-        key = -1
-        if entry is not None:
-            budget = rule.options.retain_memory
-            if budget is None:
-                budget = default_retain_memory()
-            key = ENTRIES.put(entry, budget)
+        with _mpi.section(comm, agreed=_mpi.FORWARD_ERRORS):
+            if comm is not None:
+                _mpi.entry_check(
+                    comm,
+                    f"the forward of a {type(rule).__name__}",
+                    host_model,
+                    host_rule.problem,
+                    rule.options,
+                )
+            outputs, entry = _forward(host_rule, host_model, keep=keep)
+            key = -1 if entry is None else _keep(entry, rule.options, comm)
         arrays = tuple(
             np.asarray(outputs[n], dtype=s.dtype).reshape(s.shape)
             for n, s in zip(names, out_specs, strict=True)
@@ -249,8 +261,23 @@ def _forward(rule: Any, model: Any, *, keep: bool) -> tuple:
     # A moved mesh must keep its periodic pairs and stay valid on the solve
     # domain.
     check_nodes(model.mesh.nodes, model._periodic)  # noqa: SLF001
-    _check_quality(model.mesh, model._domain.active, stacklevel=2)  # noqa: SLF001
+    _check_quality(
+        model.mesh,
+        model._domain.active,  # noqa: SLF001
+        stacklevel=2,
+        comm=getattr(rule, "comm", None),
+    )
     return rule.forward(model, keep=keep)
+
+
+def _keep(entry: Any, options: Any, comm: Any) -> int:
+    """Store a forward's entry under ``options.retain_memory``; its key."""
+    from gfem._engine.cache import ENTRIES, default_retain_memory
+
+    budget = options.retain_memory
+    if budget is None:
+        budget = default_retain_memory()
+    return ENTRIES.put(entry, budget, comm)
 
 
 def _wanted(rule: Any, kinds: list[tuple], perturbed: list[bool]) -> tuple[int, ...]:
@@ -288,38 +315,29 @@ def _host_backward(
     wanted: tuple[int, ...],
     live_names: tuple[str, ...],
 ) -> tuple:
-    from gfem._engine.cache import ENTRIES
-    from gfem._engine.runtime import task_manager
-    from gfem._engine.sensitivity import sensitivity
-
     n_inputs = len(kinds)
     values, cts = args[:n_inputs], args[n_inputs:]
     rule, model = rebuild(values)
-    entry = ENTRIES.get(int(key)) if int(key) >= 0 else None
-    fresh = None
-    if entry is None:  # evicted: recompute from the design state
-        _, entry = rule.forward(model, keep=True)
-        fresh = entry
-    try:
-        cotangents = {n: np.asarray(c) for n, c in zip(live_names, cts, strict=True)}
-        pairs = rule.backward(model, entry, cotangents)
-        # the element passes assemble on the solve's threads
-        with task_manager(rule.options.threads):
-            grads = sensitivity(
+    comm = getattr(rule, "comm", None)
+    cotangents = {n: np.asarray(c) for n, c in zip(live_names, cts, strict=True)}
+    with _mpi.section(comm, agreed=_mpi.FORWARD_ERRORS):
+        if comm is not None:
+            _mpi.entry_check(
+                comm,
+                f"the backward of a {type(rule).__name__}",
                 model,
-                pairs,
-                {kinds[i] for i in wanted},
-                form=rule.form,
-                terms=(lambda nodes: rule.terms(model, nodes=nodes))
-                if hasattr(rule, "terms")
-                else None,
+                rule.problem,
+                rule.options,
+                arrays=_replicated_cotangents(cotangents),
             )
-    finally:
-        if fresh is not None:
-            fresh.free()
+        grads = _local_cotangents(
+            key, rule, model, cotangents, wants={kinds[i] for i in wanted}, comm=comm
+        )
     out = []
     for i in wanted:
-        g = grads[kinds[i]]
+        # every step from a pass to here is real-linear on replicated values, so one
+        # sum, before the leaf's shape, equals a sum per pass (ADR 0065)
+        g = _mpi.reduce_bcast(comm, np.asarray(grads[kinds[i]]))
         leaf = np.asarray(values[i])
         if not leaf.ndim:
             g = g.sum()
@@ -331,3 +349,58 @@ def _host_backward(
             g = np.real(g)
         out.append(np.asarray(g, dtype=leaf.dtype))
     return tuple(out)
+
+
+def _replicated_cotangents(cotangents: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """What the ranks must hold alike: a cotangent, or a rank's piece's shape."""
+    return {
+        f"the cotangent of {n}": np.asarray(c.shape) if n in _PIECES else c
+        for n, c in cotangents.items()
+    }
+
+
+def _local_cotangents(
+    key: Any,
+    rule: Any,
+    model: Any,
+    cotangents: dict[str, np.ndarray],
+    *,
+    wants: set[Hashable],
+    comm: Any,
+) -> dict:
+    """This rank's part of each wanted cotangent.
+
+    The forward runs again unless every rank still holds its entry: a backward on
+    some ranks alone would hang. A rank that holds one frees it, since the next
+    forward on the same design would otherwise keep a second.
+    """
+    from gfem._engine.cache import ENTRIES
+    from gfem._engine.runtime import task_manager
+    from gfem._engine.sensitivity import sensitivity
+
+    entry = ENTRIES.get(int(key)) if int(key) >= 0 else None
+    fresh = None
+    if not _mpi.agree_all(comm, flag=entry is not None):
+        ENTRIES.discard(int(key))
+        _, entry = rule.forward(model, keep=True)
+        fresh = entry
+    else:
+        # the base handles of other entries go before this one prepares (ADR 0065)
+        ENTRIES.free_bases(comm, keep=entry)
+    try:
+        pairs = rule.backward(model, entry, cotangents)
+        # the element passes assemble on the solve's threads
+        with task_manager(rule.options.threads, comm):
+            return sensitivity(
+                model,
+                pairs,
+                wants,
+                form=rule.form,
+                terms=(lambda nodes: rule.terms(model, nodes=nodes))
+                if hasattr(rule, "terms")
+                else None,
+                comm=comm,
+            )
+    finally:
+        if fresh is not None:
+            fresh.free()

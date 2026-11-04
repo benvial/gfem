@@ -30,9 +30,10 @@ wave port, or several, one mode each (a shared port surface):
   gfem's convention of time-averaged power; Palace's modes carry 1 W peak).
 
 The 3D trace on the port face and the 2D Nédélec space of the port mode
-problem share the face's triangles and order, and NGSolve orders both
-bases by global vertex numbers, so the trace of a 3D field is the 2D field
-with the same coefficients on matching edges and faces (`trace_dofs`). With
+problem share the face's triangles and order, and NGSolve orders both bases
+by vertex number, which runs with gfem's node number on either mesh, also on
+a rank's part (ADR 0059). So the trace of a 3D field is the 2D field with the
+same coefficients on matching edges and faces (`trace_dofs`). With
 the modes written in the surface's port mode sweep's fixed basis,
 ``mode(omega) = W c(omega)``, the excitations and the functionals are fixed
 vectors (one per basis column, assembled on the 2D port once) times
@@ -43,11 +44,16 @@ adaptive sweep needs.
 The wave ports of one surface share its Robin term, its vectors and its
 modal correction (`PortSurfaceCoupling`); the excitation and the S
 functional are each port's own (`WavePortCoupling`).
+
+Under ranks the sweep and the arrays read off its basis run once on rank 0 and
+are broadcast, so every coupling below holds replicated values. Only ``vectors``
+is a rank's own: a load column, each value shared by the ranks that write it.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import functools
 import math
 
 import ngsolve as ngs
@@ -61,11 +67,12 @@ from gfem._boundaries import (
     wave_port_surfaces,
 )
 from gfem._engine import terms
-from gfem._engine.mesh import EngineMesh
+from gfem._engine.mesh import EngineMesh, inverse_order
 from gfem._engine.port_mode import PortModeSpace
 from gfem._linalg.base import free_mask
+from gfem._linalg.layout import ONE_PROCESS, DofLayout
 from gfem._port_section import PortSection, port_section
-from gfem._sweep.port_mode import PortModeSweep, port_mode_sweep
+from gfem._sweep.port_mode import PortModeSweep, swept_once
 from gfem.errors import PortModeError
 from gfem.model import Model
 
@@ -262,6 +269,7 @@ def wave_port_couplings(
     order: int,
     frequency: tuple[float, ...],
     tolerance: float,
+    layout: DofLayout = ONE_PROCESS,
 ) -> list[PortSurfaceCoupling]:
     """Run each wave port surface's port mode sweep and build its driven terms.
 
@@ -272,6 +280,7 @@ def wave_port_couplings(
         order: The element order (the port mode problem uses the same).
         frequency: The output grid, Hz.
         tolerance: ``SolverOptions.port_mode_tolerance``.
+        layout: How ``space`` lies across ranks.
 
     Returns:
         One coupling per surface with wave ports, in the order of each
@@ -284,27 +293,27 @@ def wave_port_couplings(
         lead = lead_port(group)
         section = port_section(model, lead)
         modes = PortModeSpace(section, order)
-        sweeps = port_mode_sweep(
+        sweeps, columns = swept_once(
+            layout.comm,
             modes,
             frequency,
             [p.mode for p in group],
             tolerance=tolerance,
             ports=list(group),
+            derived=functools.partial(_port_columns, modes),
         )
+        r, reaction, q = columns["r"], columns["reaction"], columns["q"]
+        m = r.shape[1] // 2
         idx3, idx2 = trace_dofs(model, section, modes, built, space)
         free = free_mask(space.FreeDofs(), space.ndof)
         idx3, idx2 = idx3[free[idx3]], idx2[free[idx3]]
-        g_form, t_form = modes.coupling_forms
-        basis = sweeps[0].basis
-        w = basis[modes.free]
-        m = w.shape[1] // 2
-        r = np.concatenate([t_form @ w[:, :m], g_form @ w[:, m:]], axis=1)
+        # never behind a test on len(idx3): the exchange is collective
+        writers = np.zeros(space.ndof)
+        writers[idx3] = 1.0
+        writers = np.real(layout.exchange(writers))
         vectors = np.zeros((space.ndof, 2 * m), r.dtype)
-        vectors[idx3] = r[idx2]
-        # hᵀ e on the port face, as Palace (the mode vanishes on fixed DOFs)
-        reaction = r.T @ basis[: modes.n_t, :m]
+        vectors[idx3] = r[idx2] / writers[idx3, None]
         scale = section.scale
-        q = basis[: modes.n_t, :m].T @ np.conj(r)
         ports = []
         for port, sweep in zip(group, sweeps, strict=True):
             coords = sweep.coords
@@ -337,6 +346,21 @@ def wave_port_couplings(
     return out
 
 
+def _port_columns(modes: PortModeSpace, basis: np.ndarray) -> dict[str, np.ndarray]:
+    """What the 2D forms give per column of the sweep's ``basis``.
+
+    ``r``: the entries of `PortSurfaceCoupling.vectors` on the free 2D DOFs;
+    ``reaction``: hᵀ e on the port face, as Palace (the mode vanishes on fixed
+    DOFs); ``q``: the port face's products with conjugated ``r``.
+    """
+    g_form, t_form = modes.coupling_forms
+    w = basis[modes.free]
+    m = w.shape[1] // 2
+    r = np.concatenate([t_form @ w[:, :m], g_form @ w[:, m:]], axis=1)
+    tangential = basis[: modes.n_t, :m]
+    return {"r": r, "reaction": r.T @ tangential, "q": tangential.T @ np.conj(r)}
+
+
 def trace_dofs(
     model: Model,
     section: PortSection,
@@ -347,8 +371,9 @@ def trace_dofs(
     """Matching DOFs of the 3D space and the port's 2D Nédélec space.
 
     The 3D field's tangential trace on the port has, on 2D DOF ``idx2[k]``,
-    the coefficient of 3D DOF ``idx3[k]``: edges are matched through their
-    end points, faces through their triangle.
+    the coefficient of 3D DOF ``idx3[k]``: edges are matched through the gfem
+    nodes at their ends, faces through their triangle. A rank walks its own port
+    faces, so on a rank with none both come back empty.
 
     Returns:
         ``(idx3, idx2)``.
@@ -356,10 +381,10 @@ def trace_dofs(
     if section.faces is None:  # pragma: no cover - sections built by gfem have them
         raise ValueError("The port section does not record its mesh triangles.")
     used = np.unique(model.mesh.triangles[section.faces])
-    bnd_of = np.empty(len(built.triangle_order), int)
-    bnd_of[built.triangle_order] = np.arange(len(built.triangle_order))
+    element_of = inverse_order(section.faces, len(model.mesh.triangles))
     nd = modes.space.components[0]
     mesh3, mesh2 = built.mesh, modes.mesh
+    node = built.node_order
     pairs: dict[int, int] = {}
 
     def add(d3, d2) -> None:
@@ -369,9 +394,14 @@ def trace_dofs(
             if a >= 0:
                 pairs[int(b)] = int(a)
 
-    for el in mesh2.Elements(ngs.VOL):
-        bnd = mesh3[ngs.ElementId(ngs.BND, int(bnd_of[section.faces[el.nr]]))]
-        edges3 = {tuple(sorted(v.nr for v in mesh3[e].vertices)): e for e in bnd.edges}
+    elements = element_of[built.triangle_order]
+    for local in np.flatnonzero(elements >= 0):
+        bnd = mesh3[ngs.ElementId(ngs.BND, int(local))]
+        el = mesh2[ngs.ElementId(ngs.VOL, int(elements[local]))]
+        edges3 = {
+            tuple(sorted(int(node[v.nr]) for v in mesh3[e].vertices)): e
+            for e in bnd.edges
+        }
         for e in el.edges:
             key = tuple(sorted(int(used[v.nr]) for v in mesh2[e].vertices))
             add(

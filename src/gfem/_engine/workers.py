@@ -10,7 +10,9 @@ own block, so the error names the frequencies it was solving. A worker
 starts with the OpenMP, MKL and OpenBLAS thread variables set to its share
 of the threads (its environment at spawn: the libraries read them when
 imported); NGSolve's own threads follow the worker's
-``SolverOptions.threads``.
+``SolverOptions.threads``. It starts without the launcher's variables too: a worker is
+a plain one-process run, and a script that imports mpi4py at its top would otherwise
+die in ``MPI_Init`` when the worker imports it again.
 
 `gfem.Model` does not pickle (its materials are a mapping proxy); its
 pytree parts do (`model_parts`, `model_from_parts`).
@@ -36,6 +38,8 @@ __all__ = ["model_from_parts", "model_parts", "run", "worker_threads"]
 
 #: Thread-count variables of the libraries a solve may run on.
 _THREAD_VARIABLES = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")
+#: What a launcher tells its tasks; a worker never resolves a communicator.
+_LAUNCHER_PREFIXES = ("OMPI_", "PMIX_", "PMI_", "SLURM_STEP_")
 #: Held while this process's environment carries a worker's thread variables.
 _START_LOCK = threading.Lock()
 
@@ -67,15 +71,19 @@ def model_from_parts(aux: Any, children: Any) -> Model:
 
 
 @contextlib.contextmanager
-def _thread_variables(threads: int) -> Generator[None]:
-    """This process's environment with the thread variables set to ``threads``.
+def _worker_environment(threads: int) -> Generator[None]:
+    """This process's environment as a worker's: its threads, and no launcher.
 
-    A process spawned meanwhile starts with them. The environment is
-    restored on exit; `_START_LOCK` keeps two `run` calls from interleaving.
+    A process spawned meanwhile starts with it. The environment is restored on
+    exit; `_START_LOCK` keeps two `run` calls from interleaving.
     """
     with _START_LOCK:
-        saved = {name: os.environ.get(name) for name in _THREAD_VARIABLES}
+        launcher = [name for name in os.environ if name.startswith(_LAUNCHER_PREFIXES)]
+        names = (*_THREAD_VARIABLES, *launcher)
+        saved = {name: os.environ.get(name) for name in names}
         os.environ.update(dict.fromkeys(_THREAD_VARIABLES, str(threads)))
+        for name in launcher:
+            del os.environ[name]
         try:
             yield
         finally:
@@ -112,7 +120,7 @@ def run(
     with contextlib.ExitStack() as stack:
         futures = []
         # a pool starts its process on the first submit
-        with _thread_variables(threads):
+        with _worker_environment(threads):
             for args in arguments:
                 pool = stack.enter_context(
                     ProcessPoolExecutor(max_workers=1, mp_context=context)

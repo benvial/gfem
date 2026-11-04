@@ -19,9 +19,10 @@ pip install "gfem[cuda12]"  # optional cuDSS GPU solver (Linux x86_64, Windows)
 pip install "gfem[mkl]"     # optional MKL PARDISO CPU direct solver (Linux x86_64, Windows)
 pip install "gfem[xarray]"  # optional: results as xarray datasets (.to_xarray())
 pip install "gfem[viz]"     # optional: fields as pyvista grids (.to_pyvista())
+pip install "gfem[mpi]"     # optional: mpi4py for solves across ranks (Linux x86_64; Open MPI from the machine)
 ```
 
-PETSc and SLEPc solvers need a source build: see the PETSc and SLEPc recipe (`docs/recipes/petsc-slepc.md`).
+PETSc and SLEPc solvers need a source build: see the PETSc and SLEPc recipe (`docs/recipes/petsc-slepc.md`). Solves across ranks: see the distributed solve recipe (`docs/recipes/distributed-solve.md`).
 
 Supported platforms: Linux x86_64 (glibc >= 2.28), macOS arm64 and Windows x86_64, Python >= 3.12.
 

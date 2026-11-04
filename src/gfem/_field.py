@@ -10,7 +10,9 @@ from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
+from gfem import _mpi
 from gfem._checks import is_traced
 from gfem._probe import field_at
 from gfem._pytree import register_fields
@@ -47,11 +49,16 @@ class Field:
     A field is a JAX pytree: its leaves are ``coefficients``, the mesh node
     coordinates and ``omega``; the rest is static.
 
+    From a solve across ranks each of a field's methods is collective: every rank
+    makes the same calls in the same order, and `at` gives each the same bits.
+
     Attributes:
         coefficients: The finite-element coefficients, shape ``(n_dofs,)``,
             float64 or complex128. Their order is the engine's for this mesh
             topology, support, space and order: read values through the
-            field's methods, not by index.
+            field's methods, not by index. Across ranks they are this rank's
+            piece, padded with zeros to the largest rank's size, so a function
+            of them differs per rank.
         mesh: The mesh the field lives on (the model's mesh, as solved).
         quantity: What the field is: ``"V"`` (electric potential), ``"E"``
             (electric field), ``"B"`` (magnetic flux density), and later
@@ -76,6 +83,7 @@ class Field:
     support: tuple[str, ...]
     omega: jax.Array | None = None
     _excluded: tuple[tuple[int, int], ...] = ()
+    _comm: _mpi.StaticComm | None = None
 
     def __post_init__(self) -> None:
         """Check the descriptor against the mesh."""
@@ -107,6 +115,11 @@ class Field:
         object.__setattr__(self, "coefficients", coefficients)
         if self.omega is not None:
             object.__setattr__(self, "omega", jnp.asarray(self.omega))
+
+    @property
+    def _communicator(self) -> Any:
+        """The communicator of a piece across ranks; ``None`` on one process."""
+        return None if self._comm is None else self._comm.comm
 
     @property
     def is_complex(self) -> bool:
@@ -142,7 +155,11 @@ class Field:
                 "b() needs the angular frequency of a time-harmonic field; this "
                 "electric field is static (omega is None)."
             )
-        rows, cols, values, size = _engine().curl_matrix(self)
+        comm = self._communicator
+        with _mpi.section(comm):
+            shape = np.asarray(self.coefficients.shape)
+            _mpi.check_call(comm, "Field.b", {"the shape of a piece": shape})
+            rows, cols, values, size = _engine().curl_matrix(self)
         curl = jax.ops.segment_sum(
             values * self.coefficients[cols], rows, num_segments=size
         )
@@ -177,8 +194,9 @@ class Field:
                 the field is not defined: outside its ``support``, or inside
                 a volume the model excludes from the solve (inside metal).
                 Under `jax.jit` with traced points or node coordinates, this
-                surfaces as a ``jax.errors.JaxRuntimeError`` with the same
-                message.
+                surfaces as a ``jax.errors.JaxRuntimeError``, or as ``ValueError``
+                from a jitted function that has already succeeded, with the
+                same message.
         """
         return field_at(self, points)
 
@@ -197,27 +215,52 @@ class Field:
         Raises:
             TypeError: The field holds JAX tracers: export concrete values,
                 outside `jax.jit` / `jax.grad`.
+            gfem.DistributedUnsupportedError: The field is a piece across ranks.
         """
-        import meshio
-
+        self._refuse_export()
         self._check_concrete("to_meshio")
-        points, cells, point_data, cell_data = _engine().sample(self)
-        return meshio.Mesh(
-            points,
-            [("tetra", cells)],
-            point_data=point_data,
-            cell_data={k: [v] for k, v in cell_data.items()},
-        )
+        return _meshio_mesh(_engine().sample(self))
 
     def to_vtu(self, path: str | Path) -> None:
-        """Write the field to a VTU file for ParaView (see `to_meshio`)."""
-        self.to_meshio().write(Path(path), file_format="vtu")
+        """Write the field to a VTU file for ParaView (see `to_meshio`).
+
+        Across ranks this is collective: rank 0 gathers the samples and writes the
+        one file, the same as one process's but for round-off.
+
+        Raises:
+            TypeError: The field holds JAX tracers: export concrete values,
+                outside `jax.jit` / `jax.grad`.
+            OSError: Rank 0 cannot write the file; on every rank.
+        """
+        comm = self._communicator
+        if comm is None:
+            self.to_meshio().write(Path(path), file_format="vtu")
+            return
+        self._check_concrete("to_vtu")
+        with _mpi.section(comm):
+            shape = np.asarray(self.coefficients.shape)
+            _mpi.check_call(
+                comm,
+                "Field.to_vtu",
+                {"the shape of a piece": shape, "the path": str(path)},
+            )
+            sampled = _engine().sample(self)
+
+            def write() -> dict[str, np.ndarray]:
+                _meshio_mesh(sampled).write(Path(path), file_format="vtu")
+                return {}
+
+            _mpi.on_root(comm, write, results=(OSError, ValueError))
 
     def to_pyvista(self) -> Any:
         """The field as a ``pyvista.UnstructuredGrid`` (see `to_meshio`).
 
         Needs the optional ``viz`` extra: ``pip install "gfem[viz]"``.
+
+        Raises:
+            gfem.DistributedUnsupportedError: The field is a piece across ranks.
         """
+        self._refuse_export()
         try:
             pyvista = importlib.import_module("pyvista")
         except ImportError:
@@ -225,6 +268,20 @@ class Field:
                 'to_pyvista needs pyvista: pip install "gfem[viz]".'
             ) from None
         return pyvista.from_meshio(self.to_meshio())
+
+    def _gathered(self) -> Field:
+        """A piece as a one-process field: whole on rank 0, empty elsewhere.
+
+        Collective. Its DOFs are in one process's numbering (ADR 0064).
+        """
+        column = _engine().one_process_column(self)
+        if column is None:
+            column = np.zeros(0, self.coefficients.dtype)
+        return dataclasses.replace(self, coefficients=column, _comm=None)
+
+    def _refuse_export(self) -> None:
+        if self._comm is not None:
+            _mpi.refuse_feature("field_export")
 
     def _check_concrete(self, method: str) -> None:
         if is_traced(self):
@@ -393,6 +450,19 @@ def _unflatten_map(aux, children) -> FieldMap:
 
 
 jax.tree_util.register_pytree_with_keys(FieldMap, _flatten_map, _unflatten_map)
+
+
+def _meshio_mesh(sampled: Any) -> meshio.Mesh:
+    """A `meshio.Mesh` of what `gfem._engine.fields.sample` returned."""
+    import meshio
+
+    points, cells, point_data, cell_data = sampled
+    return meshio.Mesh(
+        points,
+        [("tetra", cells)],
+        point_data=point_data,
+        cell_data={k: [v] for k, v in cell_data.items()},
+    )
 
 
 def _engine() -> Any:

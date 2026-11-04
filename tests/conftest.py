@@ -1,8 +1,8 @@
 """Mark every test with its tier, taken from its directory under tests/.
 
 tests/unit -> unit, tests/verification -> verification, tests/reference ->
-reference, tests/benchmark -> benchmark, tests/cuda -> cuda. A test file
-outside these directories is a collection error, so each test has one tier.
+reference, tests/benchmark -> benchmark, tests/cuda -> cuda, tests/mpi -> mpi. A
+test file outside these directories is a collection error, so each test has one tier.
 
 The reference data (Palace runs, imported meshes) is found through the
 ``GFEM_REFERENCE_DIR`` environment variable: the `reference_dir` fixture
@@ -12,6 +12,7 @@ gives its path and skips the test when it is unset, and a test taking a
 
 Tests marked ``petsc`` or ``slepc`` need gfem's PETSc or SLEPc solver: they
 are skipped, with the user-facing reason, where `gfem._petsc` cannot use it.
+Tests in tests/mpi are skipped where mpi4py or the launcher is missing.
 
 A test that sets NGSolve's thread count uses the `ngsolve_threads` fixture,
 which puts the count back afterwards.
@@ -22,18 +23,14 @@ from pathlib import Path
 
 import pytest
 
-TIERS = ("unit", "verification", "reference", "benchmark", "cuda")
+TIERS = ("unit", "verification", "reference", "benchmark", "cuda", "mpi")
 TESTS_DIR = Path(__file__).parent
 REFERENCE_ENV = "GFEM_REFERENCE_DIR"
 
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Add the tier marker before pytest's `-m` deselection runs.
-
-    Then skip the `petsc` / `slepc` tests where gfem cannot use PETSc /
-    SLEPc.
-    """
+    """Add the tier marker before pytest's `-m` deselection runs."""
     for item in items:
         tier = item.path.relative_to(TESTS_DIR).parts[0]
         if tier not in TIERS:
@@ -41,7 +38,26 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
                 f"{item.nodeid}: tests must live in tests/<tier>/ with tier in {TIERS}"
             )
         item.add_marker(tier)
-    _skip_without_petsc(items)
+        if tier == "mpi" and _uses_petsc_marker(item):
+            raise pytest.UsageError(
+                f"{item.nodeid}: a launched test skips on _petsc.has_mpi(): a petsc or "
+                "slepc marker would start PETSc, and on the MPI stack MPI, in this "
+                "process, which launched jobs then inherit"
+            )
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    """Skip what cannot run here, among the tests `-m` left.
+
+    Probing a deselected test would start PETSc in this process for nothing, and on
+    the MPI PETSc stack load MPI here, which launched jobs inherit.
+    """
+    _skip_without_petsc(session.items)
+    _skip_without_mpi(session.items)
+
+
+def _uses_petsc_marker(item: pytest.Item) -> bool:
+    return any(item.get_closest_marker(name) for name in ("petsc", "slepc"))
 
 
 def _skip_without_petsc(items: list[pytest.Item]) -> None:
@@ -67,6 +83,23 @@ def _skip_without_petsc(items: list[pytest.Item]) -> None:
             probes[name]()
         except SolverUnavailableError as err:
             item.add_marker(pytest.mark.skip(reason=str(err)))
+
+
+def _skip_without_mpi(items: list[pytest.Item]) -> None:
+    """Skip the launched tests where they cannot launch.
+
+    The probe runs only when some test carries the marker, and in `ranks`, so
+    this one-process pytest never loads MPI.
+    """
+    marked = [item for item in items if item.get_closest_marker("mpi") is not None]
+    if not marked:
+        return
+    import ranks
+
+    reason = ranks.unavailable()
+    if reason is not None:
+        for item in marked:
+            item.add_marker(pytest.mark.skip(reason=reason))
 
 
 @pytest.fixture

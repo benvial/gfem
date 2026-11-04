@@ -571,6 +571,8 @@ class NetworkParameters:
     def to_touchstone(self, path: str | Path, z0: float | None = None) -> Path:
         """Write S to a Touchstone 1.1 file (``.sNp``, real/imaginary, Hz).
 
+        Not collective: across ranks a script calls it on rank 0.
+
         A Touchstone 1.1 file has one real reference impedance for every
         port. Without ``z0`` the file is labelled with `z_ref`, which must
         then be one real value for every port and frequency: gfem never
