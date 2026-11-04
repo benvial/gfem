@@ -22,8 +22,9 @@ largest interface between two volumes, since a sheet needs the domain on both si
 
 ``check`` compares a run with its reference at ADR 0070's gates: 1e-11 on ``direct``,
 1e-9 and the exact iteration count on ``bddc_gmres``, S entries relative to the largest
-of the reference's. Gradient entries read `GRADIENT_GATE` on a real mesh. The result goes into the run's record. ``--observe``
-reports the same difference with no gate, for a run on another mesh.
+of the reference's. Gradient entries read `GRADIENT_GATE` on a real mesh. The result
+goes into the run's record. ``--observe`` reports the same difference with no gate, for
+a run on another mesh.
 
 A phase is read through a wrapper around gfem's own functions. These are private names:
 this script is pinned to the commit in its record.
@@ -52,10 +53,10 @@ import numpy as np
 #: ADR 0070's gates, relative to the largest entry of the reference.
 GATES = {"direct": 1e-11, "bddc_gmres": 1e-9}
 #: Gradient entries on a real mesh, either solver, relative to the reference's largest.
-#: ADR 0070's 1e-11 for ``direct`` holds on the launched tier's tiny meshes. On r10M_void
-#: gradients differ beyond it with no ranks at all: one-process PARDISO at 56 threads
-#: against 112 differs by 6.5e-11 in eps_r (job 48473913), the size of MUMPS on 112 ranks
-#: against one process, 1.4e-10 (48473421), while S agrees to 7e-13 there.
+#: ADR 0070's 1e-11 for ``direct`` holds on the launched tier's tiny meshes. On
+#: r10M_void gradients differ beyond it with no ranks at all: one-process PARDISO at 56
+#: threads against 112 differs by 6.5e-11 in eps_r (job 48473913), the size of MUMPS on
+#: 112 ranks against one process, 1.4e-10 (48473421), while S agrees to 7e-13 there.
 GRADIENT_GATE = 1e-9
 #: The packages a record names.
 PACKAGES = ("gfem", "ngsolve", "petsc", "petsc4py", "mpi4py", "numpy", "scipy", "jax")
