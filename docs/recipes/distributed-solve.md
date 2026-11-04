@@ -256,9 +256,7 @@ and bills every core of them. Do not time anything under `srun --overlap`.
 (distributed-scale)=
 ## Scale
 
-% The 78 M DOF rehearsal has not finished: at 28x4 on 32 standard nodes both
-% solvers ran out of memory, and BDDC on 32 highmem nodes crashed in MUMPS. Its result
-% goes here when it finishes. Keep the anchor: the layout section links to it.
+% Keep the anchor: the layout section links to it.
 
 These are observations from one run each, on MareNostrum 5 GPP (Xeon Platinum 8480+),
 Open MPI 4.1.6, PETSc 3.26.0, gfem at commit ec608cd; `tools/scale_run.py` makes the runs.
@@ -289,6 +287,14 @@ rows below 90 k DOF per rank are under the layout above, there to test agreement
 The largest wave port mesh shown across ranks has 168,022 DOF, on 28 ranks of one node
 at 50 GHz (job 48473792, commit ec608cd): S to 1.7e-12 on `direct`, and 8.9e-13 on
 `bddc_gmres` with the same iterations.
+
+The largest mesh run has 78,043,164 DOF at order 2 and 11,719,272 tetrahedra, the mesh
+above with each tetrahedron split once, on 32 highmem nodes at 28 x 4 (896 ranks, gfem at
+commit 515d12b). `bddc_gmres` on one frequency at `tolerance=1e-10`, job 48478202, took
+559 s inside `gfem.solve`, 87 iterations per port, 86 GiB on the largest node, with S the
+same bit for bit on all ranks. Its coarse problem, 22,356,889 DOF, ran on 64 ranks.
+`direct` on the same nodes, job 48478460, ran out of memory and gave no S, so at this size
+S has no second solver to agree with.
 
 What has run so far, on MareNostrum 5:
 
