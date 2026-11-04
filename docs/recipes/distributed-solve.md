@@ -249,8 +249,9 @@ and bills every core of them. Do not time anything under `srun --overlap`.
 (distributed-scale)=
 ## Scale
 
-% The 78 M DOF rehearsal (D4) has not run: its result goes here when it has. Keep the
-% anchor: the layout section links to it.
+% The 78 M DOF rehearsal (D4) has not finished: at 28x4 on 32 standard nodes both
+% solvers ran out of memory. Its result goes here when it finishes. Keep the anchor:
+% the layout section links to it.
 
 These are observations from one run each, on MareNostrum 5 GPP (Xeon Platinum 8480+),
 Open MPI 4.1.6, PETSc 3.26.0, gfem at commit ec608cd; `tools/scale_run.py` makes the runs.

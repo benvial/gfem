@@ -54,9 +54,10 @@ import numpy as np
 GATES = {"direct": 1e-11, "bddc_gmres": 1e-9}
 #: Gradient entries on a real mesh, either solver, relative to the reference's largest.
 #: ADR 0070's 1e-11 for ``direct`` holds on the launched tier's tiny meshes. On
-#: r10M_void gradients differ beyond it with no ranks at all: one-process PARDISO at 56
-#: threads against 112 differs by 6.5e-11 in eps_r (job 48473913), the size of MUMPS on
-#: 112 ranks against one process, 1.4e-10 (48473421), while S agrees to 7e-13 there.
+#: r10M_void gradients differ beyond it with no ranks at all, against one-process
+#: PARDISO at 112 threads: PARDISO at 56 threads by 6.5e-11 in eps_r (job 48473913),
+#: one-process MUMPS by 9.9e-11 (48473915). MUMPS on 112 ranks differs by 1.4e-10
+#: (48473421), while S agrees to 7e-13.
 GRADIENT_GATE = 1e-9
 #: The packages a record names.
 PACKAGES = ("gfem", "ngsolve", "petsc", "petsc4py", "mpi4py", "numpy", "scipy", "jax")
