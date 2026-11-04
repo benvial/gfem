@@ -5,9 +5,10 @@ process and every rank waits for its apply. NGSolve lets a registered ``coarsety
 take its place, so with the MPI PETSc stack `CoarseMumps` factors the wirebasket
 across ranks, with no change to BDDC: iterations and S stay those of the rank 0 route.
 
-PT-Scotch's fill jumps below about 100 k wirebasket DOF per rank (r10M: 556 M entries
-at 104 k, 4520 M at 52 k), so ``PCTELESCOPE`` in front of MUMPS runs it on at most
-one rank per `DOFS_PER_RANK`, without building a communicator by hand.
+PT-Scotch's fill grows with the ranks it orders on (r10M: 556 M entries at 104 k
+wirebasket DOF per rank, 4520 M at 52 k; r10M_void_split, 4 threads per rank: 7.3 G on
+64 ranks, 85 G on 180), so ``PCTELESCOPE`` in front of MUMPS runs it on at most one
+rank per `DOFS_PER_RANK` and `MAX_RANKS` ranks, without building a communicator by hand.
 """
 
 from __future__ import annotations
@@ -30,6 +31,9 @@ from gfem._linalg.petsc import (
 #: Wirebasket DOFs per coarse rank: PT-Scotch's fill is fine at 66 k and 104 k and
 #: jumps at 52 k and 33 k on r0.5 and r10M; "about 100 k" errs on the fine side.
 DOFS_PER_RANK = 100_000
+#: Coarse ranks at most: on r10M_void_split's 22.4 M wirebasket DOFs, 64 ranks stay
+#: within 1.4x of METIS's 5.2 G entries, 112 give 3.2x and 180 give 16x (ADR 0078).
+MAX_RANKS = 64
 
 #: Failures a larger workspace may cure: behind telescoping every failure reads 0.
 RETRIED = (MUMPS_WORKSPACE_ERROR, 0)
@@ -39,7 +43,7 @@ _made: dict[int | None, list[CoarseMumps]] = {}
 
 
 def reduction(dofs: int, size: int) -> int:
-    """``PCTELESCOPE``'s factor: ``size`` ranks to at most one per `DOFS_PER_RANK`.
+    """``PCTELESCOPE``'s factor, under `DOFS_PER_RANK` and `MAX_RANKS`.
 
     Args:
         dofs: The coarse problem's free DOFs.
@@ -49,7 +53,7 @@ def reduction(dofs: int, size: int) -> int:
         1 for no reduction. PETSc keeps every factor-th rank, ``ceil(size / factor)``
         of them.
     """
-    return max(1, math.ceil(size / max(1, dofs // DOFS_PER_RANK)))
+    return max(1, math.ceil(size / max(1, min(dofs // DOFS_PER_RANK, MAX_RANKS))))
 
 
 class CoarseMumps(ngs.BaseMatrix):

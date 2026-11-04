@@ -209,15 +209,20 @@ def test_a_one_process_solve_never_imports_mpi4py(environment, tmp_path):
     [
         (3_300_000, 28, 1),  # r10M at 28x4: 119 k per rank, nothing to reduce
         (3_300_000, 64, 2),  # 32 ranks, as ticket 18 ran
-        (33_000_000, 896, 3),  # ADR 0078's arithmetic at 100 M DOF
+        (22_356_889, 896, 14),  # r10M_void_split on 32 nodes: 64 ranks, not 180
+        (22_356_889, 64, 1),
+        (33_000_000, 896, 14),  # ADR 0078's arithmetic at 100 M DOF: still 64
         (250_000, 8, 4),
         (1_000, 8, 8),  # a tiny mesh: one rank
         (1_000, 1, 1),
     ],
 )
-def test_the_coarse_problem_runs_on_at_most_one_rank_per_100k_dofs(dofs, size, factor):
+def test_the_coarse_problem_runs_on_at_most_one_rank_per_100k_dofs_and_64_ranks(
+    dofs, size, factor
+):
     assert coarse.reduction(dofs, size) == factor
     assert math.ceil(size / factor) <= max(1, dofs // coarse.DOFS_PER_RANK)
+    assert math.ceil(size / factor) <= coarse.MAX_RANKS
 
 
 # --- refusals ---------------------------------------------------------------------
