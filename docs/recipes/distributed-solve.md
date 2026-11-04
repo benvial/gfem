@@ -166,15 +166,22 @@ On MareNostrum 5 use 28 ranks per node with 4 threads each:
 when a rank would hold under about 90 k DOF, and without PETSc, where the coarse
 problem stays on rank 0, use 8 ranks with 14 threads. Give every rank the same core
 count, since unequal masks can fail the check at the solve's start. Rank 0 needs no
-node of its own and no extra threads. This comes from layout trials of a prototype on
-that machine; {ref}`distributed-scale` is where runs through `gfem.solve` go.
+node of its own and no extra threads.
+
+These are observations from one run per layout of a prototype script on gfem at commit
+009f5a6, on a 10.2 M DOF mesh: jobs 48441613 and 48441617 on one node, 48438004 and
+48441622 on four. On four nodes `direct` took 54 s at 28 x 4, or 92 k DOF per rank, 61 s
+at 16 x 7 and 79 s at 8 x 14. With the coarse problem on rank 0, on one node, `bddc_gmres`
+took 118 s at 8 x 14 and 145 s at 28 x 4. Layouts have been compared up to 4 nodes and
+10.2 M DOF, and past that this advice is an extrapolation. {ref}`distributed-scale` has
+the runs through `gfem.solve`.
 
 - `threads=None` under ranks is `NGS_NUM_THREADS` if set, otherwise the physical cores
   in the rank's mask, divided by the ranks on the node sharing that mask, at least 1,
   and the smallest count over all ranks. On one process the usual rule stands.
-- gfem sets the BLAS threads itself: the rank's count in a factorization, 1 in BDDC's
-  coarse solve. `OMP_NUM_THREADS` is not read. Your own later setting stands outside
-  those phases.
+- gfem sets the BLAS threads itself: the rank's count in a factorization, 1 when BDDC
+  applies its coarse factorization. `OMP_NUM_THREADS` is not read. Your own later
+  setting stands outside those phases.
 - `retain_memory` and its default count per node: the bytes held on a node's ranks
   against the smallest node's half.
 
@@ -249,13 +256,16 @@ and bills every core of them. Do not time anything under `srun --overlap`.
 (distributed-scale)=
 ## Scale
 
-% The 78 M DOF rehearsal (D4) has not finished: at 28x4 on 32 standard nodes both
+% The 78 M DOF rehearsal has not finished: at 28x4 on 32 standard nodes both
 % solvers ran out of memory, and BDDC on 32 highmem nodes crashed in MUMPS. Its result
 % goes here when it finishes. Keep the anchor: the layout section links to it.
 
 These are observations from one run each, on MareNostrum 5 GPP (Xeon Platinum 8480+),
 Open MPI 4.1.6, PETSc 3.26.0, gfem at commit ec608cd; `tools/scale_run.py` makes the runs.
-They gate nothing: a time here is no promise about another mesh or layout. The mesh is
+The jobs, from the first row down, are 48472501, 48472503, 48472505, 48472507, 48472787,
+48472792 and 48472794 on `direct`, and 48472502, 48472504, 48472506, 48472508, 48472788,
+48472793 and 48472795 on `bddc_gmres`. They gate nothing: a time here is no promise about
+another mesh or layout. The mesh is
 a coplanar line with 10,248,856 DOF at order 2 and 1,464,909 tetrahedra, `direct` on two
 frequencies, `bddc_gmres` on one at `tolerance=1e-8`, two ports. A multi-node job holds
 112 cores per node, whatever it uses.
@@ -276,16 +286,17 @@ bit for bit on all ranks and differed by at most 2.8e-12 on `direct` and 7.6e-13
 `bddc_gmres`, relative to S's largest entry, with the same 64 iterations per port. The
 rows below 90 k DOF per rank are under the layout above, there to test agreement.
 
-The largest wave port mesh shown across ranks is `r8_wp`, 168,022 DOF, on 28 ranks of
-one node at 50 GHz (job 48473792): S to 1.7e-12 on `direct`, and 8.9e-13 on `bddc_gmres`
-with the same iterations.
+The largest wave port mesh shown across ranks has 168,022 DOF, on 28 ranks of one node
+at 50 GHz (job 48473792, commit ec608cd): S to 1.7e-12 on `direct`, and 8.9e-13 on
+`bddc_gmres` with the same iterations.
 
 What has run so far, on MareNostrum 5:
 
-- the launched tests, at 3, 4 and 8 ranks, and 16 for the direct solve, on one node;
+- the launched tests, at 3, 4 and 8 ranks, and 16 for the direct solve, on one node:
+  job 48470616, gfem at commit 0224ad2, 442 passed and 3 skipped;
 - the two-node job above, at 56 ranks on the 2,880 tetrahedra of `line.msh`, Open MPI
-  4.1.6, gfem at commit 11ae3c6: on each solver, what the script prints agrees with
-  one process to within 3e-12, relative.
+  4.1.6, gfem at commit 11ae3c6, job 48468681: on each solver, what the script prints
+  agrees with one process to within 3e-12, relative.
 
 ## Limits
 
