@@ -795,12 +795,12 @@ def table(args: argparse.Namespace) -> int:
     for path in args.records:
         r = json.loads(path.read_text())
         dofs = r["dofs"].get("owned_sum", 0)
-        per_rank = round(dofs / r["ranks"] / 1e3)
+        per_rank = f"{dofs / r['ranks'] / 1e3:.0f} k" if dofs else "all"
         solve = r["phases"].get("solve", {}).get("max_s", float("nan"))
         its = sorted({i for row in r["iterations"].get("iterations", []) for i in row})
         print(
             f"| {r['node_count']} | {r['ranks']} x {r['threads_read']} | "
-            f"{per_rank} k | "
+            f"{per_rank} | "
             f"`{r['solver']}` | {len(r['frequencies_ghz'])} | "
             f"{'-' if not its else ', '.join(map(str, its))} | {solve:.0f} | "
             f"{r['memory']['peak_rss_largest_node_gib']:.0f} | {r['job']} |"
