@@ -360,7 +360,7 @@ def bcast_arrays(comm: Any, arrays: dict[str, np.ndarray] | None) -> dict:
         arrays: The arrays, C-contiguous, on rank 0; ``None`` elsewhere.
     """
     if comm is None:
-        return arrays
+        return {} if arrays is None else arrays
     if arrays is None:
         meta = comm.bcast(None, root=0)
         arrays = {name: np.empty(*m) for name, m in meta.items()}
