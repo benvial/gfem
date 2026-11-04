@@ -250,8 +250,8 @@ and bills every core of them. Do not time anything under `srun --overlap`.
 ## Scale
 
 % The 78 M DOF rehearsal (D4) has not finished: at 28x4 on 32 standard nodes both
-% solvers ran out of memory. Its result goes here when it finishes. Keep the anchor:
-% the layout section links to it.
+% solvers ran out of memory, and BDDC on 32 highmem nodes crashed in MUMPS. Its result
+% goes here when it finishes. Keep the anchor: the layout section links to it.
 
 These are observations from one run each, on MareNostrum 5 GPP (Xeon Platinum 8480+),
 Open MPI 4.1.6, PETSc 3.26.0, gfem at commit ec608cd; `tools/scale_run.py` makes the runs.
