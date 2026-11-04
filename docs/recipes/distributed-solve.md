@@ -249,13 +249,35 @@ and bills every core of them. Do not time anything under `srun --overlap`.
 (distributed-scale)=
 ## Scale
 
-% Filled from the evidence runs: D1's table labelled as observations, D4 as run, r8_wp
-% as the largest wave port shown. Keep the anchor: the layout section links to it.
+% The 78 M DOF rehearsal (D4) has not run: its result goes here when it has. Keep the
+% anchor: the layout section links to it.
 
-```{note}
-**To be filled.** No timing or size is claimed here yet: this section will hold the
-runs through `gfem.solve` at scale, each with its machine and commit.
-```
+These are observations from one run each, on MareNostrum 5 GPP (Xeon Platinum 8480+),
+Open MPI 4.1.6, PETSc 3.26.0, gfem at commit ec608cd; `tools/scale_run.py` makes the runs.
+They gate nothing: a time here is no promise about another mesh or layout. The mesh is
+a coplanar line with 10,248,856 DOF at order 2 and 1,464,909 tetrahedra, `direct` on two
+frequencies, `bddc_gmres` on one at `tolerance=1e-8`, two ports. A multi-node job holds
+112 cores per node, whatever it uses.
+
+| Nodes | Ranks x threads | DOF per rank | `direct`, s | Largest node, GiB | `bddc_gmres`, s | Largest node, GiB |
+|---|---|---|---|---|---|---|
+| 1 | 1 x 112 | all | 109 | 109 | 121 | 51 |
+| 1 | 28 x 4 | 366 k | 101 | 153 | 67 | 64 |
+| 2 | 56 x 4 | 183 k | 69 | 97 | 54 | 43 |
+| 4 | 112 x 4 | 92 k | 57 | 69 | 49 | 28 |
+| 8 | 224 x 4 | 46 k | 97 | 89 | 46 | 22 |
+| 16 | 448 x 4 | 23 k | 181 | 96 | 58 | 20 |
+| 32 | 896 x 4 | 11 k | 178 | 95 | 51 | 19 |
+
+Seconds are inside `gfem.solve`, on the slowest rank. Memory is the peak resident size
+summed over a node's ranks. Against the first row, at every rank count, S was the same
+bit for bit on all ranks and differed by at most 2.8e-12 on `direct` and 7.6e-13 on
+`bddc_gmres`, relative to S's largest entry, with the same 64 iterations per port. The
+rows below 90 k DOF per rank are under the layout above, there to test agreement.
+
+The largest wave port mesh shown across ranks is `r8_wp`, 168,022 DOF, on 28 ranks of
+one node at 50 GHz (job 48473792): S to 1.7e-12 on `direct`, and 8.9e-13 on `bddc_gmres`
+with the same iterations.
 
 What has run so far, on MareNostrum 5:
 
