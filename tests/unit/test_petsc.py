@@ -515,9 +515,21 @@ def _system_tail(tmp_path):
         for entry in Path(folder).iterdir():
             if entry.name in ("mpicc", "mpicxx", "mpifort"):
                 continue
-            if not (tail / entry.name).exists():
+            # lexists: a dangling link is an entry too, as on MareNostrum 5, where
+            # /bin is /usr/bin and /bin/lualatex dangles.
+            if not os.path.lexists(tail / entry.name):
                 (tail / entry.name).symlink_to(entry)
     return tail
+
+
+def test_a_dangling_link_in_two_system_folders_is_linked_once(tmp_path, monkeypatch):
+    host = tmp_path / "host"
+    host.mkdir()
+    (host / "dangling").symlink_to("nowhere")
+    folders = (str(host), str(host))
+    monkeypatch.setattr(sys.modules[__name__], "SYSTEM_FOLDERS", folders)
+    tail = _system_tail(tmp_path)
+    assert (tail / "dangling").is_symlink()
 
 
 def _check(tmp_path, path=(), flags=(), **env):
