@@ -32,6 +32,9 @@ with its script. A run that left no record gets a stub, ``failed: true``, with S
 state, the phases its ``--trace`` left open and the figures MUMPS printed. A finished
 run keeps its record, with those figures added, since the coarse's cannot be read
 behind ``PCTELESCOPE``. ``check`` reports a stub as not passed, and ``table`` shows it.
+``close --state STARTED``, before a run, first moves any record and sidecar of that
+name aside to ``NAME.superseded-N.json`` and ``.npz``, so a killed rerun is not
+reported by an earlier run's record; ``table`` and ``check`` ignore superseded files.
 
 ``table`` gives one row per rung: median and range over the repeats, DOF per rank and
 per node, and with ``--base NODES`` an efficiency against that named rung, strong within
@@ -58,6 +61,7 @@ import socket
 import sys
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -348,8 +352,15 @@ def _instrument_petsc(phases: Phases, facts: Facts) -> None:
     phases.wrap(coarse.CoarseMumps, "Mult", "coarse_apply")
 
 
-def _print_mumps() -> None:
-    """MUMPS's own statistics, ``ICNTL(4)=2``: the whole system's and the coarse's."""
+def _print_mumps(comm: Any, say: Callable[[str], None]) -> None:
+    """MUMPS's own statistics, ``ICNTL(4)=2``: the whole system's and the coarse's.
+
+    Without ranks it only says so: one process's ``direct`` is PARDISO or sparse
+    Cholesky and its BDDC has no MUMPS coarse, so neither reaches MUMPS.
+    """
+    if comm is None:
+        say("--mumps-print does nothing without ranks")
+        return
     from gfem._linalg import coarse, petsc
 
     defaults = petsc.RankPetscHandle._defaults  # noqa: SLF001
@@ -819,8 +830,8 @@ def run(args: argparse.Namespace) -> int:
 
     phases, facts = Phases(trace=args.trace and rank == 0), Facts()
     _instrument(phases, facts, comm)
-    if args.mumps_print and comm is not None:
-        _print_mumps()
+    if args.mumps_print:
+        _print_mumps(comm, say)
     iterations: list[np.ndarray] = []
     if not args.spaces_only:
         _capture_iterations(iterations)
@@ -900,6 +911,27 @@ def _file(name: Path, suffix: str) -> Path:
     return name.with_name(name.name + suffix)
 
 
+#: A record a rerun moved aside (`close`), with no suffix or with ``.json``.
+SUPERSEDED = re.compile(r"\.superseded-\d+(\.json)?$")
+
+
+def _superseded(name: Path) -> bool:
+    return SUPERSEDED.search(name.name) is not None
+
+
+def _supersede(name: Path) -> None:
+    """Move ``name``'s record and sidecar aside, to the first free ``superseded-N``."""
+    suffixes = (".json", ".npz")
+    if not any(_file(name, s).exists() for s in suffixes):
+        return
+    n = 1
+    while any(_file(name, f".superseded-{n}{s}").exists() for s in suffixes):
+        n += 1
+    for suffix in suffixes:
+        if _file(name, suffix).exists():
+            _file(name, suffix).rename(_file(name, f".superseded-{n}{suffix}"))
+
+
 def _printable(s: np.ndarray | None) -> list | None:
     if s is None:
         return None
@@ -937,6 +969,11 @@ def _not_compared(args: argparse.Namespace, reason: str) -> int:
 def check(args: argparse.Namespace) -> int:
     """Compare a run with a reference; write the result into the run's record."""
     run_path, reference_path = args.name, args.reference
+    for label, name in (("run", run_path), ("reference", reference_path)):
+        if _superseded(name):
+            reason = f"the {label} {name} is superseded by a rerun"
+            print(json.dumps({"run": run_path.name, "passed": False, "reason": reason}))
+            return 1
     reason = _nothing_to_compare(run_path, reference_path)
     if reason:
         return _not_compared(args, reason)
@@ -983,7 +1020,8 @@ SOLVE_NOTE = (
 
 
 def _solve_seconds(record: dict[str, Any]) -> float:
-    return record["phases"]["solve"]["max_s"]
+    """The solve's time; NaN for a record with none (``--spaces-only``)."""
+    return record.get("phases", {}).get("solve", {}).get("max_s", float("nan"))
 
 
 def _rungs(records: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
@@ -1087,7 +1125,8 @@ def _rung_row(
 
 def table(args: argparse.Namespace) -> int:
     """A Markdown table of records, one row per rung, in the order given."""
-    records = [json.loads(path.read_text()) for path in args.records]
+    paths = [path for path in args.records if not _superseded(path)]
+    records = [json.loads(path.read_text()) for path in paths]
     rungs = _rungs(records)
     titles = (
         "Mesh",
@@ -1145,7 +1184,9 @@ def _stub_facts(args: argparse.Namespace) -> dict[str, Any]:
         "state": args.state,
         "rc": args.rc,
     }
-    if node_count and args.ranks_per_node:
+    if args.ranks_per_node == 0:
+        facts["ranks"] = 1  # python with no launcher, as its own record says
+    elif node_count and args.ranks_per_node:
         facts["ranks"] = node_count * args.ranks_per_node
     if args.ghz:
         facts["frequencies_ghz"] = [float(g) for g in args.ghz.split(",")]
@@ -1154,6 +1195,8 @@ def _stub_facts(args: argparse.Namespace) -> dict[str, Any]:
 
 def close(args: argparse.Namespace) -> int:
     """After a step: the printed figures on its record, or a stub if it has none."""
+    if args.state == "STARTED":
+        _supersede(args.name)
     path = _file(args.name, ".json")
     record = json.loads(path.read_text()) if path.exists() else {}
     log = args.log.read_text(errors="replace") if args.log and args.log.exists() else ""
