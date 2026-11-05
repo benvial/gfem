@@ -43,6 +43,17 @@ e = result.e_field(28e9, excite="p1").at([[0.0, 0.0, 5e-6], [1e-4, 0.0, 5e-6]])
 A point inside a volume the field does not cover (an excluded metal volume)
 raises `ValueError`.
 
+- A point inside a tetrahedron gets that tetrahedron's value, the same on any
+  number of ranks.
+- A point on a face, to round-off, gets the value from one of the tetrahedra
+  sharing it, in the field's support when one is; which one is fixed but not
+  otherwise specified. A component that jumps there, such as the normal component
+  of E at a material interface, has no single value, so to read one side offset
+  the point into it. A point on an excluded conductor's surface reads the side
+  the field covers.
+- A point within a small tolerance outside the mesh (1e-4 of an element's size)
+  is still accepted, and evaluates from the nearest element.
+
 ## Characteristic impedance
 
 `gfem.characteristic_impedance(mode, voltage_path)` is the power-voltage

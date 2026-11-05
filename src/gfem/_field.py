@@ -181,6 +181,15 @@ class Field:
         the mesh node coordinates are fixed: perturbing them raises
         `gfem.NonDifferentiableError`. Works under `jax.jit` and `jax.vmap`.
 
+        A point inside a tetrahedron gets that tetrahedron's value, the same on
+        any number of ranks. A point on a face, to round-off, gets the value from
+        one of the tetrahedra sharing it, in the field's support when one is;
+        which one is fixed but not otherwise specified. A component that jumps
+        there, such as the normal component of E at a material interface, has no
+        single value, so to read one side offset the point into it. A point within
+        a small tolerance outside the mesh (1e-4 of an element's size) is still
+        accepted, and evaluates from the nearest element.
+
         Args:
             points: One point ``(3,)`` or ``(n, 3)`` points, in metres.
 
@@ -190,8 +199,8 @@ class Field:
             Complex for a phasor.
 
         Raises:
-            ValueError: A point is outside the mesh, or inside a volume where
-                the field is not defined: outside its ``support``, or inside
+            ValueError: A point is outside the mesh, past that tolerance, or inside
+                a volume where the field is not defined: outside its ``support``, or inside
                 a volume the model excludes from the solve (inside metal).
                 Under `jax.jit` with traced points or node coordinates, this
                 surfaces as a ``jax.errors.JaxRuntimeError``, or as ``ValueError``
