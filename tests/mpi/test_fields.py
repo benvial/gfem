@@ -3,7 +3,7 @@
 A kept field is a rank's piece, and each of its methods is collective: every rank
 gets the same bits of a value, checked by `on_ranks`, and they agree with the same
 method in pytest's one process. A value at a tet's centroid is off every face, where
-a point's tet depends on the partition, one process included.
+the field may jump.
 """
 
 import dataclasses
@@ -15,12 +15,15 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from finite_differences import assert_gradient_matches, unit_directions
+from near_faces import interior_faces, into
 from ranks import on_ranks
 from solver_misses import cannot_converge_at
+from structured_meshes import strip_line, write_msh22
 
 import gfem
 from gfem import _mpi, _petsc
 from gfem._engine import fields as engine_fields
+from gfem._engine.probe import Layout, locate
 from gfem._mpi import AgreedError
 
 #: Relative to the largest one-process value: ADR 0070's gates.
@@ -221,7 +224,7 @@ def test_jit_of_a_field_only_objective_runs_on_every_rank(tmp_path, ranks, row):
 # --- the piece, the load and b ------------------------------------------------------
 
 
-def _analytic(mesh, order, comm):
+def _analytic(mesh, order, comm, support=("sub", "cover")):
     """A polynomial E in the space, as a field; its curl is known without gfem.
 
     In the mesh's coordinates ``u``: ``(u_y, u_z, u_x)`` at order 2, whose curl is
@@ -230,7 +233,6 @@ def _analytic(mesh, order, comm):
     import ngsolve as ngs
 
     power = order - 1
-    support = ("sub", "cover")
     _, space, _ = engine_fields.fe_space(mesh, support, (), "hcurl", order, comm=comm)
     function = ngs.GridFunction(space)
     function.Set(ngs.CF((ngs.y**power, ngs.z**power, ngs.x**power)))
@@ -432,6 +434,72 @@ def test_a_point_with_no_value_raises_on_every_rank_and_the_job_goes_on(tmp_path
     assert "where the field is not defined" in unsupported
     assert total == 0 + 1 + 2 + 3
     assert np.isfinite(values).all()
+
+
+#: What `locate` reads of the near-face line's field.
+_NEAR_FACE_LAYOUT = Layout(support=("dielectric",), excluded=(), space="hcurl", order=2)
+
+
+def _near_faces(mesh, n=250, seed=5):
+    """``(points, tets)``: on both sides of ``n`` faces, and on them to the largest."""
+    pairs, faces = interior_faces(mesh)
+    chosen = np.random.default_rng(seed).permutation(len(pairs))[:n]
+    pairs, faces = pairs[chosen], faces[chosen]
+    tets = np.concatenate([pairs[:, 0], pairs[:, 1]])
+    both = np.concatenate([faces, faces])
+    groups = [(into(mesh, tets, both, d)[0], tets) for d in (1e-4, 1e-6, 1e-10)]
+    groups.append((into(mesh, pairs[:, 0], faces, 0.0)[0], pairs.max(axis=1)))
+    return tuple(np.concatenate(g) for g in zip(*groups, strict=True))
+
+
+def _located_near_faces(path):
+    mesh = gfem.Mesh.from_gmsh(path, length_unit="mm")
+    points, _ = _near_faces(mesh)
+    found = locate(mesh, _NEAR_FACE_LAYOUT, points, _world())
+    return found.tetrahedra, found.barycentric
+
+
+@pytest.mark.parametrize("ranks", [2, *RANKS])
+def test_a_point_near_a_face_gets_the_same_tet_at_every_rank_count(tmp_path, ranks):
+    path = write_msh22(tmp_path / "line.msh", strip_line(3.0, 2.0, 1.0, (10, 8, 6)))
+    mesh = gfem.Mesh.from_gmsh(path, length_unit="mm")
+    points, tets = _near_faces(mesh)
+    one = locate(mesh, _NEAR_FACE_LAYOUT, points)
+    np.testing.assert_array_equal(one.tetrahedra, tets)
+    (found, bary), *_ = on_ranks(_located_near_faces, path, ranks=ranks, limit=120)
+    np.testing.assert_array_equal(found, tets)
+    np.testing.assert_array_equal(bary, one.barycentric)
+
+
+def _beside_the_cover(directory):
+    mesh = cases.layered_line(Path(directory)).mesh
+    field = _analytic(mesh, 2, _world(), support=("sub",))
+    pairs, faces = interior_faces(mesh)
+    cover = np.isin(np.arange(len(mesh.tetrahedra)), mesh.elements("cover")[0])[pairs]
+    across = cover[:, 0] != cover[:, 1]
+    pairs, faces, cover = pairs[across], faces[across], cover[across]
+    sub_side = np.where(cover[:, 0], pairs[:, 1], pairs[:, 0])
+    cover_side = np.where(cover[:, 0], pairs[:, 0], pairs[:, 1])
+    points = np.concatenate(
+        [into(mesh, sub_side, faces, d)[0] for d in (0.0, 1e-10, 1e-6, 1e-4)]
+    )
+    inside_cover, _ = into(mesh, cover_side, faces, 1e-6)
+    return (
+        points,
+        np.asarray(field.at(points)),
+        [_message(lambda p=p: field.at(p)) for p in inside_cover],
+    )
+
+
+@pytest.mark.parametrize("ranks", [3, 4])
+def test_a_point_on_or_just_above_a_volume_outside_the_support_has_a_value(
+    tmp_path, ranks
+):
+    (points, values, refused), *_ = on_ranks(
+        _beside_the_cover, tmp_path, ranks=ranks, limit=120
+    )
+    np.testing.assert_allclose(values, _exact_e(points, 2), atol=1e-9 / MM)
+    assert all("'cover'" in message for message in refused)
 
 
 def _points_differing_on_one_rank(directory):
