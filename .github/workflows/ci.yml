@@ -143,7 +143,7 @@ jobs:
       # licence gate never sees it.
       run: |
         uv venv .venv-mpich --python 3.12
-        uv pip install --python .venv-mpich ".[mpi]" mpich
+        uv pip install --python .venv-mpich ".[mpi]" mpich==5.0.2
         .venv-mpich/bin/mpiexec -n 2 .venv-mpich/bin/python tools/mpi_refusal.py
 
   tutorials:

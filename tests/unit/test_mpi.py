@@ -1,6 +1,7 @@
 """Launcher resolution and refusals, with no MPI: stub communicators, fake mpi4py."""
 
 import math
+import os
 import pickle
 import subprocess
 import sys
@@ -179,7 +180,7 @@ def test_no_vendor_refusal_at_size_one(monkeypatch):
 
 
 def _child(code: str, *paths, **environment) -> subprocess.CompletedProcess:
-    python_path = ":".join(str(p) for p in paths)
+    python_path = os.pathsep.join(str(p) for p in paths)
     env = {"JAX_PLATFORMS": "cpu", "PYTHONPATH": python_path, **environment}
     return subprocess.run(
         [sys.executable, "-c", textwrap.dedent(code)],
