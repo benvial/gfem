@@ -12,6 +12,13 @@
     size, with `gfem.SolverUnavailableError`, and `linear_solver="bddc_gmres"` above
     one rank keeps its coarse problem on rank 0 on such a stack. Rebuild as
     {doc}`../recipes/petsc-slepc` says.
+- **`Field.at` returns the tetrahedron holding the point.** A point within 1e-4 of an
+  element's size from a face could get the neighbour's value, off by the field's full
+  jump there and varying with the rank count, for about 0.05 % of uniform points in the
+  one mesh measured. It now gets the tetrahedron it lies in, on any number of ranks. A
+  point on or just above an excluded conductor no longer raises a false "lies in volume
+  region"; a point just inside one that used to read the air's value now raises. See
+  {doc}`../recipes/measurements`.
 - **Behaviour change: default thread count.** With `threads=None`, NGSolve now runs on
   `NGS_NUM_THREADS`, else the physical cores the process may run on, instead of every
   hardware thread of the machine. A user's own `ngs.SetNumThreads` no longer carries

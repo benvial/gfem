@@ -20,9 +20,9 @@ one-sided value of a field that jumps across the face.
 
 Under ranks (ADR 0063) a tetrahedron lies on one rank, which holds the points in it:
 ``Phi c`` is the rank sum of what each rank evaluates, and ``Phi^T g`` is a
-``DISTRIBUTED`` load, each point counted once. Near a face a point's tetrahedron
-depends on the partition, one process included. Coefficients are a rank's piece at
-the seam's width (`gfem._engine.fields.dof_shape`).
+``DISTRIBUTED`` load, each point counted once. A point's tetrahedron is settled from the
+replicated mesh, so it does not depend on the partition. Coefficients are a rank's piece
+at the seam's width (`gfem._engine.fields.dof_shape`).
 """
 
 from __future__ import annotations
@@ -76,6 +76,10 @@ class Layout:
     order: int
 
 
+#: Under this smallest barycentric coordinate a point counts as on a face.
+ON_FACE = 1e-12
+
+
 def in_support(mesh: Mesh, layout: Layout) -> np.ndarray:
     """Per gfem tetrahedron: whether the field is defined on it."""
     names = {r.tag: r.name for r in mesh.regions if r.dim == 3}
@@ -90,6 +94,11 @@ def in_support(mesh: Mesh, layout: Layout) -> np.ndarray:
 
 def locate(mesh: Mesh, layout: Layout, points: np.ndarray, comm: Any = None) -> Located:
     """The tetrahedra holding ``points`` (``(n, 3)``, m).
+
+    A point inside a tetrahedron gets that one, on any number of ranks. On a face, to
+    round-off, it gets one holding it: in the support when one is, then the largest
+    index. Netgen's search also accepts a point within 1e-4 outside a tetrahedron, which
+    stays only for a point just outside the mesh: it gets the nearest tetrahedron.
 
     Under ``comm`` it is collective, and all ranks get the same location.
 
@@ -108,9 +117,7 @@ def locate(mesh: Mesh, layout: Layout, points: np.ndarray, comm: Any = None) -> 
     held = nr >= 0
     tets = np.full(len(nr), -1, dtype=np.int64)
     tets[held] = np.asarray(built.tetrahedron_order)[nr[held]]
-    ref = np.stack([found["x"], found["y"], found["z"]], axis=1)
-    bary = np.concatenate([ref, 1.0 - ref.sum(axis=1, keepdims=True)], axis=1)
-    tets, bary = _agree_location(comm, tets, bary)
+    tets = _agree_location(comm, tets)
     outside = tets < 0
     if outside.any():
         worst = points.reshape(-1, 3)[int(np.flatnonzero(outside)[0])]
@@ -120,7 +127,9 @@ def locate(mesh: Mesh, layout: Layout, points: np.ndarray, comm: Any = None) -> 
                 "there."
             )
         )
-    inside = in_support(mesh, layout)[tets]
+    support = in_support(mesh, layout)
+    tets, bary = _settle(mesh, support, tets, np.asarray(points, float).reshape(-1, 3))
+    inside = support[tets]
     if not inside.all():
         k = int(np.flatnonzero(~inside)[0])
         names = {r.tag: r.name for r in mesh.regions if r.dim == 3}
@@ -130,26 +139,64 @@ def locate(mesh: Mesh, layout: Layout, points: np.ndarray, comm: Any = None) -> 
                 f"Point {_fmt(points.reshape(-1, 3)[k])} m lies in volume region "
                 f"{region!r}, where the field is not defined (its support is "
                 f"{list(layout.support)}, minus the volumes the model excludes from "
-                "the solve). A point on the boundary of the support may be found in "
-                "the neighbouring volume: move it inside."
+                "the solve)."
             )
         )
     return Located(tets, bary)
 
 
-def _agree_location(
-    comm: Any, tets: np.ndarray, bary: np.ndarray
-) -> tuple[np.ndarray, np.ndarray]:
+def _agree_location(comm: Any, tets: np.ndarray) -> np.ndarray:
     """One location on all ranks: the largest gfem tetrahedron any rank found.
 
-    Any rule held by all ranks serves. This one does not depend on the rank count.
-    ``-1`` is a point no rank found.
+    Any rule held by all ranks serves. ``-1`` is a point no rank found.
     """
-    if comm is None:
+    return tets if comm is None else _mpi.max_bcast(comm, tets)
+
+
+def _barycentric(
+    nodes: np.ndarray, tetrahedra: np.ndarray, points: np.ndarray
+) -> np.ndarray:
+    """``(n, 4)`` barycentric coordinates of ``points`` in ``(n, 4)`` ``tetrahedra``."""
+    v = nodes[tetrahedra]
+    edges = np.stack([v[:, i] - v[:, 3] for i in range(3)], axis=-1)
+    head = np.linalg.solve(edges, (points - v[:, 3])[..., None])[..., 0]
+    return np.concatenate([head, 1.0 - head.sum(axis=1, keepdims=True)], axis=1)
+
+
+def _settle(
+    mesh: Mesh, support: np.ndarray, tets: np.ndarray, points: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Move each point out of a tetrahedron netgen accepted but that does not hold it.
+
+    Reads only the mesh every rank holds (ADR 0059), so the answer does not depend on
+    the partition. Every tetrahedron holding a point shares a node with any other, and
+    so with one netgen found holding it.
+
+    Returns:
+        The settled ``(n,)`` tetrahedra and their ``(n, 4)`` barycentric coordinates.
+    """
+    nodes = np.asarray(mesh.nodes, float)
+    all_tets = np.asarray(mesh.tetrahedra)
+    tets = tets.copy()
+    bary = _barycentric(nodes, all_tets[tets], points)
+    flagged = np.flatnonzero(bary.min(axis=1) < ON_FACE)
+    if not flagged.size:
         return tets, bary
-    agreed_tets = _mpi.max_bcast(comm, tets)
-    holder = (tets >= 0) & (tets == agreed_tets)
-    return agreed_tets, _mpi.reduce_bcast(comm, np.where(holder[:, None], bary, 0.0))
+    of_node = np.argsort(all_tets.ravel(), kind="stable") // 4
+    start = np.concatenate(([0], np.cumsum(np.bincount(all_tets.ravel()))))
+    for i in flagged:
+        around = np.unique(
+            np.concatenate(
+                [of_node[start[n] : start[n + 1]] for n in all_tets[tets[i]]]
+            )
+        )
+        lowest = _barycentric(
+            nodes, all_tets[around], np.repeat(points[i : i + 1], len(around), axis=0)
+        ).min(axis=1)
+        holders = around[lowest >= min(lowest.max(), 0.0) - ON_FACE]
+        supported = holders[support[holders]]
+        tets[i] = (supported if supported.size else holders).max()
+    return tets, _barycentric(nodes, all_tets[tets], points)
 
 
 def face_points(

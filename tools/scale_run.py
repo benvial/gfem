@@ -8,7 +8,8 @@ agreement gates can fail, and no time is ever a gate:
         --solver bddc_gmres --ghz 50
     python scale_run.py run CASE OUT/ref --solver bddc_gmres --ghz 50 --threads 112
     python scale_run.py check OUT/NAME OUT/ref --gate bddc_gmres
-    python scale_run.py table OUT/*.json
+    python scale_run.py table OUT/*.json --base 4
+    python scale_run.py close OUT/NAME --log LOG --state OUT_OF_MEMORY --rc 137
 
 ``run`` writes ``NAME.json``, the record: versions, nodes, ranks and threads, DOFs per
 rank, phases, Krylov vector share, reduction wait, memory, true residual. ``NAME.npz``
@@ -26,6 +27,16 @@ of the reference's. Gradient entries read `GRADIENT_GATE` on a real mesh. The re
 goes into the run's record. ``--observe`` reports the same difference with no gate, for
 a run on another mesh.
 
+``close`` is the job script's, after every step, and by hand after a job that died
+with its script. A run that left no record gets a stub, ``failed: true``, with Slurm's
+state, the phases its ``--trace`` left open and the figures MUMPS printed. A finished
+run keeps its record, with those figures added, since the coarse's cannot be read
+behind ``PCTELESCOPE``. ``check`` reports a stub as not passed, and ``table`` shows it.
+
+``table`` gives one row per rung: median and range over the repeats, DOF per rank and
+per node, and with ``--base NODES`` an efficiency against that named rung, strong within
+one mesh or ``--weak`` across meshes. It reads times only to print them.
+
 A phase is read through a wrapper around gfem's own functions. These are private names:
 this script is pinned to the commit in its record.
 """
@@ -39,7 +50,9 @@ import functools
 import hashlib
 import importlib.metadata
 import json
+import math
 import os
+import re
 import resource
 import socket
 import sys
@@ -59,6 +72,8 @@ GATES = {"direct": 1e-11, "bddc_gmres": 1e-9}
 #: one-process MUMPS by 9.9e-11 (48473915). MUMPS on 112 ranks differs by 1.4e-10
 #: (48473421), while S agrees to 7e-13.
 GRADIENT_GATE = 1e-9
+#: Phases too frequent for the trace: several per GMRES iteration.
+UNTRACED = {"gmres_vector", "gmres_reduction"}
 #: The packages a record names.
 PACKAGES = ("gfem", "ngsolve", "petsc", "petsc4py", "mpi4py", "numpy", "scipy", "jax")
 #: PETSc's log events of a Cholesky factorization: analysis, numeric.
@@ -83,14 +98,15 @@ class Phases:
     def timed(self, name: str):
         """Count the block as phase ``name``."""
         start = time.perf_counter()
-        if self.trace:
+        trace = self.trace and name not in UNTRACED
+        if trace:
             print(f"{name} starts at {_peak_gib():.1f} GiB peak", flush=True)
         try:
             yield
         finally:
             self.seconds[name] += time.perf_counter() - start
             self.calls[name] += 1
-            if self.trace:
+            if trace:
                 print(f"{name} ends at {_peak_gib():.1f} GiB peak", flush=True)
 
     def wrap(self, owner: Any, attribute: str, name: str) -> None:
@@ -312,7 +328,11 @@ def _instrument_petsc(phases: Phases, facts: Facts) -> None:
     def timed_coarse(self):
         with phases.timed("coarse_setup"):
             set_up(self)
-        fact = {"dofs": int(self._numbering.total), "reduction": int(self._factor)}
+        fact = {
+            "dofs": int(self._numbering.total),
+            "reduction": int(self._factor),
+            "ranks": math.ceil(self._comm.size / self._factor),
+        }
         with contextlib.suppress(Exception):  # the inner KSP is absent on some ranks
             pc = self._ksp.getPC()
             matrix = (
@@ -328,9 +348,16 @@ def _instrument_petsc(phases: Phases, facts: Facts) -> None:
     phases.wrap(coarse.CoarseMumps, "Mult", "coarse_apply")
 
 
-def _print_coarse_mumps() -> None:
-    """MUMPS's own statistics of the coarse problem: its estimates before a factor."""
-    from gfem._linalg import coarse
+def _print_mumps() -> None:
+    """MUMPS's own statistics, ``ICNTL(4)=2``: the whole system's and the coarse's."""
+    from gfem._linalg import coarse, petsc
+
+    defaults = petsc.RankPetscHandle._defaults  # noqa: SLF001
+
+    def with_statistics(self):
+        return (*defaults(self), ("mat_mumps_icntl_4", 2))
+
+    petsc.RankPetscHandle._defaults = with_statistics  # noqa: SLF001
 
     options = coarse.CoarseMumps._options  # noqa: SLF001
 
@@ -352,6 +379,61 @@ def _factor_events() -> dict[str, float]:
             info = PETSc.Log.Event(event).getPerfInfo()
             out[name] = float(info["time"])
     return out
+
+
+#: A phase line of ``--trace``.
+TRACE_LINE = re.compile(r"^(\w+) (starts|ends) at [\d.]+ GiB peak$", re.MULTILINE)
+#: MUMPS's line opening a call, ``ICNTL(4)=2``: the job and the system's size.
+MUMPS_CALL = re.compile(r"Entering [SDCZ]MUMPS \S+ .*JOB, N =\s*(\d+)\s+(\d+)")
+#: MUMPS's lines worth keeping, in the words it prints them.
+MUMPS_FIGURES = {
+    "entries_estimated": r"\(20\) Number of entries in factors \(estim\.\)\s*=\s*(\S+)",
+    "front_estimated": r"\(5\) Maximum frontal size\s+\(estimated\)\s*=\s*(\S+)",
+    "flops_estimated": r"RINFOG\(1\) Operations during elimination \(estim\)\s*=\s*"
+    r"(\S+)",
+    "max_ic_mb": r"\(INFOG\(16\)\):\s*(\S+)",
+    "total_ic_mb": r"\(INFOG\(17\)\):\s*(\S+)",
+    "total_used_mb": r"\(INFOG\(22\)\):\s*(\S+)",
+    "entries": r"INFOG \(29\) Number of entries in factors\s*=\s*(\S+)",
+    "front": r"INFOG \(11\) Maximum front size\s*=\s*(\S+)",
+}
+
+
+def _open_phases(log: str) -> list[str]:
+    """The phases a trace started and never ended, outermost first."""
+    opened: list[str] = []
+    for name, event in TRACE_LINE.findall(log):
+        if event == "starts":
+            opened.append(name)
+        elif name in opened:
+            while opened.pop() != name:
+                pass
+    return opened
+
+
+def _mumps_number(text: str) -> float | int:
+    """A figure as MUMPS prints it: ``7316285143`` or ``2.592D+13``."""
+    try:
+        return int(text)
+    except ValueError:
+        return float(text.replace("D", "E"))
+
+
+def _mumps_printed(log: str) -> list[dict[str, Any]]:
+    """MUMPS's printed figures, one entry per analysis, in the order they ran."""
+    entries: list[dict[str, Any]] = []
+    figures = {key: re.compile(pattern) for key, pattern in MUMPS_FIGURES.items()}
+    for line in log.splitlines():
+        call = MUMPS_CALL.search(line)
+        if call:
+            if call[1] == "1":
+                entries.append({"n": int(call[2])})
+        elif entries:
+            for key, pattern in figures.items():
+                found = pattern.search(line)
+                if found:
+                    entries[-1][key] = _mumps_number(found[1])
+    return entries
 
 
 def _direction(text: str) -> str:
@@ -623,14 +705,33 @@ def _digest(arrays: dict[str, np.ndarray]) -> dict[str, str]:
     }
 
 
+def _mem_total_kb() -> int:
+    """What the node reports as ``MemTotal``, which tells highmem from standard."""
+    with contextlib.suppress(OSError):
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                return int(line.split()[1])
+    return 0
+
+
+def _job_facts() -> dict[str, Any]:
+    """What the job script knows and a run does not: see ``scale_job.sbatch``."""
+    return {
+        "commit": os.environ.get("SCALE_COMMIT"),
+        "job": os.environ.get("SLURM_JOB_ID"),
+        "qos": os.environ.get("SCALE_QOS") or None,
+        "constraint": os.environ.get("SCALE_CONSTRAINT") or None,
+    }
+
+
 def _environment(comm: Any) -> dict[str, Any]:
     versions = {}
     for package in PACKAGES:
         with contextlib.suppress(importlib.metadata.PackageNotFoundError):
             versions[package] = importlib.metadata.version(package)
-    hosts = (
-        [socket.gethostname()] if comm is None else comm.allgather(socket.gethostname())
-    )
+    here = (socket.gethostname(), _mem_total_kb())
+    every = [here] if comm is None else comm.allgather(here)
+    hosts = [host for host, _ in every]
     library = None
     if comm is not None:
         from mpi4py import MPI
@@ -643,13 +744,13 @@ def _environment(comm: Any) -> dict[str, Any]:
                 model = line.split(":", 1)[1].strip()
                 break
     return {
-        "commit": os.environ.get("SCALE_COMMIT"),
+        **_job_facts(),
+        "mem_total_kb": sorted({kb for _, kb in every}),
         "versions": versions,
         "mpi_library": library,
         "modules": os.environ.get("LOADEDMODULES"),
         "machine": os.environ.get("SCALE_MACHINE", "MareNostrum 5 GPP"),
         "cpu": model,
-        "job": os.environ.get("SLURM_JOB_ID"),
         "nodes": sorted(set(hosts)),
         "node_count": len(set(hosts)),
         "ranks_per_node": max(hosts.count(h) for h in set(hosts)),
@@ -718,8 +819,8 @@ def run(args: argparse.Namespace) -> int:
 
     phases, facts = Phases(trace=args.trace and rank == 0), Facts()
     _instrument(phases, facts, comm)
-    if args.mumps_print:
-        _print_coarse_mumps()
+    if args.mumps_print and comm is not None:
+        _print_mumps()
     iterations: list[np.ndarray] = []
     if not args.spaces_only:
         _capture_iterations(iterations)
@@ -770,6 +871,7 @@ def run(args: argparse.Namespace) -> int:
                 "order": args.order,
             },
             "frequencies_ghz": [f / 1e9 for f in frequencies],
+            "repeat": args.repeat,
             "mode": "spaces"
             if args.spaces_only
             else "design"
@@ -786,11 +888,16 @@ def run(args: argparse.Namespace) -> int:
             **extra,
         }
         args.name.parent.mkdir(parents=True, exist_ok=True)
-        args.name.with_suffix(".json").write_text(json.dumps(record, indent=1) + "\n")
+        _file(args.name, ".json").write_text(json.dumps(record, indent=1) + "\n")
         if arrays:
-            np.savez(args.name.with_suffix(".npz"), **arrays)
+            np.savez(_file(args.name, ".npz"), **arrays)
     say(f"record written; ranks bitwise: {bitwise} {differing or ''}")
     return 0 if bitwise else 1
+
+
+def _file(name: Path, suffix: str) -> Path:
+    """The record's file: a name may hold a dot (``x_r0.5_void``), so never replace."""
+    return name.with_name(name.name + suffix)
 
 
 def _printable(s: np.ndarray | None) -> list | None:
@@ -803,12 +910,39 @@ def _difference(a: np.ndarray, reference: np.ndarray) -> float:
     return float(np.abs(a - reference).max() / np.abs(reference).max())
 
 
+def _nothing_to_compare(run_path: Path, reference_path: Path) -> str | None:
+    """Why a run cannot be compared, a killed run's or a reference's absence."""
+    for label, name in (("run", run_path), ("reference", reference_path)):
+        if _file(name, ".npz").exists():
+            continue
+        path = _file(name, ".json")
+        record = json.loads(path.read_text()) if path.exists() else {}
+        state = record.get("state", "no record")
+        return f"the {label} {name} holds no solution: {state}"
+    return None
+
+
+def _not_compared(args: argparse.Namespace, reason: str) -> int:
+    """A check with nothing to compare: not passed, in the record if there is one."""
+    result = {"reference": str(args.reference), "passed": False, "reason": reason}
+    path = _file(args.name, ".json")
+    if path.exists():
+        record = json.loads(path.read_text())
+        record.setdefault("checks", []).append(result)
+        path.write_text(json.dumps(record, indent=1) + "\n")
+    print(json.dumps({"run": args.name.name, **result}))
+    return 1
+
+
 def check(args: argparse.Namespace) -> int:
     """Compare a run with a reference; write the result into the run's record."""
     run_path, reference_path = args.name, args.reference
-    here = np.load(run_path.with_suffix(".npz"))
-    there = np.load(reference_path.with_suffix(".npz"))
-    record = json.loads(run_path.with_suffix(".json").read_text())
+    reason = _nothing_to_compare(run_path, reference_path)
+    if reason:
+        return _not_compared(args, reason)
+    here = np.load(_file(run_path, ".npz"))
+    there = np.load(_file(reference_path, ".npz"))
+    record = json.loads(_file(run_path, ".json").read_text())
     gate = GATES[args.gate] if args.gate else None
     names = [k for k in here.files if k == "s" or k.startswith(("grad_", "value_"))]
     differences = {k: _difference(here[k], there[k]) for k in names if k in there.files}
@@ -836,31 +970,211 @@ def check(args: argparse.Namespace) -> int:
         "passed": passed if gate is not None else None,
     }
     record.setdefault("checks", []).append(result)
-    run_path.with_suffix(".json").write_text(json.dumps(record, indent=1) + "\n")
+    _file(run_path, ".json").write_text(json.dumps(record, indent=1) + "\n")
     print(json.dumps({"run": record["name"], **result}))
     return 0 if passed else 1
 
 
-def table(args: argparse.Namespace) -> int:
-    """A Markdown table of records, in the order given."""
-    print(
-        "| Nodes | Ranks x threads | DOF per rank | Solver | Frequencies | "
-        "Iterations | `gfem.solve`, s | Largest node, GiB | Job |"
-    )
-    print("|---|---|---|---|---|---|---|---|---|")
-    for path in args.records:
-        r = json.loads(path.read_text())
-        dofs = r["dofs"].get("owned_sum", 0)
-        per_rank = f"{dofs / r['ranks'] / 1e3:.0f} k" if dofs else "all"
-        solve = r["phases"].get("solve", {}).get("max_s", float("nan"))
-        its = sorted({i for row in r["iterations"].get("iterations", []) for i in row})
-        print(
-            f"| {r['node_count']} | {r['ranks']} x {r['threads_read']} | "
-            f"{per_rank} | "
-            f"`{r['solver']}` | {len(r['frequencies_ghz'])} | "
-            f"{'-' if not its else ', '.join(map(str, its))} | {solve:.0f} | "
-            f"{r['memory']['peak_rss_largest_node_gib']:.0f} | {r['job']} |"
+#: Printed under every table: what the time column holds.
+SOLVE_NOTE = (
+    "`gfem.solve` is the slowest rank's whole call, with the instrumentation's true "
+    "residual and one extra apply and matvec inside it."
+)
+
+
+def _solve_seconds(record: dict[str, Any]) -> float:
+    return record["phases"]["solve"]["max_s"]
+
+
+def _rungs(records: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """The records by rung, in the order given: repeats of one mesh, solver, layout."""
+    rungs: dict[tuple, list[dict[str, Any]]] = defaultdict(list)
+    for r in records:
+        key = (
+            Path(r["case"]).name,
+            r["solver"],
+            r["node_count"],
+            r["ranks"],
+            r["threads_read"],
         )
+        rungs[key].append(r)
+    return list(rungs.values())
+
+
+def _median(rung: list[dict[str, Any]]) -> float | None:
+    seconds = [_solve_seconds(r) for r in rung if not r.get("failed")]
+    return float(np.median(seconds)) if seconds else None
+
+
+def _efficiency(
+    rung: list[dict[str, Any]],
+    rungs: list[list[dict[str, Any]]],
+    base: int | None,
+    *,
+    weak: bool,
+) -> str:
+    """Against the rung on ``base`` nodes: this solver's, and this mesh's if strong."""
+    seconds, first = _median(rung), rung[0]
+    if base is None or seconds is None:
+        return "-"
+    for other in rungs:
+        one = other[0]
+        same = one["solver"] == first["solver"] and (
+            weak or Path(one["case"]).name == Path(first["case"]).name
+        )
+        if same and one["node_count"] == base:
+            reference = _median(other)
+            if reference is None:
+                return "-"
+            nodes = 1 if weak else first["node_count"] / base
+            return f"{reference / (seconds * nodes):.2f}"
+    return "-"
+
+
+def _rung_row(
+    rung: list[dict[str, Any]],
+    rungs: list[list[dict[str, Any]]],
+    base: int | None,
+    *,
+    weak: bool,
+) -> str:
+    """One row of the table: failed repeats are counted, a failed rung says how."""
+    first = rung[0]
+    done = [r for r in rung if not r.get("failed")]
+    failed = [r for r in rung if r.get("failed")]
+    repeats = " + ".join(
+        [
+            *([str(len(done))] if done or not failed else []),
+            *(f"1 {r['state']}" for r in failed),
+        ]
+    )
+    dofs = max((r["dofs"].get("owned_sum", 0) for r in done), default=0)
+    per_rank = f"{dofs / first['ranks'] / 1e3:.0f} k" if dofs else "-"
+    per_node = f"{dofs / first['node_count'] / 1e6:.2f} M" if dofs else "-"
+    its = sorted(
+        {i for r in done for row in r["iterations"].get("iterations", []) for i in row}
+    )
+    if done:
+        seconds = [_solve_seconds(r) for r in done]
+        median = f"{_median(rung):.0f}"
+        spread = f"{min(seconds):.0f}-{max(seconds):.0f}"
+        memory = max(r["memory"]["peak_rss_largest_node_gib"] for r in done)
+        largest = f"{memory:.0f}"
+    else:
+        last = failed[0]
+        median = f"{last['state']} in {last.get('last_phase') or 'no phase'}"
+        spread = largest = "-"
+    jobs = ", ".join(dict.fromkeys(str(r.get("job")) for r in rung))
+    cells = (
+        Path(first["case"]).name,
+        f"`{first['solver']}`",
+        first["node_count"],
+        f"{first['ranks']} x {first['threads_read']}",
+        f"{dofs:,}" if dofs else "-",
+        per_rank,
+        per_node,
+        repeats,
+        len(first.get("frequencies_ghz", [])),
+        ", ".join(map(str, its)) or "-",
+        median,
+        spread,
+        _efficiency(rung, rungs, base, weak=weak),
+        largest,
+        jobs,
+    )
+    return "| " + " | ".join(map(str, cells)) + " |"
+
+
+def table(args: argparse.Namespace) -> int:
+    """A Markdown table of records, one row per rung, in the order given."""
+    records = [json.loads(path.read_text()) for path in args.records]
+    rungs = _rungs(records)
+    titles = (
+        "Mesh",
+        "Solver",
+        "Nodes",
+        "Ranks x threads",
+        "DOF",
+        "DOF per rank",
+        "DOF per node",
+        "Repeats",
+        "Frequencies",
+        "Iterations",
+        "`gfem.solve` median, s",
+        "Range, s",
+        "Efficiency",
+        "Largest node, GiB",
+        "Job",
+    )
+    print("| " + " | ".join(titles) + " |")
+    print("|" + "---|" * len(titles))
+    for rung in rungs:
+        print(_rung_row(rung, rungs, args.base, weak=args.weak))
+    print()
+    print(SOLVE_NOTE)
+    if args.base is not None:
+        kind = "weak" if args.weak else "strong"
+        print(f"Efficiency against {args.base} nodes ({kind}).")
+    return 0
+
+
+#: A stub closed by hand with no step line: what the table still needs.
+STUB_DEFAULTS = {
+    "state": "UNKNOWN",
+    "case": "unknown",
+    "solver": "unknown",
+    "node_count": 0,
+    "ranks": 0,
+    "threads_read": 0,
+}
+
+
+def _stub_facts(args: argparse.Namespace) -> dict[str, Any]:
+    """What a step's line and its job know about a run that wrote nothing itself."""
+    nodes = os.environ.get("SLURM_JOB_NUM_NODES")
+    node_count = int(nodes) if nodes else None
+    facts = {
+        **_job_facts(),
+        "node_count": node_count,
+        "nodelist": os.environ.get("SLURM_JOB_NODELIST"),
+        "case": str(args.case) if args.case else None,
+        "solver": args.solver,
+        "repeat": args.repeat,
+        "threads_read": args.threads_per_rank,
+        "ranks_per_node": args.ranks_per_node,
+        "state": args.state,
+        "rc": args.rc,
+    }
+    if node_count and args.ranks_per_node:
+        facts["ranks"] = node_count * args.ranks_per_node
+    if args.ghz:
+        facts["frequencies_ghz"] = [float(g) for g in args.ghz.split(",")]
+    return {key: value for key, value in facts.items() if value is not None}
+
+
+def close(args: argparse.Namespace) -> int:
+    """After a step: the printed figures on its record, or a stub if it has none."""
+    path = _file(args.name, ".json")
+    record = json.loads(path.read_text()) if path.exists() else {}
+    log = args.log.read_text(errors="replace") if args.log and args.log.exists() else ""
+    figures = {"mumps_printed": _mumps_printed(log)} if log else {}
+    if record and not record.get("failed"):
+        record |= figures
+    else:
+        opened = _open_phases(log)
+        trace = {"open_phases": opened, "last_phase": opened[-1]} if opened else {}
+        record = {
+            **STUB_DEFAULTS,
+            **record,
+            "name": args.name.name,
+            "mode": "failed",
+            "failed": True,
+            **_stub_facts(args),
+            **trace,
+            **figures,
+        }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record, indent=1) + "\n")
     return 0
 
 
@@ -879,10 +1193,13 @@ def main() -> int:
     one.add_argument("--threads", type=int, default=None)
     one.add_argument("--design", action="store_true")
     one.add_argument("--seed", type=int, default=0)
+    one.add_argument("--repeat", type=int, default=1, help="this run's repeat index")
     one.add_argument("--spaces-only", action="store_true")
     one.add_argument("--trace", action="store_true", help="print phases on rank 0")
     one.add_argument(
-        "--mumps-print", action="store_true", help="MUMPS statistics of the coarse"
+        "--mumps-print",
+        action="store_true",
+        help="MUMPS statistics, of the whole system on direct and of BDDC's coarse",
     )
     one.add_argument(
         "--dump-after",
@@ -902,7 +1219,26 @@ def main() -> int:
 
     rows = commands.add_parser("table")
     rows.add_argument("records", type=Path, nargs="+")
+    rows.add_argument(
+        "--base", type=int, default=None, help="efficiency against this node count"
+    )
+    rows.add_argument(
+        "--weak", action="store_true", help="the base's time over this rung's"
+    )
     rows.set_defaults(call=table)
+
+    closing = commands.add_parser("close")
+    closing.add_argument("name", type=Path)
+    closing.add_argument("--log", type=Path, default=None)
+    closing.add_argument("--state", default=None, help="Slurm's state of the step")
+    closing.add_argument("--rc", type=int, default=None)
+    closing.add_argument("--case", type=Path, default=None)
+    closing.add_argument("--solver", default=None)
+    closing.add_argument("--ghz", default=None)
+    closing.add_argument("--ranks-per-node", type=int, default=None)
+    closing.add_argument("--threads-per-rank", type=int, default=None)
+    closing.add_argument("--repeat", type=int, default=None)
+    closing.set_defaults(call=close)
 
     args = parser.parse_args()
     return args.call(args)
