@@ -357,10 +357,11 @@ def test_bloch_refusals_come_before_assembly(c1_mesh, monkeypatch, refusal):
         gfem.solve(pc.c1(c1_mesh), problem, options=gfem.SolverOptions(**options))
 
 
-# --- per-axis gradients on a periodic cell with an absorbing face ------------------------
+# --- per-axis gradients on a periodic cell with an absorbing face ---
 
 AXES = ((0.8, 0.6, 0), (-0.6, 0.8, 0), (0, 0, 1))
-#: Reverse mode against central differences, relative; the wrong pass was off by 5e-3 to 1e-1.
+#: Reverse mode against central differences, relative.
+#: The wrong pass was off by 5e-3 to 1e-1.
 AXES_GRAD_TOL = 1e-6
 
 
@@ -372,7 +373,9 @@ def test_per_axis_gradient_on_a_periodic_cell_with_an_absorbing_face(
     """The face moment of `Absorbing` reads the pair's fields on the pair's own mesh."""
     mesh = pc.g_mesh(tmp_path)
     base = pc.g(mesh)
-    n = len(mesh.elements("cover"))  # "cover" touches the Absorbing z_max and both pairs
+    n = len(
+        mesh.elements("cover")
+    )  # "cover" touches the Absorbing z_max and both pairs
     rng = np.random.default_rng(3)
     values = {
         "eps_r": jnp.asarray(rng.uniform(2.0, 5.0, (n, 3))),
@@ -397,4 +400,6 @@ def test_per_axis_gradient_on_a_periodic_cell_with_an_absorbing_face(
         objective({**values, leaf: values[leaf] + step})
         - objective({**values, leaf: values[leaf] - step})
     ) / (2 * h)
-    assert float(jnp.sum(grad * direction)) == pytest.approx(float(fd), rel=AXES_GRAD_TOL)
+    assert float(jnp.sum(grad * direction)) == pytest.approx(
+        float(fd), rel=AXES_GRAD_TOL
+    )
