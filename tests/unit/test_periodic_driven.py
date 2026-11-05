@@ -355,3 +355,46 @@ def test_bloch_refusals_come_before_assembly(c1_mesh, monkeypatch, refusal):
     )
     with pytest.raises(error, match=message):
         gfem.solve(pc.c1(c1_mesh), problem, options=gfem.SolverOptions(**options))
+
+
+# --- per-axis gradients on a periodic cell with an absorbing face ------------------------
+
+AXES = ((0.8, 0.6, 0), (-0.6, 0.8, 0), (0, 0, 1))
+#: Reverse mode against central differences, relative; the wrong pass was off by 5e-3 to 1e-1.
+AXES_GRAD_TOL = 1e-6
+
+
+@pytest.mark.parametrize("bloch", [False, True], ids=["plain", "bloch"])
+@pytest.mark.parametrize("leaf", ["eps_r", "mu_r"])
+def test_per_axis_gradient_on_a_periodic_cell_with_an_absorbing_face(
+    tmp_path, bloch, leaf
+):
+    """The face moment of `Absorbing` reads the pair's fields on the pair's own mesh."""
+    mesh = pc.g_mesh(tmp_path)
+    base = pc.g(mesh)
+    n = len(mesh.elements("cover"))  # "cover" touches the Absorbing z_max and both pairs
+    rng = np.random.default_rng(3)
+    values = {
+        "eps_r": jnp.asarray(rng.uniform(2.0, 5.0, (n, 3))),
+        "mu_r": jnp.asarray(rng.uniform(1.0, 1.5, (n, 3))),
+    }
+    problem = gfem.Driven(pc.G_FREQUENCIES[0], wave_vector=pc.G_K if bloch else None)
+    options = gfem.SolverOptions(linear_solver="direct")
+    weights = jnp.array([[1.0, 0.5], [2.0, -1.0]])
+
+    def objective(v):
+        field = gfem.MaterialField(**v, axes=AXES)
+        model = base.with_material("cover", field)
+        s = gfem.solve(model, problem, options=options).s.values
+        return jnp.sum(jnp.abs(s) ** 2 * weights)
+
+    grad = jax.grad(objective)(values)[leaf]
+    direction = rng.normal(size=(n, 3))
+    direction /= np.linalg.norm(direction)
+    h = 1e-4
+    step = jnp.asarray(h * direction)
+    fd = (
+        objective({**values, leaf: values[leaf] + step})
+        - objective({**values, leaf: values[leaf] - step})
+    ) / (2 * h)
+    assert float(jnp.sum(grad * direction)) == pytest.approx(float(fd), rel=AXES_GRAD_TOL)
