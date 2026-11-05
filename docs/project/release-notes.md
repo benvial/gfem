@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Wrong S from a stack built by 0.1.0's script: rebuild it.** A stack from 0.1.0's
+  `tools/petsc_wheelhouse.sh` can return wrong S with no error on a complex front past
+  32,768: MUMPS calls OpenBLAS's ZGEMMT there, whose column offset overflows 32 bits.
+  On a dense test matrix of 46,000 unknowns it gave an error of 6.75e-6 with no error
+  from MUMPS or PETSc; a 10 M DOF mesh in one process had a largest front of 6,878.
+  The script now builds MUMPS without ZGEMMT.
+  - **Behaviour change.** gfem refuses a stack whose `libpetsc` imports `zgemmt_`, at any
+    size, with `gfem.SolverUnavailableError`, and `linear_solver="bddc_gmres"` above
+    one rank keeps its coarse problem on rank 0 on such a stack. Rebuild as
+    {doc}`../recipes/petsc-slepc` says.
 - **`Field.at` returns the tetrahedron holding the point.** A point within 1e-4 of an
   element's size from a face could get the neighbour's value, off by the field's full
   jump there and varying with the rank count, for about 0.05 % of uniform points in the

@@ -70,6 +70,8 @@ def test_the_petsc_stack_is_complex_with_mumps_and_no_non_free_package():
     assert PETSc.Sys.hasExternalPackage("mumps")
     assert PETSc.Sys.hasExternalPackage("metis")
     assert not PETSc.Sys.hasExternalPackage("parmetis")
+    # OpenBLAS's ZGEMMT overflows on complex fronts of 32,768 or more: MUMPS without it
+    assert not _petsc.has_zgemmt()
     has_mpi = _petsc.has_mpi()
     for package in ("ptscotch", "scalapack"):
         assert PETSc.Sys.hasExternalPackage(package) is has_mpi, package
