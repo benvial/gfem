@@ -475,7 +475,7 @@ def _beside_the_cover(directory):
     mesh = cases.layered_line(Path(directory)).mesh
     field = _analytic(mesh, 2, _world(), support=("sub",))
     pairs, faces = interior_faces(mesh)
-    cover = np.isin(np.arange(len(mesh.tetrahedra)), mesh.elements("cover")[0])[pairs]
+    cover = np.isin(np.arange(len(mesh.tetrahedra)), mesh.elements("cover"))[pairs]
     across = cover[:, 0] != cover[:, 1]
     pairs, faces, cover = pairs[across], faces[across], cover[across]
     sub_side = np.where(cover[:, 0], pairs[:, 1], pairs[:, 0])

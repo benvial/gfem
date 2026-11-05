@@ -199,7 +199,7 @@ def beside_metal(tmp_path_factory):
 def _metal_faces(mesh):
     """``(n, 2)`` tets ``(metal, oxide)`` either side of the interface, and its faces."""
     pairs, faces = interior_faces(mesh)
-    in_metal = np.isin(np.arange(len(mesh.tetrahedra)), mesh.elements("metal")[0])[pairs]
+    in_metal = np.isin(np.arange(len(mesh.tetrahedra)), mesh.elements("metal"))[pairs]
     across = in_metal[:, 0] != in_metal[:, 1]
     pairs, faces, in_metal = pairs[across], faces[across], in_metal[across]
     metal = np.where(in_metal[:, 0], pairs[:, 0], pairs[:, 1])
