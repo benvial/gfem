@@ -179,8 +179,9 @@ sweep](adaptive-sweep-gradient.md).
 A uniform sweep can also run several frequencies at once.
 `gfem.SolverOptions(frequency_workers=k)` splits the grid into `k` contiguous
 blocks and solves each block in a {term}`frequency worker`, a separate process
-with `threads // k` of the solve's threads (of the logical CPUs the process
-may run on when `threads` is `None`). One small solve uses many threads
+with `threads // k` of the solve's threads (of the solve threads when `threads`
+is `None`: `NGS_NUM_THREADS`, else the physical cores the process may run on).
+One small solve uses many threads
 poorly, so workers pay off on a many-core machine; on a few cores the gain is
 small.
 

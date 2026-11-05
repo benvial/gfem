@@ -14,8 +14,8 @@ Tests marked ``petsc`` or ``slepc`` need gfem's PETSc or SLEPc solver: they
 are skipped, with the user-facing reason, where `gfem._petsc` cannot use it.
 Tests in tests/mpi are skipped where mpi4py or the launcher is missing.
 
-A test that sets NGSolve's thread count uses the `ngsolve_threads` fixture,
-which puts the count back afterwards.
+A test that sets NGSolve's thread count, or enters its own `ngs.TaskManager()`, uses
+the `ngsolve_threads` fixture, which then sets the count `threads=None` would use.
 """
 
 import os
@@ -104,11 +104,12 @@ def _skip_without_mpi(items: list[pytest.Item]) -> None:
 
 @pytest.fixture
 def ngsolve_threads():
-    """``SetNumThreads`` is process-wide: put NGSolve's thread count back after."""
+    """``SetNumThreads`` is process-wide: put the default count back after."""
     import ngsolve as ngs
 
-    with ngs.TaskManager():
-        threads = ngs.GetNumThreads()
+    from gfem._engine.runtime import solve_threads
+
+    threads = solve_threads(None)
     yield
     ngs.SetNumThreads(threads)
 

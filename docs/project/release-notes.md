@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Behaviour change: default thread count.** With `threads=None`, NGSolve now runs on
+  `NGS_NUM_THREADS`, else the physical cores the process may run on, instead of every
+  hardware thread of the machine. A user's own `ngs.SetNumThreads` no longer carries
+  into such a solve (use `SolverOptions.threads`); inside a caller's own
+  `ngs.TaskManager()` the caller's count is kept. Without an affinity mask (macOS,
+  Windows) the count is the logical CPUs.
 - **Fixed: periodic gradients of a `MaterialField` with `axes`.** On a periodic model
   the gradient pass for the face moments built its forms on a different NGSolve mesh
   from the one the fields live on, so every face moment read zero. The gradients of

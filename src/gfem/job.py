@@ -21,6 +21,7 @@ import dataclasses
 import hashlib
 import json
 import time
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -134,7 +135,11 @@ class Job:
         """
         options = self.options
         if device is not None:
-            options = dataclasses.replace(options, device=device)
+            try:
+                options = dataclasses.replace(options, device=device)
+            except (TypeError, ValueError) as err:
+                # one argv on every rank, so every rank raises it together
+                raise _mpi.agreed(err) from None
         resolved = _mpi.resolve_comm(comm)
         start = time.perf_counter()
         result = solve(self.model, self.problem, options=options, comm=comm)
@@ -220,7 +225,7 @@ class Job:
                 job = _decode(doc, arrays, "job", path, comm)
                 if not isinstance(job, cls):
                     raise ValueError(f"{path} is not a gfem job file (no job in it).")  # noqa: TRY004, TRY301
-            except (OSError, TypeError, ValueError) as err:
+            except (OSError, TypeError, ValueError, KeyError) as err:
                 # all ranks decode one document, and the mesh's errors were agreed
                 _mpi.agreed(err)
                 raise
@@ -311,6 +316,11 @@ def _write_result(out: Path, result: Any, run: dict[str, Any], comm: Any) -> Non
     _mpi.on_root(comm, write, results=(OSError, TypeError, ValueError))
 
 
+#: What rank 0's read of a job's files can raise: a truncated ``.npz`` is a
+#: ``BadZipFile`` or an ``EOFError``, not an ``OSError``.
+_READ_ERRORS = (OSError, ValueError, EOFError, zipfile.BadZipFile)
+
+
 def _read_job(path: Path, comm: Any) -> tuple[dict, dict[str, np.ndarray]]:
     """A job's document and arrays, read by rank 0 alone."""
 
@@ -320,7 +330,7 @@ def _read_job(path: Path, comm: Any) -> tuple[dict, dict[str, np.ndarray]]:
         text = np.frombuffer(json.dumps(doc).encode(), dtype=np.uint8)
         return {_DOCUMENT: text, **arrays}
 
-    shared = _mpi.on_root(comm, read, results=(OSError, ValueError))
+    shared = _mpi.on_root(comm, read, results=_READ_ERRORS)
     return json.loads(shared.pop(_DOCUMENT).tobytes()), shared
 
 
