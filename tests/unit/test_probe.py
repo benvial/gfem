@@ -187,7 +187,9 @@ def test_a_point_on_a_face_gets_the_largest_tet_holding_it(rough):
 def beside_metal(tmp_path_factory):
     """``V = (z - 0.5) / 0.5`` (z in um) above an excluded metal volume."""
     path = tmp_path_factory.mktemp("beside") / "plate.msh"
-    sm.write_msh22(path, sm.plate(4.0, 3.0, (("metal", 0.5), ("oxide", 0.5)), (3, 3, 1)))
+    sm.write_msh22(
+        path, sm.plate(4.0, 3.0, (("metal", 0.5), ("oxide", 0.5)), (3, 3, 1))
+    )
     mesh = gfem.Mesh.from_gmsh(path)
     model = gfem.Model(
         mesh, materials={"oxide": gfem.Material(eps_r=3.9)}, excluded=("metal",)
@@ -197,7 +199,7 @@ def beside_metal(tmp_path_factory):
 
 
 def _metal_faces(mesh):
-    """``(n, 2)`` tets ``(metal, oxide)`` either side of the interface, and its faces."""
+    """``(n, 2)`` tets ``(metal, oxide)`` across the interface, and its faces."""
     pairs, faces = interior_faces(mesh)
     in_metal = np.isin(np.arange(len(mesh.tetrahedra)), mesh.elements("metal"))[pairs]
     across = in_metal[:, 0] != in_metal[:, 1]
@@ -208,7 +210,9 @@ def _metal_faces(mesh):
 
 
 @pytest.mark.parametrize("delta", [0.0, 1e-12, 1e-10, 1e-6, 7e-5, 1e-4])
-def test_a_point_on_or_just_above_an_excluded_conductor_has_a_value(beside_metal, delta):
+def test_a_point_on_or_just_above_an_excluded_conductor_has_a_value(
+    beside_metal, delta
+):
     mesh = beside_metal.mesh
     pairs, faces = _metal_faces(mesh)
     points, _ = into(mesh, pairs[:, 1], faces, delta)

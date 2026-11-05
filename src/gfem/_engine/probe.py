@@ -156,7 +156,7 @@ def _agree_location(comm: Any, tets: np.ndarray) -> np.ndarray:
 def _barycentric(
     nodes: np.ndarray, tetrahedra: np.ndarray, points: np.ndarray
 ) -> np.ndarray:
-    """``(n, 4)`` barycentric coordinates of ``points`` in ``tetrahedra`` (``(n, 4)``)."""
+    """``(n, 4)`` barycentric coordinates of ``points`` in ``(n, 4)`` ``tetrahedra``."""
     v = nodes[tetrahedra]
     edges = np.stack([v[:, i] - v[:, 3] for i in range(3)], axis=-1)
     head = np.linalg.solve(edges, (points - v[:, 3])[..., None])[..., 0]
@@ -186,7 +186,9 @@ def _settle(
     start = np.concatenate(([0], np.cumsum(np.bincount(all_tets.ravel()))))
     for i in flagged:
         around = np.unique(
-            np.concatenate([of_node[start[n] : start[n + 1]] for n in all_tets[tets[i]]])
+            np.concatenate(
+                [of_node[start[n] : start[n + 1]] for n in all_tets[tets[i]]]
+            )
         )
         lowest = _barycentric(
             nodes, all_tets[around], np.repeat(points[i : i + 1], len(around), axis=0)

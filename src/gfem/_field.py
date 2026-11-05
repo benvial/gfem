@@ -200,8 +200,8 @@ class Field:
 
         Raises:
             ValueError: A point is outside the mesh, past that tolerance, or inside
-                a volume where the field is not defined: outside its ``support``, or inside
-                a volume the model excludes from the solve (inside metal).
+                a volume where the field is not defined: outside its ``support``, or
+                inside a volume the model excludes from the solve (inside metal).
                 Under `jax.jit` with traced points or node coordinates, this
                 surfaces as a ``jax.errors.JaxRuntimeError``, or as ``ValueError``
                 from a jitted function that has already succeeded, with the
