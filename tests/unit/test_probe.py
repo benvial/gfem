@@ -1,6 +1,7 @@
 """Point probes: `Field.at` evaluates a result field at points."""
 
 import dataclasses
+import types
 
 import jax
 import jax.numpy as jnp
@@ -13,6 +14,8 @@ from near_faces import interior_faces, into
 import gfem
 from gfem._engine import fields as engine_fields
 from gfem._engine.probe import Located, locate
+from gfem._engine.probe import _settle as settle
+from gfem._engine.probe import _tets_of_nodes as tets_of_nodes
 from gfem._probe import evaluate, layout
 
 LAYERS = (("oxide", 0.5), ("nitride", 0.25))
@@ -161,7 +164,7 @@ def rough(tmp_path_factory):
     )
 
 
-@pytest.mark.parametrize("delta", [1e-4, 7e-5, 1e-6, 1e-10])
+@pytest.mark.parametrize("delta", [1e-4, 7e-5, 1e-6, 1e-8])
 def test_a_point_inside_a_tet_gets_that_tet_in_netgens_band(rough, delta):
     # netgen takes a tet up to 1e-4 outside the point, the neighbour half the time
     pairs, faces = interior_faces(rough.mesh)
@@ -181,6 +184,41 @@ def test_a_point_on_a_face_gets_the_largest_tet_holding_it(rough):
     points, _ = into(rough.mesh, pairs[:, 0], faces, 0.0)
     found = locate(rough.mesh, layout(rough), points)
     np.testing.assert_array_equal(found.tetrahedra, pairs.max(axis=1))
+
+
+@pytest.mark.parametrize("delta", [3e-11, -3e-11, 5e-10, -5e-10])
+def test_a_point_at_round_off_from_a_face_counts_as_on_it(rough, delta):
+    # round-off on a sliver reaches 1e-11: within 1e-9 of a face is on it
+    pairs, faces = interior_faces(rough.mesh)
+    points, _ = into(rough.mesh, pairs[:, 0], faces, delta)
+    found = locate(rough.mesh, layout(rough), points)
+    np.testing.assert_array_equal(found.tetrahedra, pairs.max(axis=1))
+
+
+def test_the_node_to_tet_map_is_built_once_per_mesh_topology(rough):
+    moved = gfem.Mesh(np.asarray(rough.mesh.nodes) * 1.0, rough.mesh._topology)
+    assert tets_of_nodes(moved) is tets_of_nodes(rough.mesh)
+
+
+class _Topology:
+    """A stand-in for a mesh's topology: `_settle` reads its tetrahedra."""
+
+
+def test_a_flat_tet_beside_a_point_is_skipped():
+    # tets 0 and 1 share the face z = 0 under x + y <= 1; tet 2 is flat, in z = 0
+    nodes = np.array(
+        [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [0, 0, -1], [1, 1, 0]], float
+    )
+    topology = _Topology()
+    topology.tetrahedra = np.array([[0, 1, 2, 3], [0, 1, 2, 4], [1, 2, 5, 0]])
+    mesh = types.SimpleNamespace(
+        nodes=nodes, tetrahedra=topology.tetrahedra, _topology=topology
+    )
+    point = np.array([[0.25, 0.25, 0.0]])
+    support = np.ones(3, bool)
+    tets, bary = settle(mesh, support, np.array([0]), point)
+    np.testing.assert_array_equal(tets, [1])
+    np.testing.assert_allclose(bary @ nodes[[0, 1, 2, 4]], point, atol=1e-15)
 
 
 @pytest.fixture(scope="module")
@@ -209,7 +247,7 @@ def _metal_faces(mesh):
     return np.stack([metal, oxide], axis=1), faces
 
 
-@pytest.mark.parametrize("delta", [0.0, 1e-12, 1e-10, 1e-6, 7e-5, 1e-4])
+@pytest.mark.parametrize("delta", [-1e-10, 0.0, 1e-12, 1e-10, 1e-6, 7e-5, 1e-4])
 def test_a_point_on_or_just_above_an_excluded_conductor_has_a_value(
     beside_metal, delta
 ):
@@ -221,7 +259,7 @@ def test_a_point_on_or_just_above_an_excluded_conductor_has_a_value(
     )
 
 
-@pytest.mark.parametrize("delta", [1e-10, 1e-6, 1e-4])
+@pytest.mark.parametrize("delta", [1e-8, 1e-6, 1e-4])
 def test_a_point_just_inside_an_excluded_conductor_raises(beside_metal, delta):
     pairs, faces = _metal_faces(beside_metal.mesh)
     points, _ = into(beside_metal.mesh, pairs[:, 0], faces, delta)

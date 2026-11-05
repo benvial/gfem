@@ -504,11 +504,24 @@ def node_share(
 _DEFAULT_THREADS: dict[int | None, int] = {}
 
 
+def ngs_num_threads() -> int | None:
+    """``NGS_NUM_THREADS`` as a thread count, or ``None`` when unset.
+
+    A positive integer, after stripping whitespace, counts; anything else (``"0"``,
+    empty, junk) is unset. One rule at one process and under ranks.
+    """
+    value = os.environ.get("NGS_NUM_THREADS", "").strip()
+    if value.isascii() and value.isdecimal() and int(value) > 0:
+        return int(value)
+    return None
+
+
 def default_threads(comm: Any) -> int:
     """``threads=None`` across ranks: one count for all, read once (ADR 0077).
 
-    ``NGS_NUM_THREADS`` if set, as ADR 0056 says, else `node_share`; then the minimum
-    over ranks. Collective on the first call on a communicator.
+    ``NGS_NUM_THREADS`` if set (`ngs_num_threads`), as ADR 0056 says, else
+    `node_share`; then the minimum over ranks. Collective on the first call on a
+    communicator.
 
     Args:
         comm: The resolved communicator, never ``None``: one process's count is
@@ -523,8 +536,7 @@ def default_threads(comm: Any) -> int:
         node_masks = node.allgather(mask)
     finally:
         node.Free()
-    chosen = os.environ.get("NGS_NUM_THREADS", "")
-    own = int(chosen) if chosen.isdecimal() else node_share(mask, node_masks)
+    own = ngs_num_threads() or node_share(mask, node_masks)
     _DEFAULT_THREADS[key] = agree_min(comm, max(1, own))
     return _DEFAULT_THREADS[key]
 

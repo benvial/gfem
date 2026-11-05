@@ -324,3 +324,83 @@ def test_a_stub_closed_by_hand_with_only_a_state_reaches_the_table(
     done = _tool("table", f"{name}.json")
     assert done.returncode == 0, done.stderr
     assert "NODE_FAIL in no phase" in done.stdout
+
+
+def _close(name: Path, state: str, *more: object) -> None:
+    closed = _tool("close", name, "--state", state, *more)
+    assert closed.returncode == 0, closed.stdout + closed.stderr
+
+
+def _copy(solved: Path, directory: Path) -> Path:
+    copy = directory / solved.name
+    shutil.copy(f"{solved}.json", f"{copy}.json")
+    shutil.copy(f"{solved}.npz", f"{copy}.npz")
+    return copy
+
+
+def test_a_rerun_moves_the_earlier_record_aside(solved: Path, tmp_path: Path) -> None:
+    # a rerun of a finished step is killed before it writes: its row is the rerun's
+    copy = _copy(solved, tmp_path)
+    _close(copy, "STARTED")
+    _close(copy, "CANCELLED")
+    stub = json.loads(Path(f"{copy}.json").read_text())
+    assert stub["failed"] is True
+    assert stub["state"] == "CANCELLED"
+    assert "s" not in stub
+    assert not Path(f"{copy}.npz").exists()
+    aside = tmp_path / f"{solved.name}.superseded-1"
+    assert json.loads(Path(f"{aside}.json").read_text())["s"]
+    assert Path(f"{aside}.npz").exists()
+    # a second rerun keeps both earlier records
+    _close(copy, "STARTED")
+    assert Path(f"{tmp_path / solved.name}.superseded-2.json").exists()
+    assert Path(f"{aside}.json").exists()
+
+
+def test_the_table_and_check_ignore_superseded_records(
+    solved: Path, tmp_path: Path
+) -> None:
+    copy = _copy(solved, tmp_path)
+    _close(copy, "STARTED")
+    aside = tmp_path / f"{solved.name}.superseded-1"
+    done = _tool("table", *sorted(tmp_path.glob("*.json")))
+    assert done.returncode == 0, done.stderr
+    rows = _rows(done.stdout)
+    assert len(rows) == 1
+    median = rows[0][_column(done.stdout, "`gfem.solve` median, s")]
+    assert median == "STARTED in no phase"
+    checked = _tool("check", aside, solved, "--gate", "direct")
+    assert checked.returncode == 1
+    assert "superseded" in json.loads(checked.stdout)["reason"]
+    assert "checks" not in json.loads(Path(f"{aside}.json").read_text())
+
+
+def test_a_spaces_only_record_reaches_the_table(tmp_path: Path) -> None:
+    path = _finished(tmp_path, "s", 1, 0.0, phases={"spaces_only": {"max_s": 5.0}})
+    done = _tool("table", path)
+    assert done.returncode == 0, done.stderr
+    median = _rows(done.stdout)[0][_column(done.stdout, "`gfem.solve` median, s")]
+    assert median == "nan"
+
+
+def test_a_stub_of_a_step_with_no_launcher_records_one_rank(tmp_path: Path) -> None:
+    # RPN 0: python with no launcher, whose own record says one rank
+    name = tmp_path / "one"
+    _close(name, "STARTED", "--ranks-per-node", "0", "--threads-per-rank", "8")
+    assert json.loads(Path(f"{name}.json").read_text())["ranks"] == 1
+
+
+def test_mumps_print_without_ranks_says_it_does_nothing(tmp_path: Path) -> None:
+    done = _tool(
+        "run",
+        _case(tmp_path / "case"),
+        tmp_path / "records" / "spaces",
+        "--solver",
+        "direct",
+        "--threads",
+        "1",
+        "--spaces-only",
+        "--mumps-print",
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert done.stdout.count("--mumps-print does nothing without ranks") == 1

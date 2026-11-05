@@ -30,6 +30,7 @@ from __future__ import annotations
 import collections
 import dataclasses
 import threading
+import weakref
 from typing import Any
 
 import ngsolve as ngs
@@ -76,8 +77,12 @@ class Layout:
     order: int
 
 
-#: Under this smallest barycentric coordinate a point counts as on a face.
-ON_FACE = 1e-12
+#: Under this smallest barycentric coordinate a point counts as on a face: round-off
+#: on a sliver tetrahedron reaches 1e-11.
+ON_FACE = 1e-9
+
+#: A tetrahedron whose volume is below this share of its longest edge cubed is flat.
+_FLAT = 1e-13
 
 
 def in_support(mesh: Mesh, layout: Layout) -> np.ndarray:
@@ -96,9 +101,11 @@ def locate(mesh: Mesh, layout: Layout, points: np.ndarray, comm: Any = None) -> 
     """The tetrahedra holding ``points`` (``(n, 3)``, m).
 
     A point inside a tetrahedron gets that one, on any number of ranks. On a face, to
-    round-off, it gets one holding it: in the support when one is, then the largest
-    index. Netgen's search also accepts a point within 1e-4 outside a tetrahedron, which
-    stays only for a point just outside the mesh: it gets the nearest tetrahedron.
+    1e-9 barycentric (`ON_FACE`), it gets one holding it to that tolerance: in the
+    support when one is, then the largest index. A tetrahedron of zero volume (to
+    round-off) holds no point. Netgen's search also accepts a point within 1e-4
+    outside a tetrahedron, which stays only for a point just outside the mesh: it gets
+    the nearest tetrahedron.
 
     Under ``comm`` it is collective, and all ranks get the same location.
 
@@ -156,11 +163,42 @@ def _agree_location(comm: Any, tets: np.ndarray) -> np.ndarray:
 def _barycentric(
     nodes: np.ndarray, tetrahedra: np.ndarray, points: np.ndarray
 ) -> np.ndarray:
-    """``(n, 4)`` barycentric coordinates of ``points`` in ``(n, 4)`` ``tetrahedra``."""
+    """``(n, 4)`` barycentric coordinates of ``points`` in ``(n, 4)`` ``tetrahedra``.
+
+    A flat tetrahedron (zero volume to round-off) gets ``-inf``: it holds no point.
+    """
     v = nodes[tetrahedra]
     edges = np.stack([v[:, i] - v[:, 3] for i in range(3)], axis=-1)
-    head = np.linalg.solve(edges, (points - v[:, 3])[..., None])[..., 0]
-    return np.concatenate([head, 1.0 - head.sum(axis=1, keepdims=True)], axis=1)
+    longest = np.linalg.norm(edges, axis=1).max(axis=1)
+    flat = np.abs(np.linalg.det(edges)) <= _FLAT * longest**3
+    bary = np.full((len(v), 4), -np.inf)
+    if (~flat).any():
+        rhs = (points - v[:, 3])[~flat][..., None]
+        head = np.linalg.solve(edges[~flat], rhs)[..., 0]
+        bary[~flat] = np.concatenate(
+            [head, 1.0 - head.sum(axis=1, keepdims=True)], axis=1
+        )
+    return bary
+
+
+_NODE_TETS: weakref.WeakKeyDictionary[Any, tuple[np.ndarray, np.ndarray]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _tets_of_nodes(mesh: Mesh) -> tuple[np.ndarray, np.ndarray]:
+    """The tetrahedra around each node, CSR: ``tets[start[n] : start[n + 1]]``.
+
+    Built once per mesh topology.
+    """
+    topology = mesh._topology  # noqa: SLF001
+    found = _NODE_TETS.get(topology)
+    if found is None:
+        flat = np.asarray(topology.tetrahedra).ravel()
+        tets = np.argsort(flat, kind="stable") // 4
+        start = np.concatenate(([0], np.cumsum(np.bincount(flat))))
+        found = _NODE_TETS[topology] = (tets, start)
+    return found
 
 
 def _settle(
@@ -182,8 +220,7 @@ def _settle(
     flagged = np.flatnonzero(bary.min(axis=1) < ON_FACE)
     if not flagged.size:
         return tets, bary
-    of_node = np.argsort(all_tets.ravel(), kind="stable") // 4
-    start = np.concatenate(([0], np.cumsum(np.bincount(all_tets.ravel()))))
+    of_node, start = _tets_of_nodes(mesh)
     for i in flagged:
         around = np.unique(
             np.concatenate(

@@ -14,7 +14,8 @@
 #   check NAME REF GATE|observe
 #   bench NAME RPN CPT node|net [scale_bench options...]  RPN 0: python with no launcher
 #
-# Before a run its stub says STARTED, so a job killed with this script still leaves a row;
+# Before a run its stub says STARTED (an earlier record of the name moves aside to
+# NAME.superseded-N), so a job killed with this script still leaves a row;
 # close it by hand afterwards with what sacct says (`scale_run.py close NAME --state ...`).
 # A step killed by Slurm disables later steps in its job (the script then stops with rc 3),
 # so a step that may be killed runs alone. SCALE_MODULES names the MPI stack's modules.

@@ -458,6 +458,68 @@ def test_a_stack_without_a_libpetsc_to_read_is_accepted(stack, tmp_path):
     assert _petsc.require_petsc() is petsc.PETSc
 
 
+def test_a_dangling_link_or_an_empty_libpetsc_is_skipped(stack, tmp_path):
+    petsc = _with_libpetsc(fake("petsc4py"), tmp_path, b"")  # empty
+    (tmp_path / "lib" / "libpetsc.so").symlink_to(tmp_path / "lib" / "gone.so")
+    stack(petsc=petsc)
+    assert _petsc.require_petsc() is petsc.PETSc
+
+
+def _unreadable(directory):
+    """A ``libpetsc`` in ``directory`` that this process cannot read."""
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root reads any file")
+    library = directory / "lib" / "libpetsc.so.3.26"
+    library.chmod(0)
+    return library
+
+
+def test_an_unreadable_libpetsc_is_refused_by_name(stack, tmp_path):
+    petsc = _with_libpetsc(fake("petsc4py"), tmp_path, _WITHOUT_ZGEMMT)
+    library = _unreadable(tmp_path)
+    stack(petsc=petsc)
+    with pytest.raises(gfem.SolverUnavailableError, match=re.escape(str(library))):
+        _petsc.require_petsc()
+
+
+class _Recording(_Ranks):
+    """A communicator that records its reductions and reduces to the listed results."""
+
+    def __init__(self, *results):
+        self.results = list(results)
+        self.seen = []
+
+    def allreduce(self, value, op=None):  # noqa: ARG002
+        self.seen.append(value)
+        return self.results[len(self.seen) - 1]
+
+
+def test_a_rank_that_cannot_read_its_libpetsc_still_meets_the_others(
+    stack, tmp_path, monkeypatch
+):
+    petsc = _with_libpetsc(fake("petsc4py"), tmp_path, _WITHOUT_ZGEMMT)
+    library = _unreadable(tmp_path)
+    stack(petsc=petsc)
+    monkeypatch.setattr(_mpi, "_load_mpi", lambda: types.SimpleNamespace(LAND=None))
+    comm = _Recording(True, False)
+    with pytest.raises(gfem.SolverUnavailableError, match=re.escape(str(library))):
+        _petsc.require_mpi_petsc("direct", comm)
+    assert comm.seen == [True, False]  # it took part in the agreement
+
+
+def test_all_ranks_refuse_when_one_cannot_read_its_libpetsc(
+    stack, tmp_path, monkeypatch
+):
+    petsc = _with_libpetsc(fake("petsc4py"), tmp_path, _WITHOUT_ZGEMMT)
+    stack(petsc=petsc)
+    monkeypatch.setattr(_mpi, "_load_mpi", lambda: types.SimpleNamespace(LAND=None))
+    comm = _Recording(True, False)
+    with pytest.raises(gfem.SolverUnavailableError, match="another rank"):
+        _petsc.require_mpi_petsc("direct", comm)
+    assert comm.seen == [True, True]
+    assert petsc.calls == []  # before init
+
+
 def test_a_source_install_is_read_under_its_arch(stack, tmp_path):
     petsc = fake("petsc4py")
     (tmp_path / "arch" / "lib").mkdir(parents=True)
@@ -496,7 +558,7 @@ def test_all_ranks_refuse_a_stack_one_of_them_finds_imports_zgemmt(
     stack(petsc=petsc)
     monkeypatch.setattr(_mpi, "_load_mpi", lambda: types.SimpleNamespace(LAND=None))
     with pytest.raises(gfem.SolverUnavailableError, match=r"ZGEMMT.*Rebuild.*--mpi"):
-        _petsc.require_mpi_petsc("direct", _ReducesTo(True, False))
+        _petsc.require_mpi_petsc("direct", _ReducesTo(True, True, False))
     assert petsc.calls == []  # before init
 
 

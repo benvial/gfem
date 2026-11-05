@@ -107,7 +107,12 @@ def has_zgemmt() -> bool:
 
     MUMPS is folded into ``libpetsc``, so the name is there only if MUMPS was built
     with ``-DGEMMT_AVAILABLE``. It initialises nothing, and a stack with MUMPS in
-    another library, or a static one, passes.
+    another library, or a static one, passes. A dangling link and an empty file are
+    no library.
+
+    Raises:
+        gfem.SolverUnavailableError: A ``libpetsc`` cannot be read, so the check
+            cannot tell; the error names it. Not cached.
     """
     try:
         config = __import__("petsc4py").get_config()
@@ -115,15 +120,25 @@ def has_zgemmt() -> bool:
         libraries = {path.resolve() for path in folder.glob("libpetsc.so*")}
     except Exception:  # noqa: BLE001 - also a broken install: `_import` tells why
         return False
-    return any(_names_zgemmt(library) for library in libraries)
+    return any(_names_zgemmt(library) for library in sorted(libraries))
 
 
 def _names_zgemmt(library: Path) -> bool:
-    with (
-        library.open("rb") as file,
-        mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ) as image,
-    ):
-        return image.find(b"\0zgemmt_\0") >= 0
+    try:
+        if not library.is_file() or library.stat().st_size == 0:
+            return False
+        with (
+            library.open("rb") as file,
+            mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ) as image,
+        ):
+            return image.find(b"\0zgemmt_\0") >= 0
+    except (OSError, ValueError) as err:
+        raise SolverUnavailableError(
+            f"gfem cannot read {library} ({err}) to check whether the installed "
+            "PETSc stack's MUMPS calls ZGEMMT, which can give wrong S with no error. "
+            "Make it readable, or rebuild the stack as "
+            f"{_RECIPE} describes."
+        ) from err
 
 
 def _load(package: str, library: str) -> tuple[Any, Any]:
@@ -229,7 +244,8 @@ def require_mpi_petsc(kind: str, comm: Any) -> Any:
     Raises:
         gfem.SolverUnavailableError: The MPI stack is not installed (checked before
             ``init``, which a no-MPI stack fails under a launcher), a rank finds that
-            its MUMPS calls ZGEMMT (`has_zgemmt`), or as `require_petsc`.
+            its MUMPS calls ZGEMMT or cannot read its ``libpetsc`` (`has_zgemmt`), or
+            as `require_petsc`. All ranks raise together.
     """
     if not _mpi.agree_all(comm, flag=has_mpi()):
         raise SolverUnavailableError(
@@ -239,7 +255,20 @@ def require_mpi_petsc(kind: str, comm: Any) -> Any:
             "linear_solver='bddc_gmres', or pass comm=MPI.COMM_SELF for independent "
             "one-process copies."
         )
-    if not _mpi.agree_all(comm, flag=not has_zgemmt()):
+    try:
+        found, unreadable = has_zgemmt(), None
+    except SolverUnavailableError as err:
+        found, unreadable = True, err
+    if not _mpi.agree_all(comm, flag=unreadable is None):
+        raise _mpi.agreed(
+            unreadable
+            or SolverUnavailableError(
+                f"linear_solver={kind!r} cannot run: another rank cannot read its "
+                "libpetsc to check whether the stack's MUMPS calls ZGEMMT (that "
+                "rank's error names the file)."
+            )
+        )
+    if not _mpi.agree_all(comm, flag=not found):
         raise SolverUnavailableError(
             f"linear_solver={kind!r} cannot run: {_ZGEMMT} --mpi as {_mpi.RECIPE} "
             "describes, or use linear_solver='bddc_gmres'."
