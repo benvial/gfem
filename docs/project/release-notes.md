@@ -8,6 +8,13 @@
   into such a solve (use `SolverOptions.threads`); inside a caller's own
   `ngs.TaskManager()` the caller's count is kept. Without an affinity mask (macOS,
   Windows) the count is the logical CPUs.
+- **Fixed: periodic gradients of a `MaterialField` with `axes`.** On a periodic model
+  the gradient pass for the face moments built its forms on a different NGSolve mesh
+  from the one the fields live on, so every face moment read zero. The gradients of
+  `eps_r` and `mu_r` principal values were wrong (0.5 % to 10 % in the cases measured,
+  more for eigenmodes) whenever the field touched a first-order `Absorbing` surface;
+  they now match finite differences to about 1e-8. Without such a face they were right
+  but slow. Non-periodic models were not affected.
 - **Driven solves across MPI ranks.** `mpirun -n N python script.py` or
   `srun --mpi=pmix` now runs a uniform driven sweep and its gradients across the
   ranks, with `comm=` on `gfem.solve`, `Job.run`, `Mesh.from_gmsh`, `Job.from_json`
