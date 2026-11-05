@@ -45,7 +45,8 @@ raises `ValueError`.
 
 - A point inside a tetrahedron gets that tetrahedron's value, the same on any
   number of ranks.
-- A point on a face, to round-off, gets the value from one of the tetrahedra
+- A point on a face, or within 1e-9 of an element's size from one (round-off on a
+  thin element reaches about 1e-11), gets the value from one of the tetrahedra
   sharing it, in the field's support when one is; which one is fixed but not
   otherwise specified. A component that jumps there, such as the normal component
   of E at a material interface, has no single value, so to read one side offset

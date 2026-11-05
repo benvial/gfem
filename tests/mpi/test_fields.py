@@ -441,14 +441,17 @@ _NEAR_FACE_LAYOUT = Layout(support=("dielectric",), excluded=(), space="hcurl", 
 
 
 def _near_faces(mesh, n=250, seed=5):
-    """``(points, tets)``: on both sides of ``n`` faces, and on them to the largest."""
+    """``(points, tets)``: by ``n`` faces; within 1e-9 of one, the largest."""
     pairs, faces = interior_faces(mesh)
     chosen = np.random.default_rng(seed).permutation(len(pairs))[:n]
     pairs, faces = pairs[chosen], faces[chosen]
     tets = np.concatenate([pairs[:, 0], pairs[:, 1]])
     both = np.concatenate([faces, faces])
-    groups = [(into(mesh, tets, both, d)[0], tets) for d in (1e-4, 1e-6, 1e-10)]
-    groups.append((into(mesh, pairs[:, 0], faces, 0.0)[0], pairs.max(axis=1)))
+    groups = [(into(mesh, tets, both, d)[0], tets) for d in (1e-4, 1e-6, 1e-8)]
+    groups += [
+        (into(mesh, pairs[:, 0], faces, d)[0], pairs.max(axis=1))
+        for d in (0.0, 3e-11, -3e-11)
+    ]
     return tuple(np.concatenate(g) for g in zip(*groups, strict=True))
 
 
