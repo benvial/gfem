@@ -6,12 +6,25 @@
   `tools/petsc_wheelhouse.sh` can return wrong S with no error on a complex front past
   32,768: MUMPS calls OpenBLAS's ZGEMMT there, whose column offset overflows 32 bits.
   On a dense test matrix of 46,000 unknowns it gave an error of 6.75e-6 with no error
-  from MUMPS or PETSc; a 10 M DOF mesh in one process had a largest front of 6,878. The script now
-  builds MUMPS without ZGEMMT.
+  from MUMPS or PETSc; a 10 M DOF mesh in one process had a largest front of 6,878.
+  The script now builds MUMPS without ZGEMMT.
   - **Behaviour change.** gfem refuses a stack whose `libpetsc` imports `zgemmt_`, at any
     size, with `gfem.SolverUnavailableError`, and `linear_solver="bddc_gmres"` above
     one rank keeps its coarse problem on rank 0 on such a stack. Rebuild as
     {doc}`../recipes/petsc-slepc` says.
+- **Behaviour change: default thread count.** With `threads=None`, NGSolve now runs on
+  `NGS_NUM_THREADS`, else the physical cores the process may run on, instead of every
+  hardware thread of the machine. A user's own `ngs.SetNumThreads` no longer carries
+  into such a solve (use `SolverOptions.threads`); inside a caller's own
+  `ngs.TaskManager()` the caller's count is kept. Without an affinity mask (macOS,
+  Windows) the count is the logical CPUs.
+- **Fixed: periodic gradients of a `MaterialField` with `axes`.** On a periodic model
+  the gradient pass for the face moments built its forms on a different NGSolve mesh
+  from the one the fields live on, so every face moment read zero. The gradients of
+  `eps_r` and `mu_r` principal values were wrong (0.5 % to 10 % in the cases measured,
+  more for eigenmodes) whenever the field touched a first-order `Absorbing` surface;
+  they now match finite differences to about 1e-8. Without such a face they were right
+  but slow. Non-periodic models were not affected.
 - **Driven solves across MPI ranks.** `mpirun -n N python script.py` or
   `srun --mpi=pmix` now runs a uniform driven sweep and its gradients across the
   ranks, with `comm=` on `gfem.solve`, `Job.run`, `Mesh.from_gmsh`, `Job.from_json`

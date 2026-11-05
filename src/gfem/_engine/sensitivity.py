@@ -468,7 +468,7 @@ def _moment_pass(
     face term (not summed into the owners: its derivative is per face).
     The trace of each moment is `_element_pass`'s integral.
     """
-    built = discretization(model.mesh, (), comm).built
+    built = discretization(model.mesh, model._periodic, comm).built  # noqa: SLF001
     moment = MOMENTS[term.kind]
     name = term.name
     pairs = [p for p in pairs if name in p.weights]

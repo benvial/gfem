@@ -508,3 +508,44 @@ def test_to_vtu_gathers_one_file_matching_sample(tmp_path, solver):
     gate = GATES[solver] * 100
     _assert_matches_sample(e_path, field, gate, f"E {solver}")
     _assert_matches_sample(b_path, field.b(), gate, f"B {solver}")
+
+
+# --- the command line under ranks: one report, exit 1 (spec 1.5) -------------------
+
+
+def _cli(job, *flags, ranks=3):
+    argv = [sys.executable, "-m", "gfem", "run", str(job), *flags]
+    return on_ranks_argv(argv, ranks=ranks, limit=120)
+
+
+def _one_clean_report(code, log, text):
+    assert code == 1, log
+    assert log.count("gfem: error:") == 1, log
+    assert text in log, log
+    assert "Traceback" not in log, log
+    assert "ends the job" not in log, log
+
+
+def test_a_bogus_device_exits_1_with_one_report(tmp_path):
+    path = _job(tmp_path, "bddc_gmres").to_json(tmp_path / "job.json")
+    code, log = _cli(path, "--out", str(tmp_path / "out"), "--device", "bogus")
+    _one_clean_report(code, log, "ValueError")
+
+
+def test_a_truncated_sidecar_exits_1_with_one_report(tmp_path):
+    path = _job(tmp_path, "bddc_gmres").to_json(tmp_path / "job.json")
+    sidecar = path.with_suffix(".npz")
+    sidecar.write_bytes(sidecar.read_bytes()[:200])
+    code, log = _cli(path, "--out", str(tmp_path / "out"))
+    _one_clean_report(code, log, "gfem: error:")
+
+
+def test_a_sidecar_lacking_a_key_exits_1_with_one_report(tmp_path):
+    path = _job(tmp_path, "bddc_gmres").to_json(tmp_path / "job.json")
+    sidecar = path.with_suffix(".npz")
+    with np.load(sidecar, allow_pickle=False) as npz:
+        kept = {k: npz[k] for k in npz.files}
+    kept.pop(next(iter(kept)))
+    np.savez(sidecar, **kept)
+    code, log = _cli(path, "--out", str(tmp_path / "out"))
+    _one_clean_report(code, log, "missing from the .npz sidecar")

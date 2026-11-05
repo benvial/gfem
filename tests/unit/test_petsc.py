@@ -703,6 +703,40 @@ def _stub(folder, name, body):
     path.chmod(0o755)
 
 
+SYSTEM_FOLDERS = ("/usr/bin", "/bin")
+
+
+def _system_tail(tmp_path):
+    """The system tools, linked into one folder, minus the MPI wrappers.
+
+    The host may have an MPI of its own (the launched CI job installs Open
+    MPI); the checks must see the same machine everywhere.
+    """
+    tail = tmp_path / "system-tools"
+    tail.mkdir(exist_ok=True)
+    for folder in SYSTEM_FOLDERS:
+        if not Path(folder).is_dir():
+            continue
+        for entry in Path(folder).iterdir():
+            if entry.name in ("mpicc", "mpicxx", "mpifort"):
+                continue
+            # lexists: a dangling link is an entry too, as on MareNostrum 5, where
+            # /bin is /usr/bin and /bin/lualatex dangles.
+            if not os.path.lexists(tail / entry.name):
+                (tail / entry.name).symlink_to(entry)
+    return tail
+
+
+def test_a_dangling_link_in_two_system_folders_is_linked_once(tmp_path, monkeypatch):
+    host = tmp_path / "host"
+    host.mkdir()
+    (host / "dangling").symlink_to("nowhere")
+    folders = (str(host), str(host))
+    monkeypatch.setattr(sys.modules[__name__], "SYSTEM_FOLDERS", folders)
+    tail = _system_tail(tmp_path)
+    assert (tail / "dangling").is_symlink()
+
+
 def _check(tmp_path, path=(), flags=(), **env):
     """Run the script's --check on stub tools, after ``flags``.
 
@@ -718,7 +752,7 @@ def _check(tmp_path, path=(), flags=(), **env):
         _stub(system, tool, "exit 0")
     seen = tmp_path / "uv.env"
     _stub(system, "uv", f'env > "{seen}"; echo "${{3:-{sys.executable}}}"')
-    folders = [*map(str, path), str(system), "/usr/bin", "/bin"]
+    folders = [*map(str, path), str(system), str(_system_tail(tmp_path))]
     return subprocess.run(
         [shutil.which("bash"), str(WHEELHOUSE_SCRIPT), *flags, "--check"],
         env={"HOME": str(tmp_path), "PATH": ":".join(folders), **env},
@@ -750,9 +784,13 @@ NOT_CONDA = pytest.mark.skipif(
     (Path(sys.base_prefix) / "conda-meta").is_dir(),
     reason="a conda Python runs the tests, and the script refuses it as target",
 )
+BASH_SCRIPT = pytest.mark.skipif(
+    sys.platform == "win32", reason="the build script is bash"
+)
 
 
 @NOT_CONDA
+@BASH_SCRIPT
 def test_the_no_mpi_stacks_configure_options_do_not_change(tmp_path):
     result = _check(tmp_path)
     assert result.returncode == 0, result.stderr
@@ -768,6 +806,7 @@ def test_the_no_mpi_stacks_configure_options_do_not_change(tmp_path):
 
 
 @NOT_CONDA
+@BASH_SCRIPT
 def test_the_mpi_stack_has_64_bit_indices_and_scotch_over_petscs_pin(tmp_path):
     result = _check(tmp_path, path=[_mpi_tools(tmp_path)], flags=["--mpi"])
     assert result.returncode == 0, result.stderr
@@ -785,6 +824,7 @@ def test_the_mpi_stack_has_64_bit_indices_and_scotch_over_petscs_pin(tmp_path):
 
 
 @NOT_CONDA
+@BASH_SCRIPT
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
@@ -801,14 +841,29 @@ def test_the_mpi_check_refuses_what_is_known_not_to_work(tmp_path, kwargs, messa
 
 
 @NOT_CONDA
+@BASH_SCRIPT
 def test_the_mpi_check_names_what_is_missing(tmp_path):
     result = _check(tmp_path, flags=["--mpi"])
     assert result.returncode != 0
-    # bison and flex may be in /usr/bin, which the stub PATH keeps
     assert "mpicc mpicxx mpifort" in result.stderr
 
 
 @NOT_CONDA
+@BASH_SCRIPT
+def test_a_host_mpi_does_not_change_what_the_check_sees(tmp_path, monkeypatch):
+    host = tmp_path / "host"
+    for tool in ("mpicc", "mpicxx", "mpifort"):
+        _stub(host, tool, "echo host wrapper")
+    monkeypatch.setattr(
+        sys.modules[__name__], "SYSTEM_FOLDERS", (str(host), "/usr/bin", "/bin")
+    )
+    result = _check(tmp_path, flags=["--mpi"])
+    assert result.returncode != 0
+    assert "mpicc mpicxx mpifort" in result.stderr
+
+
+@NOT_CONDA
+@BASH_SCRIPT
 def test_a_source_folder_is_checked_file_by_file(tmp_path):
     sources = tmp_path / "sources"
     (sources / "wheels").mkdir(parents=True)
@@ -818,7 +873,7 @@ def test_a_source_folder_is_checked_file_by_file(tmp_path):
     assert "petsc-3.26.0.tar.gz is missing" in result.stderr
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the build script is bash")
+@BASH_SCRIPT
 @pytest.mark.skipif(
     (Path(sys.base_prefix) / "conda-meta").is_dir(),
     reason="a conda Python runs the tests, and the script refuses it as target",
@@ -850,7 +905,7 @@ def test_the_build_script_takes_an_active_conda_off_path(tmp_path):
     assert "OTHER_TOOL=/opt/other/bin/tool" in seen.splitlines()
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the build script is bash")
+@BASH_SCRIPT
 @pytest.mark.parametrize("active", [False, True])
 def test_the_build_script_refuses_a_conda_python(tmp_path, active):
     # A conda Python's compiler flags point at conda's headers. Fake one: a

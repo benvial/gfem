@@ -248,7 +248,10 @@ class SolverOptions:
             options built on a laptop can run on a GPU machine; a GPU that
             cannot be used raises `gfem.DeviceUnavailableError`, never a
             silent CPU fallback. See `gfem.cuda_available`.
-        threads: CPU threads, or ``None`` for the machine's default.
+        threads: CPU threads, or ``None`` for the solve threads:
+            ``NGS_NUM_THREADS`` when set to a positive integer, else the physical
+            cores the process may run on (its affinity mask), not every hardware
+            thread of the machine.
             ``linear_solver="petsc"`` does not read it: MUMPS's BLAS follows
             ``OPENBLAS_NUM_THREADS``, which frequency workers set to their
             share.
@@ -278,14 +281,13 @@ class SolverOptions:
         frequency_workers: Processes a uniform `gfem.Driven` sweep spreads
             its frequencies over, in contiguous blocks, each with
             ``threads // frequency_workers`` threads (at least 1; with
-            ``threads=None``, of the logical CPUs the process may run
-            on). It applies to uniform driven sweeps only: adaptive
-            sweeps, eigenmode and electrostatic solves ignore it. Memory
-            grows about ``frequency_workers`` times, one solve per worker.
-            S agrees with one worker's to the solver precision (each
-            block's iterative solves start cold). Not available with wave
-            ports on more than one frequency (`NotImplementedError`) or a
-            GPU device. The workers are
+            ``threads=None``, of the solve threads). It applies to uniform
+            driven sweeps only: adaptive sweeps, eigenmode and electrostatic
+            solves ignore it. Memory grows about ``frequency_workers`` times,
+            one solve per worker. S agrees with one worker's to the solver
+            precision (each block's iterative solves start cold). Not available
+            with wave ports on more than one frequency (`NotImplementedError`)
+            or a GPU device. The workers are
             spawned processes, so a script that sets it must guard its
             entry point with ``if __name__ == "__main__":``.
         eigen_solver: What finds an `gfem.Eigenmode` problem's modes near

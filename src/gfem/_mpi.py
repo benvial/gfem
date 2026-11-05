@@ -511,8 +511,8 @@ def default_threads(comm: Any) -> int:
     over ranks. Collective on the first call on a communicator.
 
     Args:
-        comm: The resolved communicator, never ``None``: on one process ``threads=None``
-            keeps NGSolve's own setting, so there is no count to read.
+        comm: The resolved communicator, never ``None``: one process's count is
+            `gfem._engine.runtime.solve_threads`.
     """
     key = comm_key(comm)
     if key in _DEFAULT_THREADS:
