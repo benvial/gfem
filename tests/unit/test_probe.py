@@ -8,8 +8,12 @@ import numpy as np
 import pytest
 import scipy.constants as const
 import structured_meshes as sm
+from near_faces import interior_faces, into
 
 import gfem
+from gfem._engine import fields as engine_fields
+from gfem._engine.probe import Located, locate
+from gfem._probe import evaluate, layout
 
 LAYERS = (("oxide", 0.5), ("nitride", 0.25))
 MATERIALS = {"oxide": gfem.Material(eps_r=3.9), "nitride": gfem.Material(eps_r=7.5)}
@@ -131,6 +135,107 @@ def test_probe_inside_an_excluded_volume_raises(tmp_path):
     np.testing.assert_allclose(field.at([2e-6, 1e-6, 0.75e-6]), 0.5, atol=1e-12)
     with pytest.raises(ValueError, match="'metal'"):
         field.at([2e-6, 1e-6, 0.25e-6])
+
+
+# --- which tetrahedron holds a point ----------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def rough(tmp_path_factory):
+    """A field whose normal component jumps at every face: random coefficients."""
+    path = tmp_path_factory.mktemp("rough") / "line.msh"
+    sm.write_msh22(path, sm.strip_line(3.0, 2.0, 1.0, (6, 4, 4)))
+    mesh = gfem.Mesh.from_gmsh(path, length_unit="mm")
+    support = ("dielectric",)
+    width, _ = engine_fields.dof_shape(mesh, support, (), "hcurl", 2)
+    rng = np.random.default_rng(3)
+    return gfem.Field(
+        coefficients=jnp.asarray(rng.standard_normal(width) + 0j),
+        mesh=mesh,
+        quantity="E",
+        unit="V/m",
+        space="hcurl",
+        order=2,
+        support=support,
+        omega=jnp.asarray(1.0),
+    )
+
+
+@pytest.mark.parametrize("delta", [1e-4, 7e-5, 1e-6, 1e-10])
+def test_a_point_inside_a_tet_gets_that_tet_in_netgens_band(rough, delta):
+    # netgen takes a tet up to 1e-4 outside the point, the neighbour half the time
+    pairs, faces = interior_faces(rough.mesh)
+    tets = np.concatenate([pairs[:, 0], pairs[:, 1]])
+    points, bary = into(rough.mesh, tets, np.concatenate([faces, faces]), delta)
+    np.testing.assert_array_equal(
+        locate(rough.mesh, layout(rough), points).tetrahedra, tets
+    )
+    own = evaluate(
+        rough.coefficients[None], rough.mesh, layout(rough), Located(tets, bary)
+    )[0]
+    np.testing.assert_allclose(rough.at(points), own, rtol=1e-10)
+
+
+def test_a_point_on_a_face_gets_the_largest_tet_holding_it(rough):
+    pairs, faces = interior_faces(rough.mesh)
+    points, _ = into(rough.mesh, pairs[:, 0], faces, 0.0)
+    found = locate(rough.mesh, layout(rough), points)
+    np.testing.assert_array_equal(found.tetrahedra, pairs.max(axis=1))
+
+
+@pytest.fixture(scope="module")
+def beside_metal(tmp_path_factory):
+    """``V = (z - 0.5) / 0.5`` (z in um) above an excluded metal volume."""
+    path = tmp_path_factory.mktemp("beside") / "plate.msh"
+    sm.write_msh22(
+        path, sm.plate(4.0, 3.0, (("metal", 0.5), ("oxide", 0.5)), (3, 3, 1))
+    )
+    mesh = gfem.Mesh.from_gmsh(path)
+    model = gfem.Model(
+        mesh, materials={"oxide": gfem.Material(eps_r=3.9)}, excluded=("metal",)
+    )
+    problem = gfem.Electrostatic(terminals={"t": "top"}, ground="metal__oxide")
+    return gfem.solve(model, problem).potential["t"]
+
+
+def _metal_faces(mesh):
+    """``(n, 2)`` tets ``(metal, oxide)`` across the interface, and its faces."""
+    pairs, faces = interior_faces(mesh)
+    in_metal = np.isin(np.arange(len(mesh.tetrahedra)), mesh.elements("metal"))[pairs]
+    across = in_metal[:, 0] != in_metal[:, 1]
+    pairs, faces, in_metal = pairs[across], faces[across], in_metal[across]
+    metal = np.where(in_metal[:, 0], pairs[:, 0], pairs[:, 1])
+    oxide = np.where(in_metal[:, 0], pairs[:, 1], pairs[:, 0])
+    return np.stack([metal, oxide], axis=1), faces
+
+
+@pytest.mark.parametrize("delta", [0.0, 1e-12, 1e-10, 1e-6, 7e-5, 1e-4])
+def test_a_point_on_or_just_above_an_excluded_conductor_has_a_value(
+    beside_metal, delta
+):
+    mesh = beside_metal.mesh
+    pairs, faces = _metal_faces(mesh)
+    points, _ = into(mesh, pairs[:, 1], faces, delta)
+    np.testing.assert_allclose(
+        beside_metal.at(points), (points[:, 2] * 1e6 - 0.5) / 0.5, atol=1e-10
+    )
+
+
+@pytest.mark.parametrize("delta", [1e-10, 1e-6, 1e-4])
+def test_a_point_just_inside_an_excluded_conductor_raises(beside_metal, delta):
+    pairs, faces = _metal_faces(beside_metal.mesh)
+    points, _ = into(beside_metal.mesh, pairs[:, 0], faces, delta)
+    for point in points:
+        with pytest.raises(ValueError, match="'metal'"):
+            beside_metal.at(point)
+
+
+def test_netgens_band_still_accepts_a_point_just_outside_the_mesh(beside_metal):
+    # a cell is 0.5 um high: 1e-6 of it above the top plate, where V = 1
+    just_above = [1.7e-6, 1.1e-6, (1.0 + 0.5e-6) * 1e-6]
+    np.testing.assert_allclose(beside_metal.at(just_above), 1.0, atol=1e-4)
+    with pytest.raises(ValueError, match="outside the mesh"):
+        beside_metal.at([1.7e-6, 1.1e-6, (1.0 + 0.5e-2) * 1e-6])
 
 
 # --- JAX ---------------------------------------------------------------------------
