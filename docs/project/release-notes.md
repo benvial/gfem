@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Behaviour change: default thread count.** With `threads=None`, NGSolve now runs on
+  `NGS_NUM_THREADS`, else the physical cores the process may run on, instead of every
+  hardware thread of the machine. A user's own `ngs.SetNumThreads` no longer carries
+  into such a solve (use `SolverOptions.threads`); inside a caller's own
+  `ngs.TaskManager()` the caller's count is kept. Without an affinity mask (macOS,
+  Windows) the count is the logical CPUs.
 - **Driven solves across MPI ranks.** `mpirun -n N python script.py` or
   `srun --mpi=pmix` now runs a uniform driven sweep and its gradients across the
   ranks, with `comm=` on `gfem.solve`, `Job.run`, `Mesh.from_gmsh`, `Job.from_json`

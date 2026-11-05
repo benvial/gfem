@@ -32,6 +32,7 @@ from typing import Any
 import jax
 import numpy as np
 
+from gfem._engine.runtime import solve_threads
 from gfem.model import Model
 
 __all__ = ["model_from_parts", "model_parts", "run", "worker_threads"]
@@ -44,19 +45,9 @@ _LAUNCHER_PREFIXES = ("OMPI_", "PMIX_", "PMI_", "SLURM_STEP_")
 _START_LOCK = threading.Lock()
 
 
-def available_cpus() -> int:
-    """Logical CPUs this process may run on (its affinity mask), >= 1."""
-    if hasattr(os, "process_cpu_count"):  # Python 3.13
-        return os.process_cpu_count() or 1
-    if hasattr(os, "sched_getaffinity"):
-        return len(os.sched_getaffinity(0)) or 1
-    return os.cpu_count() or 1
-
-
 def worker_threads(threads: int | None, workers: int) -> int:
-    """Each worker's share of ``threads`` (``None``: `available_cpus`), >= 1."""
-    total = threads if threads is not None else available_cpus()
-    return max(1, total // workers)
+    """Each worker's share of ``threads`` (``None``: the solve threads), >= 1."""
+    return max(1, solve_threads(threads) // workers)
 
 
 def model_parts(model: Model) -> tuple[Any, Any]:

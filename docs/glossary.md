@@ -25,6 +25,12 @@ Frequency worker
   solve's threads (`SolverOptions.frequency_workers`); the blocks join back in
   frequency order.
 
+Solve threads
+  The CPU threads a solve runs on: `SolverOptions.threads` when given, else
+  `NGS_NUM_THREADS`, else the physical cores the process may run on (its affinity
+  mask), not every hardware thread of the machine. Under MPI ranks the cores are
+  shared between the ranks holding that mask.
+
 Sample frequency
   An output frequency at which an {term}`adaptive sweep` solved the full
   problem.

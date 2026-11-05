@@ -19,7 +19,7 @@ import structured_meshes as sm
 from solver_misses import cannot_converge_at
 
 import gfem
-from gfem._engine import workers
+from gfem._engine import runtime, workers
 from gfem._engine.driven import DrivenRule, _solve_block
 from gfem._linalg import prepare
 
@@ -230,16 +230,48 @@ def test_a_worker_starts_with_its_share_of_threads(monkeypatch):
     assert "MKL_NUM_THREADS" not in os.environ
 
 
-def test_worker_threads_split_the_cpus_this_process_may_use(monkeypatch):
-    # an affinity mask (taskset, a container's cpuset) limits the CPUs
+def test_worker_threads_split_the_cores_this_process_may_use(monkeypatch):
+    # an affinity mask (taskset, a container's cpuset) limits the CPUs; a CPU with no
+    # topology directory is a core of its own
+    monkeypatch.delenv("NGS_NUM_THREADS", raising=False)
+    monkeypatch.delenv("PYTHON_CPU_COUNT", raising=False)
     monkeypatch.setattr(os, "cpu_count", lambda: 64)
-    monkeypatch.setattr(os, "process_cpu_count", lambda: 6, raising=False)
-    assert workers.worker_threads(None, 2) == 3
     monkeypatch.delattr(os, "process_cpu_count", raising=False)
-    monkeypatch.setattr(os, "sched_getaffinity", lambda _: {0, 1, 2, 3}, raising=False)
+    mask = {100000 + cpu for cpu in range(4)}
+    monkeypatch.setattr(os, "sched_getaffinity", lambda _: mask, raising=False)
     assert workers.worker_threads(None, 2) == 2
     assert workers.worker_threads(None, 8) == 1
     assert workers.worker_threads(12, 4) == 3  # given threads win
+
+
+def test_worker_threads_count_the_cores_of_a_mask_holding_both_siblings(monkeypatch):
+    monkeypatch.delenv("NGS_NUM_THREADS", raising=False)
+    monkeypatch.delenv("PYTHON_CPU_COUNT", raising=False)
+    monkeypatch.delattr(os, "process_cpu_count", raising=False)
+    mask = set(range(16))
+    monkeypatch.setattr(os, "sched_getaffinity", lambda _: mask, raising=False)
+    read_text = Path.read_text
+
+    def siblings(path, *args, **kwargs):
+        if path.name == "thread_siblings_list":
+            return str(int(path.parent.parent.name.removeprefix("cpu")) // 2)
+        return read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", siblings)
+    assert workers.worker_threads(None, 2) == 4 == runtime.solve_threads(None) // 2
+
+
+def test_worker_threads_split_ngs_num_threads_when_it_is_set(monkeypatch):
+    monkeypatch.delenv("PYTHON_CPU_COUNT", raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: 64)
+    monkeypatch.setenv("NGS_NUM_THREADS", "8")
+    assert workers.worker_threads(None, 2) == 4 == runtime.solve_threads(None) // 2
+    assert workers.worker_threads(None, 16) == 1
+    monkeypatch.setenv("NGS_NUM_THREADS", "abc")  # falls back to the mask, as a solve
+    monkeypatch.delattr(os, "process_cpu_count", raising=False)
+    mask = {100000 + cpu for cpu in range(6)}
+    monkeypatch.setattr(os, "sched_getaffinity", lambda _: mask, raising=False)
+    assert workers.worker_threads(None, 2) == 3
 
 
 def test_a_gradient_through_two_workers_matches_one(line):
