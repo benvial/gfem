@@ -102,7 +102,6 @@ while read -r name a b c d e rest; do
   rc=$?
   echo "rc=$rc wall=$((SECONDS-s))s"
   if [ "$rc" = 0 ]; then state=COMPLETED
-  elif [ "$rc" = 124 ] || [ "$rc" = 137 ] && [ "$a" = 0 ]; then state=TIMEOUT
   elif [ "$rc" = 124 ]; then state=TIMEOUT
   elif [ "$a" = 0 ]; then state=EXIT_$rc
   else state=$(step_state); fi
