@@ -6,6 +6,8 @@ machine. Under ranks ADR 0077 decides instead (tests/unit/test_mpi.py).
 """
 
 import os
+import sys
+import types
 import warnings
 from pathlib import Path
 
@@ -13,6 +15,7 @@ import ngsolve as ngs
 import pytest
 from isolated import isolated
 
+from gfem import _mpi
 from gfem._engine.runtime import solve_threads, task_manager
 
 
@@ -79,13 +82,28 @@ def test_a_system_with_no_affinity_mask_counts_what_python_counts(monkeypatch):
     assert solve_threads(None) == 64
 
 
+@pytest.mark.parametrize("how", ["environment", "-X"])
 def test_pythons_own_cpu_count_override_counts_as_the_cpus_the_process_may_use(
-    monkeypatch,
+    monkeypatch, how
 ):
-    # PYTHON_CPU_COUNT, -X cpu_count (3.13): os.process_cpu_count answers with it
+    # PYTHON_CPU_COUNT, -X cpu_count (3.13): os.process_cpu_count answers with it,
+    # even when it equals the mask's size
     _on_mask(monkeypatch, range(12))
+    if how == "environment":
+        monkeypatch.setenv("PYTHON_CPU_COUNT", "12")
+    else:
+        monkeypatch.setitem(sys._xoptions, "cpu_count", "12")
+    assert solve_threads(None) == 12
+
+
+def test_pythons_default_cpu_count_is_no_override(monkeypatch):
+    _on_mask(monkeypatch, range(12))
+    monkeypatch.setenv("PYTHON_CPU_COUNT", "default")
+    assert solve_threads(None) == 6
+    # a process_cpu_count that differs from the mask is not an override by itself
+    monkeypatch.delenv("PYTHON_CPU_COUNT")
     monkeypatch.setattr(os, "process_cpu_count", lambda: 5)
-    assert solve_threads(None) == 5
+    assert solve_threads(None) == 6
 
 
 def test_ngs_num_threads_wins_over_the_cores_the_process_may_use(monkeypatch):
@@ -97,13 +115,58 @@ def test_ngs_num_threads_wins_over_the_cores_the_process_may_use(monkeypatch):
     assert solve_threads(None) == 300  # no cap
 
 
-@pytest.mark.parametrize("value", ["", "0", "-2", "abc", "2.5"])
-def test_a_malformed_ngs_num_threads_is_treated_as_unset(monkeypatch, value):
+class _Node:
+    """A node communicator of one rank."""
+
+    def __init__(self, mask):
+        self.mask = mask
+
+    def allgather(self, value):
+        return [value]
+
+    def Free(self):  # noqa: N802
+        pass
+
+
+class _Ranks:
+    """As much of a communicator as `default_threads` reads, one rank to a node."""
+
+    rank, size = 0, 2
+
+    def Split_type(self, _kind):  # noqa: N802
+        return _Node(None)
+
+    def allreduce(self, value, op=None):  # noqa: ARG002
+        return value
+
+
+def _default_threads(monkeypatch, under):
+    """`threads=None` at one process, or under ranks (ADR 0077)."""
+    if under == "one process":
+        return solve_threads(None)
+    mpi = types.SimpleNamespace(COMM_TYPE_SHARED=0, MIN="min")
+    monkeypatch.setattr(_mpi, "_load_mpi", lambda: mpi)
+    monkeypatch.setattr(_mpi, "comm_key", lambda _comm: 0)
+    monkeypatch.setattr(_mpi, "_DEFAULT_THREADS", {})
+    return _mpi.default_threads(_Ranks())
+
+
+@pytest.mark.parametrize("under", ["one process", "ranks"])
+@pytest.mark.parametrize("value", ["", " ", "0", "00", "-2", "abc", "2.5", "0x3"])
+def test_a_malformed_ngs_num_threads_is_treated_as_unset(monkeypatch, value, under):
     _on_mask(monkeypatch, range(12))
     monkeypatch.setenv("NGS_NUM_THREADS", value)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        assert solve_threads(None) == 6
+        assert _default_threads(monkeypatch, under) == 6
+
+
+@pytest.mark.parametrize("under", ["one process", "ranks"])
+@pytest.mark.parametrize("value", ["3", " 3 ", "3\n", "03"])
+def test_a_positive_ngs_num_threads_counts_after_whitespace(monkeypatch, value, under):
+    _on_mask(monkeypatch, range(12))
+    monkeypatch.setenv("NGS_NUM_THREADS", value)
+    assert _default_threads(monkeypatch, under) == 3
 
 
 @pytest.mark.usefixtures("ngsolve_threads")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import sys
 from collections.abc import Generator
 from typing import Any
 
@@ -27,24 +28,30 @@ def available_cpus() -> int:
             return os.process_cpu_count() or 1
         return os.cpu_count() or 1
     mask = frozenset(os.sched_getaffinity(0))
-    if hasattr(os, "process_cpu_count") and os.process_cpu_count() != len(mask):
+    if hasattr(os, "process_cpu_count") and _cpu_count_overridden():
         return os.process_cpu_count() or 1
     return _mpi.node_share(mask, [mask])
+
+
+def _cpu_count_overridden() -> bool:
+    """Whether Python's own CPU count is set: ``PYTHON_CPU_COUNT``, ``-X cpu_count``.
+
+    Both arrived with ``os.process_cpu_count`` in 3.13; ``"default"`` is no override.
+    """
+    given = sys._xoptions.get("cpu_count") or os.environ.get("PYTHON_CPU_COUNT")  # noqa: SLF001
+    return isinstance(given, str) and given not in ("", "default")
 
 
 def solve_threads(threads: int | None) -> int:
     """One process's count: ``threads``, else ``NGS_NUM_THREADS``, else its cores.
 
-    An ``NGS_NUM_THREADS`` that is not a positive integer is treated as unset. Under
-    ranks `gfem._mpi.default_threads` decides instead (ADR 0077).
+    An ``NGS_NUM_THREADS`` that is not a positive integer is treated as unset
+    (`gfem._mpi.ngs_num_threads`). Under ranks `gfem._mpi.default_threads` decides
+    instead (ADR 0077).
     """
     if threads is not None:
         return threads
-    try:
-        chosen = int(os.environ.get("NGS_NUM_THREADS", ""))
-    except ValueError:
-        chosen = 0
-    return chosen if chosen > 0 else available_cpus()
+    return _mpi.ngs_num_threads() or available_cpus()
 
 
 @contextlib.contextmanager
