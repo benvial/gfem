@@ -10,6 +10,8 @@ accepted as it is.
 gfem documents two builds (ADR 0067). The no-MPI stack serves one process and rank
 copies, which pass PETSc its launch option; only the MPI stack serves a distributed
 solve (`require_mpi_petsc`). `has_mpi` tells them apart without initialising PETSc.
+A stack whose MUMPS calls ZGEMMT is refused whatever the size of the problem
+(`has_zgemmt`, ADR 0078).
 
 Every PETSc or SLEPc object gfem creates gets its own options prefix
 (`next_prefix`). gfem's options sit in PETSc's global options database only
@@ -23,6 +25,7 @@ from __future__ import annotations
 import contextlib
 import functools
 import itertools
+import mmap
 import re
 import threading
 from collections.abc import Generator
@@ -42,6 +45,7 @@ __all__ = [
     "MIN_VERSION",
     "error_text",
     "has_mpi",
+    "has_zgemmt",
     "mpi_stack_usable",
     "next_prefix",
     "require_mpi_petsc",
@@ -71,6 +75,13 @@ _SOLVERS = {
 #: A PETSc traceback line: ``[0] KSPSetUp() at /path/itfunc.c:123``.
 _TRACEBACK = re.compile(r"\(\) at \S+:\d+$")
 _RANK = re.compile(r"^\[\d+\]\s*")
+#: Why `has_zgemmt` stops a stack: read by the errors of `require_petsc` and
+#: `require_mpi_petsc`.
+_ZGEMMT = (
+    "the installed PETSc stack's MUMPS calls ZGEMMT, and OpenBLAS's overflows on a "
+    "complex front of 32,768 or more, which can give wrong S with no error. Rebuild "
+    "the stack with the current tools/petsc_wheelhouse.sh"
+)
 
 
 @functools.cache
@@ -88,6 +99,31 @@ def has_mpi() -> bool:
     except Exception:  # noqa: BLE001 - also a broken install: `_import` tells why
         return False
     return "PETSC_HAVE_MPIUNI" not in header
+
+
+@functools.cache
+def has_zgemmt() -> bool:
+    """Whether the installed ``libpetsc`` imports ZGEMMT; False without one to read.
+
+    MUMPS is folded into ``libpetsc``, so the name is there only if MUMPS was built
+    with ``-DGEMMT_AVAILABLE``. It initialises nothing, and a stack with MUMPS in
+    another library, or a static one, passes.
+    """
+    try:
+        config = __import__("petsc4py").get_config()
+        folder = Path(config["PETSC_DIR"], config.get("PETSC_ARCH") or "", "lib")
+        libraries = {path.resolve() for path in folder.glob("libpetsc.so*")}
+    except Exception:  # noqa: BLE001 - also a broken install: `_import` tells why
+        return False
+    return any(_names_zgemmt(library) for library in libraries)
+
+
+def _names_zgemmt(library: Path) -> bool:
+    with (
+        library.open("rb") as file,
+        mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ) as image,
+    ):
+        return image.find(b"\0zgemmt_\0") >= 0
 
 
 def _load(package: str, library: str) -> tuple[Any, Any]:
@@ -148,8 +184,9 @@ def require_petsc(subject: str = "linear_solver") -> Any:
 
     Raises:
         gfem.SolverUnavailableError: petsc4py is missing or cannot be
-            imported, its PETSc has real scalars, or it is older than
-            `MIN_VERSION` or of unknown version.
+            imported, its PETSc has real scalars, it is older than
+            `MIN_VERSION` or of unknown version, or its MUMPS calls ZGEMMT
+            (`has_zgemmt`).
     """
     build = "Build PETSc and petsc4py with complex scalars"
     _, PETSc = _import(subject, "petsc4py", "PETSc", build)
@@ -161,6 +198,12 @@ def require_petsc(subject: str = "linear_solver") -> Any:
             f"scalars (PETSc.ScalarType is {scalar.name}), and gfem's operators "
             "are complex. Rebuild PETSc with --with-scalar-type=complex as "
             f"{_RECIPE} describes, or {other}."
+        )
+    if has_zgemmt():
+        value, other = _SOLVERS[subject]
+        raise SolverUnavailableError(
+            f"{subject}={value!r} cannot run: {_ZGEMMT}{' --mpi' if has_mpi() else ''} "
+            f"as {_RECIPE} describes, or {other}."
         )
     return PETSc
 
@@ -185,8 +228,8 @@ def require_mpi_petsc(kind: str, comm: Any) -> Any:
 
     Raises:
         gfem.SolverUnavailableError: The MPI stack is not installed (checked before
-            ``init``, which a no-MPI stack fails under a launcher), or as
-            `require_petsc`.
+            ``init``, which a no-MPI stack fails under a launcher), a rank finds that
+            its MUMPS calls ZGEMMT (`has_zgemmt`), or as `require_petsc`.
     """
     if not _mpi.agree_all(comm, flag=has_mpi()):
         raise SolverUnavailableError(
@@ -195,6 +238,11 @@ def require_mpi_petsc(kind: str, comm: Any) -> Any:
             f"tools/petsc_wheelhouse.sh --mpi as {_mpi.RECIPE} describes, use "
             "linear_solver='bddc_gmres', or pass comm=MPI.COMM_SELF for independent "
             "one-process copies."
+        )
+    if not _mpi.agree_all(comm, flag=not has_zgemmt()):
+        raise SolverUnavailableError(
+            f"linear_solver={kind!r} cannot run: {_ZGEMMT} --mpi as {_mpi.RECIPE} "
+            "describes, or use linear_solver='bddc_gmres'."
         )
     return require_petsc("linear_solver")
 

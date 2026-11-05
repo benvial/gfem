@@ -66,6 +66,11 @@ pip install --no-index --find-links wheelhouse petsc petsc4py slepc slepc4py
   leaves them in place.
 - Rebuild for another Python version, and when gfem raises the PETSc version
   it supports: the error message names the oldest one it accepts.
+- Rebuild a stack from gfem 0.1.0's script: gfem refuses it, since its MUMPS
+  calls ZGEMMT ({doc}`../project/release-notes`). Delete the wheelhouse, run this
+  script's current version into a new folder, and rerun the install line with
+  `--force-reinstall`, since the versions do not change. The build takes about 14
+  minutes on 112 cores. A stack with MPI rebuilds the same way, with `--mpi`.
 
 (petsc-with-mpi)=
 ### With MPI
@@ -100,7 +105,7 @@ PETSc.Sys.hasExternalPackage("mumps")  # True
 
 If gfem cannot use the stack, the solve raises `gfem.SolverUnavailableError`
 with the reason (a package that does not import, real scalars, a version older
-than gfem supports) and the fix. gfem never falls back to another solver.
+than gfem supports, a MUMPS that calls ZGEMMT) and the fix. gfem never falls back to another solver.
 
 ## Choose the solvers
 

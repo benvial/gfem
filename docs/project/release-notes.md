@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Wrong S from a stack built by 0.1.0's script: rebuild it.** A stack from 0.1.0's
+  `tools/petsc_wheelhouse.sh` can return wrong S with no error on a complex front past
+  32,768: MUMPS calls OpenBLAS's ZGEMMT there, whose column offset overflows 32 bits.
+  On a dense test matrix of 46,000 unknowns it gave an error of 6.75e-6 with no error
+  from MUMPS or PETSc; a mesh of 10 M DOF in one process has fronts near 7,000. The script now
+  builds MUMPS without ZGEMMT.
+  - **Behaviour change.** gfem refuses a stack whose `libpetsc` imports `zgemmt_`, at any
+    size, with `gfem.SolverUnavailableError`, and `linear_solver="bddc_gmres"` above
+    one rank keeps its coarse problem on rank 0 on such a stack. Rebuild as
+    {doc}`../recipes/petsc-slepc` says.
 - **Driven solves across MPI ranks.** `mpirun -n N python script.py` or
   `srun --mpi=pmix` now runs a uniform driven sweep and its gradients across the
   ranks, with `comm=` on `gfem.solve`, `Job.run`, `Mesh.from_gmsh`, `Job.from_json`

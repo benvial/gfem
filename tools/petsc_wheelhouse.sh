@@ -319,6 +319,52 @@ build() {
   echo "=== $name built in $((SECONDS - start)) s"
 }
 
+# PETSc's configure adds -DGEMMT_AVAILABLE to MUMPS when the BLAS has GEMMT, and
+# MUMPS then sends every symmetric update through ZGEMMT. OpenBLAS's ZGEMMT, up to
+# at least 0.3.34, computes each column's offset in a 32-bit int, which wraps on a
+# complex front of 32,768 or more: wrong factors with no error, or a SEGV. Which
+# OpenBLAS runs is not this build's to choose: libpetsc binds to NGSolve's by
+# SONAME. Without the flag MUMPS uses its own blocked ZGEMM loop, on 64-bit
+# offsets. configure has no option for this, so edit the sdist's MUMPS.py.
+patch_petsc_sdist() {
+  "$PY" - "$WORK/petsc-$PETSC_VERSION.tar.gz" << 'EOF'
+import io, os, sys, tarfile
+
+sdist = sys.argv[1]
+line = b"if self.blasLapack.checkForRoutine('dgemmt'):"
+hits = 0
+with tarfile.open(sdist) as old, tarfile.open(sdist + ".patched", "w:gz") as new:
+    for member in old:
+        data = old.extractfile(member).read() if member.isfile() else None
+        if member.name.endswith("config/BuildSystem/config/packages/MUMPS.py"):
+            hits += data.count(line)
+            data = data.replace(line, b"if False:  # gfem: OpenBLAS's ZGEMMT overflows")
+            member.size = len(data)
+        new.addfile(member, io.BytesIO(data) if data is not None else None)
+if hits != 1:
+    os.remove(sdist + ".patched")
+    sys.exit(f"{sdist}: MUMPS.py's GEMMT check found {hits} times, expected once")
+os.replace(sdist + ".patched", sdist)
+EOF
+}
+
+# The built libpetsc must not import ZGEMMT: MUMPS is folded into it, so the name in
+# its dynamic symbols is what the flag leaves behind. gfem refuses such a stack.
+check_no_gemmt() {
+  "$PY" - "$OUT"/petsc-"$PETSC_VERSION"-*.whl << 'EOF'
+import os, sys, zipfile
+
+with zipfile.ZipFile(sys.argv[1]) as wheel:
+    names = [n for n in wheel.namelist() if os.path.basename(n).startswith("libpetsc.so")]
+    if not names:
+        sys.exit(f"{sys.argv[1]}: no libpetsc to check")
+    for name in names:
+        if b"\0zgemmt_\0" in wheel.read(name):
+            sys.exit(f"{name} still imports zgemmt_: MUMPS was built with -DGEMMT_AVAILABLE")
+        print(f"{name}: no zgemmt_")
+EOF
+}
+
 # The petsc wheel folds the static MUMPS, PORD and libseq libraries into
 # libpetsc.so and then deletes them, but its petscvariables, petsc.pc and
 # petscmachineinfo.h still list them, so SLEPc fails to link against it
@@ -434,9 +480,11 @@ fetch petsc "$PETSC_VERSION" "$SHA256_petsc"
 fetch petsc4py "$PETSC_VERSION" "$SHA256_petsc4py"
 fetch slepc "$SLEPC_VERSION" "$SHA256_slepc"
 fetch slepc4py "$SLEPC_VERSION" "$SHA256_slepc4py"
+patch_petsc_sdist
 
 build petsc "$PETSC_VERSION"
 patch_petsc_wheel
+check_no_gemmt
 build petsc4py "$PETSC_VERSION"
 build slepc "$SLEPC_VERSION"
 build slepc4py "$SLEPC_VERSION"

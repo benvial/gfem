@@ -6,13 +6,16 @@ modules or replace them by fakes, so they hold on any machine, with or
 without PETSc.
 """
 
+import io
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import types
 import typing
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -32,6 +35,7 @@ def _clear():
     _petsc.require_petsc.cache_clear()
     _petsc.require_slepc.cache_clear()
     _petsc.has_mpi.cache_clear()
+    _petsc.has_zgemmt.cache_clear()
 
 
 def fake(name, *, version="3.26.0", scalar=np.complex128, error=None):
@@ -406,6 +410,104 @@ def test_a_distributed_solver_without_petsc4py_names_the_stack(stack, monkeypatc
         _petsc.require_mpi_petsc("direct", _Ranks())
 
 
+#: The dynamic symbol names of a libpetsc, as ``nm -D`` reads them.
+_WITH_ZGEMMT = b"\x7fELF\0zgemm_\0zgemmt_\0zhemm_\0"
+_WITHOUT_ZGEMMT = b"\x7fELF\0zgemm_\0zhemm_\0"
+
+
+def _with_libpetsc(petsc, directory, image, *, mpiuni=False):
+    """``petsc`` whose ``PETSC_DIR`` holds a stub ``libpetsc`` of these bytes."""
+    _with_conf(petsc, directory, mpiuni=mpiuni)
+    (directory / "lib").mkdir()
+    (directory / "lib" / "libpetsc.so.3.26").write_bytes(image)
+    return petsc
+
+
+def test_a_stack_that_imports_zgemmt_is_refused_with_the_rebuild(
+    stack, tmp_path, plate
+):
+    stack(petsc=_with_libpetsc(fake("petsc4py"), tmp_path, _WITH_ZGEMMT))
+    match = (
+        r"ZGEMMT.*wrong S.*Rebuild.*tools/petsc_wheelhouse.sh.*linear_solver='direct'"
+    )
+    with pytest.raises(gfem.SolverUnavailableError, match=match):
+        _electrostatic(plate)
+
+
+def test_the_refusal_names_the_build_of_the_stack_it_refuses(stack, tmp_path):
+    stack(petsc=_with_libpetsc(fake("petsc4py"), tmp_path, _WITH_ZGEMMT, mpiuni=True))
+    with pytest.raises(gfem.SolverUnavailableError) as raised:
+        _petsc.require_petsc()
+    assert "--mpi" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "image",
+    [_WITHOUT_ZGEMMT, b"\0scipy_zgemmt_\0", b"\0zgemmt_64_\0"],
+    ids=["no name", "another library's prefix", "another name"],
+)
+def test_a_stack_without_the_name_is_accepted(stack, tmp_path, image):
+    petsc = _with_libpetsc(fake("petsc4py"), tmp_path, image)
+    stack(petsc=petsc)
+    assert _petsc.require_petsc() is petsc.PETSc
+
+
+def test_a_stack_without_a_libpetsc_to_read_is_accepted(stack, tmp_path):
+    petsc = _with_conf(fake("petsc4py"), tmp_path, mpiuni=True)
+    stack(petsc=petsc)
+    assert _petsc.require_petsc() is petsc.PETSc
+
+
+def test_a_source_install_is_read_under_its_arch(stack, tmp_path):
+    petsc = fake("petsc4py")
+    (tmp_path / "arch" / "lib").mkdir(parents=True)
+    (tmp_path / "arch" / "lib" / "libpetsc.so.3.26").write_bytes(_WITH_ZGEMMT)
+    petsc.get_config = lambda: {"PETSC_DIR": str(tmp_path), "PETSC_ARCH": "arch"}
+    stack(petsc=petsc)
+    with pytest.raises(gfem.SolverUnavailableError, match="ZGEMMT"):
+        _petsc.require_petsc()
+
+
+def test_slepc_on_a_stack_that_imports_zgemmt_is_refused(stack, tmp_path):
+    stack(
+        petsc=_with_libpetsc(fake("petsc4py"), tmp_path, _WITH_ZGEMMT),
+        slepc=fake("slepc4py"),
+    )
+    match = r"eigen_solver='slepc'.*ZGEMMT.*eigen_solver='arpack'"
+    with pytest.raises(gfem.SolverUnavailableError, match=match):
+        _petsc.require_slepc()
+
+
+class _ReducesTo(_Ranks):
+    """A communicator whose reductions come out as listed, whatever this rank holds."""
+
+    def __init__(self, *results):
+        self.results = iter(results)
+
+    def allreduce(self, value, op=None):  # noqa: ARG002
+        return next(self.results)
+
+
+def test_all_ranks_refuse_a_stack_one_of_them_finds_imports_zgemmt(
+    stack, tmp_path, monkeypatch
+):
+    # This rank's own libpetsc is clean, another rank's is not: no rank goes on.
+    petsc = _with_libpetsc(fake("petsc4py"), tmp_path, _WITHOUT_ZGEMMT)
+    stack(petsc=petsc)
+    monkeypatch.setattr(_mpi, "_load_mpi", lambda: types.SimpleNamespace(LAND=None))
+    with pytest.raises(gfem.SolverUnavailableError, match=r"ZGEMMT.*Rebuild.*--mpi"):
+        _petsc.require_mpi_petsc("direct", _ReducesTo(True, False))
+    assert petsc.calls == []  # before init
+
+
+def test_bddc_keeps_rank_0_for_its_coarse_problem_on_a_stack_that_imports_zgemmt(
+    stack, tmp_path
+):
+    # The rank-0 route reaches no ZGEMMT, and the route never changes S.
+    stack(petsc=_with_libpetsc(fake("petsc4py"), tmp_path, _WITH_ZGEMMT))
+    assert _petsc.mpi_stack_usable() is False
+
+
 def test_a_worker_starts_without_the_launchers_variables(monkeypatch):
     names = (
         "OMPI_COMM_WORLD_SIZE",
@@ -489,6 +591,109 @@ def test_the_build_script_runs_no_shell_startup_file_in_its_children():
     commands = [line.strip() for line in _script_lines() if line.strip()]
     assert commands[0] == "set -euo pipefail"
     assert commands[1].split()[:3] == ["unset", "BASH_ENV", "ENV"]
+
+
+def _script_function(name):
+    """The text of one function of the build script."""
+    text = WHEELHOUSE_SCRIPT.read_text()
+    return re.search(rf"^{name}\(\) \{{\n.*?^\}}$", text, re.MULTILINE | re.DOTALL)[0]
+
+
+def _run_function(name, **env):
+    """One function of the build script, alone, in bash."""
+    return subprocess.run(
+        [shutil.which("bash"), "-c", f"{_script_function(name)}\n{name}"],
+        env={"PATH": os.environ["PATH"], "PY": sys.executable, **env},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+
+
+def _sdist(work, mumps_py):
+    """A petsc sdist holding this ``MUMPS.py`` and one other file."""
+    path = work / "petsc-3.26.0.tar.gz"
+    with tarfile.open(path, "w:gz") as sdist:
+        for name, data in (
+            ("petsc-3.26.0/config/BuildSystem/config/packages/MUMPS.py", mumps_py),
+            ("petsc-3.26.0/README", b"read me\n"),
+        ):
+            member = tarfile.TarInfo(name)
+            member.size = len(data)
+            sdist.addfile(member, io.BytesIO(data))
+    return path
+
+
+_ADDS_THE_FLAG = (
+    b"    if self.blasLapack.checkForRoutine('dgemmt'):\n"
+    b"      self.addDefine('GEMMT_AVAILABLE', 1)\n"
+)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the build script is bash")
+def test_the_build_script_takes_the_gemmt_flag_out_of_the_petsc_sdist(tmp_path):
+    path = _sdist(tmp_path, b"before\n" + _ADDS_THE_FLAG + b"after\n")
+    done = _run_function(
+        "patch_petsc_sdist", WORK=str(tmp_path), PETSC_VERSION="3.26.0"
+    )
+    assert done.returncode == 0, done.stderr
+    with tarfile.open(path) as sdist:
+        mumps = sdist.extractfile(
+            "petsc-3.26.0/config/BuildSystem/config/packages/MUMPS.py"
+        ).read()
+        assert sdist.extractfile("petsc-3.26.0/README").read() == b"read me\n"
+    assert b"checkForRoutine('dgemmt')" not in mumps
+    assert mumps.startswith(b"before\n")
+    assert mumps.endswith(b"after\n")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the build script is bash")
+def test_the_build_script_stops_if_the_sdist_lacks_the_gemmt_check(tmp_path):
+    _sdist(tmp_path, b"another PETSc\n")
+    done = _run_function(
+        "patch_petsc_sdist", WORK=str(tmp_path), PETSC_VERSION="3.26.0"
+    )
+    assert done.returncode != 0
+    assert "GEMMT check found 0 times" in done.stderr
+
+
+def _wheel(out, **members):
+    with zipfile.ZipFile(out / "petsc-3.26.0-cp313-linux_x86_64.whl", "w") as wheel:
+        for name, data in members.items():
+            wheel.writestr(f"petsc/lib/{name}", data)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the build script is bash")
+def test_the_build_script_stops_if_the_wheels_libpetsc_has_zgemmt(tmp_path):
+    _wheel(tmp_path, **{"libpetsc.so.3.26.0": _WITH_ZGEMMT, "libother.so": b""})
+    done = _run_function("check_no_gemmt", OUT=str(tmp_path), PETSC_VERSION="3.26.0")
+    assert done.returncode != 0
+    assert "libpetsc.so.3.26.0 still imports zgemmt_" in done.stderr
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the build script is bash")
+def test_the_build_script_goes_on_if_the_wheels_libpetsc_lacks_it(tmp_path):
+    members = {"libpetsc.so.3.26.0": _WITHOUT_ZGEMMT, "libother.so": _WITH_ZGEMMT}
+    _wheel(tmp_path, **members)
+    done = _run_function("check_no_gemmt", OUT=str(tmp_path), PETSC_VERSION="3.26.0")
+    assert done.returncode == 0, done.stderr
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the build script is bash")
+def test_the_build_script_stops_if_the_wheel_holds_no_libpetsc(tmp_path):
+    _wheel(tmp_path, **{"libother.so": b""})
+    done = _run_function("check_no_gemmt", OUT=str(tmp_path), PETSC_VERSION="3.26.0")
+    assert done.returncode != 0
+    assert "no libpetsc" in done.stderr
+
+
+def test_the_build_script_patches_after_the_checksum_and_checks_after_the_build():
+    lines = [line.strip() for line in _script_lines()]
+    fetched = lines.index('fetch petsc "$PETSC_VERSION" "$SHA256_petsc"')
+    patched = lines.index("patch_petsc_sdist")
+    built = lines.index('build petsc "$PETSC_VERSION"')
+    assert fetched < patched < built < lines.index("check_no_gemmt")
 
 
 def _stub(folder, name, body):
