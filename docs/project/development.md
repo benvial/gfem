@@ -1,4 +1,7 @@
-# Development
+# Contributing
+
+This page is for working on gfem itself: building it, running its tests and
+rebuilding the docs. To use gfem, start at {doc}`../get-started`.
 
 ```bash
 uv sync
@@ -12,6 +15,8 @@ Test tiers are pytest markers set by directory: `tests/unit`,
 `tests/mpi`. The `reference`, `benchmark`, `cuda` and `mpi` tiers are deselected by
 default; run them with `uv run pytest -m reference` (and so on). Reference tests read their
 data from `GFEM_REFERENCE_DIR` and skip when it is unset.
+{doc}`../verification` describes each verification case in physical terms and
+links the test file that runs it.
 
 Tests marked `petsc` and `slepc` sit in the unit and verification tiers and
 skip unless the {term}`PETSc stack` is installed. To run them, add the
@@ -49,11 +54,23 @@ uv run pytest -m "unit or (verification and (petsc or slepc))" -rs
 uv run pytest -m "mpi and not reference" -rs
 ```
 
-Keep these two selections in separate pytest commands. A selected `petsc` or `slepc`
-test makes pytest start PETSc in its own process, which on this stack loads MPI there.
-A launched job under `srun` then failed in `MPI_Init_thread`, and pytest did not exit
-after its summary, with an `orted` as its child. So launched tests never carry those
-markers (collection refuses them), and they skip on `_petsc.has_mpi()` instead.
+Keep these two selections in separate pytest commands: a selected `petsc` or `slepc`
+test loads MPI in pytest's own process, and a launched job under `srun` then fails.
+Collection refuses launched tests that carry those markers; they skip on
+`_petsc.has_mpi()` instead.
+
+## Licence gate
+
+CI's licence gate, `tools/licence_gate.py`, audits the installed dependency tree
+and gfem's wheel. It fails on non-free and non-commercial licences. GPL and LGPL
+dependencies pass. Proprietary licences pass only where `tools/licences.toml`
+allows them: the NVIDIA runtime wheels of the `cuda12` and `cuda13` extras, and
+the recorded Intel licence of each distribution of the `mkl` extra. A distribution
+whose licence cannot be read from its metadata fails until you record it in
+`tools/licences.toml`; PyPI's `openmpi` wheel is one, so the `mpi` extra leaves it
+out. PETSc and SLEPc are built from source and not declared by gfem, so the gate
+does not see them. A `petsc`-marked test checks that ParMETIS is absent from both
+stacks, and PT-Scotch and ScaLAPACK from the no-MPI stack.
 
 ## Docs
 
