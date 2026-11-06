@@ -368,3 +368,36 @@ def test_a_case_with_no_label_fails_the_build(monkeypatch):
 def test_a_refusal_with_no_case_fails_the_build(monkeypatch):
     with pytest.raises(caps.CapabilitiesError, match="messages"):
         _refusals(monkeypatch, messages=_MESSAGES | {"new": "new"})
+
+
+def test_a_raise_seen_while_the_gradient_is_computed_links_the_shared_section(
+    tmp_path,
+):
+    # The raises list renders in a site with a page holding the shared
+    # "When a gradient raises" section: each row whose error arrives wrapped
+    # links that section, which says how to catch it.
+    build = pytest.importorskip("sphinx.cmd.build")
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "conf.py").write_text(
+        f"import sys\nsys.path.insert(0, {str(REPO / 'docs' / '_ext')!r})\n"
+        "extensions = ['gfem_capabilities']\n"
+        "gfem_capabilities_source_url = 'https://example.org/'\n",
+        encoding="utf-8",
+    )
+    (source / "index.rst").write_text(
+        "Raises\n======\n\n.. toctree::\n\n   errors\n\n.. gfem-raises::\n",
+        encoding="utf-8",
+    )
+    (source / "errors.rst").write_text(
+        ".. _gradient-errors:\n\nWhen a gradient raises\n======================\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "html"
+    assert build.build_main(["-q", "-b", "html", str(source), str(out)]) == 0
+    items = (out / "index.html").read_text(encoding="utf-8").split("<li>")[1:]
+    wrapped = [i for i in items if "JaxRuntimeError" in i]
+    assert wrapped
+    assert all('href="errors.html#gradient-errors"' in i for i in wrapped)
+    assert all("</a> (<a" in i for i in wrapped)  # beside the source link, not in it
+    assert not any("#gradient-errors" in i for i in items if i not in wrapped)
