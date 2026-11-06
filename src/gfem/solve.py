@@ -70,15 +70,23 @@ def solve(
     A pure function of its inputs: the model and problem are not changed,
     and the same inputs give the same result.
 
-    It is also a JAX function of the model's array leaves: `jax.grad`,
-    `jax.jit` and `jax.vmap` (sequential solves) apply. Each input then
+    It is also a JAX function of the model's arrays (the mesh node
+    coordinates and every `MaterialField` array): `jax.grad`, `jax.jit`
+    and `jax.vmap` (sequential solves) apply. Each input then
     has a gradient (for an electrostatic capacitance: the `MaterialField`
     ``eps_r`` values), an exact zero gradient if the problem never reads it
     (``conductivity`` in electrostatics), or raises
-    `gfem.NonDifferentiableError` while JAX traces, if the problem reads it
-    but gfem cannot differentiate it (for example a problem value such as
+    `gfem.NonDifferentiableError` when `jax.grad`, `jax.jit` or `jax.vmap`
+    traces the function, if the problem reads it but gfem cannot
+    differentiate it (for example a problem value such as
     a frequency, or a field-derived output). `jax.lax.stop_gradient` on an
     input or an output is the opt-out. Only reverse mode is supported.
+
+    Example:
+        S-parameters of a model over a band::
+
+            result = gfem.solve(model, gfem.Driven(frequency=[4e9, 5e9, 6e9]))
+            s21 = result.s["p2", "p1"]  # S21 over frequency
 
     Args:
         model: The device.

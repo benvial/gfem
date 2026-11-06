@@ -305,6 +305,17 @@ def test_mesh_filter_keeps_constants_and_the_volume_weighted_total(stack):
     assert jnp.ptp(blur(rho)) < jnp.ptp(rho)
 
 
+def test_a_grid_needs_fixed_mesh_nodes(stack):
+    def build(mesh):
+        design.LayerGrid(mesh, "design", pitch=0.25 * MM)
+        return mesh.nodes.sum()
+
+    with pytest.raises(
+        ValueError, match=r"computed inside jax\.grad, jax\.jit or jax\.vmap"
+    ):
+        jax.jit(build)(stack)
+
+
 def test_filter_arguments_are_checked(stack):
     grid = design.LayerGrid(stack, "design", pitch=0.25 * MM)
     with pytest.raises(ValueError, match="LayerGrid"):

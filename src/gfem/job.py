@@ -1,18 +1,20 @@
 """Serialized runs: `Job` (``job.json``) and `load_result` (``result.json``).
 
 A job bundle is ``job.json``, the mesh file it references (by path and
-sha256) and, when the job has arrays, a ``.npz`` sidecar next to it with
-every array leaf (material fields, moved mesh nodes, ...) under its pytree
-leaf path. A result bundle is a directory with ``result.json`` and
-``result.npz``. Both documents carry ``schema_version`` and
-``gfem_version``: gfem reads older schema versions and refuses newer ones.
+sha256) and, when the job has arrays, a ``.npz`` sidecar next to it. The
+sidecar stores every array of the job (material fields, moved mesh nodes,
+...), keyed by where it sits in the job, e.g.
+``.model.materials['oxide'].eps_r``. A result bundle is a directory with
+``result.json`` and ``result.npz``. Both documents carry ``schema_version``
+and ``gfem_version``: gfem reads older schema versions and refuses newer
+ones.
 
 Run a job bundle with ``python -m gfem run job.json --out results/`` (or
 `Job.run`), and read the result back with `load_result`.
 
 Across ranks rank 0 reads and writes the files, and a result bundle holds its fields
 in one-process numbering, so a bundle from any rank count is an ordinary one that a
-laptop reads (ADR 0064).
+laptop reads.
 """
 
 from __future__ import annotations
@@ -78,7 +80,9 @@ class Job:
 
     The unit gsim and cloud runners exchange. `to_json` writes it as a job
     bundle; ``python -m gfem run job.json --out DIR`` or `run` solves it.
-    A job is a JAX pytree whose leaves are the model's and the problem's.
+    A job is a JAX
+    `pytree <https://docs.jax.dev/en/latest/pytrees.html>`__
+    whose arrays are the model's and the problem's.
 
     Attributes:
         model: The device.
@@ -167,9 +171,10 @@ class Job:
         stored relative to the JSON file's directory when the mesh lies
         inside it, so a directory holding the job and its mesh can be moved
         or uploaded as one bundle. The sidecar, ``<stem>.npz`` next to the
-        JSON file, holds every array leaf of the job (material fields,
-        moved mesh nodes) under its pytree leaf path; it is written only
-        when there are arrays.
+        JSON file, holds every array of the job (material fields, moved mesh
+        nodes), keyed by where it sits in the job, e.g.
+        ``.model.materials['oxide'].eps_r``; it is written only when there
+        are arrays.
 
         Not collective: across ranks a script calls it on rank 0.
 
@@ -180,7 +185,8 @@ class Job:
             The JSON file's path.
 
         Raises:
-            TypeError: The job holds values traced by JAX.
+            TypeError: The job holds values computed inside `jax.grad`,
+                `jax.jit` or `jax.vmap`; write it from fixed values.
         """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -241,7 +247,7 @@ def load_result(path: str | Path, *, comm: Any = None) -> Any:
 
     A bundle from any rank count reads on one process. Under a launcher a bundle
     with no fields holds no mesh and is read with no communication, on any rank, so
-    a read that fails is one rank's failure: it ends the job (ADR 0058), and the
+    a read that fails is one rank's failure: it ends the job, and the
     errors below raise only on one process.
 
     Args:
@@ -284,8 +290,8 @@ def _write_result(out: Path, result: Any, run: dict[str, Any], comm: Any) -> Non
         if is_traced(result):
             raise _mpi.agreed(
                 TypeError(
-                    "Cannot write a result traced by JAX (inside jax.grad, jax.jit "
-                    "or jax.vmap). Write results from concrete values."
+                    "Cannot write a result computed inside jax.grad, jax.jit or "
+                    "jax.vmap. Write results from concrete values."
                 )
             )
         _mpi.check_call(comm, "Job.run's bundle", {"the directory": str(out)})

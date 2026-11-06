@@ -10,7 +10,7 @@ A density design runs through a fixed chain of differentiable maps, then
 
 Every helper is pure JAX or a fixed linear map with an exact adjoint, so
 `jax.grad`, `jax.jit` and `jax.vmap` work through all of them. The optimizer
-is the user's own (optax, nlopt, scipy, ...).
+is your own (optax, nlopt, scipy, ...).
 
 - The **filter** (`helmholtz_filter`) sets a minimum length scale: it smooths
   the density by a screened-Poisson (Helmholtz PDE) solve.
@@ -198,8 +198,9 @@ class LayerGrid:
 
         Raises:
             RegionNotFoundError: The mesh has no such region.
-            ValueError: ``pitch <= 0``, the mesh nodes are traced, or a
-                face of the surface is not horizontal.
+            ValueError: ``pitch <= 0``, the mesh nodes are computed inside
+                `jax.grad`, `jax.jit` or `jax.vmap` (build the grid from the
+                fixed mesh), or a face of the surface is not horizontal.
 
         Warns:
             UserWarning: Some pixels are sampled by no element (face)
@@ -212,8 +213,9 @@ class LayerGrid:
             raise ValueError(f"LayerGrid: pitch must be > 0 m, got {pitch}.")
         if is_traced(mesh.nodes):
             raise ValueError(
-                "LayerGrid: the mesh nodes are traced by JAX; build the grid "
-                "outside jax.jit / jax.grad, from a mesh with concrete nodes."
+                "LayerGrid: the mesh nodes are computed inside jax.grad, jax.jit "
+                "or jax.vmap; build the grid outside the transformed function, "
+                "from a mesh with concrete nodes."
             )
         nodes = np.asarray(mesh.nodes)
         if r.dim == 3:
@@ -493,8 +495,9 @@ def _mesh_filter(mesh: Mesh, region: str, length: float) -> tuple[Callable, int]
 
     if is_traced(mesh.nodes):
         raise ValueError(
-            "helmholtz_filter: the mesh nodes are traced by JAX; build the filter "
-            "outside jax.jit / jax.grad, from a mesh with concrete nodes."
+            "helmholtz_filter: the mesh nodes are computed inside jax.grad, "
+            "jax.jit or jax.vmap; build the filter outside the transformed "
+            "function, from a mesh with concrete nodes."
         )
     tets = mesh.tetrahedra[mesh.elements(region)]
     used, local = np.unique(tets, return_inverse=True)

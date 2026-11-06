@@ -45,12 +45,12 @@
           aria-label="Animation: the 3D bend's design and field over the {{ front.steps }} optimization iterations, then the thresholded design final"></video>
       </div>
       <svg class="hist" id="hist" role="img" aria-label="|S21|² at each of the {{ front.steps }} iterations, rising from {{ front.snapshots[0].t }} to {{ front.snapshots[-1].t }}; click to go to an iteration"></svg>
-      <div class="ports" aria-hidden="true"><span>iteration 0, ρ = {{ front.start }} everywhere</span><span>|S21|² per iteration, β doubling every {{ front.steps_per_beta }}</span><span>iteration {{ front.last }}, then <code>final</code></span></div>
+      <div class="ports" aria-hidden="true"><span>iteration 0, ρ = {{ front.start }} everywhere</span><span>|S21|² per iteration; the projection sharpens (β doubles) every {{ front.steps_per_beta }} iterations</span><span>iteration {{ front.last }}, then <code>final</code></span></div>
       {%- else %}
       <div class="plot"><p class="gfem-missing">The hero data is missing: run <code>just front-page-data</code> and <code>tools/bend3d_animation.py</code>, then rebuild.</p></div>
       {%- endif %}
       <div class="chain" aria-label="The differentiable chain">
-        <span>ρ</span><span class="op">→</span><span>½(ρ + ρᵀ)</span><span class="op">→</span><span>helmholtz_filter</span><span class="op">→</span><span>project</span><span class="op">→</span><span>MaterialField</span><span class="op">→</span><span>gfem.solve</span><span class="op">→</span><span>S21</span><span class="op">→</span><span>J</span>
+        <span>ρ</span><span class="op">→</span><span>mirror about y = x</span><span class="op">→</span><span>filter</span><span class="op">→</span><span>project</span><span class="op">→</span><span>permittivity</span><span class="op">→</span><span>gfem.solve</span><span class="op">→</span><span>1 − |S21|²</span>
         <span class="back"><span class="op">←</span> <b>jax.value_and_grad</b> back to ρ</span>
       </div>
       {%- if front %}
@@ -86,7 +86,7 @@
       <div class="claim">
         <h2 id="m-h">What differentiates</h2>
         <p>Every supported gradient is checked against finite differences. An unsupported one raises an error instead of returning zero; a zero means the physics never reads that input.</p>
-        <p class="src">{{ caps.provenance }}: <code>tests/verification/test_gradient_matrix.py</code>. Raises: <code>test_gradient_matrix_raise_table.py</code>.</p>
+        <p class="src">{{ caps.provenance }}. <a href="{{ pathto('verification') }}">How gfem is checked</a></p>
         <a class="more" href="{{ pathto('capabilities') }}">Full matrix on Capabilities</a>
       </div>
       <div>
@@ -101,7 +101,7 @@
             {%- endfor %}
           </tbody>
         </table>
-        <div class="legend"><span class="key gfem-verified"><span class="gfem-glyph"></span>checked against finite differences</span><span class="key gfem-zero"><span class="gfem-glyph"></span>exact zero: the physics never reads the input</span><span class="key gfem-raises"><span class="gfem-glyph"></span>raises <code>NonDifferentiableError</code> unless named</span></div>
+        <div class="legend"><span class="key gfem-verified"><span class="gfem-glyph"></span>checked against finite differences</span><span class="key gfem-zero"><span class="gfem-glyph"></span>exact zero: the physics never reads the input</span><span class="key gfem-raises"><span class="gfem-glyph"></span>raises: <code>NonDifferentiableError</code>, or the error the cell names</span></div>
       </div>
     </section>
 

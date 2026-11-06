@@ -114,7 +114,7 @@ html_theme_options = {
         {"title": "Capabilities", "url": "capabilities"},
         {"title": "API", "url": "api/index"},
     ],
-    "github_url": "",  # an empty slot until a remote exists
+    "github_url": REPO_URL,
     "show_ai_links": False,  # no "Open in ChatGPT / Claude" menu
     "ethical_ads_publisher": "",  # no EthicalAds div (the default is "readthedocs")
     "globaltoc_expand_depth": 1,
@@ -126,8 +126,8 @@ html_context = {
     # The footer's Project group (partials/site-foot.html): (title, docname).
     "gfem_project_links": [
         ("Licence", "project/licence"),
-        ("Development", "project/development"),
         ("Release notes", "project/release-notes"),
+        ("Contributing", "project/development"),
     ],
 }
 html_show_sphinx = False
@@ -160,6 +160,7 @@ ogp_site_url = html_baseurl
 # _ext/gfem_search.py keeps the permalink "#" out of result titles (_ext is put on
 # sys.path in the API block below).
 extensions += ["gfem_search"]
+
 # --- end search -------------------------------------------------------------------
 
 # --- API reference: sphinx-autoapi and docs/_ext/gfem_api.py --------------------
@@ -247,19 +248,24 @@ gfem_capabilities_source_url = f"{REPO_URL}/blob/main/"
 # compact matrix and the provenance line, above).
 
 # The install line and its note, in one place: the front page and get-started.md
-# (the {{ install }} substitution) show both. At PyPI publishing this becomes
-# {"line": "pip install gfem", "note": ""}.
+# (the {{ install }} substitution) show both. "extra" is the same source with an
+# extra, for get-started.md's {{ install_extras }}. At PyPI publishing this becomes
+# {"line": "pip install gfem", "note": "", "extra": 'pip install "gfem[{extra}]"'}.
 if REPO_URL:
     gfem_install = {
         "line": f'pip install "gfem @ git+{REPO_URL}"',
         "note": "gfem is not on PyPI yet: pip installs it from the repository.",
+        "extra": f'pip install "gfem[{{extra}}] @ git+{REPO_URL}"',
     }
 else:
     gfem_install = {
         "line": "uv build --wheel && pip install dist/gfem-*.whl",
         "note": "gfem is not on PyPI yet: build the wheel in a checkout of the "
         "repository and install it.",
+        "extra": 'pip install "$(ls dist/gfem-*.whl)[{extra}]"',
     }
+# The extras get-started.md installs, in its table's order.
+gfem_extras = ("mkl", "cuda12", "xarray", "viz", "mpi")
 
 
 def _status(version: str) -> str:
@@ -291,6 +297,16 @@ myst_substitutions = {
         for part in (gfem_install["note"], f"```bash\n{gfem_install['line']}\n```")
         if part
     ),
+    "install_extras": "```bash\n"
+    + "\n".join(gfem_install["extra"].format(extra=e) for e in gfem_extras)
+    + "\n```",
+    # The recipes' install blocks, from the same source as get-started's.
+    "install_mpi": f"```bash\n{gfem_install['extra'].format(extra='mpi')}\n```",
+    "install_cuda": "```bash\n"
+    + gfem_install["extra"].format(extra="cuda12")
+    + "  # CUDA 12 drivers\n"
+    + gfem_install["extra"].format(extra="cuda13")
+    + "  # CUDA 13 drivers (check `nvidia-smi`)\n```",
 }
 
 

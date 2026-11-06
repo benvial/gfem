@@ -66,6 +66,27 @@ def test_host_forward_reads_problem_leaves_from_the_traced_values(model):
     np.testing.assert_allclose(jax.vmap(lambda s: _solve(model, s))(scales), scales * n)
 
 
+class FixedScaleRule(ScaledRule):
+    """Reads the problem's scale but refuses to differentiate with respect to it."""
+
+    def role(self, kind):
+        return "read" if kind[0] == "problem" else "unread"
+
+    def unsupported_input(self, kind):  # noqa: ARG002
+        return "it is fixed"
+
+
+def test_a_refused_problem_input_is_named_by_its_attribute(model):
+    def objective(s):
+        problem = Scaled(s)
+        return solve_vjp(FixedScaleRule(problem), model, problem)["y"]
+
+    with pytest.raises(
+        gfem.NonDifferentiableError, match=r"problem\.scale: it is fixed"
+    ):
+        jax.grad(objective)(2.0)
+
+
 def test_adjoint_tolerance_defaults_to_the_forward_tolerance():
     assert adjoint_tolerance(gfem.SolverOptions()) == 1e-6
     assert adjoint_tolerance(gfem.SolverOptions(tolerance=1e-9)) == 1e-9

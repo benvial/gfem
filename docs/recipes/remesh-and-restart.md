@@ -1,7 +1,7 @@
 # Remesh and restart
 
 A shape design in gfem moves the nodes of one imported mesh; it never changes
-the mesh's topology. `gfem.shape.boundary_morph` builds a fixed linear map from
+the mesh's topology. {py:obj}`gfem.shape.boundary_morph` builds a fixed linear map from
 normal displacements of a surface's nodes to a moved mesh, solved once on the
 imported mesh. Small and moderate moves keep the mesh valid, but a long
 optimization can travel further than one mesh allows. This recipe shows how to
@@ -17,15 +17,14 @@ gsim), and restart the optimizer from where it stopped.
 
 ## How far one mesh goes
 
-On the IHP TopMetal2 coplanar line of the reference set (`driven/r8`, a 15 µm
-gap), pushing one sidewall of the signal conductor into the gap with a smooth
+On a coplanar line in IHP's TopMetal2 with a 15 µm gap, pushing one sidewall of the signal conductor into the gap with a smooth
 bump gives:
 
 | Bump amplitude into the gap | What happens |
 |---|---|
 | up to 10.5 µm | nothing |
-| 11 µm | `MeshQualityWarning`: an element fell below a quarter of its imported quality |
-| 14 µm (93% of the gap) | `MeshQualityError`: an element is inverted |
+| 11 µm | {py:obj}`gfem.MeshQualityWarning`: an element fell below a quarter of its imported quality |
+| 14 µm (93% of the gap) | {py:obj}`gfem.MeshQualityError`: an element is inverted |
 
 Moving the wall into the metal inverts nothing down to −15 µm. Three things
 make this travel possible, and they are worth keeping in your own setup:
@@ -78,7 +77,7 @@ a parameter.
 
 ## 2. Accept steps on mesh quality
 
-`gfem.shape.quality(mesh)` returns the scaled Jacobian of every tetrahedron: 1
+{py:obj}`gfem.shape.quality` returns the scaled Jacobian of every tetrahedron: 1
 for a regular one, at most 0 for an inverted one. Check a trial step before you
 take it, and backtrack when the mesh degrades:
 
@@ -144,8 +143,13 @@ def build_model(q, outdir):
         sim.add_cpw_port(
             port, layer="topmetal2", s_width=20, gap_width=15, excited=True
         )
-    sim.mesh(preset="default", refined_mesh_size=8.0, max_mesh_size=40.0)
-    mesh = gfem.Mesh.from_gmsh(f"{outdir}/palace.msh", length_unit="um")
+    sim.mesh(
+        preset="default",
+        refined_mesh_size=8.0,
+        max_mesh_size=40.0,
+        model_name="device",
+    )
+    mesh = gfem.Mesh.from_gmsh(f"{outdir}/device.msh", length_unit="um")
     return make_model(mesh)  # materials, boundaries, ports, excluded=
 
 
@@ -169,5 +173,7 @@ Two details to keep in mind:
 - Compare objective values only within one mesh. Record the value at `q_k` on
   both meshes if you want to see the size of the jump.
 
-An automatic remesh-and-restart hook through gsim is on the roadmap; in v0.1
-it is this manual loop.
+## Next
+
+{py:obj}`gfem.shape.boundary_morph`, {py:obj}`gfem.shape.quality`,
+{doc}`shape-gradient`, {doc}`gsim`, the [shape tutorial](../tutorials/shape.ipynb).

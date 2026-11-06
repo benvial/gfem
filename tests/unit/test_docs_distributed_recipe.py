@@ -1,8 +1,9 @@
-"""The distributed solve recipe: what it shows matches what ran and what exists.
+"""The distributed solve and offline cluster recipes: what they show matches what ran.
 
-docs/recipes/distributed-solve.md runs nothing at docs build time. The launched
-`tests/mpi/test_recipe.py` runs its script; its job scripts ran once on MareNostrum 5
-as written. This keeps those blocks in the shape that ran, and the page's names real.
+docs/recipes/distributed-solve.md and docs/recipes/offline-cluster.md run nothing at
+docs build time. The launched `tests/mpi/test_recipe.py` runs the script; the cluster
+page's job scripts ran once on MareNostrum 5 as written. This keeps those blocks in the
+shape that ran, and the pages' names real.
 """
 
 import ast
@@ -16,12 +17,18 @@ import gfem
 
 REPO = Path(__file__).parents[2]
 PAGE = REPO / "docs" / "recipes" / "distributed-solve.md"
+CLUSTER = REPO / "docs" / "recipes" / "offline-cluster.md"
 SCRIPT = REPO / "tools" / "distributed_line.py"
 
 
 @pytest.fixture(scope="module")
 def page():
     return PAGE.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def cluster():
+    return CLUSTER.read_text(encoding="utf-8")
 
 
 def _blocks(page: str, language: str) -> list[str]:
@@ -34,25 +41,62 @@ def _jobs(page: str) -> list[str]:
     return [b for b in _blocks(page, "bash") if b.startswith("#!/bin/bash")]
 
 
-def test_the_page_is_in_both_tables_of_contents():
-    assert "recipes/distributed-solve" in (REPO / "docs" / "index.md").read_text()
-    assert "{doc}`distributed-solve`" in (REPO / "docs/recipes/index.md").read_text()
+def test_both_pages_are_in_both_tables_of_contents_cluster_right_after():
+    toctree = (REPO / "docs" / "index.md").read_text()
+    assert "recipes/distributed-solve\nrecipes/offline-cluster\n" in toctree
+    listing = (REPO / "docs/recipes/index.md").read_text()
+    assert "{doc}`distributed-solve`\n- {doc}`offline-cluster`\n" in listing
 
 
+def _published(text: str) -> str:
+    """The text without MyST comments, which never render."""
+    return re.sub(r"^%.*$", "", text, flags=re.MULTILINE)
+
+
+@pytest.mark.parametrize("which", ["page", "cluster"])
 @pytest.mark.parametrize("private", [".scratch", "mn5run", "ticket", "ehpc", "resl"])
-def test_no_private_path_or_name_reaches_the_page(page, private):
-    # MyST comments never render
-    published = re.sub(r"^%.*$", "", page, flags=re.MULTILINE)
-    assert private not in published
+def test_no_private_path_or_name_reaches_the_pages(request, which, private):
+    assert private not in _published(request.getfixturevalue(which))
+
+
+# A commit SHA mixes hex letters and digits; a Slurm job id is a number after "job".
+_SHA = r"\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*[0-9])[0-9a-f]{7,40}\b"
+_JOB = r"(?i:\bjobs? (?:id )?[0-9]{6,})"
+
+
+def _ids(text: str) -> list[str]:
+    return re.findall(f"{_SHA}|{_JOB}", text)
+
+
+@pytest.mark.parametrize(
+    ("text", "found"),
+    [
+        ("gfem 009f5a6, on a 10.2 M DOF mesh", ["009f5a6"]),
+        ("jobs 48441613 and 48441617 on one node", ["jobs 48441613"]),
+        ("at 50 GHz (job 48473792, commit ec608c1)", ["job 48473792", "ec608c1"]),
+        ("Job 48468681: 442 passed", ["Job 48468681"]),
+        ("a 10200000 DOF mesh, 1234567 unknowns", []),
+        ("the effaced and defaced words", []),
+    ],
+)
+def test_the_id_check_finds_shas_and_job_ids_but_not_plain_numbers(text, found):
+    assert _ids(text) == found
+
+
+@pytest.mark.parametrize("which", ["page", "cluster"])
+def test_no_commit_or_job_id_reaches_the_pages(request, which):
+    assert not _ids(_published(request.getfixturevalue(which)))
 
 
 def test_the_page_takes_its_refusals_from_the_generator(page):
     assert "```{gfem-distributed-refusals}\n```" in page
 
 
-def test_the_layout_section_links_to_the_scale_section(page):
-    assert "(distributed-scale)=\n## Scale" in page
-    assert "{ref}`distributed-scale`" in page
+def test_the_page_sends_measured_times_to_performance_and_installs_to_the_cluster_page(
+    page,
+):
+    assert "{doc}`../project/scaling`" in page
+    assert "{doc}`offline-cluster`" in page
 
 
 def test_the_page_includes_the_script_it_downloads(page):
@@ -66,30 +110,33 @@ def test_every_python_block_parses(page):
         ast.parse(block)
 
 
-def test_there_are_a_build_job_and_a_run_job(page):
-    build, run = _jobs(page)
+def test_the_cluster_page_has_a_build_job_and_a_run_job(cluster):
+    build, run = _jobs(cluster)
     assert "--mpi --sources sources wheelhouse-mpi" in build
     assert "srun --mpi=pmix" in run
 
 
 @pytest.mark.parametrize("index", [0, 1])
-def test_a_job_leaves_intel_mpi_behind_for_the_stacks_open_mpi(page, index):
-    job = _jobs(page)[index]
+def test_a_job_leaves_intel_mpi_behind_for_the_stacks_open_mpi(cluster, index):
+    job = _jobs(cluster)[index]
     assert job.index("module purge") < job.index("openmpi/4.1.6-gcc")
 
 
-def test_the_run_job_has_the_layout_the_page_recommends(page):
-    _, run = _jobs(page)
+def test_the_run_job_has_the_layout_the_distributed_page_recommends(page, cluster):
+    assert "--ntasks-per-node=28 --cpus-per-task=4" in page
+    _, run = _jobs(cluster)
     assert "--ntasks-per-node=28 --cpus-per-task=4" in run
     assert "--cpu-bind" not in run
     assert "OMP_NUM_THREADS" not in run
 
 
-def test_the_extra_is_the_one_the_page_names(page):
+def test_the_extra_is_the_one_the_pages_name(page, cluster):
     project = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]
     (spec,) = project["optional-dependencies"]["mpi"]
     assert spec.startswith("mpi4py>=4.1.2,<5;")
-    assert 'pip install "gfem[mpi]"' in page
+    assert "{{ install_mpi }}" in page  # conf.py's install form, not PyPI's
+    assert 'pip install "gfem[' not in page
+    assert "[mpi]" in cluster
 
 
 def test_the_page_names_public_objects():

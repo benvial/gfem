@@ -6,8 +6,10 @@ Reads every ``*.json`` in ``RECORDS`` that ``scale_run.py`` and ``scale_bench.py
 (superseded ones aside) and writes one Markdown snippet per table of `CAMPAIGN` into
 ``OUT``, which ``docs/project/scaling.md`` includes. The docs build never runs this
 script, opens a record or computes a number (ADR 0017's amendment); a person reruns it
-and diffs. Each snippet's first line names the commit and the SHA-256 of the records
-manifest: one line per record file, its SHA-256 and its name, sorted by name.
+and diffs. Each snippet's first line, a comment the page does not render, names the
+commit and the SHA-256 of the records manifest: one line per record file, its SHA-256
+and its name, sorted by name. What renders names no commit and no Slurm job: the
+records and the scaling record hold those.
 
 It reads times only to print them, and asserts nothing about a time. It refuses, naming
 the record: a record of another commit, a table's record that is missing, a ``check``
@@ -175,10 +177,6 @@ def _layout(record: Record) -> str:
     return f"{record['ranks']} x {record['threads_read']}"
 
 
-def _jobs(rung: list[Record]) -> str:
-    return ", ".join(dict.fromkeys(str(r.get("job")) for r in rung))
-
-
 def _iterations(rung: list[Record]) -> str:
     seen = dict.fromkeys(
         "/".join(map(str, row))
@@ -339,7 +337,6 @@ def ladder(
                 coarse,
                 _efficiency(rung, rungs, base, weak),
                 memory,
-                _jobs(rung),
             )
         )
     titles = (
@@ -360,7 +357,6 @@ def ladder(
         f"Efficiency against {base} node{'s' if base != 1 else ''}"
         + (" (weak)" if weak else ""),
         "Largest node, GiB",
-        "Job",
     )
     kind = (
         "time at the base over time here"
@@ -411,13 +407,12 @@ def agreement(chosen: list[Record], records: dict[str, Record]) -> str:
                     (
                         f"`{ref.get('solver', '?')}` on {_mesh(ref) if ref else '?'}, "
                         f"{_layout(ref) if ref else '?'}, "
-                        f"{_tol(ref) if ref else '?'}, job {ref.get('job', '?')}"
+                        f"{_tol(ref) if ref else '?'}"
                     ),
                     f"{check['differences']['s']:.2g}",
                     "observed, no gate" if gate is None else f"{gate:g}",
                     "-" if same is None else ("same" if same else "differ"),
                     "yes" if r.get("ranks_bitwise") else "no",
-                    r.get("job"),
                 )
             )
     titles = (
@@ -429,12 +424,11 @@ def agreement(chosen: list[Record], records: dict[str, Record]) -> str:
         "DOF per rank",
         "`tol`",
         "GHz",
-        "Reference: solver, mesh, ranks x threads, `tol`, job",
+        "Reference: solver, mesh, ranks x threads, `tol`",
         "Difference in S",
         "Gate",
         "Iterations",
         "S bitwise on all ranks",
-        "Job",
     )
     note = (
         "\nThe difference is the largest entry of S's difference over the largest "
@@ -455,7 +449,7 @@ def ms3(chosen: list[Record]) -> str:
         f"`tol={_tol(r)}`, iterations {_iterations([r])} for ports 1/2, "
         f"`gfem.solve` {_s(solve)} s, S "
         + ("bit for bit the same on all ranks" if r.get("ranks_bitwise") else "differs")
-        + f", job {r['job']}.\n"
+        + ".\n"
     )
 
 
@@ -477,7 +471,6 @@ def attempt(chosen: list[Record], logs: Path | None) -> str:
                     f"{printed['total_ic_mb'] / 1e6:.2f}",
                     f"{printed['max_ic_mb'] / 1e3:.1f}",
                     _failure(r, logs) if r.get("failed") else "finished",
-                    r.get("job"),
                 )
             )
     titles = (
@@ -492,7 +485,6 @@ def attempt(chosen: list[Record], logs: Path | None) -> str:
         "Total memory, TB (INFOG(17))",
         "Largest rank, GB",
         "End",
-        "Job",
     )
     note = (
         "\nMUMPS's own printed estimates, in-core. A second analysis is the retry gfem "
@@ -549,7 +541,6 @@ def phases(chosen: list[Record], records: dict[str, Record]) -> str:
                 coarse.get("ranks", "-"),
                 f"{max(printed):.3g}" if printed else "-",
                 len(rung),
-                _jobs(rung),
             )
         )
     titles = (
@@ -574,7 +565,6 @@ def phases(chosen: list[Record], records: dict[str, Record]) -> str:
         "Coarse ranks",
         "Coarse factor entries",
         "Repeats",
-        "Job",
     )
     note = (
         "\nMedians over the finished repeats, and shares of those medians. Phases are "
@@ -605,7 +595,7 @@ def meshes(
         )
         for name, r in sorted(seen.items(), key=lambda item: dofs[item[0]])
     ]
-    note = "\nOrder 2 Nedelec DOF as the runs counted them; md5 of `palace.msh`.\n"
+    note = "\nOrder 2 Nedelec DOF as the runs counted them; md5 of the mesh file.\n"
     return _table(("Mesh", "Tetrahedra", "DOF", "md5"), rows) + note
 
 
@@ -633,7 +623,7 @@ def bench(chosen: list[Record]) -> str:
             )
         )
     text = (
-        f"One node ({node['host']}, {node['cpu']}), job {node['job']}: MKL `dgemm` "
+        f"One node ({node['host']}, {node['cpu']}): MKL `dgemm` "
         f"(n={node['rows'][0]['dgemm']['n']}), `zgemm` "
         f"(n={node['rows'][0]['zgemm']['n']}) and a STREAM triad, medians.\n\n"
     )
@@ -654,7 +644,7 @@ def bench(chosen: list[Record]) -> str:
     ]
     text += (
         f"\nPing-pong from rank 0, {big['ranks']} ranks on {big['node_count']} nodes, "
-        f"job {big['job']}, {big['mpi_library'].split(',')[0]}, medians.\n\n"
+        f"{big['mpi_library'].split(',')[0]}, medians.\n\n"
     )
     text += _table(
         (
@@ -675,28 +665,26 @@ def bench(chosen: list[Record]) -> str:
                 f"{a['median_s_slowest_rank'] * 1e6:.1f}"
                 for a in sorted(r["allreduce"], key=lambda a: a["doubles"])
             ),
-            r["job"],
         )
         for r in nets
     ]
     text += "\n`Allreduce`, the slowest rank's median.\n\n"
     text += _table(
-        ("Ranks on nodes", *(f"{n:,} doubles, us" for n in counts), "Job"),
+        ("Ranks on nodes", *(f"{n:,} doubles, us" for n in counts)),
         rows,
     )
     return text
 
 
-def _where(chosen: list[Record], commit: str) -> str:
-    """The machine, nodes and commit of a table's runs, as their records name them."""
+def _where(chosen: list[Record]) -> str:
+    """The machine and nodes of a table's runs, as their records name them."""
     machines = sorted({r["machine"] for r in chosen if r.get("machine")})
     cpus = sorted({r["cpu"] for r in chosen if r.get("cpu")})
     constraints = sorted({r["constraint"] for r in chosen if r.get("constraint")})
-    parts = [", ".join(machines + cpus) or "machine not recorded"]
+    parts = [", ".join(machines + cpus)] if machines or cpus else []
     if constraints:
         parts.append(" and ".join(f"`{c}`" for c in constraints) + " nodes")
-    parts.append(f"gfem at commit {commit}")
-    return "; ".join(parts) + ".\n\n"
+    return "; ".join(parts) + ".\n\n" if parts else ""
 
 
 # --- the snippets --------------------------------------------------------------------
@@ -758,7 +746,7 @@ def write_snippets(
         else:
             _refuse(f"unknown table kind {kind} for {name}")
         path = out / f"{name}.md"
-        path.write_text(header + _where(chosen, commit) + body)
+        path.write_text(header + _where(chosen) + body)
         written.append(path)
     return written
 

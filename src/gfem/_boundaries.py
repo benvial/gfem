@@ -323,13 +323,23 @@ class LumpedPort:
     waveguide port is two elements with opposite directions. The port is
     terminated by R, L and C in parallel, or by a resistive ``impedance``.
 
+    Example:
+        A coplanar waveguide port: one gap on each side of the signal line,
+        each excited from the signal line towards ground::
+
+            port = gfem.LumpedPort(
+                "p1", surface=("gap_left", "gap_right"), direction=("-x", "+x")
+            )
+
     Attributes:
         name: The port's name; ports index S-parameters by name, in the
             order of the model's ``ports``.
         surface: One surface name, or a sequence of them (multi-element).
-        direction: The excitation direction of each element: an axis
-            ('+x', '-y', ...) or a 3-vector. With several surfaces, a
-            sequence of the same length.
+        direction: The excitation direction of each element, along its
+            surface from one conductor to the other: the reference direction
+            of E across the gap, so it sets the polarity of the port voltage.
+            An axis ('+x', '-y', ...) or a 3-vector. With several surfaces,
+            a sequence of the same length.
         resistance: Termination resistance, ohm.
         inductance: Termination inductance, H.
         capacitance: Termination capacitance, F.

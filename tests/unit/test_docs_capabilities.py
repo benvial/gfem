@@ -145,41 +145,54 @@ def test_raising_cells_name_their_error(derived):
 
 
 def test_raises_list_is_the_out_of_scope_rows_off_the_grid(derived):
-    rows = {r["label"]: r for r in derived["raises"]}
+    rows = {r["key"]: r for r in derived["raises"]}
     assert len(rows) == 18
-    assert "electrostatic \N{MULTIPLICATION SIGN} sheet fill" not in rows
-    assert (
-        rows["probe \N{MULTIPLICATION SIGN} node coordinates"]["error"]
-        == "NonDifferentiableError"
-    )
+    assert "electrostatic x sheet fill" not in rows
+    assert rows["probe x node coordinates"]["error"] == "NonDifferentiableError"
     assert rows["material axes (orientation)"] == {
-        "label": "material axes (orientation)",
+        "key": "material axes (orientation)",
+        "label": "Any result, with respect to a material's principal axes",
         "error": "NonDifferentiableError",
         "when": "",
     }
-    nodes = rows["driven \N{MULTIPLICATION SIGN} nodes of a port surface"]
-    assert nodes == {
-        "label": "driven \N{MULTIPLICATION SIGN} nodes of a port surface",
-        "error": "PortGeometryError",
-        "when": "in the backward pass",
-    }
+    nodes = rows["driven x nodes of a port surface"]
+    assert nodes["error"] == "PortGeometryError"
+    assert nodes["when"] == (
+        "while the gradient is computed, inside a `jax.errors.JaxRuntimeError`"
+    )
 
 
-#: The periodic rows of the raises list as published, with their errors.
+def test_a_wrapped_error_with_no_gfem_name_still_says_when_it_raises():
+    from jax.errors import JaxRuntimeError
+
+    row = caps._error(JaxRuntimeError, "no error name here")
+    assert row["error"] == "JaxRuntimeError"
+    assert row["when"] == "while the gradient is computed"
+    assert caps.links_gradient_errors(row)
+    assert caps.links_gradient_errors(caps._error(JaxRuntimeError, "PortGeometryError"))
+    assert not caps.links_gradient_errors(caps._error(ValueError, "ValueError"))
+
+
+def test_raises_rows_read_in_site_words_not_test_labels(derived):
+    for row in derived["raises"]:
+        assert row["label"] == caps.RAISES_LABELS[row["key"]]
+        assert row["label"] != row["key"]
+        assert " x " not in row["label"]
+
+
+#: The periodic rows of the raises list (test labels), with their errors.
 PERIODIC_RAISES = {
-    "driven \N{MULTIPLICATION SIGN} wave_vector": "NonDifferentiableError",
-    "eigenmode \N{MULTIPLICATION SIGN} wave_vector": "NonDifferentiableError",
-    "periodic model \N{MULTIPLICATION SIGN} node move that breaks a pair": (
-        "ValueError"
-    ),
-    "boundary_morph \N{MULTIPLICATION SIGN} paired moving surface": "ValueError",
-    "Bloch driven \N{MULTIPLICATION SIGN} adaptive sweep": "NotImplementedError",
-    "Bloch eigenmode \N{MULTIPLICATION SIGN} bddc_gmres": "ValueError",
+    "driven x wave_vector": "NonDifferentiableError",
+    "eigenmode x wave_vector": "NonDifferentiableError",
+    "periodic model x node move that breaks a pair": "ValueError",
+    "boundary_morph x paired moving surface": "ValueError",
+    "Bloch driven x adaptive sweep": "NotImplementedError",
+    "Bloch eigenmode x bddc_gmres": "ValueError",
 }
 
 
 def test_periodic_raises_rows_publish_their_labels_and_errors(derived):
-    rows = {r["label"]: r["error"] for r in derived["raises"]}
+    rows = {r["key"]: r["error"] for r in derived["raises"]}
     assert {k: rows.get(k) for k in PERIODIC_RAISES} == PERIODIC_RAISES
 
 
@@ -298,6 +311,25 @@ def test_a_zero_and_a_raise_in_one_cell_fails(data):
         _derive(data, expected=expected)
 
 
+def test_a_raises_row_with_no_site_label_fails(data):
+    row = ("tensor x chirality", None, ValueError, "chirality")
+    with pytest.raises(caps.CapabilitiesError, match="tensor x chirality"):
+        _derive(data, out_of_scope=[*data[2], row])
+
+
+def test_a_site_label_with_no_raises_row_fails(data):
+    rows = [r for r in data[2] if r[0] != "forward mode"]
+    with pytest.raises(caps.CapabilitiesError, match="forward mode"):
+        _derive(data, out_of_scope=rows)
+
+
+def test_the_matrix_provenance_is_its_own_sentence(derived):
+    assert derived["provenance"].endswith(
+        "each checked along 3 random directions against fourth-order "
+        "central differences"
+    )
+
+
 # --- the table of what raises above one rank ---------------------------------------
 
 _MESSAGES = {"a": "a has no path", "b": "b has no path", "guard": "guarded"}
@@ -347,3 +379,36 @@ def test_a_case_with_no_label_fails_the_build(monkeypatch):
 def test_a_refusal_with_no_case_fails_the_build(monkeypatch):
     with pytest.raises(caps.CapabilitiesError, match="messages"):
         _refusals(monkeypatch, messages=_MESSAGES | {"new": "new"})
+
+
+def test_a_raise_seen_while_the_gradient_is_computed_links_the_shared_section(
+    tmp_path,
+):
+    # The raises list renders in a site with a page holding the shared
+    # "When a gradient raises" section: each row whose error arrives wrapped
+    # links that section, which says how to catch it.
+    build = pytest.importorskip("sphinx.cmd.build")
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "conf.py").write_text(
+        f"import sys\nsys.path.insert(0, {str(REPO / 'docs' / '_ext')!r})\n"
+        "extensions = ['gfem_capabilities']\n"
+        "gfem_capabilities_source_url = 'https://example.org/'\n",
+        encoding="utf-8",
+    )
+    (source / "index.rst").write_text(
+        "Raises\n======\n\n.. toctree::\n\n   errors\n\n.. gfem-raises::\n",
+        encoding="utf-8",
+    )
+    (source / "errors.rst").write_text(
+        ".. _gradient-errors:\n\nWhen a gradient raises\n======================\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "html"
+    assert build.build_main(["-q", "-b", "html", str(source), str(out)]) == 0
+    items = (out / "index.html").read_text(encoding="utf-8").split("<li>")[1:]
+    wrapped = [i for i in items if "JaxRuntimeError" in i]
+    assert wrapped
+    assert all('href="errors.html#gradient-errors"' in i for i in wrapped)
+    assert all("</a> (<a" in i for i in wrapped)  # beside the source link, not in it
+    assert not any("#gradient-errors" in i for i in items if i not in wrapped)

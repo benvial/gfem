@@ -55,6 +55,8 @@ recipes/measurements
 recipes/gpu-direct-solver
 recipes/petsc-slepc
 recipes/distributed-solve
+recipes/offline-cluster
+recipes/frequency-sweep
 recipes/gsim
 ```
 
@@ -63,6 +65,8 @@ recipes/gsim
 :caption: Capabilities
 
 capabilities
+project/scaling
+verification
 ```
 
 ```{toctree}
@@ -78,7 +82,6 @@ glossary
 :caption: Project
 
 project/licence
-project/development
-project/scaling
 project/release-notes
+project/development
 ```

@@ -1,5 +1,7 @@
 """`Material` and `MaterialField`: keyword-only physics values with checks."""
 
+import re
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -273,8 +275,14 @@ def test_material_under_a_gradient_raises_with_the_material_field_remedy():
     def objective(eps):
         return gfem.Material(eps_r=eps).eps_r
 
-    with pytest.raises(gfem.NonDifferentiableError, match=r"MaterialField\.uniform"):
+    with pytest.raises(
+        gfem.NonDifferentiableError, match=r"MaterialField\.uniform"
+    ) as e:
         jax.grad(objective)(2.0)
+    message = str(e.value)
+    assert "computed inside jax.grad, jax.jit or jax.vmap" in message
+    assert "jax.grad reaches its values" in message
+    assert not re.search(r"\b(traced|leaf|leaves|pytree)\b", message)
 
 
 # --- MaterialField -------------------------------------------------------------

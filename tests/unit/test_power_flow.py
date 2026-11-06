@@ -338,7 +338,9 @@ def test_power_flow_is_not_differentiable_yet(step):
         field = dataclasses.replace(e, coefficients=coefficients)
         return gfem.power_flow(field, _below(7.5), model=model)
 
-    with pytest.raises(gfem.NonDifferentiableError, match="power_flow"):
+    with pytest.raises(gfem.NonDifferentiableError, match="power_flow") as err:
         jax.grad(through)(e.coefficients.real)
+    assert "computed inside jax.grad, jax.jit or jax.vmap" in str(err.value)
+    assert "traced" not in str(err.value)
     with pytest.raises(gfem.NonDifferentiableError, match="power_flow"):
         jax.jit(lambda m: gfem.power_flow(e, _below(7.5), model=m))(model)

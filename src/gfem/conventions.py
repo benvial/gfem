@@ -78,7 +78,7 @@ real, power waves and pseudo-waves coincide.
   and currents, not on the conductors' terminal ones.
 - Under a Bloch wave vector (see Bloch periodicity), S is referenced to the
   field E. A solver that reports the periodic envelope
-  ``u = E exp(+i k·r)`` (Palace) gives
+  ``u = E exp(+i k·r)`` gives
   ``S_ij exp(+i k·(r_i - r_j))``, with i the output port, j the excited
   port and r_p a point of port p, when k·r is constant over each port.
 
@@ -153,10 +153,9 @@ wave vector k (rad/m, ``wave_vector=`` on `gfem.Driven` and
 
     E(r + a) = exp(-i k·a) E(r)
 
-so, under e^{+iωt}, the phase of a Bloch wave travels along +k (as Palace's
-``FloquetWaveVector``). Without a wave vector the fields are equal on both
-surfaces (plain periodicity). Swapping a pair's surfaces flips a and gives
-the same field.
+so, under e^{+iωt}, the phase of a Bloch wave travels along +k. Without a
+wave vector the fields are equal on both surfaces (plain periodicity).
+Swapping a pair's surfaces flips a and gives the same field.
 
 Under a Bloch wave vector, ``∫ D · E dV`` over the cell can vanish, so an
 eigenmode field is phased to make its largest coefficient real and positive
