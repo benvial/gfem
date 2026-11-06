@@ -252,19 +252,24 @@ gfem_capabilities_source_url = f"{REPO_URL}/blob/main/"
 # compact matrix and the provenance line, above).
 
 # The install line and its note, in one place: the front page and get-started.md
-# (the {{ install }} substitution) show both. At PyPI publishing this becomes
-# {"line": "pip install gfem", "note": ""}.
+# (the {{ install }} substitution) show both. "extra" is the same source with an
+# extra, for get-started.md's {{ install_extras }}. At PyPI publishing this becomes
+# {"line": "pip install gfem", "note": "", "extra": 'pip install "gfem[{extra}]"'}.
 if REPO_URL:
     gfem_install = {
         "line": f'pip install "gfem @ git+{REPO_URL}"',
         "note": "gfem is not on PyPI yet: pip installs it from the repository.",
+        "extra": f'pip install "gfem[{{extra}}] @ git+{REPO_URL}"',
     }
 else:
     gfem_install = {
         "line": "uv build --wheel && pip install dist/gfem-*.whl",
         "note": "gfem is not on PyPI yet: build the wheel in a checkout of the "
         "repository and install it.",
+        "extra": 'pip install "$(ls dist/gfem-*.whl)[{extra}]"',
     }
+# The extras get-started.md installs, in its table's order.
+gfem_extras = ("mkl", "cuda12", "xarray", "viz", "mpi")
 
 
 def _status(version: str) -> str:
@@ -296,6 +301,9 @@ myst_substitutions = {
         for part in (gfem_install["note"], f"```bash\n{gfem_install['line']}\n```")
         if part
     ),
+    "install_extras": "```bash\n"
+    + "\n".join(gfem_install["extra"].format(extra=e) for e in gfem_extras)
+    + "\n```",
 }
 
 
