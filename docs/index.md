@@ -79,5 +79,6 @@ glossary
 
 project/licence
 project/development
+project/scaling
 project/release-notes
 ```
