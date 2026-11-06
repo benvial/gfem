@@ -11,4 +11,4 @@ MareNostrum 5 GPP, Intel(R) Xeon(R) Platinum 8480+; `highmem` nodes; gfem at com
 | B1_void_split | 7,060,800 | 47,277,960 | `77dfd1e3759ebfbcf87c4c8d469fdad2` |
 | B2_void_split | 16,355,088 | 108,570,046 | `621e606fe9fc2c43eaa23848a27e3ac4` |
 
-Order 2 Nedelec DOF as the runs counted them; md5 of `palace.msh`.
+Order 2 Nedelec DOF as the runs counted them; md5 of the mesh file.

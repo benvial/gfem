@@ -1,7 +1,7 @@
 # Start from a gsim simulation
 
 [gsim](https://pypi.org/project/gsim/) lays out, meshes and configures a
-device. gfem reads what it writes: the gmsh mesh `palace.msh` and the solver
+device. gfem reads what it writes: the gmsh mesh `device.msh` and the solver
 configuration `config.json`. Build a `gfem.Model` from those two files, then solve and
 differentiate it with gfem like any other model. gfem does not import gsim.
 
@@ -19,7 +19,7 @@ sim.set_airbox(margin_x=50, margin_y=0, z_above=100, z_below=100)
 for port in ("o1", "o2"):
     sim.add_cpw_port(port, layer="topmetal2", s_width=20, gap_width=15, excited=True)
 sim.set_driven(fmin=1e9, fmax=100e9)
-sim.mesh(preset="default")  # writes sim/palace.msh
+sim.mesh(preset="default", model_name="device")  # writes sim/device.msh
 sim.write_config()  # writes sim/config.json
 ```
 
@@ -30,7 +30,7 @@ gsim writes micrometres; gfem works in metres, so give the file's unit:
 ```python
 import gfem
 
-mesh = gfem.Mesh.from_gmsh("sim/palace.msh", length_unit="um")
+mesh = gfem.Mesh.from_gmsh("sim/device.msh", length_unit="um")
 ```
 
 The mesh's regions are gsim's physical groups, by name.
@@ -80,8 +80,9 @@ ports = [
 ]
 ```
 
-Palace's three-valued material properties and `MaterialAxes` map onto gfem's
-principal values and `axes` ({doc}`anisotropic-materials`).
+`config.json` gives each material three principal values and a `MaterialAxes`
+frame; they map onto gfem's principal values and `axes`
+({doc}`anisotropic-materials`).
 
 gsim meshes the metal traces as volumes and tags them with the name of the
 dielectric around them, so a trace has no region name of its own. Exclude it

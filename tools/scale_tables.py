@@ -605,7 +605,7 @@ def meshes(
         )
         for name, r in sorted(seen.items(), key=lambda item: dofs[item[0]])
     ]
-    note = "\nOrder 2 Nedelec DOF as the runs counted them; md5 of `palace.msh`.\n"
+    note = "\nOrder 2 Nedelec DOF as the runs counted them; md5 of the mesh file.\n"
     return _table(("Mesh", "Tetrahedra", "DOF", "md5"), rows) + note
 
 

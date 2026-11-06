@@ -118,7 +118,8 @@ minus = gfem.solve(line, gfem.Driven(5e9, wave_vector=(-k[0], 0.0, 0.0))).s.valu
 # plus.T equals minus to solver precision
 ```
 
-- S is referenced to the field E, not to a periodic envelope. It is not
+- S is referenced to the field E, not to a periodic envelope.
+  {py:obj}`gfem.conventions` gives the factor between the two. S is not
   symmetric: S(k)ᵀ = S(−k) ({term}`Bloch reciprocity`).
 - k is the same at every frequency of the sweep.
 - Only `sweep="uniform"` takes a wave vector: the adaptive sweep raises
@@ -170,26 +171,6 @@ plain periodic one is factored with LDLᵀ.
 | `petsc` | driven | raises `ValueError` |
 | cuDSS (`device="cuda"`) | not tested | raises `NotImplementedError` |
 | eigen solver | ARPACK, SLEPc | ARPACK; SLEPc is not tested |
-
-## Coming from Palace
-
-- Palace's `FloquetWaveVector` has gfem's sign. It is in rad per Palace's
-  length unit L0; gfem's `wave_vector` is in rad/m. gfem measures each pair's
-  translation from the mesh, so none is given.
-- Palace's S is referenced to the periodic envelope u = E exp(+i k·r):
-  S_ij^Palace = exp(+i k·(r_i − r_j)) S_ij^gfem, with i the output port, j
-  the excited port and r_p a point of port p; the diagonal is the same. This
-  holds when k·r is constant over each port surface (k normal to the port, or
-  the port small against 2π/|k|).
-- Palace applies the wave vector as a shift of the curl, gfem as a phase
-  between paired unknowns, so the two discrete operators differ. The
-  comparison is a physics case on converged meshes, in
-  `tests/reference/test_periodic.py`, which runs outside the default CI:
-  - **R1**: the two lowest bands of the layered line, lossless at k = π/a and
-    lossy at k = π/2a, agree to a relative 1e-6 (complex frequencies: Palace
-    does not put a lossless band's frequency on the real axis, as gfem does).
-  - **R2**: S of the two-port line at k = 0.3π/a agrees to 1e-4 after the
-    factor above.
 
 ## How the results are checked
 

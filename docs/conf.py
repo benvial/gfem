@@ -160,6 +160,11 @@ ogp_site_url = html_baseurl
 # _ext/gfem_search.py keeps the permalink "#" out of result titles (_ext is put on
 # sys.path in the API block below).
 extensions += ["gfem_search"]
+
+# _ext/gfem_palace.py fails the build when the built site or README.md names
+# Palace, outside gsim's import path in a code block (ADR 0080).
+extensions += ["gfem_palace"]
+
 # --- end search -------------------------------------------------------------------
 
 # --- API reference: sphinx-autoapi and docs/_ext/gfem_api.py --------------------

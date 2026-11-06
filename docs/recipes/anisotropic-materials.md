@@ -203,7 +203,7 @@ identities. No tolerance is quoted here; each is in its test.
   the closed-form propagation constant, without reflecting:
   `tests/verification/test_anisotropic_wave_ports.py::test_a_guide_with_anisotropic_permeability_transmits_its_te10_mode`.
   The same guide with its tensors turned about the guide axis does not
-  reflect either (the case of Palace issue #835):
+  reflect either:
   `tests/verification/test_anisotropic_wave_ports.py::test_a_fill_turned_about_the_guide_axis_does_not_reflect`.
 - The port mode of that turned tensor propagates, with its propagation
   constant between those of the two guides filled with the tensor's

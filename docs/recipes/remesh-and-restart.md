@@ -144,8 +144,13 @@ def build_model(q, outdir):
         sim.add_cpw_port(
             port, layer="topmetal2", s_width=20, gap_width=15, excited=True
         )
-    sim.mesh(preset="default", refined_mesh_size=8.0, max_mesh_size=40.0)
-    mesh = gfem.Mesh.from_gmsh(f"{outdir}/palace.msh", length_unit="um")
+    sim.mesh(
+        preset="default",
+        refined_mesh_size=8.0,
+        max_mesh_size=40.0,
+        model_name="device",
+    )
+    mesh = gfem.Mesh.from_gmsh(f"{outdir}/device.msh", length_unit="um")
     return make_model(mesh)  # materials, boundaries, ports, excluded=
 
 
