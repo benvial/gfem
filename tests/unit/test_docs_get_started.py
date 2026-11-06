@@ -17,6 +17,7 @@ import pytest
 
 ROOT = Path(__file__).parents[2]
 PAGE = ROOT / "docs" / "get-started.md"
+README = ROOT / "README.md"
 MESH = ROOT / "docs" / "tutorials" / "data" / "line.msh"
 MESH_URL = (
     "https://raw.githubusercontent.com/benvial/gfem/main/docs/tutorials/data/line.msh"
@@ -76,3 +77,9 @@ def test_the_first_solve_prints_the_transmission_line_values(
     assert printed == pytest.approx([0.8306, 0.9013, 0.6052], abs=1e-4)
     page_values = np.array(shown.strip().strip("[]").split(), float)
     assert page_values == pytest.approx(printed, abs=1e-6)
+
+
+def test_the_readme_copies_the_first_solve(first_solve):
+    readme = _section(README.read_text(encoding="utf-8"), "A first solve")
+    assert _blocks(readme, "python") == _blocks(first_solve, "python")
+    assert _blocks(readme, "text") == _blocks(first_solve, "text")

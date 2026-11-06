@@ -4,10 +4,8 @@ MIT.
 
 gfem depends on [NGSolve](https://ngsolve.org) (LGPL-2.1), whose PyPI wheels
 also contain GPL-2.0+ SuiteSparse code (UMFPACK, CHOLMOD Supernodal); keep that
-in mind when redistributing a whole gfem environment. The CI licence gate
-(`tools/licence_gate.py`) fails on non-free or non-commercial licences in the
-installed dependency tree; it admits proprietary licences only for the vendor
-wheels of the optional extras. The base install is OSI-licensed.
+in mind when redistributing a whole gfem environment. The base install is
+OSI-licensed: only the optional extras below pull proprietary vendor wheels.
 
 ## Optional extras
 
@@ -25,23 +23,22 @@ wheels of the optional extras. The base install is OSI-licensed.
   results, more slowly.
 
 - `mpi` pulls mpi4py (BSD-3-Clause). It brings no MPI library: Open MPI comes from
-  the machine, and is not gfem's to ship. PyPI's `openmpi` wheel declares a licence
-  (`LicenseRef-OpenMPI`) the gate cannot read, and stays outside the extra.
+  the machine, and is not gfem's to ship. PyPI's `openmpi` wheel is not part of
+  the extra.
 
 ## PETSc and SLEPc
 
 `linear_solver="petsc"` and `eigen_solver="slepc"` use libraries you build
-with {doc}`../recipes/petsc-slepc`; gfem neither ships nor declares them, so
-the licence gate does not see them. The script builds PETSc, SLEPc and their
-Python bindings (BSD-2-Clause) with:
+with {doc}`../recipes/petsc-slepc`; gfem neither ships nor declares them.
+The script builds PETSc, SLEPc and their Python bindings (BSD-2-Clause) with:
 
 - on the {term}`no-MPI PETSc stack`, MUMPS (CeCILL-C), METIS (Apache-2.0) and
   OpenBLAS (BSD-3-Clause);
 - on the {term}`MPI PETSc stack`, the same, with ScaLAPACK (BSD-3-Clause) and
   PT-Scotch (CeCILL-C), on the machine's Open MPI.
 
-ParMETIS (not free for commercial use) is never built, on either stack: a
-`petsc`-marked test checks that it is absent, and that PT-Scotch and ScaLAPACK are
-absent from the no-MPI stack. The MPI stack's `libptscotchparmetisv3` is Scotch's
-own ParMETIS-compatible interface, not ParMETIS. conda-forge's PETSc depends on
-ParMETIS, which is why the recipe builds from source.
+ParMETIS (not free for commercial use) is not part of either stack, and the
+no-MPI stack contains neither PT-Scotch nor ScaLAPACK. The MPI stack's
+`libptscotchparmetisv3` is Scotch's own ParMETIS-compatible interface, not
+ParMETIS. conda-forge's PETSc depends on ParMETIS, which is why the recipe builds
+from source.

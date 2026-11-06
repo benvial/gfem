@@ -64,8 +64,8 @@ class SheetField:
     continuity), 1 the solid sheet; values above 1 are legal (more sheet
     than the solid), negative ones are not (the sheet would be active).
 
-    The fill is a pytree leaf: `jax.grad` of a driven or eigenmode objective
-    reaches it. Build it from a design density with `interpolate`.
+    `jax.grad` of a driven or eigenmode objective reaches ``fill``. Build it
+    from a design density with `interpolate`.
 
     Attributes:
         fill: One real value per face of the surface, in

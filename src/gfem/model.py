@@ -152,15 +152,29 @@ class Model:
     A model is independent of the problem type: one model feeds driven,
     eigenmode, electrostatic and port mode problems. It is validated on
     construction and immutable; derive variants with `replace` and
-    `with_material`. It is a JAX pytree whose leaves are the mesh node
-    coordinates and every `MaterialField` array, so `jax.grad` of an
-    objective reaches them.
+    `with_material`. A `Model` is a JAX
+    `pytree <https://docs.jax.dev/en/latest/pytrees.html>`__:
+    `jax.grad` of an objective reaches the mesh node coordinates and every
+    `MaterialField` array; everything else is fixed.
 
     Regions are addressed by gmsh physical-group name. Every volume region
     gets a material or is excluded. Exterior surfaces of the
     electromagnetic solve domain that no boundary condition or port names
     are PMC (n x H = 0) for electromagnetic problems; `default_pmc` lists
     them.
+
+    Example:
+        A two-port microstrip on a substrate::
+
+            model = gfem.Model(
+                gfem.Mesh.from_gmsh("filter.msh"),
+                materials={"substrate": gfem.Material(eps_r=4.4)},
+                boundaries=[gfem.PEC("ground"), gfem.Absorbing("outer")],
+                ports=[
+                    gfem.LumpedPort("p1", "port1", "+z"),
+                    gfem.LumpedPort("p2", "port2", "+z"),
+                ],
+            )
 
     Args:
         mesh: The mesh.
