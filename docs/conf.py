@@ -161,10 +161,6 @@ ogp_site_url = html_baseurl
 # sys.path in the API block below).
 extensions += ["gfem_search"]
 
-# _ext/gfem_palace.py fails the build when the built site or README.md names
-# Palace, outside gsim's import path in a code block (ADR 0080).
-extensions += ["gfem_palace"]
-
 # --- end search -------------------------------------------------------------------
 
 # --- API reference: sphinx-autoapi and docs/_ext/gfem_api.py --------------------
