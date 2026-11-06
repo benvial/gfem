@@ -492,8 +492,9 @@ def attempt(chosen: list[Record], logs: Path | None) -> str:
         "Job",
     )
     note = (
-        "\nMUMPS's own printed estimates, in-core, at `ICNTL(14)=60`. A second "
-        "analysis is the retry gfem makes after MUMPS reports too little memory.\n"
+        "\nMUMPS's own printed estimates, in-core. A second analysis is the retry gfem "
+        "makes after MUMPS reports too little memory, with a larger `ICNTL(14)`; the "
+        "step's log gives both values.\n"
     )
     return _table(titles, rows) + note
 
