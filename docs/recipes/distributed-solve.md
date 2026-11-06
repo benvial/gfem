@@ -9,9 +9,7 @@ sweep and its gradients run this way; anything else raises at once
 
 ## Install
 
-```bash
-pip install "gfem[mpi]"
-```
+{{ install_mpi }}
 
 The extra adds mpi4py, on Linux x86_64. The MPI library comes from your
 machine and must be **Open MPI**.

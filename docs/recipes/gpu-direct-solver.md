@@ -9,10 +9,7 @@ double-precision speed, so measure before you rely on it.
 
 ## Install
 
-```bash
-pip install "gfem[cuda12]"  # CUDA 12 drivers
-pip install "gfem[cuda13]"  # CUDA 13 drivers (check `nvidia-smi`)
-```
+{{ install_cuda }}
 
 The extras exist on Linux x86_64 and Windows x86_64. On macOS they install
 nothing, and a GPU request says that CUDA is not supported there.

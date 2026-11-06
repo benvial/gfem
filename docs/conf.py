@@ -114,7 +114,7 @@ html_theme_options = {
         {"title": "Capabilities", "url": "capabilities"},
         {"title": "API", "url": "api/index"},
     ],
-    "github_url": "",  # an empty slot until a remote exists
+    "github_url": REPO_URL,
     "show_ai_links": False,  # no "Open in ChatGPT / Claude" menu
     "ethical_ads_publisher": "",  # no EthicalAds div (the default is "readthedocs")
     "globaltoc_expand_depth": 1,
@@ -304,6 +304,13 @@ myst_substitutions = {
     "install_extras": "```bash\n"
     + "\n".join(gfem_install["extra"].format(extra=e) for e in gfem_extras)
     + "\n```",
+    # The recipes' install blocks, from the same source as get-started's.
+    "install_mpi": f"```bash\n{gfem_install['extra'].format(extra='mpi')}\n```",
+    "install_cuda": "```bash\n"
+    + gfem_install["extra"].format(extra="cuda12")
+    + "  # CUDA 12 drivers\n"
+    + gfem_install["extra"].format(extra="cuda13")
+    + "  # CUDA 13 drivers (check `nvidia-smi`)\n```",
 }
 
 

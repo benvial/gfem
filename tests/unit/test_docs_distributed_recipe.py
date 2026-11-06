@@ -59,10 +59,33 @@ def test_no_private_path_or_name_reaches_the_pages(request, which, private):
     assert private not in _published(request.getfixturevalue(which))
 
 
+# A commit SHA mixes hex letters and digits; a Slurm job id is a number after "job".
+_SHA = r"\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*[0-9])[0-9a-f]{7,40}\b"
+_JOB = r"(?i:\bjobs? (?:id )?[0-9]{6,})"
+
+
+def _ids(text: str) -> list[str]:
+    return re.findall(f"{_SHA}|{_JOB}", text)
+
+
+@pytest.mark.parametrize(
+    ("text", "found"),
+    [
+        ("gfem 009f5a6, on a 10.2 M DOF mesh", ["009f5a6"]),
+        ("jobs 48441613 and 48441617 on one node", ["jobs 48441613"]),
+        ("at 50 GHz (job 48473792, commit ec608c1)", ["job 48473792", "ec608c1"]),
+        ("Job 48468681: 442 passed", ["Job 48468681"]),
+        ("a 10200000 DOF mesh, 1234567 unknowns", []),
+        ("the effaced and defaced words", []),
+    ],
+)
+def test_the_id_check_finds_shas_and_job_ids_but_not_plain_numbers(text, found):
+    assert _ids(text) == found
+
+
 @pytest.mark.parametrize("which", ["page", "cluster"])
 def test_no_commit_or_job_id_reaches_the_pages(request, which):
-    text = _published(request.getfixturevalue(which))
-    assert not re.findall(r"\b[0-9a-f]{7,40}\b|job [0-9]{6,}|\b4[0-9]{7}\b", text)
+    assert not _ids(_published(request.getfixturevalue(which)))
 
 
 def test_the_page_takes_its_refusals_from_the_generator(page):
@@ -111,7 +134,8 @@ def test_the_extra_is_the_one_the_pages_name(page, cluster):
     project = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]
     (spec,) = project["optional-dependencies"]["mpi"]
     assert spec.startswith("mpi4py>=4.1.2,<5;")
-    assert 'pip install "gfem[mpi]"' in page
+    assert "{{ install_mpi }}" in page  # conf.py's install form, not PyPI's
+    assert 'pip install "gfem[' not in page
     assert "[mpi]" in cluster
 
 
