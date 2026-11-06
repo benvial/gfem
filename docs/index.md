@@ -55,6 +55,7 @@ recipes/measurements
 recipes/gpu-direct-solver
 recipes/petsc-slepc
 recipes/distributed-solve
+recipes/frequency-sweep
 recipes/gsim
 ```
 
@@ -64,6 +65,7 @@ recipes/gsim
 
 capabilities
 project/scaling
+verification
 ```
 
 ```{toctree}

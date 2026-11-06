@@ -68,10 +68,10 @@ wrapper, so gfem raises `gfem.SolverUnavailableError` above one rank on anything
   Its licence file is one the licence gate cannot read, so check it yourself
   ({doc}`../project/licence`).
 
-`"bddc_gmres"` and `"auto"` need no PETSc: BDDC's coarse problem then runs on
-{term}`rank 0 <Rank-0 coarse factorization>`. `"direct"` and `"petsc"` need the
-{term}`MPI PETSc stack`, and with it BDDC's coarse problem
-{term}`runs across ranks too <Distributed coarse factorization>`. Build it with
+`"bddc_gmres"` and `"auto"` need no PETSc. Without it, one step of every BDDC
+iteration runs on the first rank, which changes the recommended layout (see "Threads
+and layout" below). `"direct"` and `"petsc"` need the {term}`MPI PETSc stack`, and
+with it that step runs across ranks too. Build it with
 `tools/petsc_wheelhouse.sh --mpi`: {ref}`petsc-with-mpi` says what it holds. A stack
 runs under the Open MPI it was built on. gfem does not check this, so load the same
 module when you run. The build's online form, without `--sources`, is written but has
@@ -100,7 +100,7 @@ Here is a whole one. It needs the {download}`mesh <../tutorials/data/line.msh>`,
   mpi4py. `comm=` on `gfem.solve`, `Job.run`, `Mesh.from_gmsh`, `Job.from_json` and
   `load_result` overrides it. A communicator of size 1 is one process.
 - A script of your own may do what it likes between calls, but a value that decides
-  what happens next must be an {term}`agreed value`: the same bits on every rank.
+  what happens next must be the same, bit for bit, on every rank.
   S, gradients and everything the mesh holds are. A clock, a file listing or a
   random number without a shared seed is not. gfem checks its inputs when a solve
   starts: a difference raises on every rank, naming the input. If a rank is late, it
@@ -133,7 +133,8 @@ if rank == 0:
 result.e_field(frequency, "p1").to_vtu("field.vtu")  # every rank calls this
 ```
 
-- `Field.coefficients` is this rank's padded {term}`field piece`, not a global array.
+- `Field.coefficients` holds only this rank's part of the field (padded to one length
+  on every rank), not a global array.
 - `Job.run(out=)` and `python -m gfem run` gather the fields to rank 0, in the order
   they have on one process, so a bundle reads on one process whatever rank count wrote
   it. Read it with `load_result(path, comm=MPI.COMM_SELF)`.
@@ -143,8 +144,8 @@ result.e_field(frequency, "p1").to_vtu("field.vtu")  # every rank calls this
 
 ## Errors
 
-A failure every rank decides on together, an {term}`agreed error`, raises on every
-rank, and the script may catch it. Any other failure on one rank prints its traceback
+A failure every rank decides on together raises on every rank, and the script may
+catch it. Any other failure on one rank prints its traceback
 with the rank and ends the job: its peers could not go on. From the first distributed
 solve on, this holds for your own code too. Before it, launch with
 `python -m mpi4py script.py`, or an exception on one rank leaves the others waiting.

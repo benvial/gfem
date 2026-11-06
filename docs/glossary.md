@@ -59,17 +59,6 @@ Port mode sweep
   frequencies before the 3D solve, giving each wave port's propagation constant
   and mode profile at every output frequency. The wave ports of a
   {term}`shared port surface` share one sweep.
-
-Gradient verification matrix
-  The set of cells (problem type × gradient input × linear solver × sweep)
-  whose gradients are checked against fourth-order central differences and a
-  second-order {term}`Taylor remainder <Taylor test>`. The {doc}`capabilities`
-  page is generated from it.
-
-Raise table
-  For each problem type, every result leaf × model or problem input leaf with
-  its expected outcome: a gradient, an exact zero, or a named error. Never a
-  silent zero.
 ```
 
 ## Models
@@ -177,6 +166,16 @@ PETSc stack
   `eigen_solver="slepc"` need. It comes in two builds, the
   {term}`no-MPI PETSc stack` and the {term}`MPI PETSc stack`.
 
+No-MPI PETSc stack
+  The {term}`PETSc stack` for one process: what `linear_solver="petsc"` and
+  `eigen_solver="slepc"` need on a workstation or as {term}`rank copies`. It
+  needs no MPI library and cannot run a {term}`distributed solve`.
+
+MPI PETSc stack
+  The {term}`PETSc stack` built against your Open MPI: what a
+  {term}`distributed solve` with `"direct"` or `"petsc"` needs. It runs
+  one-process solves too, and only under the Open MPI it was built on.
+
 Periodic pair
   Two exterior surfaces of a {term}`model` related by a translation, whose
   fields are identified; one to three pairs make a 1D, 2D or 3D periodic cell
@@ -207,11 +206,6 @@ Job
 Field
   A solution quantity (electric field, potential) on the model's mesh, carried
   by a result with its quantity, unit, space, order and support.
-
-Run record
-  The committed outputs of a run too costly for CI (its solver outputs,
-  settings, environment and the hash of the script that produced them), which a
-  docs page reads instead of solving.
 
 Partial result
   The result of a uniform sweep restricted to the frequencies it solved before
@@ -352,10 +346,6 @@ Objective
   overlap) whose gradient with respect to {term}`design parameters` is
   requested.
 
-Taylor test
-  A gradient check that the first-order Taylor remainder of an
-  {term}`objective` shrinks at second order as the perturbation shrinks.
-
 Cluster-symmetric objective
   An {term}`objective` that depends on a degenerate group of modes only through
   quantities unchanged when the modes are relabelled, such as their sum, so its
@@ -377,41 +367,4 @@ Distributed solve
 Rank copies
   Independent complete solves, one per launched process, each on its own single-rank
   communicator, asked for by name.
-
-Agreed value
-  A value every rank holds bitwise: a replicated input, the result of a reduction, or
-  a broadcast. The only kind of value that may decide what a {term}`distributed solve`
-  does next.
-
-Agreed error
-  A failure all ranks decide on together, so that it raises on every rank and the
-  script may catch it; any other failure on a rank ends the job.
-
-Field piece
-  The part of a field's values one rank holds; a value shared between ranks is the
-  same on every rank holding it.
-
-Rank agreement
-  A distributed result that is bitwise the same on every rank and equal, within its
-  stated tolerance, to the one-process result of the same model and options.
-
-Distributed refusal
-  A solve or method call on more than one rank that raises on every rank, naming what
-  has no distributed path and the remedy; it never runs on fewer ranks instead.
-
-No-MPI PETSc stack
-  The {term}`PETSc stack` with MUMPS and METIS and no MPI: it runs in one process, or
-  as {term}`rank copies`, needs no MPI library, and has no part in a
-  {term}`distributed solve`.
-
-MPI PETSc stack
-  The {term}`PETSc stack` built on one Open MPI, with MUMPS, ScaLAPACK, PT-Scotch and
-  METIS, 64-bit indices and no ParMETIS: what a {term}`distributed solve` through
-  PETSc needs. It also runs one-process solves.
-
-Distributed coarse factorization
-  BDDC's coarse factorization across ranks on PETSc MUMPS.
-
-Rank-0 coarse factorization
-  BDDC's coarse factorization gathered to rank 0, the only route without PETSc.
 ```

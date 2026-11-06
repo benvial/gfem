@@ -16,10 +16,13 @@ property's column, whose cells then name the forms their tests cover
 Every claim that cannot be derived raises `CapabilitiesError`, which the
 Sphinx hook turns into an `ExtensionError`: a problem key or input kind the
 mapping below does not know, a grid cell with no outcome or with
-conflicting ones, and a missing ``OUT_OF_SCOPE`` row the grid needs.
+conflicting ones, a missing ``OUT_OF_SCOPE`` row the grid needs, and an
+``OUT_OF_SCOPE`` row off the grid with no site label (or a label with no row).
 
 `derive` returns one plain dict (lists, dicts, strings and numbers). The
-two directives on docs/capabilities.md render it, and every page template
+directives on docs/capabilities.md (the matrix, the raises list in the site's
+words of ``RAISES_LABELS``) and docs/verification.md (the matrix's provenance
+sentence) render it, and every page template
 gets it as ``gfem_capabilities`` (the template context, as if set in
 ``html_context``) for the front page's compact matrix, which shows the rows
 marked ``front`` only. Only
@@ -38,6 +41,7 @@ MATRIX_TEST = "tests/verification/test_gradient_matrix.py"
 RAISE_TEST = "tests/verification/test_gradient_matrix_raise_table.py"
 REFUSAL_CASES = "tests/mpi_cases.py"
 CAPABILITIES_DOC = "capabilities"
+VERIFICATION_DOC = "verification"  # renders the matrix's provenance sentence
 FRONT_DOC = "index"  # the gfem-home layout renders the compact matrix
 DISTRIBUTED_DOC = "recipes/distributed-solve"
 CONTEXT_KEY = "gfem_capabilities"  # the template context name
@@ -154,8 +158,73 @@ MATERIAL_PROPERTIES = {
 SOLVERS = {"direct": "direct solver", "bddc_gmres": "BDDC + GMRES"}
 # OUT_OF_SCOPE rows the grid needs (by their label): the row's cell raises.
 GRID_LABELS = {"electrostatic x sheet fill": ("electrostatic", "fill")}
+#: What each raises row asks for, in the site's words, by the test's label (the
+#: match key). A row off the grid with no label here, or a label with no row,
+#: fails the build.
+RAISES_LABELS = {
+    "driven x fill of a sheet beside a wave port": (
+        "Driven S-parameters, with respect to the fill of a sheet that shares "
+        "an edge with a wave port's face"
+    ),
+    "driven x material on a wave port face": (
+        "Driven S-parameters, with respect to the material of a region with "
+        "elements on a wave port's face"
+    ),
+    "driven x material field with axes on a wave port face": (
+        "Driven S-parameters, with respect to the principal values of a "
+        "`MaterialField` with axes, in a region with elements on a wave port's face"
+    ),
+    "material axes (orientation)": (
+        "Any result, with respect to a material's principal axes"
+    ),
+    "values of an anisotropic Material": (
+        "Any result, with respect to the values of an anisotropic `Material`"
+    ),
+    "nodes beside an anisotropic absorbing face": (
+        "Any result, with respect to node coordinates, when an `Absorbing` "
+        "surface borders an anisotropic material"
+    ),
+    "driven x material on a shared wave port face": (
+        "Driven S-parameters, with respect to the material of a region with "
+        "elements on a shared wave port surface"
+    ),
+    "driven x nodes of a port surface": (
+        "Driven S-parameters, with respect to node coordinates on a port surface"
+    ),
+    "eigenmode x nodes of a port surface": (
+        "Eigenmode results, with respect to node coordinates on a port surface"
+    ),
+    "greedy adaptive sweep under a transformation": (
+        '`Driven(sweep="adaptive")` without `samples`, inside `jax.grad`, '
+        "`jax.jit` or `jax.vmap`"
+    ),
+    "forward mode": "Forward mode: `jax.jvp` of a solve",
+    "probe x node coordinates": (
+        "A field value at points (`Field.at`), with respect to node coordinates"
+    ),
+    "driven x wave_vector": (
+        "Driven S-parameters, with respect to the Bloch wave vector"
+    ),
+    "periodic model x node move that breaks a pair": (
+        "A node move that breaks a `Periodic` pair (the two surfaces no longer match)"
+    ),
+    "boundary_morph x paired moving surface": (
+        "`boundary_morph` with a surface of a `Periodic` pair as the moving surface"
+    ),
+    "Bloch driven x adaptive sweep": (
+        '`Driven(sweep="adaptive")` with a Bloch `wave_vector`'
+    ),
+    "eigenmode x wave_vector": (
+        "Eigenmode results, with respect to the Bloch wave vector"
+    ),
+    "Bloch eigenmode x bddc_gmres": (
+        '`Eigenmode` with a Bloch `wave_vector` on `linear_solver="bddc_gmres"`'
+    ),
+}
 STATUS_TEXT = {"verified": "FD-verified", "zero": "exact zero", "raises": "raises"}
 OUTCOMES = {"gradient", "zero", "raises"}
+#: How a gfem error raised in the backward pass reaches the caller.
+WRAPPED = "while the gradient is computed, inside a `jax.errors.JaxRuntimeError`"
 
 
 def forms_text(forms: list[str]) -> str:
@@ -296,10 +365,18 @@ def gradient_matrix(cells, expected, out_of_scope) -> dict:
         f"{counts['bddc_gmres']} repeated on BDDC + GMRES), each checked along "
         "3 random directions against fourth-order central differences"
     )
+    off_grid = [label for label in labels if label not in GRID_LABELS]
+    unlabelled = [label for label in off_grid if label not in RAISES_LABELS]
+    stale = [label for label in RAISES_LABELS if label not in off_grid]
+    if unlabelled or stale:
+        raise CapabilitiesError(
+            f"{RAISE_TEST}: OUT_OF_SCOPE rows with no site label {unlabelled}, "
+            f"site labels with no row {stale} (RAISES_LABELS in "
+            "docs/_ext/gfem_capabilities.py)"
+        )
     raises = [
-        {"label": _display(label), **_error(error, match)}
-        for label, (error, match) in labels.items()
-        if label not in GRID_LABELS
+        {"key": label, "label": RAISES_LABELS[label], **_error(*labels[label])}
+        for label in off_grid
     ]
     return {
         "columns": [
@@ -389,8 +466,8 @@ def _error(error: type, match: str) -> dict:
     if error.__name__ == "JaxRuntimeError":
         head = re.match(r"\w+Error\b", match)
         if head:
-            return {"error": head.group(), "when": "in the backward pass"}
-        return {"error": error.__name__, "when": "in the backward pass"}
+            return {"error": head.group(), "when": WRAPPED}
+        return {"error": error.__name__, "when": ""}
     return {"error": error.__name__, "when": ""}
 
 
@@ -447,10 +524,6 @@ def distributed_refusals(keys, methods, guards, feature, messages) -> list[dict]
         }
         for case in cases
     ]
-
-
-def _display(label: str) -> str:
-    return label.replace(" x ", " \N{MULTIPLICATION SIGN} ")
 
 
 # --- Loading the verification tests --------------------------------------------
@@ -547,7 +620,7 @@ def setup(app):
     def reread(_app, env, *_changes) -> list[str]:
         # These pages render the tests' data, not their own source: read them
         # again on every build so an incremental build never serves stale claims.
-        pages = (CAPABILITIES_DOC, FRONT_DOC, DISTRIBUTED_DOC)
+        pages = (CAPABILITIES_DOC, VERIFICATION_DOC, FRONT_DOC, DISTRIBUTED_DOC)
         return [d for d in pages if d in env.found_docs]
 
     app.add_config_value("gfem_capabilities_source_url", "", "html", str)
@@ -560,7 +633,7 @@ def setup(app):
 
 
 def _directives() -> dict:
-    """The two directives (defined here so the module imports without Sphinx)."""
+    """The directives (defined here so the module imports without Sphinx)."""
     from docutils import nodes
     from sphinx import addnodes
     from sphinx.util.docutils import SphinxDirective
@@ -598,7 +671,7 @@ def _directives() -> dict:
             return [xref]
 
     class GradientMatrix(_Claims):
-        """The full gradient matrix and its provenance line."""
+        """The full gradient matrix (its provenance is `GradientChecks`)."""
 
         def run(self):
             data = self.data
@@ -626,10 +699,7 @@ def _directives() -> dict:
                     line += _entry(*self.cell(cell))
                 body += line
             group += body
-            provenance = nodes.paragraph(
-                text=f"{data['provenance']}.", classes=["gfem-provenance"]
-            )
-            return [table, provenance]
+            return [table]
 
         def cell(self, cell: dict) -> list:
             mark = nodes.inline(classes=["gfem-mark", f"gfem-{cell['status']}"])
@@ -649,6 +719,13 @@ def _directives() -> dict:
                 ]
             return out
 
+    class GradientChecks(_Claims):
+        """How many cells the matrix checks, and how: one generated sentence."""
+
+        def run(self):
+            text = f"{self.data['provenance']}."
+            return [nodes.paragraph(text=text[0].upper() + text[1:])]
+
     class Raises(_Claims):
         """The out-of-scope pairs off the grid, each with its named error."""
 
@@ -659,9 +736,11 @@ def _directives() -> dict:
                 tag += nodes.Text("raises ")
                 tag += nodes.literal(text=row["error"])
                 if row["when"]:
-                    tag += nodes.Text(f" {row['when']}")
+                    tag.extend(_with_code(f" {row['when']}"))
                 para = nodes.paragraph()
-                para += nodes.inline(text=row["label"], classes=["what"])
+                what = nodes.inline(classes=["what"])
+                what.extend(_with_code(row["label"]))
+                para += what
                 para += nodes.Text(" ")
                 para.extend(self.source(RAISE_TEST, tag))
                 items += nodes.list_item("", para)
@@ -704,6 +783,7 @@ def _directives() -> dict:
 
     return {
         "gfem-gradient-matrix": GradientMatrix,
+        "gfem-gradient-checks": GradientChecks,
         "gfem-raises": Raises,
         "gfem-distributed-refusals": DistributedRefusals,
     }
