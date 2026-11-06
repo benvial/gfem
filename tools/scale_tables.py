@@ -683,6 +683,18 @@ def bench(chosen: list[Record]) -> str:
     return text
 
 
+def _where(chosen: list[Record], commit: str) -> str:
+    """The machine, nodes and commit of a table's runs, as their records name them."""
+    machines = sorted({r["machine"] for r in chosen if r.get("machine")})
+    cpus = sorted({r["cpu"] for r in chosen if r.get("cpu")})
+    constraints = sorted({r["constraint"] for r in chosen if r.get("constraint")})
+    parts = [", ".join(machines + cpus) or "machine not recorded"]
+    if constraints:
+        parts.append(" and ".join(f"`{c}`" for c in constraints) + " nodes")
+    parts.append(f"gfem at commit {commit}")
+    return "; ".join(parts) + ".\n\n"
+
+
 # --- the snippets --------------------------------------------------------------------
 
 
@@ -742,7 +754,7 @@ def write_snippets(
         else:
             _refuse(f"unknown table kind {kind} for {name}")
         path = out / f"{name}.md"
-        path.write_text(header + body)
+        path.write_text(header + _where(chosen, commit) + body)
         written.append(path)
     return written
 

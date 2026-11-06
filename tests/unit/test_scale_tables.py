@@ -176,3 +176,17 @@ def test_a_superseded_record_is_not_read(ladder, tmp_path):
         ladder, tmp_path / "out", commit="9a57680", spec=LADDER
     )
     assert "999" not in path.read_text()
+
+
+def test_a_table_names_the_machine_and_nodes_its_runs_name(ladder, tmp_path):
+    for path in ladder.glob("*.json"):
+        record = json.loads(path.read_text())
+        record.update(machine="Some Cluster", constraint="highmem")
+        path.write_text(json.dumps(record))
+    (path,) = scale_tables.write_snippets(
+        ladder, tmp_path / "out", commit="9a57680", spec=LADDER
+    )
+    where = path.read_text().splitlines()[2]
+    assert "Some Cluster" in where
+    assert "highmem" in where
+    assert "9a57680" in where
