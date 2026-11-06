@@ -351,7 +351,9 @@ def test_traced_values_cannot_be_written(model, tmp_path):
         job.to_json(tmp_path / "job.json")
         return eps.sum()
 
-    with pytest.raises(TypeError, match="traced"):
+    with pytest.raises(
+        TypeError, match=r"computed inside jax\.grad, jax\.jit or jax\.vmap"
+    ):
         jax.grad(write)(jnp.full(n, 2.0))
 
 

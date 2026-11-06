@@ -46,19 +46,19 @@ SLEPC_NAMESPACES = ("eps_", "bv_", "ds_", "rg_", "fn_")
 #: once per DOF (``lapack``) or swap its spectral transform (``gd``).
 _EPS_TYPES = ("krylovschur", "arnoldi")
 _SELECTION = (
-    "is set by gfem: Eigenmode.target picks the modes (the seed keeps the "
+    "is set by gfem: Eigenmode.target picks the modes (gfem keeps the "
     "eigenvalues nearest it); set that instead."
 )
 _PROBLEM_TYPE = (
-    "is set by gfem: the seed operator is a non-Hermitian shift-inverted operator."
+    "is set by gfem: the eigen solver works on a non-Hermitian shift-inverted operator."
 )
 _CONVERGENCE = (
     "is set by gfem: eigen_tolerance is relative to each shift-inverted "
     "eigenvalue, as with ARPACK; set SolverOptions.eigen_tolerance instead."
 )
 _EXTRACTION = (
-    "needs the operator's transpose or a target, which gfem's seed operator "
-    "does not give SLEPc."
+    "needs the operator's transpose or a target, which gfem's shift-inverted "
+    "operator does not give SLEPc."
 )
 #: Options gfem sets itself, and what to set instead (the message's tail).
 _RESERVED: dict[str, str] = {
@@ -117,7 +117,7 @@ _RESERVED_PREFIXES: dict[str, str] = {
     "eps_harmonic": _EXTRACTION,
     "eps_refined": _EXTRACTION,
     "st_": (
-        "has no effect: gfem's seed applies T(σ)⁻¹ through linear_solver, not "  # noqa: RUF001
+        "has no effect: gfem applies T(σ)⁻¹ through linear_solver, not "  # noqa: RUF001
         "through a SLEPc spectral transform; configure that solver instead "
         "(with linear_solver='petsc', its ksp_ / pc_ options)."
     ),
@@ -192,7 +192,7 @@ def _petsc_options(options: SolverOptions) -> PetscOptions:
             if name == "eps_type" and value not in _EPS_TYPES:
                 raise ValueError(
                     f"{field} must be 'krylovschur' or 'arnoldi' on gfem's "
-                    f"shift-inverted seed operator, got {value!r}."
+                    f"shift-inverted operator, got {value!r}."
                 )
         elif options.linear_solver != "petsc":
             slepc = (

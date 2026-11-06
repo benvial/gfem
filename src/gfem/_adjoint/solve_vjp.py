@@ -122,7 +122,7 @@ def _describe(kind: tuple) -> str:
     if kind[0] == "material":
         return f"model.materials[{kind[1]!r}].{kind[2]}"
     if kind[0] == "problem":
-        return f"the problem leaf {kind[1]}"
+        return f"problem{kind[1]}"
     if kind[0] == "boundary":
         rest = "".join(f".{k}" for k in kind[2:])
         return f"model.boundaries[{kind[1]}]{rest}"

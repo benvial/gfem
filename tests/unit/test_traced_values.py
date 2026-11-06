@@ -6,6 +6,8 @@ under `jax.jit` or `jax.grad` they raise `gfem.NonDifferentiableError`
 (which an existing ``except ValueError`` still catches) naming the value.
 """
 
+import re
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -39,6 +41,14 @@ def test_a_traced_fixed_value_raises_nondifferentiable(name, transform):
     wrapped = jax.jit(objective) if transform == "jit" else jax.grad(objective)
     with pytest.raises(gfem.NonDifferentiableError, match=name.split(".")[-1]):
         wrapped(1e9)
+
+
+def test_the_message_names_the_jax_transformations():
+    with pytest.raises(gfem.NonDifferentiableError) as err:
+        jax.grad(lambda f: gfem.Driven(frequency=f) and f)(1e9)
+    message = str(err.value)
+    assert "computed inside jax.grad, jax.jit or jax.vmap" in message
+    assert not re.search(r"\b(traced|tracer|leaf|leaves|pytree)\b", message)
 
 
 def test_the_error_is_still_a_value_error():

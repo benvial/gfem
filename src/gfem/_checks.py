@@ -30,9 +30,9 @@ def check_fixed(value: Any, what: str) -> None:
     """
     if is_traced(value):
         raise NonDifferentiableError(
-            f"{what}, not traced by JAX: gfem does not differentiate with respect "
-            "to it. Build it from concrete values, outside the function JAX "
-            "transforms."
+            f"{what}, not values computed inside jax.grad, jax.jit or jax.vmap: "
+            "gfem does not differentiate with respect to it. Build it from "
+            "concrete values, outside the transformed function."
         )
 
 

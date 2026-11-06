@@ -686,8 +686,9 @@ def test_port_mode_runs_under_jit_without_its_field(plate_mesh):
     traced = gamma(4.0)
     np.testing.assert_allclose(traced.gamma, exact.gamma, rtol=1e-10)
     np.testing.assert_allclose(traced.Z_PV, exact.Z_PV, rtol=1e-10)
-    with pytest.raises(TypeError, match="e_field"):
+    with pytest.raises(TypeError, match="e_field") as err:
         traced.e_field.at([W / 2, D / 2, 0.0])
+    assert "computed inside jax.grad, jax.jit or jax.vmap" in str(err.value)
 
 
 def test_port_mode_gradient_of_an_unread_property_is_an_exact_zero(plate_mesh):

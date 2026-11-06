@@ -309,8 +309,8 @@ class PortModeRule:
         if is_traced(self._model):
             raise TypeError(
                 "PortModeResult.e_field is not available from a port mode solve "
-                "traced by JAX (jax.jit, jax.grad, jax.vmap): the mode field needs "
-                "concrete model values. Solve PortMode outside the transformed "
+                "computed inside jax.grad, jax.jit or jax.vmap: the mode field "
+                "needs concrete model values. Solve PortMode outside the transformed "
                 "function to read e_field."
             )
         sweep = self.forward(self._model, keep=False)[0]["sweep"]

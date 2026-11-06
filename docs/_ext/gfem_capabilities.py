@@ -225,6 +225,9 @@ STATUS_TEXT = {"verified": "FD-verified", "zero": "exact zero", "raises": "raise
 OUTCOMES = {"gradient", "zero", "raises"}
 #: How a gfem error raised in the backward pass reaches the caller.
 WRAPPED = "while the gradient is computed, inside a `jax.errors.JaxRuntimeError`"
+#: The label of the recipes' "When a gradient raises" section, which says how
+#: to catch a `WRAPPED` error; each such row links it.
+GRADIENT_ERRORS = "gradient-errors"
 
 
 def forms_text(forms: list[str]) -> str:
@@ -654,6 +657,20 @@ def _directives() -> dict:
             ref.extend(children)
             return [ref]
 
+        def ref(self, label: str, *children):
+            """``children`` linked to the section labelled ``label``."""
+            xref = addnodes.pending_xref(
+                "",
+                refdomain="std",
+                reftype="ref",
+                reftarget=label,
+                refdoc=self.env.docname,
+                refexplicit=True,
+                refwarn=True,
+            )
+            xref.extend(children)
+            return xref
+
         def doc(self, docname: str, *children):
             """``children`` linked to the page ``docname``."""
             if not docname:
@@ -743,6 +760,10 @@ def _directives() -> dict:
                 para += what
                 para += nodes.Text(" ")
                 para.extend(self.source(RAISE_TEST, tag))
+                if row["when"] == WRAPPED:  # outside the source link: no nesting
+                    para += nodes.Text(" (")
+                    para += self.ref(GRADIENT_ERRORS, nodes.Text("how to catch it"))
+                    para += nodes.Text(")")
                 items += nodes.list_item("", para)
             return [items]
 

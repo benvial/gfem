@@ -188,7 +188,7 @@ def shift_invert(
             if shell.error is not None:
                 raise shell.error from None
             raise RuntimeError(
-                "SLEPc's seed solve failed (SolverOptions.petsc_options = "
+                "SLEPc's eigen solve failed (SolverOptions.petsc_options = "
                 f"{dict(options)}): {_petsc.error_text(err)}"
             ) from _petsc.unwrap(err)
         finally:
