@@ -4,7 +4,8 @@ Every public name is documented once, on its home module page, and references
 resolve under every spelling users write:
 
 - ``autoapi-skip-member`` skips the copies of a name that are not on its home
-  page (``gfem.Model`` is documented on ``gfem.model`` only).
+  page (``gfem.Model`` is documented on ``gfem.model`` only), and the JAX pytree
+  protocol methods (``tree_flatten``, ...), which users never call.
 - ``missing-reference`` resolves ``gfem.X``, a bare ``X`` and
   ``gfem._private.X`` to the documented ``gfem.<home>.X``.
 - ``env-before-read-docs`` rewrites private annotation types to their public
@@ -22,6 +23,11 @@ from pathlib import Path
 
 from sphinx.addnodes import pending_xref
 from sphinx.transforms.post_transforms import SphinxPostTransform
+
+# JAX's pytree protocol: public in code, never called by users.
+_PYTREE_PROTOCOL = frozenset(
+    {"tree_flatten", "tree_flatten_with_keys", "tree_unflatten"}
+)
 
 # Filled on config-inited from autoapi_dirs.
 _API_MODULES: set[str] = set()  # "gfem" and its public modules
@@ -99,13 +105,15 @@ def _load_homes(app, config) -> None:
 
 
 def _skip_duplicates(app, what, name, obj, skip, options):  # noqa: ARG001, PLR0917
-    """Skip every copy of a public name that is not on its home page.
+    """Skip every copy of a public name not on its home page, and pytree methods.
 
     The signature is the ``autoapi-skip-member`` event's.
     """
     if what in ("module", "package"):
         return None
     parent, _, short = name.rpartition(".")
+    if what == "method" and short in _PYTREE_PROTOCOL:
+        return True
     if parent in _API_MODULES and _API_HOMES.get(short, parent) != parent:
         return True
     return None
