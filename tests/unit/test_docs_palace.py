@@ -79,6 +79,74 @@ def test_readme_prose_is_a_hit(gfem_palace, tmp_path):
     assert [line for _, line, _ in gfem_palace.palace_hits(html, readme)] == [3, 3]
 
 
-def test_only_html_files_are_scanned(gfem_palace, tmp_path):
-    html, readme = site(tmp_path, {"_sources/a.md.txt": "Palace\n"})
+SPLIT_IMPORT = (
+    '<div class="highlight"><pre><span></span><span class="kn">import</span>'
+    '<span class="w"> </span><span class="nn">gsim</span><span class="o">.</span>'
+    '<span class="nn">palace</span>\n</pre></div>\n'
+)
+SPLIT_ATTRIBUTE = (
+    '<div class="highlight"><pre><span></span><span class="n">sim</span> '
+    '<span class="o">=</span> <span class="n">gsim</span><span class="o">.</span>'
+    '<span class="n">palace</span><span class="o">.</span>'
+    '<span class="n">DrivenSim</span><span class="p">()</span>\n</pre></div>\n'
+)
+
+
+@pytest.mark.parametrize("page", [SPLIT_IMPORT, SPLIT_ATTRIBUTE])
+def test_gsim_import_split_into_spans_is_allowed(gfem_palace, tmp_path, page):
+    html, readme = site(tmp_path, {"recipes/gsim.html": page})
+    assert gfem_palace.palace_hits(html, readme) == []
+
+
+def test_a_split_code_block_still_reports_another_mention(gfem_palace, tmp_path):
+    page = SPLIT_ATTRIBUTE.replace("DrivenSim", "Palace")
+    html, readme = site(tmp_path, {"p.html": "<p>x</p>\n" + page})
+    [(_, line, excerpt)] = gfem_palace.palace_hits(html, readme)
+    assert line == 2
+    assert "Palace" in excerpt
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "_sources/recipes/a.md.txt",
+        "searchindex.js",
+        "_static/data.json",
+        "_downloads/abc/run.py",
+        "tutorials/a.ipynb",
+    ],
+)
+def test_every_published_text_file_is_scanned(gfem_palace, tmp_path, name):
+    text = "Palace\n"
+    if name.endswith(".ipynb"):
+        text = '{"cells": [{"cell_type": "markdown", "source": ["As in Palace"]}]}'
+    html, readme = site(tmp_path, {name: text})
+    assert len(gfem_palace.palace_hits(html, readme)) == 1
+
+
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [
+        ("_sources/recipes/gsim.md.txt", "```python\nfrom gsim.palace import X\n```\n"),
+        ("_downloads/abc/run.py", "from gsim.palace import DrivenSim\n"),
+        (
+            "tutorials/a.ipynb",
+            '{"cells": [{"cell_type": "code", "source": ["import gsim.palace"]}]}',
+        ),
+        (
+            "_sources/tutorials/a.ipynb.txt",
+            '{"cells": [{"cell_type": "code", "source": ["import gsim.palace"]}]}',
+        ),
+    ],
+)
+def test_gsim_import_is_allowed_in_the_code_of_every_file_type(
+    gfem_palace, tmp_path, name, text
+):
+    html, readme = site(tmp_path, {name: text})
+    assert gfem_palace.palace_hits(html, readme) == []
+
+
+def test_binary_files_are_not_scanned(gfem_palace, tmp_path):
+    html, readme = site(tmp_path, {"index.html": "<p>gfem</p>\n"})
+    (html / "font.woff2").write_bytes(b"\xff\xfePalace")
     assert gfem_palace.palace_hits(html, readme) == []
