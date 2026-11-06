@@ -1,8 +1,9 @@
 # How gfem is checked
 
 Each claim on {doc}`capabilities` and in the recipes is backed by a test that
-solves a case with a known answer: a closed form, an identity the physics
-must obey, an independent method, or finite differences for a gradient. This
+solves a case with a known answer. The answer is a closed form, an identity
+the physics must obey, an independent method, or finite differences for a
+gradient. This
 page lists those cases by area, in physical terms, and links the test files
 on GitHub. The tolerance each check asserts is in its test, not on this page.
 
