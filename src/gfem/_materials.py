@@ -51,8 +51,8 @@ _BY_NAME = {p.name: p for p in PROPERTIES}
 
 _TRACED_REMEDY = (
     "To differentiate with respect to a region's material, assign "
-    "gfem.MaterialField.uniform(region, material) to that region instead: its "
-    "values are pytree leaves (an anisotropic material gives principal values "
+    "gfem.MaterialField.uniform(region, material) to that region instead: "
+    "jax.grad reaches its values (an anisotropic material gives principal values "
     "along its axes)."
 )
 
@@ -132,8 +132,8 @@ def _material_value(prop: _Property, value: Any, owner: str) -> Any:
         return None
     if is_traced(value):
         raise NonDifferentiableError(
-            f"{owner}: {prop.name} is traced by JAX, but Material values are fixed "
-            f"constants. {_TRACED_REMEDY}"
+            f"{owner}: {prop.name} is computed inside jax.grad, jax.jit or jax.vmap, "
+            f"but Material values are fixed constants. {_TRACED_REMEDY}"
         )
     arr = np.asarray(value)
     if np.iscomplexobj(arr):
@@ -334,9 +334,10 @@ class Material:
             not orthonormal, a matrix is not symmetric (gyrotropic tensors are
             not supported), a matrix is given with `axes` or beside three
             principal values, or the matrices do not share principal axes.
-        NonDifferentiableError: A value is traced by `jax.grad`; use
-            `MaterialField.uniform` to differentiate with respect to a
-            region's material.
+        NonDifferentiableError: A value is computed inside `jax.grad`,
+            `jax.jit` or `jax.vmap` from their arguments; pass a fixed value,
+            or use `MaterialField.uniform` to differentiate with respect to
+            a region's material.
     """
 
     eps_r: float | tuple[float, float, float] = 1.0
@@ -552,12 +553,12 @@ class MaterialField:
     """Material properties that vary over one volume region, per element (P0).
 
     Keyword-only. Any `Material` property may be given; a property left out
-    is ``None`` (an empty pytree subtree, so adding a property later never
-    changes the tree structure of existing code). Each given property is
+    is ``None`` (adding a property later never changes the structure that
+    `jax.tree` functions see in existing code). Each given property is
     either an array of one value per tetrahedron of the region, in mesh order
     (``mesh.elements(region)``), or a single value for the whole region.
 
-    The values are pytree leaves: `jax.grad` of any objective reaches them.
+    `jax.grad` of any objective reaches the values.
     `eps_r` and `mu_r` may be complex (lossy, negative imaginary part under
     e^{+iωt}); `conductivity` is electrical, S/m.
 
@@ -566,8 +567,8 @@ class MaterialField:
     values along the principal axes, shape ``(n_elements, 3)`` per element
     or ``(3,)`` for the whole region (an isotropic value is three equal
     values); the thermal properties keep one value. The axes are fixed: the
-    values vary, the principal axes do not. `jax.grad` gives one cotangent
-    per principal value, in the leaf's shape; the axes have none.
+    values vary, the principal axes do not. `jax.grad` gives one derivative
+    per principal value, in the shape of the values; the axes have none.
 
     Build one with `MaterialField.interpolate` (a design density blended
     between two materials) or `MaterialField.uniform` (a whole region whose
@@ -577,15 +578,16 @@ class MaterialField:
         region: The region the field was built for, or ``None``. When set,
             the model checks that the field is assigned to this region.
         axes: Three orthonormal vectors, the principal axes of the
-            principal values, or ``None`` (an isotropic field). Static data,
-            not a pytree leaf: it cannot be differentiated.
+            principal values, or ``None`` (an isotropic field). Fixed: it
+            cannot be differentiated.
 
     Raises:
         ValueError: A value is not passive or finite, a tensor property's
             shape does not fit `axes` (a 2-D array needs `axes`; with `axes`
             the last dimension is 3), the per-element sizes differ, or
             `axes` is not orthonormal.
-        NonDifferentiableError: `axes` is traced by JAX.
+        NonDifferentiableError: `axes` is computed inside `jax.grad`,
+            `jax.jit` or `jax.vmap` from their arguments; pass a fixed value.
     """
 
     eps_r: jax.Array | None = None
@@ -703,11 +705,11 @@ class MaterialField:
     def uniform(cls, region: str, material: Material) -> MaterialField:
         """A whole region's constant material, as a differentiable field.
 
-        Each property the material defines becomes one scalar leaf, so
+        Each property the material defines becomes one scalar array, so
         ``jax.grad`` gives the sensitivity to the region's eps_r,
         conductivity, ... directly. An anisotropic material gives a field
         on its `axes` (the coordinate axes if ``None``) whose tensor
-        properties are ``(3,)`` leaves of principal values.
+        properties are ``(3,)`` arrays of principal values.
 
         Args:
             region: The volume region the field is for.

@@ -209,38 +209,37 @@ def _petsc_options(options: SolverOptions) -> PetscOptions:
 class SolverOptions:
     """Every numerical knob of a solve, kept apart from the model and problem.
 
-    Frozen and keyword-only. The defaults converge on the reference problems;
-    `preset` gives coarser or finer settings in one word.
+    Frozen and keyword-only. The defaults suit most models; `preset` trades
+    speed for accuracy in one word. Most solves need only ``order``,
+    ``linear_solver`` and ``tolerance``, or a preset. The adaptive, eigen
+    and PETSc fields matter only on those paths.
+
+    Example:
+        Finer settings in one word, or a direct solve at order 3::
+
+            options = gfem.SolverOptions.preset("accurate")
+            options = gfem.SolverOptions(linear_solver="direct", order=3)
+            result = gfem.solve(model, problem, options=options)
 
     Attributes:
         order: Polynomial order of the Nédélec (H(curl)) and H1 elements.
-        linear_solver: ``"auto"`` (each problem type's default: BDDC + GMRES
-            for driven, BDDC + conjugate gradients for electrostatic, direct
-            for eigenmode), ``"bddc_gmres"`` (BDDC with the Krylov method
-            that fits the operator: conjugate gradients for electrostatic),
-            ``"direct"`` (one LDL^T factorization reused for every
-            right-hand side: MKL PARDISO with METIS ordering when the ``mkl``
-            extra is installed, NGSolve's sparse Cholesky otherwise) or
-            ``"petsc"`` (PETSc: an exact MUMPS LDL^T factorization unless
-            ``petsc_options`` configures another PETSc solver, from the
-            PETSc stack the "Solve with PETSc and SLEPc" recipe builds; never
-            chosen by ``"auto"``). A solver this Python cannot use raises
-            `gfem.SolverUnavailableError` when the solve starts. Under a
-            Bloch wave vector (``wave_vector=`` on the problem) the operator
-            is general and ``"direct"`` factors it with LU (MKL PARDISO with
-            the ``mkl`` extra, UMFPACK otherwise); ``"petsc"`` raises, and
-            ``"bddc_gmres"`` raises for eigenmode problems.
-        tolerance: With BDDC, the relative preconditioned residual of the
-            iterative solve: for BDDC + GMRES ``|P(b - Ax)| / |P b|`` as
-            GMRES estimates it, for BDDC + conjugate gradients the P-norm of
-            the residual over its first value. S and fields are accurate to
-            about this size; the unpreconditioned residual ``|b - Ax| / |b|``
-            can be orders larger at low frequency and does not measure the
-            error. With ``"petsc"`` and a Krylov ``ksp_type`` it is PETSc's
-            ``ksp_rtol`` on the unpreconditioned residual ``|b - Ax| / |b|``
-            (unless ``petsc_options`` sets ``ksp_norm_type``), so the same
-            value is a different norm per backend; PETSc's default exact
-            factorization ignores it.
+        linear_solver: ``"auto"`` (the default) picks per problem type:
+            ``"bddc_gmres"`` for driven and electrostatic, ``"direct"`` for
+            eigenmode. Pick ``"direct"`` for small and medium models on one
+            machine: one factorization per frequency serves every port, and
+            the ``mkl`` extra makes it faster (MKL PARDISO). Pick
+            ``"bddc_gmres"`` for large models or limited memory: an
+            iterative solve to ``tolerance``. Pick ``"petsc"`` to use an
+            existing PETSc build (the "Solve with PETSc and SLEPc" recipe):
+            an exact MUMPS factorization by default, or the PETSc solver
+            ``petsc_options`` configures; ``"auto"`` never picks it. A solver
+            this Python cannot use raises `gfem.SolverUnavailableError` when
+            the solve starts. With a Bloch wave vector (``wave_vector=`` on
+            the problem), use ``"direct"``, or ``"bddc_gmres"`` for driven
+            problems only; ``"petsc"`` raises.
+        tolerance: S and fields are accurate to about this size: the
+            relative residual of an iterative linear solve (see Notes for
+            its norm). An exact factorization ignores it.
         device: Where the direct solver runs: ``"cpu"``, ``"cuda"`` or
             ``"cuda:N"`` (the N-th GPU). A GPU needs
             ``linear_solver="direct"`` (NVIDIA cuDSS, from the ``cuda12`` or
@@ -260,21 +259,23 @@ class SolverOptions:
         adaptive_max_samples: Most frequencies the adaptive sweep solves.
         adaptive_memory: Consecutive samples under ``adaptive_tolerance``
             that end the adaptive sweep.
-        port_mode_tolerance: Residual accepted for a reduced port mode before
-            an exact port mode solve replaces it.
+        port_mode_tolerance: Accuracy of each wave port's mode across the
+            sweep: the backward error each mode reaches at every frequency
+            (``PortModeResult.residual``).
         retain_memory: Bytes of solver factorizations kept for gradients;
             ``None`` is half of the physical memory, 0 always recomputes.
         adjoint_tolerance: Relative residual of adjoint solves, in the norm
             ``tolerance`` names for each backend; ``None`` is ``tolerance``.
         eigen_tolerance: Backward error accepted for an eigenmode (the
-            residual over ``|K| + |omega| |C| + |omega|^2 |M|``), shared by
-            the seed iteration (ARPACK's, or SLEPc's ``eps_tol`` with
-            ``eigen_solver="slepc"``) and the refinement; distinct from
-            ``tolerance``, the residual of each linear solve. The norms are
-            set by the highest curl-curl modes, so a resonance's frequency
-            and Q can be much less accurate than this value: on a port-loaded
-            CPW resonator, gsim's default 1e-6 leaves f off by 1e-5 and Q by
-            0.5 %, while 1e-10 brings both errors far below that.
+            residual over ``|K| + |omega| |C| + |omega|^2 |M|``), in the
+            eigen solver's first pass (ARPACK's, or SLEPc's ``eps_tol`` with
+            ``eigen_solver="slepc"``) and in the refinement. For frequency
+            and Q to many digits, and for eigenmode gradients, keep the
+            default 1e-10 or go lower: 1e-6 can leave Q about 0.5 % off on
+            a port-loaded resonator. The norms are set by the highest
+            curl-curl modes, so frequency and Q can be much less accurate
+            than this value. It is distinct from ``tolerance``, the residual
+            of each linear solve.
         cluster_rtol: Relative distance under which eigenfrequencies form a
             degenerate cluster.
         max_refine_iterations: Most iterations of the eigenmode refinement.
@@ -302,8 +303,9 @@ class SolverOptions:
             ``-``, and their values, read by ``linear_solver="petsc"`` and
             ``eigen_solver="slepc"``; a value of ``None`` is a flag, a
             ``bool`` is ``true`` / ``false``. They override gfem's defaults
-            (``pc_type cholesky``, ...), under each solver's own options
-            prefix: never write one. Names starting ``eps_``, ``bv_``,
+            (the MUMPS factorization is ``ksp_type preonly``, ``pc_type
+            cholesky``), under each solver's own options prefix: never write
+            one. Names starting ``eps_``, ``bv_``,
             ``ds_``, ``rg_`` or ``fn_`` need ``eigen_solver="slepc"``, every
             other name needs ``linear_solver="petsc"``, so an option never
             goes to a solver that is not selected. Options gfem sets from
@@ -311,12 +313,25 @@ class SolverOptions:
             from ``eigen_tolerance``, ...) raise `ValueError`. An option the
             PETSc linear solver does not read (a typo, or an option of
             another configuration) raises `ValueError` when the solve
-            starts; one SLEPc does not read raises it after SLEPc's seed
-            solve. With ``ksp_reuse_preconditioner``, a reused
+            starts; one SLEPc does not read raises it after the eigen
+            solver's first pass. With ``ksp_reuse_preconditioner``, a reused
             preconditioner is set up again at the frequency or shift where
             a Krylov solve on it does not converge (for example at
             ``ksp_max_it``). Stored as ``(name, value)`` pairs sorted by
             name.
+
+    Notes:
+        ``tolerance`` is a different norm per backend, so the same value
+        does not give the same accuracy everywhere. With ``"bddc_gmres"``
+        it is the relative preconditioned residual: ``|P(b - Ax)| / |P b|``
+        as GMRES estimates it, or for conjugate gradients (electrostatic)
+        the P-norm of the residual over its first value. The
+        unpreconditioned residual ``|b - Ax| / |b|`` can be orders larger at
+        low frequency and does not measure the error. With ``"petsc"`` and
+        a Krylov ``ksp_type`` it is PETSc's ``ksp_rtol`` on the
+        unpreconditioned residual (unless ``petsc_options`` sets
+        ``ksp_norm_type``). When you switch backend, check S against a
+        tighter ``tolerance`` once.
     """
 
     order: int = 2

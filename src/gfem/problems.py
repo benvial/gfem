@@ -65,6 +65,13 @@ class Electrostatic:
     (``tan_delta``, ``conductivity``, a negative imaginary ``eps_r``) and
     ``mu_r`` do not enter the electrostatic problem.
 
+    Example:
+        The capacitance of a trace made of two surfaces, against ground::
+
+            problem = gfem.Electrostatic(
+                terminals={"trace": ["m1_xy", "m1_z"]}, ground="ground"
+            )
+
     Args:
         terminals: Terminal name -> its surface name or names (a conductor's
             shell), in capacitance-matrix order. A list of surface names
@@ -81,10 +88,6 @@ class Electrostatic:
 
     `gfem.solve` raises NotImplementedError on a model with a
     `gfem.Periodic` pair.
-
-    Example:
-        ``gfem.Electrostatic(terminals={"trace": ["m1_xy", "m1_z"]},
-        ground="ground")``
     """
 
     terminals: tuple[tuple[str, tuple[str, ...]], ...]
@@ -184,6 +187,12 @@ class PortMode:
     wave ports of its surface, so it gives the same mode a driven problem
     uses; an explicit ``mode`` sweeps that rank alone.
 
+    Example:
+        The mode of wave port ``"p1"`` from 1 to 100 GHz::
+
+            problem = gfem.PortMode("p1", np.linspace(1e9, 100e9, 100))
+            modes = gfem.solve(model, problem)
+
     Args:
         port: The name of a `WavePort` of the model.
         frequency: One frequency or a 1D sequence of them, Hz.
@@ -196,7 +205,8 @@ class PortMode:
         TypeError: ``port`` is not a name.
         ValueError: A frequency is not finite and positive, or ``mode`` is
             not an integer >= 1.
-        NonDifferentiableError: ``frequency`` is traced by JAX.
+        NonDifferentiableError: ``frequency`` is computed inside `jax.grad`,
+            `jax.jit` or `jax.vmap` from their arguments; pass a fixed value.
 
     `gfem.solve` raises `PortModeError` when the mode is below cutoff
     somewhere in the band (naming the estimated cutoff) or degenerate, or
@@ -210,9 +220,6 @@ class PortMode:
     `gfem.NonDifferentiableError` and a thermal property gets an exact
     zero. Under `jax.jit` and `jax.vmap` the solve runs, but the result's
     ``e_field`` is not available.
-
-    Example:
-        ``gfem.PortMode("p1", np.linspace(1e9, 100e9, 100))``
     """
 
     port: str
@@ -275,40 +282,21 @@ class Driven:
     impedance its resistance; see `gfem.NetworkParameters`) and, on request,
     the electric fields (see `gfem.conventions` for their amplitude).
 
-    A `WavePort` is fed by its port mode: before the 3D solve, a port mode
-    sweep (`gfem.PortMode`) tabulates each wave port's mode over the
-    frequencies, to ``SolverOptions.port_mode_tolerance``; the port face
-    carries a port boundary (a boundary term at the mode's real
-    wavenumber plus a rank-two modal correction, so the port absorbs its
-    own mode without reflection, hybrid modes included), S is the field's
-    projection on the mode, and ``WavePort(offset=...)`` de-embeds it. The
-    modes are on the result (``DrivenResult.port_modes``).
+    A `WavePort` is fed by its own port mode, solved before the 3D solve to
+    ``SolverOptions.port_mode_tolerance``; S is the field's projection on
+    that mode, and ``WavePort(offset=...)`` de-embeds it. The port absorbs
+    its own mode without reflection, hybrid modes included, and the modes
+    are on ``DrivenResult.port_modes``.
 
-    Low frequencies: below the mesh's low-frequency floor, k0·h_min = 1e-6
-    (f·h_min ≈ 48 Hz·m, with h_min the shortest edge, at order 2), the
-    E-field formulation's rounding error grows like 1e-16/(k0·h_min)². The
-    fields and gradients lose digits, and with an exact factorization
-    (``linear_solver="direct"``, or ``"petsc"`` with its default MUMPS
-    factorization) so does the capacitive part of S. MKL PARDISO
-    (``"direct"`` with the ``mkl`` extra) becomes unreliable below
-    k0·h_min ≈ 3e-8. Above that, and down to at least k0·h_min = 1e-8 with
-    the other exact factorizations, the inductance read from S and
-    reciprocity are unaffected. The solve warns with `gfem.LowFrequencyWarning`. With
-    ``bddc_gmres``, S stays at ``SolverOptions.tolerance``, but a
-    capacitance read from S is good only to about tolerance/(ωCZ0). For
-    capacitance at low frequency, solve `gfem.Electrostatic`. Examples: the
-    floor is 48 MHz with 1 µm elements and 5 GHz with 10 nm elements.
+    Example:
+        Solve 100 frequencies in full, or read a 300-point sweep from a few
+        full solves::
 
-    An iterative linear solve (``linear_solver="bddc_gmres"``, or
-    ``"petsc"`` with a Krylov ``ksp_type``) that does not converge at some
-    frequency raises `gfem.LinearSolverConvergenceError`. A uniform sweep
-    stops there and keeps what it solved: the error's ``.result`` holds the
-    frequencies solved before it, its ``.unsolved`` the rest, ready to solve
-    again, e.g. with ``linear_solver="direct"``. An adaptive sweep raises
-    with neither, since its reduced model needs every sample.
-
-    A driven solve has no eigen solve: it ignores
-    ``SolverOptions.eigen_solver``.
+            uniform = gfem.Driven(frequency=np.linspace(1e9, 100e9, 100))
+            adaptive = gfem.Driven(
+                frequency=np.linspace(1e9, 100e9, 300), sweep="adaptive"
+            )
+            result = gfem.solve(model, adaptive)
 
     Args:
         frequency: One frequency or a 1D sequence of them, Hz.
@@ -359,20 +347,44 @@ class Driven:
             given without ``sweep="adaptive"``, is empty or repeats a
             frequency, a ``samples`` or ``keep_fields`` frequency is not one
             of ``frequency``, or ``wave_vector`` is not a finite 3-vector.
-        NonDifferentiableError: ``frequency``, ``samples``,
-            ``keep_fields`` or ``wave_vector`` is traced by JAX.
+            With ``wave_vector``, `gfem.solve` also raises it on a model
+            without a `gfem.Periodic` pair, for a k with a component outside
+            the span of the pairs' translations, and with
+            ``linear_solver="petsc"``; use ``"direct"`` or ``"bddc_gmres"``.
+        NotImplementedError: `gfem.solve` raises it for ``wave_vector`` with
+            ``sweep="adaptive"`` or a GPU ``device``; solve a uniform sweep
+            on the CPU.
+        NonDifferentiableError: ``frequency``, ``samples``, ``keep_fields``
+            or ``wave_vector`` is computed inside `jax.grad`, `jax.jit` or
+            `jax.vmap` from their arguments; pass a fixed value.
+        LinearSolverConvergenceError: `gfem.solve` raises it when an
+            iterative linear solve (``linear_solver="bddc_gmres"``, or
+            ``"petsc"`` with a Krylov ``ksp_type``) does not converge at some
+            frequency. A uniform sweep stops there and keeps what it solved:
+            the error's ``.result`` holds the frequencies solved before it,
+            its ``.unsolved`` the rest; solve ``err.unsolved`` again with
+            ``linear_solver="direct"``. An adaptive sweep keeps neither,
+            since its reduced model needs every sample; rerun it with
+            ``linear_solver="direct"``.
 
-    With ``wave_vector``, `gfem.solve` raises ValueError on a model without
-    a `gfem.Periodic` pair, for a k with a component outside the span of
-    the pairs' translations, and with ``linear_solver="petsc"``; and
-    NotImplementedError with ``sweep="adaptive"`` or a GPU ``device``.
+    Notes:
+        Below the mesh's low-frequency floor, k0·h_min = 1e-6 (f·h_min ≈
+        48 Hz·m, with h_min the shortest edge, at order 2), the solve warns
+        with `gfem.LowFrequencyWarning`. The floor is 48 MHz with 1 µm
+        elements and 5 GHz with 10 nm elements. Below it, the E-field
+        formulation's rounding error grows like 1e-16/(k0·h_min)², so the
+        fields and gradients lose digits. With an exact factorization
+        (``linear_solver="direct"``, or ``"petsc"`` with its default MUMPS
+        factorization) the capacitive part of S loses digits too. The
+        inductance read from S and reciprocity are unaffected down to at
+        least k0·h_min = 1e-8. MKL PARDISO (``"direct"`` with the ``mkl``
+        extra) becomes unreliable below k0·h_min ≈ 3e-8; below that, use
+        ``"direct"`` without the ``mkl`` extra. With ``bddc_gmres``, S stays
+        at ``SolverOptions.tolerance``, but a capacitance read from S is
+        good only to about tolerance/(ωCZ0). For capacitance at low
+        frequency, solve `gfem.Electrostatic`.
 
-    Example:
-        ``gfem.Driven(frequency=np.linspace(1e9, 100e9, 100))`` solves all
-        100 frequencies in full; for a many-point sweep,
-        ``gfem.Driven(frequency=np.linspace(1e9, 100e9, 300),
-        sweep="adaptive")`` solves a few and reads the rest from the reduced
-        model.
+        A driven solve ignores ``SolverOptions.eigen_solver``.
     """
 
     frequency: tuple[float, ...]
@@ -495,17 +507,21 @@ class Eigenmode:
 
     A `Conductor` (its surface impedance grows as the square root of the
     frequency) or a second-order `Absorbing` boundary (a term in 1 /
-    frequency) makes the eigenproblem nonlinear. The modes are then seeded
-    with those factors frozen at ``target`` and each one is refined on the
-    exact frequency dependence (residual inverse iteration on the
-    factorization the seed already made), so frequency and Q do not depend
-    on ``target``. Conductor and radiation losses must be perturbations
-    (Q above about 5); for a strongly radiating structure, find the
-    resonance from a `gfem.Driven` sweep.
+    frequency) makes the eigenproblem nonlinear. The eigen solver's first pass
+    then freezes those factors at ``target``. Each mode is refined on the
+    exact frequency dependence, reusing that pass's factorization, so
+    frequency and Q do not depend on ``target``. Conductor and radiation
+    losses must be perturbations (Q above about 5); for a strongly radiating
+    structure, find the resonance from a `gfem.Driven` sweep.
 
     Lumped ports are terminations here: nothing is excited. A port with a
     resistance gets a coupling Q, a port with an inductance a participation
     ratio (see `gfem.EigenmodeResult`).
+
+    Example:
+        The two modes nearest 5 GHz::
+
+            result = gfem.solve(model, gfem.Eigenmode(target=5e9, n_modes=2))
 
     Args:
         target: The frequency to search around, Hz.
@@ -524,8 +540,9 @@ class Eigenmode:
         ValueError: ``target`` is not a finite positive number,
             ``n_modes`` is not an integer >= 1, or ``wave_vector`` is not a
             finite 3-vector.
-        NonDifferentiableError: ``target`` or ``wave_vector`` is traced by
-            JAX.
+        NonDifferentiableError: ``target`` or ``wave_vector`` is computed
+            inside `jax.grad`, `jax.jit` or `jax.vmap` from their arguments;
+            pass a fixed value.
 
     `gfem.solve` raises `gfem.EigenmodeConvergenceError` when fewer than
     ``n_modes`` modes converge (never a partial result), and
@@ -537,9 +554,6 @@ class Eigenmode:
     with a component outside the span of the pairs' translations, and with
     any ``linear_solver`` but ``"direct"``; and NotImplementedError on a GPU
     ``device``.
-
-    Example:
-        ``gfem.Eigenmode(target=5e9, n_modes=2)``
     """
 
     target: float

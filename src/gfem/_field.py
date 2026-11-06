@@ -46,8 +46,8 @@ class Field:
     time-averaged densities carry a factor 1/2 (w_e = Re(E·D*)/4). An
     eigenmode field has an arbitrary normalization.
 
-    A field is a JAX pytree: its leaves are ``coefficients``, the mesh node
-    coordinates and ``omega``; the rest is static.
+    `jax.grad` reaches a field's ``coefficients``, the mesh node coordinates
+    and ``omega``; the rest is fixed.
 
     From a solve across ranks each of a field's methods is collective: every rank
     makes the same calls in the same order, and `at` gives each the same bits.
@@ -202,7 +202,7 @@ class Field:
             ValueError: A point is outside the mesh, past that tolerance, or inside
                 a volume where the field is not defined: outside its ``support``, or
                 inside a volume the model excludes from the solve (inside metal).
-                Under `jax.jit` with traced points or node coordinates, this
+                With points or node coordinates computed inside `jax.jit`, this
                 surfaces as a ``jax.errors.JaxRuntimeError``, or as ``ValueError``
                 from a jitted function that has already succeeded, with the
                 same message.
@@ -324,8 +324,9 @@ class ReducedFields(Sequence[Field]):
     ordinary `Field` objects; every field shares the descriptor below.
 
     The basis is frozen for gradients: a field's coefficients differentiate
-    through its coordinates only, and a cotangent on ``basis`` itself raises
-    `gfem.NonDifferentiableError` in `gfem.solve`'s backward pass. With
+    through its coordinates only, and a gradient that reaches ``basis``
+    itself raises `gfem.NonDifferentiableError` while `jax.grad` computes
+    the gradient. With
     frozen samples (``Driven.samples``) the basis may end in zero columns:
     it is padded to a size known before the solve.
 
