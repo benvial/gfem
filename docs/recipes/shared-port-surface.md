@@ -1,20 +1,17 @@
 # Request several modes on one port surface
 
-A silicon strip guides more than one mode: a 500 × 220 nm strip in oxide at
-1.55 µm carries a TE-like and a TM-like fundamental mode (TE0 and TM0). A
-polarization rotator, a mode converter or a taper is described by one
-S-matrix in which each guided mode at each end has its own row and column:
-`S["out_TM0", "in_TE0"]` is the fraction of the TE0 wave launched at the input
-that leaves as TM0. In gfem, several {py:obj}`gfem.WavePort`s on one surface,
-one `mode` each, form a {term}`shared port surface`: one boundary that
-absorbs and launches each {term}`requested mode` and one
-{term}`port mode sweep` that solves the cross-section for all of them
-together.
+Get one S-matrix with a row and a column for each guided mode at each end of
+a polarization rotator, a mode converter or a taper.
+`S["out_TM0", "in_TE0"]`, for example, is the fraction of the TE0 wave
+launched at the input that leaves as TM0. Several {py:obj}`gfem.WavePort`s on
+one surface, one `mode` each, form a {term}`shared port surface`: one
+boundary that absorbs and launches each {term}`requested mode`.
 
-The page assumes a model meshed with gmsh: two leads of the strip ending on
-the exterior surfaces `port1` and `port2`, a `core` and a `cladding` region,
-an outer surface `outer`, and the device, a region `design`, between the
-leads. Each lead is uniform near its port face, so the port mode problem of
+The example is a 500 × 220 nm silicon strip in oxide at 1.55 µm, which
+carries a TE-like and a TM-like fundamental mode (TE0 and TM0). The gmsh
+mesh has two leads of the strip ending on the exterior surfaces `port1` and
+`port2`, and a `core` and a `cladding` region. It also has an outer surface
+`outer` and, between the leads, the device: a region `design`. Each lead is uniform near its port face, so the port mode problem of
 the face describes the guided modes of the lead.
 
 ## Set up the ports
@@ -52,13 +49,21 @@ Every API keyed by port name works per mode: `Driven(excite=...)`,
 `result.port_modes["in_TM0"]`, `s.z_ref`, Touchstone and xarray export, and
 the saved job.
 
+- **Each mode is its own port.** S is made of power waves normalized to unit
+  modal power ({py:obj}`gfem.conventions`). `s.y()`, `s.z()` and
+  `s.renormalize()` act on modal voltages and currents, one per mode, not on
+  the conductors' terminal ones.
 - **One surface, one cross-section.** The wave ports of one surface must
   request different `mode`s and give the same `pec_edges`; a
   {py:obj}`gfem.LumpedPort` or a boundary condition cannot share the surface
   with them. `gfem.Model` raises `ValueError` otherwise.
-- **Per port.** `offset` and `voltage_path` belong to each port: each mode is
-  de-embedded with its own propagation constant, and its path fixes its own
-  polarity and reference impedance.
+- **Per port.** `offset` and `voltage_path` belong to each port. Each mode is
+  de-embedded with its own propagation constant. A `voltage_path` fixes that
+  mode's sign (`Re V > 0` along the path) and gives its `z_ref`. Without one,
+  a mesh-dependent rule fixes the sign of the port's row and column of S.
+  `|S|` and every power are unaffected, but the phase of a cross-mode entry
+  is then not comparable between meshes: give a `voltage_path` to compare
+  phases.
 - **`mode` is a rank, not a polarization.** It is the mode's rank at the
   lowest frequency of the solve, 1 being the most confined (the largest
   effective index). Check which rank is TM0 before naming a port after it:
@@ -71,26 +76,11 @@ the saved job.
   or look at `tm0.e_field`, which points mostly normal to the wafer for a
   {term}`TM-like mode`. On a shared port surface, `PortMode` runs the
   surface's joint sweep, so it gives the same mode the driven solve uses.
-  For this strip TE0 is rank 1 and TM0 rank 2
-  (`tests/reference/test_shared_port_surface.py`).
-
-## Conventions
-
-S is made of power waves normalized to unit modal power and keyed by port
-name, with every convention of `gfem.conventions`; each mode is its own port.
-
-- **Polarity.** A `voltage_path` on a port fixes that mode's sign
-  (`Re V > 0` along the path) and gives its `z_ref`. Without one, the sign of
-  the port's row and column of S, hence of its cross-mode entries, is fixed
-  by a mesh-dependent rule: `|S|` and every power are unaffected, the phase of
-  a cross-mode entry is not comparable between meshes.
+  For this strip TE0 is rank 1 and TM0 rank 2.
 - **Driven fields.** A kept field (`Driven(keep_fields=...)`) is the field for
-  1 W incident in one requested mode, every other port terminated: the other
-  modes of the excited port's own surface are absorbed (matched) like those
-  of the far end.
-- **Network parameters.** `s.y()`, `s.z()` and `s.renormalize()` act on
-  modal voltages and currents, one per mode, not on the conductors' terminal
-  ones.
+  1 W incident in one requested mode, with every other port terminated. The
+  other modes of the excited port's own surface are absorbed (matched) like
+  those of the far end.
 
 ## Differentiate a conversion
 
@@ -125,39 +115,29 @@ the `out_TM0` row costs one adjoint solve per frequency. Adaptive sweeps
 differentiate as for one mode per port
 ({doc}`adaptive-sweep-gradient`).
 
-## Trust
+## Check your results
 
-- **Reciprocity.** `S` equals its transpose to the solver's tolerance.
+- **Reciprocity.** `S` should equal its transpose to the solver's tolerance.
 - **Power.** For a lossless device with every propagating mode requested,
-  `SᴴS` is the identity: no power goes anywhere S does not show.
+  `SᴴS` should be the identity: no power goes anywhere S does not show.
 - **Power through a plane.** {py:obj}`gfem.power_flow` through a plane in the
-  output lead (see {doc}`measurements`) equals `Σ_k |S[out_k, in]|²`, the sum
-  over the requested modes at that end.
-- **What the tests check.**
-  - The conversion of TE10 into TE20 by a dielectric slab against one wall of
-    a rectangular guide, against an independent mode-matching solution, with
-    unitarity, reciprocity and the power through each lead:
-    `tests/verification/test_shared_port_surface.py`.
-  - The TEM and first higher mode of a parallel-plate line, against their
-    analytic propagation: `tests/unit/test_driven_wave_ports.py`.
-  - TE0 and TM0 of this page's 500 × 220 nm strip, transmitted each with its
-    own phase, unreflected and unconverted:
-    `tests/reference/test_shared_port_surface.py`.
-  - The gradients of cross-mode entries, against finite differences: the
-    `shared` cells of `tests/verification/test_gradient_matrix.py`, part
-    of the driven row of the matrix on {doc}`../capabilities`.
+  output lead (see {doc}`measurements`) should equal `Σ_k |S[out_k, in]|²`,
+  the sum over the requested modes at that end.
+
+How gfem itself is checked on wave ports and shared port surfaces:
+{doc}`../verification`.
 
 ## Limits
 
 - **Unrequested modes are reflected, not converted.** A propagating mode that
   no wave port on its surface requests is partly reflected at the port, by
-  about `(β_j − β₀)/(β_j + β₀)`, with β_j its propagation constant and β₀
-  that of the surface's lowest-ranked requested mode, and never converted into a requested mode there. S
-  misses the power the device sends into it. Request it to see where that
-  power goes. A mode ranked below the highest requested one and left out
-  (a lone `mode=2`, or modes 1 and 3) warns with
-  {py:obj}`gfem.SkippedPortModeWarning`; modes above the highest requested
-  rank never warn.
+  about `(β_j − β₀)/(β_j + β₀)`. Here β_j is its propagation constant and β₀
+  that of the surface's lowest-ranked requested mode. It is never converted
+  into a requested mode there, so S misses the power the device sends into
+  it. Request it to see where that power goes. A mode ranked below the
+  highest requested one and left out (a lone `mode=2`, or modes 1 and 3)
+  warns with {py:obj}`gfem.SkippedPortModeWarning`. Modes above the highest
+  requested rank never warn.
 - **Mirror half models.** On a {term}`mirror half model` the ranks count only
   the modes the symmetry plane admits, so a mode of the other parity is not a
   gap. A PMC or PEC plane through the strip's mid-height admits only one of
@@ -168,25 +148,26 @@ differentiate as for one mode per port
   mode (the {term}`mode cross-projection`); above 1e-3 the solve warns with
   {py:obj}`gfem.PortModeProjectionWarning`, which states the size of that
   error in S. Keep the port line lossless near the port.
-- **Degenerate, crossing and cut-off modes.** A requested mode degenerate
-  with another (TE10 and TE01 of a square guide) has no defined field, and
-  the solve raises {py:obj}`gfem.PortModeError`, naming both ports when both
-  modes are requested. It raises too when two requested modes follow the
-  same mode through an unresolved crossing, and when a requested mode is
-  below cutoff somewhere in the band (a lossy mode counts as below cutoff
-  where its attenuation is at least its phase constant, Re β ≤ |Im β|); the
-  messages name the port and the surface. A clean crossing is followed and
-  warns with {py:obj}`gfem.PortModeTrackingWarning`.
+- **Degenerate, crossing and cut-off modes.** The solve raises
+  {py:obj}`gfem.PortModeError`, naming the port and the surface, in three
+  cases. A requested mode degenerate with another (TE10 and TE01 of a square
+  guide) has no defined field: break the cross-section's symmetry, with the
+  mesh or a `pec_edges` wall. Two requested modes that follow the same mode
+  through an unresolved crossing: narrow the band or break the symmetry. A
+  requested mode below cutoff somewhere in the band: narrow the band. A lossy
+  mode counts as below cutoff where its attenuation is at least its phase
+  constant, Re β ≤ |Im β|. A clean crossing is followed and warns with
+  {py:obj}`gfem.PortModeTrackingWarning`.
 - **Eigenmodes.** {py:obj}`gfem.Eigenmode` raises `NotImplementedError` for
   any wave port, lone or shared: find resonances from a `gfem.Driven` sweep.
 - **Designs on a port face.** The port modes are constants of the solve: a
   design region with elements on a port face raises
   {py:obj}`gfem.PortGeometryError` under `jax.grad`, naming the surface and
-  its wave ports.
+  its wave ports. Keep the design region off the port faces.
 
 ## Next
 
-- {doc}`s-parameter-gradient`: S objectives, their cost and what raises.
-- {doc}`measurements`: power through a plane, probes, characteristic
-  impedance.
-- {py:obj}`gfem.WavePort`, {py:obj}`gfem.PortMode`, `gfem.conventions`.
+{py:obj}`gfem.WavePort`, {py:obj}`gfem.PortMode`, {py:obj}`gfem.conventions`,
+{doc}`s-parameter-gradient` (S objectives, their cost and what raises),
+{doc}`measurements` (power through a plane, probes, characteristic
+impedance).
