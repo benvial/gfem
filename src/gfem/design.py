@@ -10,7 +10,7 @@ A density design runs through a fixed chain of differentiable maps, then
 
 Every helper is pure JAX or a fixed linear map with an exact adjoint, so
 `jax.grad`, `jax.jit` and `jax.vmap` work through all of them. The optimizer
-is the user's own (optax, nlopt, scipy, ...).
+is your own (optax, nlopt, scipy, ...).
 
 - The **filter** (`helmholtz_filter`) sets a minimum length scale: it smooths
   the density by a screened-Poisson (Helmholtz PDE) solve.
@@ -198,8 +198,9 @@ class LayerGrid:
 
         Raises:
             RegionNotFoundError: The mesh has no such region.
-            ValueError: ``pitch <= 0``, the mesh nodes are traced, or a
-                face of the surface is not horizontal.
+            ValueError: ``pitch <= 0``, the mesh nodes are computed inside
+                `jax.grad`, `jax.jit` or `jax.vmap` (build the grid from the
+                fixed mesh), or a face of the surface is not horizontal.
 
         Warns:
             UserWarning: Some pixels are sampled by no element (face)

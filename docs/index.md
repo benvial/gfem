@@ -64,6 +64,7 @@ recipes/gsim
 :caption: Capabilities
 
 capabilities
+project/scaling
 verification
 ```
 
@@ -80,7 +81,6 @@ glossary
 :caption: Project
 
 project/licence
-project/development
-project/scaling
 project/release-notes
+project/development
 ```
