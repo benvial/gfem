@@ -27,4 +27,5 @@ orphan: true
 - {doc}`gpu-direct-solver`
 - {doc}`petsc-slepc`
 - {doc}`distributed-solve`
+- {doc}`frequency-sweep`
 - {doc}`gsim`
