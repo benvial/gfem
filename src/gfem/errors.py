@@ -214,8 +214,9 @@ class DegenerateModeError(ValueError):
     differentiable. It is raised while `jax.grad` computes the gradient, also
     when the cluster extends beyond the ``n_modes`` modes asked for. Under
     `jax.grad` it arrives as ``jax.errors.JaxRuntimeError``, or as
-    ``ValueError`` from a jitted function, with this message; see the
-    gradient recipes ("When a gradient raises"). The message names the
+    ``ValueError`` from a jitted function that has already run
+    successfully, with this message; see the gradient recipes ("When a
+    gradient raises"). The message names the
     modes, their frequencies and their gap, and the remedies: a symmetric
     objective, ``n_modes`` covering the whole cluster, a design that breaks
     the symmetry, or a `Driven` surrogate.
@@ -272,8 +273,9 @@ class LinearSolverConvergenceError(RuntimeError):
     electrostatic solve, and any solve under `jax.grad`, `jax.jit` or
     `jax.vmap` (forward or adjoint) return no partial result. Under
     `jax.grad` it arrives as ``jax.errors.JaxRuntimeError``, or as
-    ``ValueError`` from a jitted function, with this message; see the
-    gradient recipes ("When a gradient raises").
+    ``ValueError`` from a jitted function that has already run
+    successfully, with this message; see the gradient recipes ("When a
+    gradient raises").
 
     Attributes:
         frequency: The frequency in Hz where the solve did not converge

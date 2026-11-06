@@ -117,7 +117,7 @@ An extra goes in brackets after `gfem` in the same install line:
 
 | Extra | What it adds | Platforms |
 | --- | --- | --- |
-| `mkl` | A faster CPU direct solver (Intel MKL PARDISO) for `linear_solver="direct"`, with the same results. Intel's licence forbids hosted (SaaS) use: read {doc}`project/licence` before you install it. | Linux x86_64, Windows x86_64 |
+| `mkl` | A faster CPU direct solver (Intel MKL PARDISO) for `linear_solver="direct"`, with the same results except far below the low-frequency floor ({py:obj}`gfem.Driven`, Notes). Intel's licence forbids hosted (SaaS) use: read {doc}`project/licence` before you install it. | Linux x86_64, Windows x86_64 |
 | `cuda12` | The direct solver on an NVIDIA GPU (cuDSS); see {doc}`recipes/gpu-direct-solver`. Use `cuda13` instead for CUDA 13; install one of the two, not both. | Linux x86_64, Windows x86_64 |
 | `xarray` | Results as xarray datasets (`.to_xarray()`). | all |
 | `viz` | Fields as PyVista grids (`.to_pyvista()`). | all |

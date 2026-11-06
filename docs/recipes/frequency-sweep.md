@@ -93,7 +93,7 @@ if __name__ == "__main__":
 |---|---|---|
 | Pick it for | many frequencies on one machine | a uniform sweep on many cores |
 | Accuracy | fields to about `adaptive_tolerance` between samples | every frequency to the solver tolerance |
-| Memory | one solve at a time | about `k` solves at a time |
+| Memory | one solve at a time, plus up to two field vectors per excitation and sample | about `k` solves at a time |
 | Under `jax.grad` | frozen samples ({doc}`adaptive-sweep-gradient`) | as a uniform sweep |
 
 Workers apply to uniform driven sweeps only. An adaptive sweep, an

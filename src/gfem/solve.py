@@ -76,9 +76,9 @@ def solve(
     has a gradient (for an electrostatic capacitance: the `MaterialField`
     ``eps_r`` values), an exact zero gradient if the problem never reads it
     (``conductivity`` in electrostatics), or raises
-    `gfem.NonDifferentiableError` when `jax.jit` or `jax.grad` first runs
-    the function, if the problem reads it
-    but gfem cannot differentiate it (for example a problem value such as
+    `gfem.NonDifferentiableError` when `jax.grad`, `jax.jit` or `jax.vmap`
+    traces the function, if the problem reads it but gfem cannot
+    differentiate it (for example a problem value such as
     a frequency, or a field-derived output). `jax.lax.stop_gradient` on an
     input or an output is the opt-out. Only reverse mode is supported.
 

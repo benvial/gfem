@@ -377,12 +377,13 @@ class Driven:
         (``linear_solver="direct"``, or ``"petsc"`` with its default MUMPS
         factorization) the capacitive part of S loses digits too. The
         inductance read from S and reciprocity are unaffected down to at
-        least k0·h_min = 1e-8. MKL PARDISO (``"direct"`` with the ``mkl``
-        extra) becomes unreliable below k0·h_min ≈ 3e-8; below that, use
-        ``"direct"`` without the ``mkl`` extra. With ``bddc_gmres``, S stays
-        at ``SolverOptions.tolerance``, but a capacitance read from S is
-        good only to about tolerance/(ωCZ0). For capacitance at low
-        frequency, solve `gfem.Electrostatic`.
+        least k0·h_min = 1e-8. MKL PARDISO becomes unreliable below
+        k0·h_min ≈ 3e-8, and ``"direct"`` uses it whenever the ``mkl`` extra
+        is installed. Below that, use ``linear_solver="petsc"`` (MUMPS), or
+        ``"direct"`` in an environment without the ``mkl`` extra. With
+        ``bddc_gmres``, S stays at ``SolverOptions.tolerance``, but a
+        capacitance read from S is good only to about tolerance/(ωCZ0). For
+        capacitance at low frequency, solve `gfem.Electrostatic`.
 
         A driven solve ignores ``SolverOptions.eigen_solver``.
     """
