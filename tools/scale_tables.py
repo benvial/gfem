@@ -78,7 +78,10 @@ CAMPAIGN: dict[str, dict[str, Any]] = {
     },
 }
 
-TOL_NOTE = "`tol` is GMRES's relative residual; it does not apply to `direct`."
+TOL_NOTE = (
+    "`tol` is `SolverOptions.tolerance`, GMRES's relative preconditioned residual; it "
+    "does not apply to `direct`."
+)
 SOLVE_NOTE = (
     "`gfem.solve` is the slowest rank's whole call: spaces, ports, preconditioner or "
     "factorization, and GMRES, with the instrumentation's true residual and one extra "
