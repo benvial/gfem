@@ -56,7 +56,6 @@ import json
 import math
 import os
 import re
-import resource
 import socket
 import sys
 import time
@@ -692,6 +691,8 @@ def _spaces(case: Case, args, frequencies, comm) -> None:
 
 
 def _peak_gib() -> float:
+    import resource  # Unix only; the tool runs on Linux, its tests import it anywhere
+
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20
 
 

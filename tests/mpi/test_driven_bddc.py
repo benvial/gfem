@@ -641,4 +641,6 @@ def test_a_long_wait_at_the_door_says_so_once_per_rank_and_goes_on(tmp_path):
         env={"PYTHONPATH": os.pathsep.join(map(str, SCRIPT_PATH))},
     )
     assert code == 0, log
-    assert log.count("waiting over 0.2 s") == 2, log
+    # Only the solve door is waited on by design; reading the mesh may wait too
+    # on a slow runner.
+    assert log.count("waiting over 0.2 s for the other ranks at solve") == 2, log

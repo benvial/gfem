@@ -84,7 +84,8 @@ def test_a_record_says_which_repeat_on_which_nodes(solved: Path) -> None:
     assert record["repeat"] == 2
     assert record["qos"] == "gp_test"
     assert record["constraint"] == "highmem"
-    assert all(kb > 0 for kb in record["mem_total_kb"])
+    if Path("/proc/meminfo").exists():  # Linux; elsewhere the field reads 0
+        assert all(kb > 0 for kb in record["mem_total_kb"])
 
 
 #: A killed `direct` step's log: the trace on rank 0 and MUMPS's own lines, as printed
