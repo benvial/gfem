@@ -1,4 +1,4 @@
-"""Mesh import (gmsh ``.msh`` 2.2 ASCII and 4.1) and the `Mesh` pytree."""
+"""Mesh import (gmsh ``.msh`` 2.2 ASCII and 4.1) and `Mesh`."""
 
 from __future__ import annotations
 
@@ -148,13 +148,21 @@ def _read_on_rank_0(path: Path, length_unit: str, comm) -> _Topology:
 class Mesh:
     """A straight-sided tetrahedral mesh with named regions.
 
-    Build one with `Mesh.from_gmsh`. A `Mesh` is a JAX pytree whose only leaf
-    is `nodes`, the node coordinates in metres. Everything else is static:
-    elements, regions (gmsh physical groups, by name and number), the gmsh
-    entity of each element, which volumes border each surface, and the
-    imported node coordinates.
+    Build one with `Mesh.from_gmsh` from a gmsh ``.msh`` file (format 2.2
+    ASCII or 4.1); ``length_unit`` names the unit of the file's coordinates,
+    and `nodes` are in metres. Regions are the gmsh physical groups, by name
+    and number.
 
-    Element arrays are 0-based NumPy integer arrays, read-only, in file order.
+    A `Mesh` is a JAX
+    `pytree <https://docs.jax.dev/en/latest/pytrees.html>`__:
+    `jax.grad` reaches `nodes`; the elements, regions and imported
+    coordinates are fixed. Element arrays are 0-based NumPy integer arrays,
+    read-only, in file order.
+
+    Example:
+        A mesh written in micrometres::
+
+            mesh = gfem.Mesh.from_gmsh("filter.msh", length_unit="um")
     """
 
     def __init__(self, nodes, topology: _Topology) -> None:

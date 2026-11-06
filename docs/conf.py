@@ -126,8 +126,8 @@ html_context = {
     # The footer's Project group (partials/site-foot.html): (title, docname).
     "gfem_project_links": [
         ("Licence", "project/licence"),
-        ("Development", "project/development"),
         ("Release notes", "project/release-notes"),
+        ("Contributing", "project/development"),
     ],
 }
 html_show_sphinx = False

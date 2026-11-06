@@ -50,7 +50,7 @@
       <div class="plot"><p class="gfem-missing">The hero data is missing: run <code>just front-page-data</code> and <code>tools/bend3d_animation.py</code>, then rebuild.</p></div>
       {%- endif %}
       <div class="chain" aria-label="The differentiable chain">
-        <span>ρ</span><span class="op">→</span><span>½(ρ + ρᵀ)</span><span class="op">→</span><span>helmholtz_filter</span><span class="op">→</span><span>project</span><span class="op">→</span><span>MaterialField</span><span class="op">→</span><span>gfem.solve</span><span class="op">→</span><span>S21</span><span class="op">→</span><span>J</span>
+        <span>ρ</span><span class="op">→</span><span>mirror about y = x</span><span class="op">→</span><span>filter</span><span class="op">→</span><span>project</span><span class="op">→</span><span>permittivity</span><span class="op">→</span><span>gfem.solve</span><span class="op">→</span><span>1 − |S21|²</span>
         <span class="back"><span class="op">←</span> <b>jax.value_and_grad</b> back to ρ</span>
       </div>
       {%- if front %}
@@ -86,7 +86,7 @@
       <div class="claim">
         <h2 id="m-h">What differentiates</h2>
         <p>Every supported gradient is checked against finite differences. An unsupported one raises an error instead of returning zero; a zero means the physics never reads that input.</p>
-        <p class="src">{{ caps.provenance }}: <code>tests/verification/test_gradient_matrix.py</code>. Raises: <code>test_gradient_matrix_raise_table.py</code>.</p>
+        <p class="src">{{ caps.provenance }}. <a href="{{ pathto('verification') }}">How gfem is checked</a></p>
         <a class="more" href="{{ pathto('capabilities') }}">Full matrix on Capabilities</a>
       </div>
       <div>
