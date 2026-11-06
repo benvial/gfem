@@ -97,7 +97,7 @@ def _table_rows(text: str) -> list[list[str]]:
     return [[c.strip() for c in row.strip("|").split("|")] for row in rows[1:]]
 
 
-def test_a_ladder_gives_each_rung_its_median_dof_per_rank_tolerance_and_job(
+def test_a_ladder_gives_each_rung_its_median_dof_per_rank_and_tolerance(
     ladder, tmp_path
 ):
     (path,) = scale_tables.write_snippets(
@@ -110,7 +110,6 @@ def test_a_ladder_gives_each_rung_its_median_dof_per_rank_tolerance_and_job(
     assert "1e-08" in one
     assert "110" in one  # the median of 100, 110, 120
     assert "100-120" in one
-    assert "11" in one
     assert two[:2] == ["2", "56 x 4"]
     assert "50 k" in two
     assert "60" in two  # the median of the two that finished
@@ -126,7 +125,6 @@ def test_a_failed_repeat_is_a_row_of_its_own_with_its_state(ladder, tmp_path):
     failed = rows[2]
     assert failed[:2] == ["2", "56 x 4"]
     assert "TIMEOUT" in " ".join(failed)
-    assert "12" in failed
     assert "50 k" in failed  # the mesh's DOF, from the rung's finished runs
 
 
@@ -189,4 +187,19 @@ def test_a_table_names_the_machine_and_nodes_its_runs_name(ladder, tmp_path):
     where = path.read_text().splitlines()[2]
     assert "Some Cluster" in where
     assert "highmem" in where
-    assert "9a57680" in where
+
+
+def test_what_renders_names_no_commit_and_no_job(ladder, tmp_path):
+    for path in ladder.glob("*.json"):
+        record = json.loads(path.read_text())
+        record.update(machine="Some Cluster", job="48598488")
+        path.write_text(json.dumps(record))
+    (path,) = scale_tables.write_snippets(
+        ladder, tmp_path / "out", commit="9a57680", spec=LADDER
+    )
+    rendered = "\n".join(
+        line for line in path.read_text().splitlines() if not line.startswith("%")
+    )
+    assert "9a57680" not in rendered
+    assert "48598488" not in rendered
+    assert "Job" not in rendered

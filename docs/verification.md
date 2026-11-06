@@ -174,14 +174,14 @@ Tests: [launched tests](https://github.com/benvial/gfem/tree/main/tests/mpi).
 The runs of {doc}`project/scaling` were checked three ways:
 
 - **Every rank count against one process.** On a 10,248,856 DOF coplanar
-  line, from 1 to 32 nodes, each solver against its own one-process run: the
-  first twelve rows below.
+  line, from 1 to 32 nodes, each solver against its own one-process run. S
+  agreed to rounding error on both solvers, and `bddc_gmres` took the same
+  number of iterations.
 - **The two solvers against each other.** On the largest mesh both solvers
-  finished, 47,277,960 DOF on 16 nodes, `bddc_gmres` against `direct`.
-  `direct` did not finish at 108,570,046 DOF, so this check did not run
-  there.
-- **The largest mesh against the 10,248,856 DOF line**: the last row. The
-  meshes differ, so this difference is an observation, not a check.
+  finished, 47,277,960 DOF on 16 nodes, `bddc_gmres` against `direct`. S
+  agreed to well within the GMRES tolerance of that run. `direct` did not
+  finish at 108,570,046 DOF, so this check did not run there.
+- **The largest mesh against the 10,248,856 DOF line.** The meshes differ, so
+  S differs by the change of mesh. This is an observation, not a check.
 
-```{include} project/_scaling/agreement.md
-```
+In every run, every rank held the same S, bit for bit.
