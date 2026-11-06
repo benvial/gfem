@@ -47,6 +47,8 @@ exclude_patterns = [
     # never published, though a local checkout may keep them under docs/
     "adr",
     "agents",
+    # snippets that docs/project/scaling.md includes, not pages
+    "project/_scaling",
 ]
 
 # --- MyST / MyST-NB -----------------------------------------------------------

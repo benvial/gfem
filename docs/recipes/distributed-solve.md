@@ -258,43 +258,14 @@ and bills every core of them. Do not time anything under `srun --overlap`.
 
 % Keep the anchor: the layout section links to it.
 
-These are observations from one run each, on MareNostrum 5 GPP (Xeon Platinum 8480+),
-Open MPI 4.1.6, PETSc 3.26.0, gfem at commit ec608cd; `tools/scale_run.py` makes the runs.
-The jobs, from the first row down, are 48472501, 48472503, 48472505, 48472507, 48472787,
-48472792 and 48472794 on `direct`, and 48472502, 48472504, 48472506, 48472508, 48472788,
-48472793 and 48472795 on `bddc_gmres`. They gate nothing: a time here is no promise about
-another mesh or layout. The mesh is
-a coplanar line with 10,248,856 DOF at order 2 and 1,464,909 tetrahedra, `direct` on two
-frequencies, `bddc_gmres` on one at `tolerance=1e-8`, two ports. A multi-node job holds
-112 cores per node, whatever it uses.
-
-| Nodes | Ranks x threads | DOF per rank | `direct`, s | Largest node, GiB | `bddc_gmres`, s | Largest node, GiB |
-|---|---|---|---|---|---|---|
-| 1 | 1 x 112 | all | 109 | 109 | 121 | 51 |
-| 1 | 28 x 4 | 366 k | 101 | 153 | 67 | 64 |
-| 2 | 56 x 4 | 183 k | 69 | 97 | 54 | 43 |
-| 4 | 112 x 4 | 92 k | 57 | 69 | 49 | 28 |
-| 8 | 224 x 4 | 46 k | 97 | 89 | 46 | 22 |
-| 16 | 448 x 4 | 23 k | 181 | 96 | 58 | 20 |
-| 32 | 896 x 4 | 11 k | 178 | 95 | 51 | 19 |
-
-Seconds are inside `gfem.solve`, on the slowest rank. Memory is the peak resident size
-summed over a node's ranks. Against the first row, at every rank count, S was the same
-bit for bit on all ranks and differed by at most 2.8e-12 on `direct` and 7.6e-13 on
-`bddc_gmres`, relative to S's largest entry, with the same 64 iterations per port. The
-rows below 90 k DOF per rank are under the layout above, there to test agreement.
+{doc}`../project/scaling` holds the strong and weak scaling of both solvers on
+MareNostrum 5, from 3.1 M to 108.6 M DOF on 1 to 32 nodes, at one commit, with each run's
+job, DOF per rank and `tol`. It also gives the agreement of S with one process on 1 to 32
+nodes, and between the two solvers on the largest mesh both finished.
 
 The largest wave port mesh shown across ranks has 168,022 DOF, on 28 ranks of one node
 at 50 GHz (job 48473792, commit ec608cd): S to 1.7e-12 on `direct`, and 8.9e-13 on
 `bddc_gmres` with the same iterations.
-
-The largest mesh run has 78,043,164 DOF at order 2 and 11,719,272 tetrahedra, the mesh
-above with each tetrahedron split once, on 32 highmem nodes at 28 x 4 (896 ranks, gfem at
-commit 515d12b). `bddc_gmres` on one frequency at `tolerance=1e-10`, job 48478202, took
-559 s inside `gfem.solve`, 87 iterations per port, 86 GiB on the largest node, with S the
-same bit for bit on all ranks. Its coarse problem, 22,356,889 DOF, ran on 64 ranks.
-`direct` on the same nodes, job 48478460, ran out of memory and gave no S, so at this size
-S has no second solver to agree with.
 
 What has run so far, on MareNostrum 5:
 
