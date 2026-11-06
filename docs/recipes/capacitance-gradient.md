@@ -1,10 +1,16 @@
 # Differentiate a capacitance
 
-`gfem.solve` is a JAX function of the model's array leaves. `jax.grad` of any
-objective built from a result reaches the per-element values of every
-`MaterialField` in the model, without you writing an adjoint.
+Get the derivative of a capacitance with respect to the permittivity of every
+element, without writing an adjoint. `jax.grad` of any objective built from
+an electrostatic result reaches the per-element values of every
+{py:obj}`gfem.MaterialField` in the model. This page also holds what the other
+gradient recipes share: batches of designs, the memory kept for gradients,
+`jax.lax.stop_gradient`, and what to do when a gradient raises.
 
-## A gradient with respect to a permittivity field
+## A mutual capacitance against a permittivity field
+
+The mesh `stack.msh` has an oxide and a nitride layer, terminals on its top
+face and on the oxide-nitride interface, and the ground on its bottom face.
 
 ```python
 import jax
@@ -29,44 +35,55 @@ def coupling(eps):
 
 
 n = len(mesh.elements("oxide"))
-value, grad = jax.value_and_grad(coupling)(jnp.full(n, 3.9))  # grad: (n,)
+value, grad = jax.value_and_grad(coupling)(jnp.full(n, 3.9))  # grad: (n,), fF
 ```
 
-`result.mutual` and `result.inverse` are JAX functions of
-`result.capacitance`, so they differentiate like it. The region energies
-`result.energy` do not yet: a gradient through them raises
-`gfem.NonDifferentiableError` when it reaches an input the solve reads
-(`eps_r`, the mesh nodes), and is an exact zero for the inputs it never
-reads. The total energy of excitation `i` is `capacitance[i, i] / 2`.
+- `grad[i]` is the change of the mutual capacitance, in fF, per unit change of
+  the relative permittivity of oxide element `i`.
+- `result.mutual` and `result.inverse` differentiate like
+  `result.capacitance`.
+- The region energies `result.energy` have no gradient yet: a gradient
+  through them raises {py:obj}`gfem.NonDifferentiableError`. Use
+  `capacitance[i, i] / 2`, the total energy of excitation `i`, instead.
+- The gradient costs no extra solve. Each terminal's potential is its own
+  adjoint, so the backward pass (the part of `jax.grad` that runs after the
+  solve) is one element-wise integral.
 
-The capacitance gradient costs no extra solve: each terminal's potential is its
-own adjoint, so the backward pass is one element-wise integral. To get the
-sensitivity to a whole region's constant permittivity, assign
-`gfem.MaterialField.uniform("oxide", gfem.Material(eps_r=3.9))`: its values are
-scalar leaves. A `Material`'s values are fixed constants; tracing one raises
-`gfem.NonDifferentiableError` with that remedy.
+## Differentiate a whole region's permittivity
 
-`jax.jit` and `jax.vmap` work on the same functions. Under `vmap` the solves
-run one after the other, so `jax.vmap(jax.grad(mutual))` over a batch of
+For the sensitivity to one constant permittivity of a whole region, assign
+`gfem.MaterialField.uniform("oxide", gfem.Material(eps_r=3.9))`. Its values
+are scalars, so the gradient has one value per property. A
+{py:obj}`gfem.Material`'s values are fixed constants: differentiating with
+respect to one raises `gfem.NonDifferentiableError`, whose message gives this
+remedy.
+
+## Several designs at once
+
+`jax.jit` and `jax.vmap` work on the same functions. Under `jax.vmap` the
+solves run one after the other, so `jax.vmap(jax.grad(...))` over a batch of
 designs (an eroded, nominal and dilated triple, say) gives what a Python loop
 over them gives:
 
 ```python
 designs = jnp.stack([eps_eroded, eps_nominal, eps_dilated])  # (3, n)
-grads = jax.vmap(jax.grad(mutual))(designs)  # (3, n)
-robust = jax.grad(lambda ds: jnp.max(jax.vmap(mutual)(ds)))(designs)
+grads = jax.vmap(jax.grad(coupling))(designs)  # (3, n)
+robust = jax.grad(lambda ds: jnp.max(jax.vmap(coupling)(ds)))(designs)
 ```
 
-`jax.jacrev` of the whole matrix and a `jax.vjp` pullback called several times
-give the same numbers as fresh `jax.grad` calls. Only reverse mode is
-supported: `jax.jvp` and `jax.jacfwd` raise JAX's own `TypeError`.
+## Several gradients from one solve
 
-Between the forward and the backward pass gfem keeps what the backward needs
-(for a capacitance, the terminal potentials; never the factorization), up to
-`SolverOptions(retain_memory=...)` bytes, half of the physical memory by
-default. Older entries are dropped first; a dropped one is recomputed from the
-design when its backward runs, which costs time, never accuracy.
-`retain_memory=0` keeps nothing and always recomputes.
+`jax.jacrev` of the whole capacitance matrix, and the function `jax.vjp`
+returns called several times, give the same numbers as separate `jax.grad`
+calls. Between the solve and its gradients gfem keeps what the gradients need
+(for a capacitance, the terminal potentials):
+
+- It keeps up to `SolverOptions(retain_memory=...)` bytes, half of the
+  physical memory by default, and drops the oldest entries first.
+- A dropped entry is recomputed from the design when its gradient runs. This
+  costs time, never accuracy.
+- `retain_memory=0` keeps nothing and always recomputes. Use it when memory,
+  not time, is short.
 
 ## What every other input gives
 
@@ -74,24 +91,24 @@ Every input of the model has one of three outcomes:
 
 - **a gradient**, for what the problem reads and gfem differentiates (for
   electrostatics: `eps_r`, the real part when it is complex, and the mesh
-  node coordinates, see [Shape gradients](shape-gradient.md));
+  node coordinates, see {doc}`shape-gradient`);
 - **an exact zero**, for what the problem never reads. Electrostatics does not
   read `conductivity`, `tan_delta`, `mu_r`, the thermal properties or the
   elements of excluded volumes, so one `MaterialField` can serve an
   electrostatic and a driven objective together;
-- **`gfem.NonDifferentiableError`**, raised while JAX traces the gradient,
-  before any solve, for what the problem reads but gfem cannot differentiate
-  yet (an output such as `result.energy`). The message names the input or
-  output and the remedy.
+- **`gfem.NonDifferentiableError`**, raised when `jax.grad` is called, before
+  any solve, for what the problem reads but gfem cannot differentiate yet (an
+  output such as `result.energy`). The message names the input or output and
+  the remedy.
 
 gfem never returns a silent zero for an input the physics reads.
 
-## Opting out: `jax.lax.stop_gradient`
+## Use a value without its derivative
 
 `jax.lax.stop_gradient` is the one way to use a value without its derivative.
 For example, `jax.grad` over a whole model also differentiates the mesh
 nodes, a shape gradient you may not need (it costs one more pass over the
-elements); freeze them first:
+elements). Freeze them first:
 
 ```python
 def objective(model):
@@ -105,7 +122,42 @@ grads = jax.grad(objective)(model)  # grads.materials[...] holds the field gradi
 The same works on an output that has no gradient: wrap it in
 `stop_gradient` where the objective uses it.
 
-Errors that only the data can reveal are raised on the host during the
-backward pass. JAX re-raises them as `jax.errors.JaxRuntimeError`, or as
-`ValueError` from a jitted function that has already succeeded; the message
-keeps the gfem error name and its remedy.
+(gradient-errors)=
+
+## When a gradient raises
+
+Some errors can only be found while `jax.grad` computes the gradient, after
+the solve has succeeded. Examples are a port node moved by a shape update
+({py:obj}`gfem.PortGeometryError`) and a degenerate mode cluster your objective
+does not treat symmetrically ({py:obj}`gfem.DegenerateModeError`). JAX does not
+pass gfem's error class through at that stage. You get a
+`jax.errors.JaxRuntimeError` or, from a jitted function that has already run
+successfully, a `ValueError`. The message is gfem's own: it names the error
+and how to fix it. Catch those two classes and read the message:
+
+```python
+try:
+    grad = jax.grad(coupling)(eps)
+except (jax.errors.JaxRuntimeError, ValueError) as error:
+    print(error)  # names the gfem error and its remedy
+```
+
+## Check your results
+
+- Compare the gradient with a central difference of your objective along a
+  random direction `v`: `(f(p + h v) - f(p - h v)) / (2 h)` against
+  `grad @ v`. Their difference shrinks as `h` shrinks, until the solver
+  tolerance limits it.
+
+How gfem itself is checked: {doc}`../verification`.
+
+## Limits
+
+- Only reverse mode is supported: `jax.jvp` and `jax.jacfwd` of a solve raise
+  JAX's own `TypeError`. Use `jax.grad`, `jax.vjp` or `jax.jacrev`.
+
+## Next
+
+{py:obj}`gfem.Electrostatic`, {py:obj}`gfem.MaterialField`,
+{py:obj}`gfem.SolverOptions`; {doc}`s-parameter-gradient`,
+{doc}`eigenmode-gradient`, {doc}`shape-gradient`; {doc}`../capabilities`.
