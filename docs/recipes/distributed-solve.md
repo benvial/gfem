@@ -21,8 +21,6 @@ machine and must be **Open MPI**.
 - The `direct` and `petsc` solvers also need the {term}`MPI PETSc stack`
   ({ref}`petsc-with-mpi`); `bddc_gmres` and `auto` do not. Run the stack under
   the Open MPI module it was built with: gfem does not check this.
-- On a cluster whose compute nodes have no internet, follow
-  {doc}`offline-cluster`.
 
 ## Run the script
 
@@ -183,4 +181,4 @@ How gfem itself is checked across ranks: {doc}`../verification`.
 
 {py:obj}`gfem.solve`, {py:obj}`gfem.DistributedUnsupportedError`,
 {py:obj}`gfem.SolverUnavailableError`, {doc}`petsc-slepc`,
-{doc}`offline-cluster`, {doc}`../project/scaling`.
+{doc}`../project/scaling`.

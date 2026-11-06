@@ -83,7 +83,7 @@ bison 3 or newer, flex and cmake 3.26 or newer. `--check` names what is
 missing, and refuses an MPI other than Open MPI.
 
 - `--fetch-sources DIR` downloads what a build needs, on a machine with internet;
-  `--sources DIR` builds from it, offline. {doc}`offline-cluster` shows both.
+  `--sources DIR` builds from it, offline.
 - The stack runs one-process solves too, through the same `linear_solver="petsc"`.
 - A stack runs under the Open MPI it was built on: load the same one to use it.
 - The no-MPI stack under a launcher serves {term}`rank copies` only, and a
