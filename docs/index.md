@@ -55,6 +55,7 @@ recipes/measurements
 recipes/gpu-direct-solver
 recipes/petsc-slepc
 recipes/distributed-solve
+recipes/offline-cluster
 recipes/frequency-sweep
 recipes/gsim
 ```

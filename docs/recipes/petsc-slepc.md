@@ -45,7 +45,7 @@ environment). The script takes an active conda environment off `PATH`. gfem
 needs PETSc with complex scalars, and conda-forge's PETSc depends on ParMETIS,
 which is not free for commercial use ({doc}`../project/licence`).
 
-The script `tools/petsc_wheelhouse.sh` in the repository
+The script `petsc_wheelhouse.sh`
 ({download}`download it <../../tools/petsc_wheelhouse.sh>`, or read it at the
 end of this page) builds PETSc, SLEPc, petsc4py and slepc4py, with MUMPS, METIS
 and OpenBLAS, into a wheelhouse: a folder of four wheels. It compiles all of
@@ -66,12 +66,11 @@ pip install --no-index --find-links wheelhouse petsc petsc4py slepc slepc4py
   leaves them in place.
 - Rebuild for another Python version, and when gfem raises the PETSc version
   it supports: the error message names the oldest one it accepts.
-- Rebuild a stack from gfem 0.1.0's script: gfem refuses it, since its MUMPS
-  calls ZGEMMT ({doc}`../project/release-notes`). Delete the wheelhouse, run this
-  script's current version into a new folder, and rerun the install line with
-  `--force-reinstall`, since the versions do not change. The build took about 14
-  minutes on a 112-core MareNostrum 5 node. A stack with MPI rebuilds the same way,
-  with `--mpi`.
+- Rebuild a stack built by gfem 0.1.0's script, which gfem refuses
+  ({doc}`../project/release-notes`). Run the current script into a new
+  folder, then rerun the install line with `--force-reinstall`, since the
+  package versions do not change. An MPI stack rebuilds the same way, with
+  `--mpi`.
 
 (petsc-with-mpi)=
 ### With MPI
@@ -79,14 +78,12 @@ pip install --no-index --find-links wheelhouse petsc petsc4py slepc slepc4py
 `bash petsc_wheelhouse.sh --mpi wheelhouse` builds the {term}`MPI PETSc stack`
 beside the no-MPI one, on the Open MPI whose `mpicc`, `mpicxx` and `mpifort` are on
 `PATH`. {doc}`distributed-solve` is what it is for. It has complex scalars, 64-bit
-indices, MUMPS, METIS, ScaLAPACK and PT-Scotch from Scotch 7.0.18 (the script takes
-that tarball itself, since PETSc 3.26.0's pinned Scotch crashes MUMPS's parallel
-analysis), compiled at `-O2`, and no ParMETIS. It also needs bison 3 or newer, flex
-and cmake 3.26 or newer; `--check` names what is missing, and refuses another MPI.
+indices, MUMPS, METIS, ScaLAPACK and PT-Scotch, and no ParMETIS. It also needs
+bison 3 or newer, flex and cmake 3.26 or newer. `--check` names what is
+missing, and refuses an MPI other than Open MPI.
 
 - `--fetch-sources DIR` downloads what a build needs, on a machine with internet;
-  `--sources DIR` builds from it, offline. {doc}`distributed-solve` shows both, on
-  MareNostrum 5, where this form ran. The online form has not run yet.
+  `--sources DIR` builds from it, offline. {doc}`offline-cluster` shows both.
 - The stack runs one-process solves too, through the same `linear_solver="petsc"`.
 - A stack runs under the Open MPI it was built on: load the same one to use it.
 - The no-MPI stack under a launcher serves {term}`rank copies` only, and a
@@ -106,7 +103,7 @@ PETSc.Sys.hasExternalPackage("mumps")  # True
 
 If gfem cannot use the stack, the solve raises `gfem.SolverUnavailableError`
 with the reason (a package that does not import, real scalars, a version older
-than gfem supports, a MUMPS that calls ZGEMMT) and the fix. gfem never falls back to another solver.
+than gfem supports, a stack built by gfem 0.1.0's script) and the fix. gfem never falls back to another solver.
 
 ## Choose the solvers
 
@@ -154,7 +151,7 @@ options = gfem.SolverOptions(
 - `{"eps_ncv": 40, "eps_monitor": None}` gives SLEPc a larger subspace and
   prints its progress; `eps_mpd` and `eps_max_it` also reach SLEPc.
 - `{"eps_view": None}` prints the eigensolver SLEPc ran, at the end of each
-  seed solve; so do SLEPc's other end-of-solve viewers, `eps_converged_reason`
+  of its solves; so do SLEPc's other end-of-solve viewers, `eps_converged_reason`
   and `eps_error_*`.
 - Never write an options prefix: gfem gives each solver its own and holds its
   options in PETSc's database only while that solver reads them. Command-line
@@ -163,7 +160,7 @@ options = gfem.SolverOptions(
   starts: a typo, or an option of another configuration, such as a MUMPS
   option with `pc_type` `jacobi`. So does an option PETSc or SLEPc refuses,
   with its reason. An option SLEPc does not read, such as `eps_mpdd`, raises
-  `ValueError` after its seed solve.
+  `ValueError` after SLEPc's first pass.
 
 (petsc-krylov-methods)=
 ### Krylov methods
@@ -236,19 +233,19 @@ dense kernels on the threaded OpenBLAS the script builds: set
 `OPENBLAS_NUM_THREADS` before Python starts. Frequency workers already give
 each worker its share of the threads.
 
-## How to trust the results
+## Check your results
 
-- With no `petsc_options`, `"petsc"` is an exact factorization: its results
-  agree with `"direct"` to solver precision. SLEPc only finds first
-  approximations of the modes, which gfem refines as it does ARPACK's: modes,
-  Q, fields and gradients agree with ARPACK's to solver precision.
-- The tests marked `petsc` and `slepc` check both:
-  `tests/unit/test_linalg_petsc.py`, `tests/unit/test_eigenmode_slepc.py` and
-  the PETSc cells of `tests/verification/test_gradient_matrix.py`. They run
-  only where the PETSc stack is installed, so the {doc}`../capabilities`
-  gradient matrix does not list PETSc.
-- For speed, see {ref}`petsc-when-to-choose`: `"petsc"` is slower than
-  `"direct"` with the `mkl` extra, and SLEPc is about as fast as ARPACK.
+- **Two linear solvers.** With no `petsc_options`, `"petsc"` is an exact
+  factorization: solve once with `"petsc"` and once with `"direct"`, and S
+  should agree to solver precision.
+- **Two eigen solvers.** gfem refines SLEPc's modes as it does ARPACK's: with
+  `eigen_solver="slepc"` and with `"arpack"`, the modes, Q, fields and gradients
+  should agree to solver precision.
+
+How gfem itself is checked on PETSc and SLEPc:
+{ref}`verification <verification-petsc>`. The {doc}`../capabilities` gradient
+matrix does not list PETSc, because those checks run only where the stack is
+installed.
 
 ## Limits
 
