@@ -3,7 +3,8 @@
 ## What to expect
 
 How large a driven model gfem has solved across MPI ranks, and how fast, on one
-cluster. Every number in this summary comes from the tables below.
+cluster. These are observations from one set of runs, not limits or promises
+for your model. Every number in this summary comes from the tables below.
 
 - **Largest model.** `linear_solver="bddc_gmres"` solved 108,570,046 DOF on 4 to 32
   nodes. Its fastest {py:obj}`gfem.solve` was 423 s, on 8 nodes

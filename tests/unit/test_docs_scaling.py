@@ -18,11 +18,22 @@ def test_the_page_is_in_the_table_of_contents():
     assert "project/scaling" in (DOCS / "index.md").read_text()
 
 
-def test_the_page_includes_every_snippet_and_nothing_else():
+#: Generated with the others but not rendered: the agreement table is a
+#: developer's gate, not a reader's result.
+UNRENDERED = "agreement.md"
+
+
+def test_the_page_includes_every_snippet_but_the_agreement_table():
     included = re.findall(
         r"^```\{include\} _scaling/(.+)$", PAGE.read_text(), re.MULTILINE
     )
-    assert sorted(included) == [s.name for s in SNIPPETS]
+    assert sorted(included) == [s.name for s in SNIPPETS if s.name != UNRENDERED]
+    assert UNRENDERED in [s.name for s in SNIPPETS]
+
+
+@pytest.mark.parametrize("page", ["project/scaling.md", "verification.md"])
+def test_no_page_a_user_reads_includes_the_agreement_table(page):
+    assert UNRENDERED not in (DOCS / page).read_text()
 
 
 @pytest.mark.parametrize("snippet", SNIPPETS, ids=lambda p: p.name)
@@ -45,5 +56,6 @@ def test_no_private_path_or_name_reaches_the_page(private):
 
 def test_the_page_makes_no_scaling_claim():
     text = PAGE.read_text().lower()
-    assert "observations" in text.split("\n\n")[1]
+    opening = next(p for p in text.split("\n\n") if not p.startswith("#"))
+    assert "observations" in opening
     assert "scales to" not in text
