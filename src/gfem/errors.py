@@ -44,7 +44,8 @@ class NonDifferentiableError(TypeError, ValueError):
     The message names the quantity, the reason and the remedy. To use such a
     value in an objective without its derivative, wrap it in
     `jax.lax.stop_gradient`. Fixed physics values (a problem's frequencies,
-    a port's direction) raise it when JAX traces them; it is also a
+    a port's direction) raise it when they are computed inside `jax.grad`,
+    `jax.jit` or `jax.vmap`; it is also a
     `ValueError`, so a handler for invalid values still catches those.
     """
 
@@ -210,13 +211,14 @@ class DegenerateModeError(ValueError):
     each mode, and so its derivative, depends on an arbitrary choice of
     basis: only objectives symmetric in the cluster's modes (their sum or
     mean, a smooth aggregate such as a log-sum-exp in place of ``max``) are
-    differentiable. Raised during the backward pass (so under `jax.grad` it
-    reaches the user as ``jax.errors.JaxRuntimeError``, or as ``ValueError``
-    from a jitted function that has already succeeded, with this message),
-    also when the cluster extends beyond the ``n_modes`` modes asked for.
-    The message names the modes, their frequencies and their gap, and the
-    remedies: a symmetric objective, ``n_modes`` covering the whole
-    cluster, a design that breaks the symmetry, or a `Driven` surrogate.
+    differentiable. It is raised while `jax.grad` computes the gradient, also
+    when the cluster extends beyond the ``n_modes`` modes asked for. Under
+    `jax.grad` it arrives as ``jax.errors.JaxRuntimeError``, or as
+    ``ValueError`` from a jitted function, with this message; see the
+    gradient recipes ("When a gradient raises"). The message names the
+    modes, their frequencies and their gap, and the remedies: a symmetric
+    objective, ``n_modes`` covering the whole cluster, a design that breaks
+    the symmetry, or a `Driven` surrogate.
     """
 
 
@@ -237,17 +239,12 @@ class LowFrequencyWarning(UserWarning):
 
     The floor is k0 * h_min = 1e-6 (f * h_min = 48 Hz*m), with k0 the
     vacuum wavenumber and h_min the shortest edge of the solve domain.
-    Below it the E-field formulation's rounding error grows like
-    1e-16 / (k0 * h_min)^2: the fields and their gradients, and with an
-    exact factorization (``linear_solver="direct"``, or ``"petsc"`` with
-    its default MUMPS factorization) the capacitive part of S, lose
-    digits. MKL PARDISO (``"direct"`` with the ``mkl`` extra) becomes
-    unreliable below k0 * h_min = 3e-8. Above that, and down to at least
-    k0 * h_min = 1e-8 with the other exact factorizations, inductance read
-    from S and reciprocity are unaffected. For capacitance at low frequency solve
-    `gfem.Electrostatic`; otherwise raise the lowest frequency or coarsen
-    the smallest elements. The solve still runs. Filter it with Python's
-    `warnings` module.
+    Below it the fields and their gradients lose digits, and with an exact
+    factorization so does the capacitive part of S. For capacitance at low
+    frequency solve `gfem.Electrostatic`; otherwise raise the lowest
+    frequency or coarsen the smallest elements. The solve still runs; see
+    `gfem.Driven`, Notes, for how far each result holds. Filter it with
+    Python's `warnings` module.
     """
 
 
@@ -273,10 +270,10 @@ class LinearSolverConvergenceError(RuntimeError):
     workers each block stops at its own first such frequency and the error
     holds the union of the blocks. An adaptive sweep, an eigenmode or
     electrostatic solve, and any solve under `jax.grad`, `jax.jit` or
-    `jax.vmap` (forward or adjoint) return no partial result; under JAX the
-    error reaches the user as ``jax.errors.JaxRuntimeError``, or as
-    ``ValueError`` from a jitted function that has already succeeded, with
-    this message.
+    `jax.vmap` (forward or adjoint) return no partial result. Under
+    `jax.grad` it arrives as ``jax.errors.JaxRuntimeError``, or as
+    ``ValueError`` from a jitted function, with this message; see the
+    gradient recipes ("When a gradient raises").
 
     Attributes:
         frequency: The frequency in Hz where the solve did not converge

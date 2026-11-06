@@ -15,8 +15,7 @@ result reloaded with `gfem.load_result`.
   elements, exact for the solved field (a flux of point-sampled
   ``E x H*`` is not, see the measurements recipe).
 
-Measurements that evaluate fields run as host kernels behind gfem's
-gradient wrapper: they work under `jax.jit` and `jax.vmap`, and under
+Measurements run on the CPU and work under `jax.jit` and `jax.vmap`; under
 `jax.grad` they differentiate with respect to the field coefficients (so
 material-field gradients flow through the solve that made the field) and
 the measurement's own numbers. Mesh-node gradients raise
@@ -435,7 +434,9 @@ def characteristic_impedance(mode: PortModeResult, voltage_path: Any) -> jax.Arr
         TypeError: ``mode`` is not a `gfem.PortModeResult`.
         ValueError: The path is malformed or leaves the port plane, or
             ``mode`` carries no field (a driven result without kept fields).
-        NonDifferentiableError: ``voltage_path`` is traced by JAX.
+        NonDifferentiableError: ``voltage_path`` is computed inside
+            `jax.grad`, `jax.jit` or `jax.vmap` from their arguments; pass a
+            fixed value.
     """
     from gfem._sweep.port_mode import path_voltage
     from gfem.results import PortModeResult
@@ -529,7 +530,9 @@ def power_flow(
             electric field, or was not solved on ``model``; or the
             surface is within one element of a port's surface.
         gfem.DistributedUnsupportedError: The field is a piece across ranks.
-        NonDifferentiableError: ``field`` or ``model`` is traced by JAX.
+        NonDifferentiableError: ``field`` or ``model`` is computed inside
+            `jax.grad`, `jax.jit` or `jax.vmap` from their arguments; call
+            `power_flow` outside them.
     """
     from gfem._field import Field
     from gfem.model import Model
@@ -546,8 +549,8 @@ def power_flow(
     if is_traced(field) or is_traced(model):
         raise NonDifferentiableError(
             "gfem.power_flow is not differentiable in this version: its field and "
-            "model must be concrete values, not traced by JAX. Compute it outside "
-            "the function JAX transforms."
+            "model must be fixed values, not computed inside jax.grad, jax.jit or "
+            "jax.vmap. Call it outside the function JAX transforms."
         )
     _check_driven(field)
     engine = importlib.import_module("gfem._engine.power_flow")

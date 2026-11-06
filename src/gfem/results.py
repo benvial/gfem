@@ -1,4 +1,4 @@
-"""Results of `gfem.solve`: frozen pytrees of arrays with static labels."""
+"""Results of `gfem.solve`: frozen results with labelled arrays."""
 
 from __future__ import annotations
 
@@ -591,7 +591,8 @@ class NetworkParameters:
             ValueError: The file name does not match the port count, not
                 every port was excited, a port has no reference impedance,
                 or `z_ref` is not one real value and ``z0`` is not given.
-            TypeError: The values are traced by JAX.
+            TypeError: The values are computed inside `jax.grad`, `jax.jit`
+                or `jax.vmap`; write the file from a result outside them.
         """
         path = Path(path)
         n = len(self.ports)
