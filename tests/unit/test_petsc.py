@@ -469,6 +469,8 @@ def _unreadable(directory):
     """A ``libpetsc`` in ``directory`` that this process cannot read."""
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         pytest.skip("root reads any file")
+    if sys.platform == "win32":
+        pytest.skip("chmod cannot take read access away on Windows")
     library = directory / "lib" / "libpetsc.so.3.26"
     library.chmod(0)
     return library

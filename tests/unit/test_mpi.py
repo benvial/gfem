@@ -181,7 +181,9 @@ def test_no_vendor_refusal_at_size_one(monkeypatch):
 
 def _child(code: str, *paths, **environment) -> subprocess.CompletedProcess:
     python_path = os.pathsep.join(str(p) for p in paths)
-    env = {"JAX_PLATFORMS": "cpu", "PYTHONPATH": python_path, **environment}
+    # Windows needs these to start Python and its DLLs; neither says launched.
+    system = {k: os.environ[k] for k in ("PATH", "SYSTEMROOT") if k in os.environ}
+    env = {**system, "JAX_PLATFORMS": "cpu", "PYTHONPATH": python_path, **environment}
     return subprocess.run(
         [sys.executable, "-c", textwrap.dedent(code)],
         capture_output=True,

@@ -10,6 +10,11 @@ from pathlib import Path
 import pytest
 import scale_run
 
+#: The scale tools run on Linux clusters: POSIX paths, bash job scripts.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason="the scale tools are Linux only"
+)
+
 TOOL = Path(scale_run.__file__)
 LINE = Path(__file__).parents[2] / "docs" / "tutorials" / "data" / "line.msh"
 

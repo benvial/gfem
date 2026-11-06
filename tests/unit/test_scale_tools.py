@@ -2,6 +2,7 @@
 
 import importlib.metadata
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,11 @@ import scale_steps
 import scale_void
 
 import gfem
+
+#: The scale tools run on Linux clusters: POSIX paths, bash job scripts.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason="the scale tools are Linux only"
+)
 
 #: A cube of two tetrahedra around the shared face (1 2 3): one belongs to the excluded
 #: entity 20, and a triangle lies on each.
