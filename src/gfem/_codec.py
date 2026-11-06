@@ -131,9 +131,9 @@ class Encoder:
         """The JSON form of ``value``, whose pytree path is ``path``."""
         if isinstance(value, Tracer):
             raise TypeError(
-                f"Cannot write {path or 'the value'}: it is traced by JAX "
-                "(inside jax.grad, jax.jit or jax.vmap). Write jobs and results "
-                "from concrete values."
+                f"Cannot write {path or 'the value'}: it is computed inside "
+                "jax.grad, jax.jit or jax.vmap. Write jobs and results from "
+                "concrete values."
             )
         if value is None or isinstance(value, (bool, str)):
             return value

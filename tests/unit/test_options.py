@@ -2,6 +2,7 @@
 
 import dataclasses
 import pickle
+import re
 
 import numpy as np
 import pytest
@@ -117,6 +118,22 @@ def _slepc(options):
 def test_invalid_values_name_the_option(kwargs, word):
     with pytest.raises(ValueError, match=word):
         gfem.SolverOptions(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "option",
+    [
+        "eps_largest_real",
+        "eps_gen_hermitian",
+        "eps_two_sided",
+        "st_ksp_type",
+        "eps_type",
+    ],
+)
+def test_reserved_slepc_options_say_what_gfem_sets_in_user_terms(option):
+    with pytest.raises(ValueError) as err:
+        gfem.SolverOptions(**_slepc({option: "lapack"}))
+    assert not re.search(r"\bseed", str(err.value))
 
 
 def test_cuda_needs_the_direct_solver():

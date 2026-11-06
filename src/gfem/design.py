@@ -213,8 +213,9 @@ class LayerGrid:
             raise ValueError(f"LayerGrid: pitch must be > 0 m, got {pitch}.")
         if is_traced(mesh.nodes):
             raise ValueError(
-                "LayerGrid: the mesh nodes are traced by JAX; build the grid "
-                "outside jax.jit / jax.grad, from a mesh with concrete nodes."
+                "LayerGrid: the mesh nodes are computed inside jax.grad, jax.jit "
+                "or jax.vmap; build the grid outside the transformed function, "
+                "from a mesh with concrete nodes."
             )
         nodes = np.asarray(mesh.nodes)
         if r.dim == 3:
@@ -494,8 +495,9 @@ def _mesh_filter(mesh: Mesh, region: str, length: float) -> tuple[Callable, int]
 
     if is_traced(mesh.nodes):
         raise ValueError(
-            "helmholtz_filter: the mesh nodes are traced by JAX; build the filter "
-            "outside jax.jit / jax.grad, from a mesh with concrete nodes."
+            "helmholtz_filter: the mesh nodes are computed inside jax.grad, "
+            "jax.jit or jax.vmap; build the filter outside the transformed "
+            "function, from a mesh with concrete nodes."
         )
     tets = mesh.tetrahedra[mesh.elements(region)]
     used, local = np.unique(tets, return_inverse=True)
