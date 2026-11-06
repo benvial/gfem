@@ -63,6 +63,7 @@ recipes/gsim
 :caption: Capabilities
 
 capabilities
+project/scaling
 ```
 
 ```{toctree}
@@ -78,7 +79,6 @@ glossary
 :caption: Project
 
 project/licence
-project/development
-project/scaling
 project/release-notes
+project/development
 ```
