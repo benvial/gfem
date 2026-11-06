@@ -162,6 +162,17 @@ def test_raises_list_is_the_out_of_scope_rows_off_the_grid(derived):
     )
 
 
+def test_a_wrapped_error_with_no_gfem_name_still_says_when_it_raises():
+    from jax.errors import JaxRuntimeError
+
+    row = caps._error(JaxRuntimeError, "no error name here")
+    assert row["error"] == "JaxRuntimeError"
+    assert row["when"] == "while the gradient is computed"
+    assert caps.links_gradient_errors(row)
+    assert caps.links_gradient_errors(caps._error(JaxRuntimeError, "PortGeometryError"))
+    assert not caps.links_gradient_errors(caps._error(ValueError, "ValueError"))
+
+
 def test_raises_rows_read_in_site_words_not_test_labels(derived):
     for row in derived["raises"]:
         assert row["label"] == caps.RAISES_LABELS[row["key"]]
