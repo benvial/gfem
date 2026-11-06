@@ -290,8 +290,8 @@ def _write_result(out: Path, result: Any, run: dict[str, Any], comm: Any) -> Non
         if is_traced(result):
             raise _mpi.agreed(
                 TypeError(
-                    "Cannot write a result traced by JAX (inside jax.grad, jax.jit "
-                    "or jax.vmap). Write results from concrete values."
+                    "Cannot write a result computed inside jax.grad, jax.jit or "
+                    "jax.vmap. Write results from concrete values."
                 )
             )
         _mpi.check_call(comm, "Job.run's bundle", {"the directory": str(out)})
