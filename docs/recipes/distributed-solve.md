@@ -127,7 +127,7 @@ the same order.
   or the other ranks wait forever.
 - An error found while `jax.grad` computes the gradient loses its class across
   ranks, as on one process: catch `jax.errors.JaxRuntimeError` and `ValueError`
-  and read the message (see {doc}`capacitance-gradient`).
+  and read the message (see {ref}`gradient-errors`).
 - On the MPI PETSc stack, use PETSc on every rank copy or on none: a job that
   mixes them has not been tried.
 
