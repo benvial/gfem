@@ -130,4 +130,4 @@ Three cases raise:
 
 {py:obj}`gfem.SheetField`, {py:obj}`gfem.design.LayerGrid`,
 {py:obj}`gfem.design.project`, {doc}`s-parameter-gradient`,
-{doc}`robust-optimization`, {doc}`../capabilities`.
+{doc}`robust-optimization`, {doc}`../capabilities`, {doc}`../verification`.

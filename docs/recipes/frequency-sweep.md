@@ -109,6 +109,8 @@ Workers apply to uniform driven sweeps only. An adaptive sweep, an
   `frequency_workers=1` and with your `k`. S should agree to the solver
   tolerance.
 
+How gfem itself is checked: {doc}`../verification`.
+
 ## Limits
 
 - A GPU device needs `frequency_workers=1` (`ValueError` otherwise): the
