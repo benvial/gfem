@@ -1,12 +1,12 @@
 # Design a patterned metal sheet
 
-Thin metal on a dielectric stack (RF films, superconducting chips) is a sheet:
-gsim meshes it as a zero-thickness interior surface. A `gfem.SheetField`
-patterns such a sheet face by face: it holds one real **fill** per face of the
-surface and scales the admittance of the `Conductor` or `Impedance` on it,
-`Y_f(ω) = fill_f · Y_solid(ω)`. Fill 0 is no metal (plain dielectric
-continuity), 1 the solid sheet. The fill is a pytree leaf, so `jax.grad` of a
-driven or eigenmode objective reaches it, and through it a pixel design.
+Optimize the pattern of a thin metal film on a dielectric stack (an RF film,
+a superconducting chip layer), pixel by pixel, with `jax.grad`. The film is a
+sheet: a zero-thickness interior surface of the mesh, as gsim meshes it. A
+{py:obj}`gfem.SheetField` holds one real **fill** per face of that surface and
+scales the admittance of the {py:obj}`gfem.Conductor` or
+{py:obj}`gfem.Impedance` on it, `Y_f(ω) = fill_f · Y_solid(ω)`. Fill 0 is no
+metal (plain dielectric continuity), 1 the solid sheet.
 
 ## The chain
 
@@ -61,7 +61,7 @@ also takes any per-face density of your own.
 The fields feel a sheet over a window of admittances: between about
 `|Y| = 0.1 / eta` and `10 / eta` (eta the wave impedance around the sheet), it
 goes from transparent to nearly a short. A fill linear in the admittance would
-put that whole window in the first fraction of a percent of the density, so
+put that whole window in the first fraction of a percent of the density. So
 `interpolate` is exponential by default, `w = (r^rho - 1) / (r - 1)`: log-scale
 in the admittance, with exact 0 and 1 at the ends. The window's centre is at
 about
@@ -76,62 +76,58 @@ as for any density method. Grey inductive sheets stay lossless.
 
 ## Solver
 
-A design sweeps the sheet's admittance over many orders of magnitude, and a
-solid metal sheet is PEC-like (`eta |Y|` of 1e4 for 2 µm of copper). Both
-solvers are verified on sheet designs, and the contrast alone does not slow
-BDDC + GMRES: on the test line, a solid, checkerboard or random void / solid
-fill of 2 µm of copper or of a 1 pH kinetic inductance takes the iterations
-of an empty sheet (within 2) and matches the direct solve to 1e-12, and the
-gradient checks pass on `direct` and on `bddc_gmres`, including a copper
-pixel design graded across the default contrast.
+Use `direct` for inductive sheet designs, and for the small, repeated solves
+of an optimization loop: it factorizes once per frequency and is insensitive
+to the contrast. `bddc_gmres`, the driven default, suits large models of resistive
+or conductor sheets. On any sheet design, check its iteration counts at your
+design's extremes (all void, all solid) and at a grey fill.
 
-What slows BDDC + GMRES is a faint **inductive** face. A face of an
-inductive sheet (an `Impedance` with an `inductance`, a kinetic-inductance
-film) at fill `w` has a reactance per square `omega L / w`, and where that is
-about
+A design sweeps the sheet's admittance over many orders of magnitude, and a
+solid metal sheet is PEC-like (`eta |Y|` of 1e4 for 2 µm of copper). That
+contrast alone does not slow BDDC + GMRES: solid, checkerboard and random
+fills of a copper film or of a kinetic inductance take about the iterations of
+an empty sheet.
+
+What slows it is a faint **inductive** face. A face of an inductive sheet (an
+`Impedance` with an `inductance`, a kinetic-inductance film) at fill `w` has a
+reactance per square `omega L / w`. Where that is about
 
     X ≈ eta0 lambda0 / (2 h (eps1 + eps2))
 
-(`h` the mesh size along the sheet, `eps1`, `eps2` the relative
-permittivities on its two sides: tens of `eta0` on usual meshes), the sheet
-resonates at the drive frequency in a quasi-static mode about `2 h` long (a
-sheet plasmon at the mesh scale). Grey and exponentially interpolated fills
-of an inductive sheet put some faces there. On the test line (`h` = 0.5 mm,
-tolerance 1e-6) such designs took 60-175 GMRES iterations where an empty
-sheet takes 23; with the mesh halved, some solves stopped at the
-400-iteration limit, which raises `gfem.LinearSolverConvergenceError` naming `direct`, and so did
-a uniform fill tuned onto the resonance, on the coarser mesh already. The iterations grow
-with refinement because a finer mesh resonates over a wider range of fills. Solves that converge, and their gradients, still match the
-direct solver to about ten times the tolerance. Resistive films and
-conductors are barely affected (a grey copper film: 31 iterations), and the
-direct solver not at all.
-
-So use `direct` for inductive sheet designs, and for the small, repeated
-solves of an optimization loop (it factorizes once per frequency and is
-insensitive to the contrast). `bddc_gmres`, the driven default, suits large
-models of resistive or conductor sheets; on any sheet design, check its
-iteration counts at your design's extremes (all void, all solid) and at a
-grey fill.
+the sheet resonates at the drive frequency in a quasi-static mode about `2 h`
+long (a sheet plasmon at the mesh scale). Here `h` is the mesh size along the
+sheet and `eps1`, `eps2` the relative permittivities on its two sides, so `X`
+is tens of `eta0` on usual meshes. Grey and exponentially interpolated fills
+of an inductive sheet put some faces there, as does a uniform fill tuned onto
+the resonance. The GMRES iterations then grow several times, and more on a
+finer mesh, which resonates over a wider range of fills. A solve that reaches
+the iteration limit raises {py:obj}`gfem.LinearSolverConvergenceError`, naming
+`direct`; switch to it. Resistive films and conductors are barely affected.
 
 ## Gradients
 
-`d S / d fill_f` takes no extra solve beyond the adjoint of the other inputs:
-one face pass over the sheet, `-θ(ω) ∫_f λ_t · u_t`, per field pair. An
-eigenfrequency's `d omega / d fill_f` needs no solve at all; the frequency
-derivative of a `Conductor`'s `Z_s(ω)` is part of `T'(k)`. An adaptive sweep
-treats the sheet as one more design-dependent affine piece (frozen samples, as
-for materials).
+`d S / d fill` costs no extra solve beyond the adjoint solve of the other
+inputs, and an eigenfrequency's `d omega / d fill` needs no extra solve at
+all. An adaptive sweep differentiates the fill like a material, with frozen
+samples ({doc}`adaptive-sweep-gradient`). Shape gradients see the sheet too:
+node coordinates differentiate through it like any other surface term, and the
+fill stays attached to its face.
 
-What raises:
+Three cases raise:
 
-- a perturbed fill on a sheet that shares an edge with a **wave port** face
-  (`gfem.PortGeometryError`): the port mode reads the sheet there and is a
-  constant of the solve. Split the sheet so the part touching the port is a
-  boundary of its own, or `jax.lax.stop_gradient` the fill. The forward works:
-  the port mode applies the fill on its edges.
-- a negative fill, in the forward (passivity).
-- the solid's own values (conductivity, thickness, R, L, C) are fixed numbers.
+- A perturbed fill on a sheet that shares an edge with a **wave port** face
+  raises {py:obj}`gfem.PortGeometryError`: the port mode reads the sheet there
+  and is a constant of the solve. Split the sheet so the part touching the
+  port is a boundary of its own, or `jax.lax.stop_gradient` the fill. The
+  forward solve works: the port mode applies the fill on its edges.
+- A negative fill raises `ValueError` in the forward solve: the sheet would be
+  active. `SheetField.interpolate` of a density in [0, 1] keeps it passive.
+- The solid's own values (conductivity, thickness, R, L, C) are fixed numbers:
+  differentiating them raises {py:obj}`gfem.NonDifferentiableError`. Keep them
+  plain numbers and differentiate the fill.
 
-The face pass and the shape gradient both see the sheet: node coordinates
-differentiate through a sheet term like any other surface term (the fill
-stays attached to its face).
+## Next
+
+{py:obj}`gfem.SheetField`, {py:obj}`gfem.design.LayerGrid`,
+{py:obj}`gfem.design.project`, {doc}`s-parameter-gradient`,
+{doc}`robust-optimization`, {doc}`../capabilities`.

@@ -2,7 +2,7 @@
 
 A density design is fabricated with an etch bias: edges move outwards
 (under-etch, more material) or inwards (over-etch, less material).
-`gfem.design.robust` gives the three variants of one filtered density, and
+{py:obj}`gfem.design.robust` gives the three variants of one filtered density, and
 the optimizer works on the worst of them. The result keeps its performance
 across the bias, and both the solid and the void get a minimum feature size
 set by the filter radius. The full worked example is the
@@ -60,3 +60,9 @@ rho = jnp.where(feed_mask, 1.0, rho)  # pin solid feed connections
 rho = (rho + rho[:, ::-1]) / 2  # mirror symmetry about the grid's centre line in x
 rho = jnp.where(grid.sampled, rho, 0.0)  # void outside a non-rectangular footprint
 ```
+
+## Next
+
+{py:obj}`gfem.design.robust`, {py:obj}`gfem.design.helmholtz_filter`,
+{py:obj}`gfem.design.project`, {doc}`s-parameter-gradient`, {doc}`sheet-design`,
+the [topology tutorial](../tutorials/topology.ipynb).
