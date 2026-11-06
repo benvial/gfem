@@ -1,9 +1,11 @@
 # Measure fields after the solve
 
-A result carries every quantity that needs no extra input. Anything that
-needs more physics input (a probe point, a thin interface layer, a voltage
-path) is a measurement: a function called on the result, also on a result
-reloaded with `gfem.load_result`.
+Get a resonator's surface-loss Q, field values at points, a line's
+characteristic impedance or the power through a surface from a solved
+result. A result already carries every quantity that needs no extra input.
+Anything that needs more input (a probe point, a thin interface layer, a
+voltage path) is a measurement: a function you call on the result, also on a
+result reloaded with {py:obj}`gfem.load_result`.
 
 ## Interface (surface) loss of a resonator
 
@@ -28,7 +30,7 @@ On a metal sheet between substrate and vacuum, `"MA"` reads the vacuum face
 and `"MS"` the substrate face (its normal flux, with the substrate's
 permittivity tensor), so one surface serves both. A side counts as vacuum
 only if no wave in it is slower than in vacuum, so an anisotropic substrate is
-never taken for vacuum; the thin layer itself is isotropic.
+never taken for vacuum. The thin layer itself is isotropic.
 
 ## Probes
 
@@ -40,20 +42,16 @@ result = gfem.solve(model, gfem.Driven(frequency=28e9, keep_fields=True))
 e = result.e_field(28e9, excite="p1").at([[0.0, 0.0, 5e-6], [1e-4, 0.0, 5e-6]])
 ```
 
-A point inside a volume the field does not cover (an excluded metal volume)
-raises `ValueError`.
-
-- A point inside a tetrahedron gets that tetrahedron's value, the same on any
-  number of ranks.
-- A point on a face, or within 1e-9 of an element's size from one (round-off on a
-  thin element reaches about 1e-11), gets the value from one of the tetrahedra
-  sharing it, in the field's support when one is; which one is fixed but not
-  otherwise specified. A component that jumps there, such as the normal component
-  of E at a material interface, has no single value, so to read one side offset
-  the point into it. A point on an excluded conductor's surface reads the side
+- A point inside an element reads that element's value.
+- A point on a face reads the value from one of the elements that share it.
+  A component that jumps there, such as the normal component of E at a
+  material interface, has no single value: to read one side, offset the
+  point into it. A point on an excluded conductor's surface reads the side
   the field covers.
-- A point within a small tolerance outside the mesh (1e-4 of an element's size)
-  is still accepted, and evaluates from the nearest element.
+- A point inside a volume the field does not cover (an excluded metal volume)
+  raises `ValueError`: move it into the solved region.
+- A point outside the mesh by less than 1e-4 of an element's size reads the
+  nearest element. Farther out raises `ValueError`: move the point inside.
 
 ## Characteristic impedance
 
@@ -92,7 +90,7 @@ p_box = gfem.power_flow(e, "design", model=model)
   on the domain boundary are not part of it: what leaves through them
   (absorbing walls, ports) is counted inside `side`.
 - **Exact, in lossy media too.** The number comes from the residual of the
-  discrete equations on the element layer just outside `side`, so it is
+  discrete equations on the element layer next to `side`, so it is
   exact for the solved field. It equals the power `side`'s ports feed minus
   what its elements, sheets and absorbing faces absorb, so the difference
   between two surfaces is exactly the power absorbed or radiated between
@@ -103,10 +101,11 @@ p_box = gfem.power_flow(e, "design", model=model)
   surface raises `ValueError`. Move it one element away, or put the port's
   elements inside `side`.
 - **The model the field was solved with** is a required input: the residual
-  reads its materials and boundaries. Pass the same model (a design solved
-  with other `MaterialField` values is not detected). `power_flow` is not
-  differentiable in this version: a traced field or model raises
-  `gfem.NonDifferentiableError`.
+  reads its materials and boundaries. Pass the same model: gfem does not
+  detect a design solved with other `MaterialField` values.
+- **Not differentiable.** `power_flow` inside `jax.grad` raises
+  `gfem.NonDifferentiableError`. Build a gradient objective from S or from
+  probes instead.
 
 :::{note}
 **Why not integrate E × H\* over a plane.** On a finite-element field the
@@ -120,10 +119,9 @@ field.
 
 ## Gradients
 
-Probes and interface participation are host kernels behind gfem's gradient
-wrapper: they run under `jax.jit` and `jax.vmap`, and `jax.grad` flows
-through the field coefficients into the solve. A probe objective on a kept
-driven field therefore has material-field gradients:
+Probes and interface participation work inside `jax.jit` and `jax.vmap`,
+and `jax.grad` flows through the field into the solve. A probe objective on
+a kept driven field therefore has material-field gradients:
 
 ```python
 def field_at_probe(eps):
@@ -135,8 +133,28 @@ def field_at_probe(eps):
 grad = jax.grad(field_at_probe)(eps)
 ```
 
-Mesh-node coordinates and probe points are fixed: perturbing them raises
-`gfem.NonDifferentiableError` (`jax.lax.stop_gradient` is the opt-out).
-Mode fields are not differentiable in this version, so a gradient of an
-interface participation that reaches the eigenmode solve raises there; the
-layer's thickness, permittivity and loss tangent differentiate.
+- Mesh-node coordinates and probe points are fixed: differentiating with
+  respect to them raises `gfem.NonDifferentiableError`. Wrap them in
+  `jax.lax.stop_gradient` to hold them fixed.
+- Mode fields are not differentiable in this version, so a gradient of an
+  interface participation that reaches the eigenmode solve raises there.
+  The layer's thickness, permittivity and loss tangent differentiate: take
+  the gradient with respect to those, or build the objective from the
+  eigenmode's `frequency` and `q`.
+
+## Check your results
+
+- On a lossless device driven at port 1, `gfem.power_flow` through a plane
+  in an output lead should equal the sum of `|S[out, "p1"]|²` over the
+  output ports at that end.
+- Between two surfaces in a lossless region with no port or sheet, the two
+  `power_flow` values should agree.
+
+How gfem itself is checked: {doc}`../verification`.
+
+## Next
+
+{py:obj}`gfem.interface_participation`, {py:obj}`gfem.characteristic_impedance`,
+{py:obj}`gfem.power_flow`, {py:obj}`gfem.Field`, {doc}`shared-port-surface`,
+{doc}`s-parameter-gradient`, {doc}`eigenmode-gradient`.
+
