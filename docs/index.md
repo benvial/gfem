@@ -63,6 +63,7 @@ recipes/gsim
 :caption: Capabilities
 
 capabilities
+verification
 ```
 
 ```{toctree}

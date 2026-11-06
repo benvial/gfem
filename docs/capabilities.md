@@ -1,34 +1,9 @@
 # Capabilities
 
-What gfem solves and differentiates at v0.1. The gradient matrix and the
-raises list on this page are generated from the test suite when the docs are
-built: neither is typed by hand.
+What gfem solves, which results it differentiates, and what it refuses, at
+v0.1.
 
-## What differentiates
-
-Every supported gradient is checked against finite differences. An
-unsupported one raises an error instead of returning zero; an exact zero
-means the physics never reads that input.
-
-```{gfem-gradient-matrix}
-```
-
-**FD-verified**: a cell of the gradient verification matrix in
-`tests/verification/test_gradient_matrix.py`, which CI's verification job runs
-on every pull request and push to `main`. **Exact zero**: the problem never reads the input.
-**Raises**: {py:obj}`gfem.NonDifferentiableError` at trace time, unless another error
-is named; the outcomes are pinned in
-`tests/verification/test_gradient_matrix_raise_table.py`.
-
-## What raises
-
-Outside the matrix, these uses raise a named error rather than return a
-gradient that would be wrong:
-
-```{gfem-raises}
-```
-
-## Problem types, ports and boundaries
+## What you can solve
 
 - **Problems**: {py:obj}`gfem.Driven` (the response of a model to its ports over a
   frequency grid, uniform or adaptive sweep), {py:obj}`gfem.Eigenmode` (resonant
@@ -55,19 +30,55 @@ gradient that would be wrong:
 - **Measurements**: {py:obj}`gfem.characteristic_impedance`,
   {py:obj}`gfem.interface_participation` and {py:obj}`gfem.power_flow`
   ({doc}`recipes/measurements`).
-- **Linear solvers**: direct, BDDC + GMRES, PETSc (an exact MUMPS
-  factorization unless you configure another PETSc solver; built from source,
-  {doc}`recipes/petsc-slepc`), and the experimental cuDSS direct solver on an
-  NVIDIA GPU ({doc}`recipes/gpu-direct-solver`). The gradient matrix above
-  covers the direct and BDDC solvers.
-- **Eigen solvers**: ARPACK, or SLEPc ({doc}`recipes/petsc-slepc`); mode
-  refinement, Q and gradients are the same for both.
-- **Across MPI ranks**: a driven uniform sweep and its gradients, on Open MPI and
-  Linux x86_64, compared with one process by launched tests. Adaptive sweeps,
-  eigenmode, electrostatic and periodic problems, frequency workers, the GPU and
-  BDDC at order 1 raise {py:obj}`gfem.DistributedUnsupportedError` there, and run
-  as one process per rank when asked by name. The table and what has been run:
-  {doc}`recipes/distributed-solve`.
+
+## Solvers
+
+- **`linear_solver="direct"`**: pick it for a model whose factorization fits
+  in one machine's memory, for eigenmode problems, and for the repeated solves
+  of an optimization loop on a small model. It factorizes once per frequency
+  and reuses the factorization for every port. Install the `mkl` extra for its fastest
+  factorization.
+- **`linear_solver="bddc_gmres"`**: pick it for a large model, or when the
+  direct factorization does not fit in memory. It is the default
+  (`"auto"`) for driven problems.
+- **`linear_solver="petsc"`** and **`eigen_solver="slepc"`**: pick them for
+  MUMPS and its options, your own PETSc Krylov method and preconditioner, or
+  SLEPc's own controls. With no options, `"petsc"` gives the same results as
+  `"direct"`, and SLEPc the same modes and Q as ARPACK, the default eigen
+  solver. You build them from
+  source ({doc}`recipes/petsc-slepc`).
+- **`device="cuda"`**: the direct solver on one NVIDIA GPU through cuDSS,
+  experimental ({doc}`recipes/gpu-direct-solver`).
+- **Across MPI ranks**: a driven uniform sweep and its gradients run split
+  across the ranks of one job, on Open MPI and Linux x86_64. Everything else
+  raises {py:obj}`gfem.DistributedUnsupportedError` there; the full table is
+  in {doc}`recipes/distributed-solve`.
+
+How large a model each solver has finished, and in what time:
+{doc}`project/scaling`.
+
+## What you can differentiate
+
+```{gfem-gradient-matrix}
+```
+
+- **FD-verified**: supported; the gradient is checked against finite
+  differences.
+- **Exact zero**: the result does not depend on this input; `jax.grad`
+  returns zero, correctly.
+- **Raises**: asking for this gradient raises
+  {py:obj}`gfem.NonDifferentiableError` (or the error named) instead of
+  returning a wrong value.
+
+How each mark is checked: {doc}`verification`.
+
+### Gradients that raise
+
+Off the matrix, asking for these gradients raises the named error instead of
+returning a wrong value:
+
+```{gfem-raises}
+```
 
 ## Limits
 
@@ -85,8 +96,7 @@ gradient that would be wrong:
   anisotropic materials when every tensor has a principal axis along the port
   normal. Elsewhere in the model the principal axes may point in any
   direction: a model with tilted principal axes and its rigidly rotated copy
-  give the same S, eigenfrequency and capacitance
-  (`tests/unit/test_anisotropic_rotation.py`).
+  give the same S, eigenfrequency and capacitance.
 - **Second-order absorbing boundaries** raise next to an anisotropic
   material; use order 1, which is exact at normal incidence for any
   anisotropic material.
