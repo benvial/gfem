@@ -1,0 +1,495 @@
+{
+ "schema": "suite-record/1",
+ "campaign": "20261117-1a0108b-reference-microstrip-palace-0.18.1.post5",
+ "name": "microstrip_L0_p2/palace-mumps__wheels__default__rep1",
+ "run": {
+  "case": "microstrip_L0_p2",
+  "solver": "palace:mumps",
+  "stack": "wheels",
+  "layout": {
+   "asked": "default",
+   "ranks": 112,
+   "threads": 1
+  },
+  "core_budget": 112,
+  "repeat": 1,
+  "tolerance": null,
+  "order_in_job": 1,
+  "job": "49172824",
+  "step": "1",
+  "started_utc": "2026-11-17T20:45:28Z",
+  "finished_utc": "2026-11-17T20:46:26Z",
+  "added_for": null,
+  "launch": "srun"
+ },
+ "status": "ok",
+ "reason": null,
+ "failure_class": null,
+ "slurm_state": "COMPLETED",
+ "returncode": 0,
+ "case": {
+  "definition_sha256": "771866156e7202c96a811fb990b0a534b7bc15ab6597b7b4355b89868c7b47d5",
+  "mesh_sha256": "52caa88ac88570ddd58d1128063b60f7d925f802d3ce66c58cf562c9689e1b89",
+  "order": 2,
+  "ndof": 315870,
+  "reference": null
+ },
+ "outputs": {
+  "frequencies_hz": [
+   1000000000.0,
+   25000000000.0,
+   50000000000.0,
+   75000000000.0,
+   100000000000.0
+  ],
+  "s": {
+   "p1,p1": [
+    [
+     0.03388265992631724,
+     0.008280503121867329
+    ],
+    [
+     0.05319008373821535,
+     -0.022775853332272854
+    ],
+    [
+     0.015527303518341331,
+     -0.039440000717082244
+    ],
+    [
+     0.0015091636634873087,
+     -0.00971715547798129
+    ],
+    [
+     0.02507578852816018,
+     -0.0061507190818691874
+    ]
+   ],
+   "p2,p1": [
+    [
+     0.9652823047470519,
+     -0.04881690232575345
+    ],
+    [
+     0.46529747033465035,
+     -0.8204279582676434
+    ],
+    [
+     -0.4656189765927632,
+     -0.8068570318190897
+    ],
+    [
+     -0.9207458332939065,
+     -0.009972942591410785
+    ],
+    [
+     -0.4742944093593845,
+     0.7774513122321661
+    ]
+   ],
+   "p1,p2": [
+    [
+     0.9652823047458159,
+     -0.04881690234116258
+    ],
+    [
+     0.4652974703346611,
+     -0.8204279582676623
+    ],
+    [
+     -0.46561897659279533,
+     -0.8068570318191454
+    ],
+    [
+     -0.9207458332960402,
+     -0.009972942588219617
+    ],
+    [
+     -0.47429440935672534,
+     0.7774513122339112
+    ]
+   ],
+   "p2,p2": [
+    [
+     0.03388286422071045,
+     0.008280191640426251
+    ],
+    [
+     0.053240623005782806,
+     -0.022854706761911456
+    ],
+    [
+     0.015463067437226134,
+     -0.03963075469804283
+    ],
+    [
+     0.0015246054394611967,
+     -0.009791299134890042
+    ],
+    [
+     0.0253055473023966,
+     -0.006659471038103472
+    ]
+   ]
+  },
+  "iterations": [
+   2,
+   2,
+   2,
+   1,
+   1,
+   2,
+   2,
+   2,
+   1,
+   1
+  ]
+ },
+ "accuracy": null,
+ "same_code_error": {
+  "metric": "max_abs_dS",
+  "value": 0.0,
+  "per_item": [
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0
+  ],
+  "against": "microstrip_L0_p2/palace-mumps__wheels__default__rep1",
+  "label": "solver error"
+ },
+ "timings": {
+  "wall_s": 57.581,
+  "startup_s": 3.1656382256560036,
+  "work_s": 54.415,
+  "mesh_read_s": 0.674,
+  "discretize_s": null,
+  "assemble_s": 1.45,
+  "setup_s": 29.8,
+  "solve_s": 2.085,
+  "estimate_s": 11.691,
+  "postpro_s": 14.341999999999999,
+  "rom_s": 0.0,
+  "other_s": 0.0,
+  "setup_total_s": 31.924,
+  "solve_total_s": 2.085,
+  "per_sample_s": 10.883,
+  "rank_reduction": "max-of-rows",
+  "source": "palace.json",
+  "rank0": {
+   "mesh_read_s": 0.5504461490000001,
+   "discretize_s": null,
+   "assemble_s": 0.8928244430000001,
+   "setup_s": 29.799507238000004,
+   "solve_s": 2.0621584630000003,
+   "estimate_s": 0.406672554,
+   "postpro_s": 13.691424811000005,
+   "rom_s": 0.0,
+   "other_s": 7.011369639999991
+  }
+ },
+ "memory": {
+  "peak_rss_sum_gib": 38.687503814697266,
+  "peak_rss_rank_max_gib": 0.49550628662109375,
+  "peak_rss_largest_node_gib": 38.687503814697266,
+  "metric": "PeakNodeMemoryMegabytes.Total",
+  "pss_peak_sum_gib": 18.69430923461914,
+  "sacct_max_rss_gib": null,
+  "self_reports": {}
+ },
+ "checks": {
+  "mesh_hash": "pass",
+  "inputs_match": "pass",
+  "converged": "pass",
+  "complete": "pass",
+  "provenance": "pass",
+  "layout": "pass",
+  "placement": "fail",
+  "reference_matches": "skipped",
+  "accuracy_plausible": "skipped"
+ },
+ "structural": {
+  "setups": 10,
+  "solves": 10,
+  "estimator": "always on, lightened (EstimatorTol 1e-2, EstimatorMG)",
+  "excitations": 2,
+  "direct_arm": "GMRES around complex MUMPS (MGMaxLevels 1)"
+ },
+ "stack": {
+  "name": "wheels",
+  "kind": "wheels",
+  "closed": [
+   "mkl (pip, PARDISO)"
+  ],
+  "versions": {
+   "palace": "0.18.1.post5",
+   "ngsolve": "6.2.2608",
+   "petsc": "3.26.0"
+  },
+  "fingerprint": "6a5f35271919710270884155dc8812e6e23b56124f3e8877547ee8d896c5225b",
+  "description": {
+   "name": "wheels",
+   "kind": "wheels",
+   "closed": [
+    "mkl (pip, PARDISO)"
+   ],
+   "versions": {
+    "palace": "0.18.1.post5",
+    "ngsolve": "6.2.2608",
+    "petsc": "3.26.0"
+   },
+   "codes": {
+    "gfem": {
+     "modules": [
+      "openmpi/4.1.6-gcc"
+     ],
+     "packages": [],
+     "env": {
+      "JAX_PLATFORMS": "cpu",
+      "JAX_ENABLE_X64": "1",
+      "OMPI_MCA_opal_warn_on_missing_libcuda": "0"
+     },
+     "threads": {
+      "OMP_NUM_THREADS": "threads",
+      "MKL_NUM_THREADS": "threads",
+      "NGS_NUM_THREADS": "threads",
+      "OPENBLAS_NUM_THREADS": "threads"
+     },
+     "caps": {
+      "OPENBLAS_NUM_THREADS": 64
+     },
+     "mpi": "pmix",
+     "launcher": null,
+     "entry": null,
+     "python": null,
+     "launch_r1": "srun"
+    },
+    "palace": {
+     "modules": [],
+     "packages": [],
+     "env": {},
+     "threads": {
+      "OMP_NUM_THREADS": "threads",
+      "OPENBLAS_NUM_THREADS": 1
+     },
+     "caps": {},
+     "mpi": "pmi2",
+     "launcher": "srun",
+     "entry": "palace-real",
+     "python": null,
+     "launch_r1": "srun"
+    }
+   },
+   "inputs": {
+    "base_venv": "{stacks.wheels.base_venv}",
+    "wheel_dirs": [
+     "{stacks.wheels.wheel_dirs[0]}",
+     "{stacks.wheels.wheel_dirs[1]}"
+    ],
+    "petsc_wheelhouse": "{stacks.wheels.petsc_wheelhouse}",
+    "palace_wheelhouse": "{stacks.wheels.palace_wheelhouse}",
+    "python": "{stacks.wheels.python}"
+   },
+   "env": {},
+   "env_dir": "{cluster.root}/envs/bench-1a0108b-wheels-6a5f3527",
+   "code_env": {
+    "gfem": "{cluster.root}/envs/bench-1a0108b-wheels-6a5f3527",
+    "palace": "{cluster.root}/envs/palace-0.18.1.post5"
+   },
+   "prefixes": {}
+  },
+  "provenance": {
+   "gfem_manifest": {
+    "sha256": "e894d4d624e2f59ab7e5d4055705a760770db0525e8e4192c0128f56ab4818f7",
+    "text": "commit 1a0108bd45856e7d8c8e998e23f06bd6f84a9481\n71dea36af1e1037e51523a5625507b7670fd84f8ddf6a80a16a8825f51d4714a  {cluster.root}/refs/1a0108b/dist/gfem-0.1.0-py3-none-any.whl\n830acc20a7c9260de84d01b4ca9a00d80c642442f79ac73d56897d543ced8583  {stacks.wheels.petsc_wheelhouse}/petsc-3.26.0-py3-none-linux_x86_64.whl\n72e73e3b25bb77bbf910aff4474036360cc8464441578b8dc1b06ad60e4ffc4e  {stacks.wheels.petsc_wheelhouse}/petsc4py-3.26.0-cp312-cp312-linux_x86_64.whl\n18e8cca8c0b42891c8994793f6035b16e3adf8d3f125d3516594bab0aeda6b5d  {stacks.wheels.petsc_wheelhouse}/slepc-3.26.0-py3-none-linux_x86_64.whl\na724ea7ec244830809c66d9544e211d79a11fe9cdaab9aa78c0f920dcd689f05  {stacks.wheels.petsc_wheelhouse}/slepc4py-3.26.0-cp312-cp312-linux_x86_64.whl\ncoverage==7.16.2\ngfem @ file://{cluster.root}/refs/1a0108b/dist/gfem-0.1.0-py3-none-any.whl#sha256=71dea36af1e1037e51523a5625507b7670fd84f8ddf6a80a16a8825f51d4714a\niniconfig==2.3.1\nintel-cmplr-lib-ur==2026.2.0\nintel-openmp==2026.2.0\njax==0.12.0\njaxlib==0.12.0\nmarkdown-it-py==4.2.0\nmdurl==0.1.2\nmeshio==5.3.5\nmkl==2026.2.0\nml_dtypes==0.6.0\nmpi4py==4.1.2\nnetgen-mesher==6.2.2608\nnetgen_occt==7.8.1\nngsolve==6.2.2608\nngsolve_openblas==0.3.33\nnumpy==2.5.4\nopt_einsum==3.4.0\npackaging==26.3\npandas==3.0.6\npetsc @ file://{stacks.wheels.petsc_wheelhouse}/petsc-3.26.0-py3-none-linux_x86_64.whl#sha256=830acc20a7c9260de84d01b4ca9a00d80c642442f79ac73d56897d543ced8583\npetsc4py @ file://{stacks.wheels.petsc_wheelhouse}/petsc4py-3.26.0-cp312-cp312-linux_x86_64.whl#sha256=72e73e3b25bb77bbf910aff4474036360cc8464441578b8dc1b06ad60e4ffc4e\npluggy==1.7.0\nPygments==2.21.0\npytest==9.1.1\npytest-cov==7.1.0\npython-dateutil==2.9.0.post0\nrich==15.0.0\nscipy==1.18.1\nsix==1.17.0\nslepc @ file://{stacks.wheels.petsc_wheelhouse}/slepc-3.26.0-py3-none-linux_x86_64.whl#sha256=18e8cca8c0b42891c8994793f6035b16e3adf8d3f125d3516594bab0aeda6b5d\nslepc4py @ file://{stacks.wheels.petsc_wheelhouse}/slepc4py-3.26.0-cp312-cp312-linux_x86_64.whl#sha256=a724ea7ec244830809c66d9544e211d79a11fe9cdaab9aa78c0f920dcd689f05\ntbb==2023.2.0\ntcmlib==1.6.0\numf==1.2.0\nxarray==2026.9.0\n"
+   },
+   "palace_manifest": {
+    "sha256": "4042f2e425a3b843d31df59a8721980828aae525f6e0a071f50f0bfb456f9635",
+    "text": "48406ef74088010da0d835867a7991fc6cead89ecc7a7671505d9caa224f2921  {stacks.wheels.palace_wheelhouse}/palace_solver-0.18.1.post5-py3-none-manylinux_2_28_x86_64.whl\npalace --version: Palace version: v0.18.1\npalace-solver @ file://{stacks.wheels.palace_wheelhouse}/palace_solver-0.18.1.post5-py3-none-manylinux_2_28_x86_64.whl#sha256=48406ef74088010da0d835867a7991fc6cead89ecc7a7671505d9caa224f2921\n"
+   },
+   "palace_wheel_sha256": "48406ef74088010da0d835867a7991fc6cead89ecc7a7671505d9caa224f2921",
+   "palace_version": "Palace version: v0.18.1"
+  },
+  "env": "module purge >/dev/null 2>&1\nexport PATH={cluster.root}/envs/palace-0.18.1.post5/bin:\"$PATH\"\nunset OMP_NUM_THREADS MKL_NUM_THREADS OPENBLAS_NUM_THREADS NGS_NUM_THREADS OMP_PLACES OMP_PROC_BIND GOMP_CPU_AFFINITY KMP_AFFINITY\nexport OMP_NUM_THREADS=1\nexport OPENBLAS_NUM_THREADS=1\nexport OMP_PLACES=cores OMP_PROC_BIND=close\n",
+  "modules": "openmpi/4.1.6-gcc\n",
+  "ldd": "palace-real: libopenblasp-r0-a4f38a19.3.34.so => {cluster.root}/envs/palace-0.18.1.post5/lib/python3.12/site-packages/palace_solver/bin/../../palace_solver.libs/libopenblasp-r0-a4f38a19.3.34.so (0x00007f5a6139d000)\npalace-real: libscalapack-dcb8e3ca.so.2.2.2 => {cluster.root}/envs/palace-0.18.1.post5/lib/python3.12/site-packages/palace_solver/bin/../../palace_solver.libs/libscalapack-dcb8e3ca.so.2.2.2 (0x00007f5a60da2000)\n"
+ },
+ "provenance": {
+  "gfem": {
+   "commit": "1a0108bd45856e7d8c8e998e23f06bd6f84a9481",
+   "version": null
+  },
+  "harness": {
+   "commit": "1a0108bd45856e7d8c8e998e23f06bd6f84a9481"
+  },
+  "solver": {
+   "code": "palace",
+   "dialect": "0.18",
+   "stack_version": "0.18.1.post5",
+   "version": "0.18.1.post5",
+   "text": "\nPalace version: v0.18.1\nSchema version: 1-7-0\n",
+   "schema": "1-7-0",
+   "binary_version": "v0.18.1",
+   "git_tag": "v0.18.1"
+  },
+  "stack": {
+   "name": "wheels",
+   "description_sha256": "f8638f63c753db57df400ee3e42d06f94756d81ff2a96e234379b6bc9ce84da2",
+   "env_manifest_sha256": "e894d4d624e2f59ab7e5d4055705a760770db0525e8e4192c0128f56ab4818f7",
+   "fingerprint": "6a5f35271919710270884155dc8812e6e23b56124f3e8877547ee8d896c5225b"
+  },
+  "versions": {},
+  "env": {
+   "I_MPI_HYDRA_BOOTSTRAP": "slurm",
+   "I_MPI_HYDRA_BOOTSTRAP_EXEC_EXTRA_ARGS": "--external-launcher",
+   "OMP_NUM_THREADS": "1",
+   "OMP_PLACES": "cores",
+   "OMP_PROC_BIND": "close",
+   "OPENBLAS_NUM_THREADS": "1",
+   "SLURM_CPUS_ON_NODE": "112",
+   "SLURM_NTASKS": "1"
+  },
+  "machine": {
+   "name": "mn5-gpp",
+   "nodes": [
+    "gs03r2b53"
+   ],
+   "node_class": "standard",
+   "cpu": "Intel(R) Xeon(R) Platinum 8480+",
+   "mem_total_kb": [
+    263774832
+   ],
+   "cpus_allowed": 224,
+   "pinned_cpus": "0-223",
+   "exclusive": true,
+   "partition": "gpp",
+   "qos": "gp_ehpc",
+   "constraint": null,
+   "mpi_library": null
+  }
+ },
+ "observations": {
+  "busy_threads_per_core_max": 1,
+  "placement": {
+   "status": "fail",
+   "masks": [
+    "0,112",
+    "1,113",
+    "2,114",
+    "3,115",
+    "4,116",
+    "5,117",
+    "6,118",
+    "7,119",
+    "8,120",
+    "9,121",
+    "10,122",
+    "11,123",
+    "12,124",
+    "13,125",
+    "14,126",
+    "15,127",
+    "16,128",
+    "17,129",
+    "18,130",
+    "19,131",
+    "20,132",
+    "21,133",
+    "22,134",
+    "23,135",
+    "24,136",
+    "25,137",
+    "26,138",
+    "27,139",
+    "28,140",
+    "29,141",
+    "30,142",
+    "31,143",
+    "32,144",
+    "33,145",
+    "34,146",
+    "35,147",
+    "36,148",
+    "37,149",
+    "38,150",
+    "39,151",
+    "40,152",
+    "41,153",
+    "42,154",
+    "43,155",
+    "44,156",
+    "45,157",
+    "46,158",
+    "47,159",
+    "48,160",
+    "49,161",
+    "50,162",
+    "51,163",
+    "52,164",
+    "53,165",
+    "54,166",
+    "55,167",
+    "56,71,168",
+    "57,88,169",
+    "58,105,170",
+    "59,105,171",
+    "60,105,172",
+    "61,105,173",
+    "62,174",
+    "63,105,175",
+    "64,107,176",
+    "65,89,177",
+    "66,105,178",
+    "67,89,179",
+    "68,107,180",
+    "69,107,181",
+    "70,109,182",
+    "71,109,183",
+    "72,107,184",
+    "73,109,185",
+    "74,89,186",
+    "75,109,187",
+    "76,132,188",
+    "77,90,189",
+    "78,90,190",
+    "79,90,191",
+    "80,90,192",
+    "81,112,193",
+    "82,111,194",
+    "83,133,195",
+    "84,90,196",
+    "56,85,197",
+    "86,90,198",
+    "6,87,199",
+    "88,111,200",
+    "89,201",
+    "90,202",
+    "91,203",
+    "2,92,204",
+    "90,93,205",
+    "94,206",
+    "95,207",
+    "90,96,208",
+    "90,97,209",
+    "98,210",
+    "99,211",
+    "100,212",
+    "101,213",
+    "102,214",
+    "103,215",
+    "104,216",
+    "1,105,217",
+    "62,106,218",
+    "107,219",
+    "108,220",
+    "109,221",
+    "110,222",
+    "111,223"
+   ],
+   "reason": "rank 56 mask 56,71,168 holds 2 cores; rank 57 mask 57,88,169 holds 2 cores; rank 58 mask 58,105,170 holds 2 cores; rank 59 mask 59,105,171 holds 2 cores; rank 59 shares core 105 with rank 58; rank 60 mask 60,105,172 holds 2 cores; rank 60 shares core 105 with rank 58; rank 61 mask 61,105,173 holds 2 cores; rank 61 shares core 105 with rank 58; rank 63 mask 63,105,175 holds 2 cores; rank 63 shares core 105 with rank 58; rank 64 mask 64,107,176 holds 2 cores; rank 65 mask 65,89,177 holds 2 cores; rank 66 mask 66,105,178 holds 2 cores; rank 66 shares core 105 with rank 58; rank 67 mask 67,89,179 holds 2 cores; rank 67 shares core 89 with rank 65; rank 68 mask 68,107,180 holds 2 cores; rank 68 shares core 107 with rank 64; rank 69 mask 69,107,181 holds 2 cores; rank 69 shares core 107 with rank 64; rank 70 mask 70,109,182 holds 2 cores; rank 71 mask 71,109,183 holds 2 cores; rank 71 shares core 71 with rank 56; rank 72 mask 72,107,184 holds 2 cores; rank 72 shares core 107 with rank 64; rank 73 mask 73,109,185 holds 2 cores; rank 73 shares core 109 with rank 70; rank 74 mask 74,89,186 holds 2 cores; rank 74 shares core 89 with rank 65; rank 75 mask 75,109,187 holds 2 cores; rank 75 shares core 109 with rank 70; rank 76 mask 76,132,188 holds 2 cores; rank 76 shares core 20 with rank 20; rank 77 mask 77,90,189 holds 2 cores; rank 78 mask 78,90,190 holds 2 cores; rank 78 shares core 90 with rank 77; rank 79 mask 79,90,191 holds 2 cores; rank 79 shares core 90 with rank 77; rank 80 mask 80,90,192 holds 2 cores; rank 80 shares core 90 with rank 77; rank 81 mask 81,112,193 holds 2 cores; rank 81 shares core 0 with rank 0; rank 82 mask 82,111,194 holds 2 cores; rank 83 mask 83,133,195 holds 2 cores; rank 83 shares core 21 with rank 21; rank 84 mask 84,90,196 holds 2 cores; rank 84 shares core 90 with rank 77; rank 85 mask 56,85,197 holds 2 cores; rank 85 shares core 56 with rank 56; rank 86 mask 86,90,198 holds 2 cores; rank 86 shares core 90 with rank 77; rank 87 mask 6,87,199 holds 2 cores; rank 87 shares core 6 with rank 6; rank 88 mask 88,111,200 holds 2 cores; rank 88 shares core 88 with rank 57; rank 89 shares core 89 with rank 65; rank 90 shares core 90 with rank 77; rank 92 mask 2,92,204 holds 2 cores; rank 92 shares core 2 with rank 2; rank 93 mask 90,93,205 holds 2 cores; rank 93 shares core 90 with rank 77; rank 96 mask 90,96,208 holds 2 cores; rank 96 shares core 90 with rank 77; rank 97 mask 90,97,209 holds 2 cores; rank 97 shares core 90 with rank 77; rank 105 mask 1,105,217 holds 2 cores; rank 105 shares core 1 with rank 1; rank 106 mask 62,106,218 holds 2 cores; rank 106 shares core 62 with rank 62; rank 107 shares core 107 with rank 64; rank 109 shares core 109 with rank 70; rank 111 shares core 111 with rank 82"
+  },
+  "dof_seen_in_stdout": 315870
+ },
+ "accuracy_reason": "no_reference"
+}

@@ -1,0 +1,83 @@
+{
+ "schema": "suite-campaign/1",
+ "id": "20261117-1a0108b-reference-microstrip-palace-0.18.1.post5",
+ "name": "reference-microstrip-palace-0.18.1.post5",
+ "planned_utc": "2026-11-17T20:34:57Z",
+ "campaign_file": {
+  "path": "benchmarks/campaigns/reference-microstrip-palace-0.18.1.post5.toml",
+  "sha256": "7aadbbf1c62d4a3c3d252d23f8d4478d4dc7954ec6c75956d7ad2ae5ce1261c9"
+ },
+ "pins": {
+  "gfem": {
+   "commit": "1a0108bd45856e7d8c8e998e23f06bd6f84a9481",
+   "commit_utc": "2026-11-17T20:27:14Z"
+  },
+  "harness": {
+   "commit": "1a0108bd45856e7d8c8e998e23f06bd6f84a9481"
+  },
+  "solvers": {
+   "palace": "0.18.1.post5"
+  },
+  "stacks": {
+   "wheels": {
+    "description_sha256": "f8638f63c753db57df400ee3e42d06f94756d81ff2a96e234379b6bc9ce84da2",
+    "env_manifest_sha256": "e894d4d624e2f59ab7e5d4055705a760770db0525e8e4192c0128f56ab4818f7",
+    "fingerprint": "6a5f35271919710270884155dc8812e6e23b56124f3e8877547ee8d896c5225b",
+    "palace_manifest_sha256": "4042f2e425a3b843d31df59a8721980828aae525f6e0a071f50f0bfb456f9635"
+   }
+  }
+ },
+ "machine": "mn5-gpp",
+ "core_budget": 112,
+ "jobs": [
+  {
+   "job": "wheels",
+   "group": "stack",
+   "qos": "gp_ehpc",
+   "constraint": null,
+   "nodes": [
+    "gs03r2b53"
+   ],
+   "elapsed_s": 1625.0,
+   "billed_core_h": 50.556,
+   "state": "COMPLETED",
+   "cases": [
+    "microstrip_L0_p2",
+    "microstrip_L1_p2"
+   ],
+   "stack": "wheels",
+   "runs": 2,
+   "est_s": 1110.0,
+   "est_core_h": 34.5,
+   "time_limit": "0:28:00",
+   "slurm_ids": [
+    "49172824"
+   ]
+  }
+ ],
+ "records": {
+  "records/microstrip_L0_p2/palace-mumps__wheels__default__rep1.json": "63f9013147cd260c1e5ae556c7e41236ce76a478871e69f7552d4a5cd1b46f51",
+  "records/microstrip_L1_p2/palace-mumps__wheels__default__rep1.json": "7bed1b0aa1ab82de7692e07cdaa18c87a38a33996a46822cf49b48e0e66ed72d"
+ },
+ "checks": {
+  "complete": "pass",
+  "provenance": "pass",
+  "dof_equal": "skipped",
+  "node_class": {
+   "observed": [
+    "standard"
+   ],
+   "planned": "standard"
+  },
+  "harness_failures": [
+   "microstrip_L1_p2/palace-mumps__wheels__default__rep1"
+  ]
+ },
+ "closed_utc": "2026-11-17T21:12:32Z",
+ "node_class": "standard",
+ "repeats": 1,
+ "runs": 2,
+ "est_core_h": 34.5,
+ "limit_core_h": 51.8,
+ "notes": []
+}
