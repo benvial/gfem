@@ -1,0 +1,2184 @@
+{
+ "anchor_tolerance": 1e-08,
+ "campaign_ids": [
+  "20261117-4d64c1c-release-gfem"
+ ],
+ "cases": [
+  {
+   "accuracy": [
+    {
+     "accuracy_reason": null,
+     "bound": 1e-12,
+     "ceiling": 1e-05,
+     "code": "gfem",
+     "default": true,
+     "delta": null,
+     "delta_floor": false,
+     "error": 1.86264e-09,
+     "kind": "direct",
+     "layout": "1x16",
+     "metric": "max_rel_dRe_f",
+     "order": 3,
+     "plausible": "pass",
+     "rescored": null,
+     "resolved": true,
+     "same_code_error": 1.19097e-15,
+     "same_code_label": "solver error",
+     "solver": "gfem:direct",
+     "tolerance": null
+    }
+   ],
+   "campaigns": [
+    "20261117-4d64c1c-release-gfem"
+   ],
+   "cells": [
+    {
+     "accuracy_reason": null,
+     "bound": 1e-12,
+     "case": "bragg",
+     "class": "direct",
+     "code": "gfem",
+     "default": true,
+     "error": 1.86264e-09,
+     "error_items": [
+      1.62325e-09,
+      1.86264e-09
+     ],
+     "imbalance": null,
+     "iterations": 0.0,
+     "jobs": [
+      "49175437"
+     ],
+     "kind": "direct",
+     "layout": "1x16",
+     "memory": {
+      "peak_rss_largest_node_gib": 0.43,
+      "peak_rss_rank_max_gib": 0.43,
+      "peak_rss_sum_gib": 0.43,
+      "pss_peak_sum_gib": 0.425469,
+      "sacct_max_rss_gib": null
+     },
+     "metric": "max_rel_dRe_f",
+     "n": 3,
+     "names": [
+      "bragg/gfem-direct__wheels__default__rep1",
+      "bragg/gfem-direct__wheels__default__rep2",
+      "bragg/gfem-direct__wheels__default__rep3"
+     ],
+     "ndof": 1560,
+     "noisy": true,
+     "order": 3,
+     "plausible": "pass",
+     "rank0": null,
+     "rank_reduction": "max",
+     "ranks": 1,
+     "reference": "bragg-20261117-058b2f5",
+     "resolved": true,
+     "same_code_against": "bragg/gfem-direct__wheels__default__rep1",
+     "same_code_error": 1.19097e-15,
+     "same_code_label": "solver error",
+     "self_reports": {
+      "solver_nbytes": 7104610.0
+     },
+     "setups": 2.0,
+     "solver": "gfem:direct",
+     "solves": 1.0,
+     "spread": 1.91997,
+     "stack": "wheels",
+     "timings": {
+      "assemble_s": 0.00490261,
+      "discretize_s": 0.0140938,
+      "estimate_s": null,
+      "mesh_read_s": 0.0437799,
+      "other_s": 0.258877,
+      "per_sample_s": null,
+      "postpro_s": null,
+      "rom_s": null,
+      "setup_s": 0.0363316,
+      "setup_total_s": 0.0986327,
+      "solve_s": 0.104435,
+      "solve_total_s": 0.104435,
+      "startup_s": 1.36725,
+      "work_s": 0.461205
+     },
+     "tolerance": null,
+     "version": "0.1.0",
+     "work_max_s": 1.34366,
+     "work_min_s": 0.45816,
+     "work_s": 0.461205
+    }
+   ],
+   "comparison": {
+    "label": null,
+    "ndof": {
+     "gfem": [
+      1560
+     ]
+    }
+   },
+   "error_cost": {
+    "differences": [],
+    "directs": [
+     {
+      "class": "direct",
+      "code": "gfem",
+      "layout": "1x16",
+      "peak_rss_sum_gib": 0.43,
+      "solver": "gfem:direct",
+      "tolerance": null,
+      "work_s": 0.461205
+     }
+    ],
+    "equal_error": null,
+    "floors": {},
+    "ladders": [],
+    "points": [
+     {
+      "class": "direct",
+      "code": "gfem",
+      "error": 1.86264e-09,
+      "layout": "1x16",
+      "peak_rss_sum_gib": 0.43,
+      "plotted": 1.86264e-09,
+      "solver": "gfem:direct",
+      "tolerance": null,
+      "unresolved": false,
+      "work_s": 0.461205
+     }
+    ],
+    "reference": true,
+    "unresolved_band": 1e-11
+   },
+   "error_items": {
+    "lines": [
+     {
+      "class": "direct",
+      "code": "gfem",
+      "error": [
+       1.62325e-09,
+       1.86264e-09
+      ],
+      "layout": "1x16",
+      "solver": "gfem:direct",
+      "x": [
+       1,
+       2
+      ]
+     }
+    ],
+    "x": "mode"
+   },
+   "figures": {
+    "error_cost": "fig-bragg-error-cost.svg",
+    "error_items": "fig-bragg-error-items.svg",
+    "memory": "fig-bragg-memory.svg",
+    "phases": "fig-bragg-phases.svg"
+   },
+   "kind": "eigen",
+   "layouts": [
+    {
+     "best": "1x16",
+     "cells": [
+      {
+       "default": true,
+       "labels": [
+        "default",
+        "best"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "work_max_s": 1.34366,
+       "work_min_s": 0.45816,
+       "work_s": 0.461205
+      }
+     ],
+     "default": "1x16",
+     "default_over_best": 1.0,
+     "listed_only": true,
+     "solver": "gfem:direct",
+     "ties": [],
+     "tolerance": null,
+     "unrun": []
+    }
+   ],
+   "name": "bragg",
+   "notes": [],
+   "phases": [
+    {
+     "accuracy_reason": null,
+     "bound": 1e-12,
+     "case": "bragg",
+     "class": "direct",
+     "code": "gfem",
+     "default": true,
+     "error": 1.86264e-09,
+     "error_items": [
+      1.62325e-09,
+      1.86264e-09
+     ],
+     "imbalance": null,
+     "iterations": 0.0,
+     "jobs": [
+      "49175437"
+     ],
+     "kind": "direct",
+     "layout": "1x16",
+     "memory": {
+      "peak_rss_largest_node_gib": 0.43,
+      "peak_rss_rank_max_gib": 0.43,
+      "peak_rss_sum_gib": 0.43,
+      "pss_peak_sum_gib": 0.425469,
+      "sacct_max_rss_gib": null
+     },
+     "metric": "max_rel_dRe_f",
+     "n": 3,
+     "names": [
+      "bragg/gfem-direct__wheels__default__rep1",
+      "bragg/gfem-direct__wheels__default__rep2",
+      "bragg/gfem-direct__wheels__default__rep3"
+     ],
+     "ndof": 1560,
+     "noisy": true,
+     "order": 3,
+     "plausible": "pass",
+     "rank0": null,
+     "rank_reduction": "max",
+     "ranks": 1,
+     "reference": "bragg-20261117-058b2f5",
+     "resolved": true,
+     "role": "default, best",
+     "same_code_against": "bragg/gfem-direct__wheels__default__rep1",
+     "same_code_error": 1.19097e-15,
+     "same_code_label": "solver error",
+     "self_reports": {
+      "solver_nbytes": 7104610.0
+     },
+     "setups": 2.0,
+     "solver": "gfem:direct",
+     "solves": 1.0,
+     "spread": 1.91997,
+     "stack": "wheels",
+     "timings": {
+      "assemble_s": 0.00490261,
+      "discretize_s": 0.0140938,
+      "estimate_s": null,
+      "mesh_read_s": 0.0437799,
+      "other_s": 0.258877,
+      "per_sample_s": null,
+      "postpro_s": null,
+      "rom_s": null,
+      "setup_s": 0.0363316,
+      "setup_total_s": 0.0986327,
+      "solve_s": 0.104435,
+      "solve_total_s": 0.104435,
+      "startup_s": 1.36725,
+      "work_s": 0.461205
+     },
+     "tolerance": null,
+     "version": "0.1.0",
+     "work_max_s": 1.34366,
+     "work_min_s": 0.45816,
+     "work_s": 0.461205
+    }
+   ],
+   "pins": {
+    "gfem": [
+     "linear_solver per kind",
+     "the run tolerance",
+     "eigen_tolerance 1e-10",
+     "no field output"
+    ]
+   },
+   "reference": {
+    "bounds": {
+     "f_hz": 1e-12
+    },
+    "computed_utc": "2026-11-17T18:55:08Z",
+    "id": "bragg-20261117-058b2f5",
+    "ids": [
+     "bragg-20261117-058b2f5"
+    ],
+    "in_store": true,
+    "method": "closed_form",
+    "newer": {
+     "computed_utc": "2026-11-17T22:42:49Z",
+     "id": "bragg-20261117-d2a9be3"
+    },
+    "reason": null,
+    "sha256": "3b505fa8d9cb4002e469dd216072dd40b9c9ca33af3301b5cab229d06f725211",
+    "sha256_matches": true
+   },
+   "rescore_flag": "--rescore bragg=bragg-20261117-d2a9be3",
+   "rescored_against": null,
+   "snapshot": [
+    {
+     "class": "direct",
+     "entries": [
+      {
+       "code": "gfem",
+       "error": 1.86264e-09,
+       "jobs": [
+        "49175437"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "peak_rss_sum_gib": 0.43,
+       "role": "default",
+       "slow_node": false,
+       "solver": "gfem:direct",
+       "work_s": 0.461205
+      },
+      {
+       "code": "gfem",
+       "error": 1.86264e-09,
+       "jobs": [
+        "49175437"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "peak_rss_sum_gib": 0.43,
+       "role": "best",
+       "slow_node": false,
+       "solver": "gfem:direct",
+       "work_s": 0.461205
+      }
+     ],
+     "ratios": []
+    },
+    {
+     "class": "iterative",
+     "entries": [],
+     "ratios": []
+    }
+   ],
+   "structural": {
+    "gfem:direct": [
+     "direct_arm: PARDISO (MKL), one process"
+    ]
+   }
+  },
+  {
+   "accuracy": [
+    {
+     "accuracy_reason": null,
+     "bound": 1e-12,
+     "ceiling": 0.0038907,
+     "code": "gfem",
+     "default": true,
+     "delta": null,
+     "delta_floor": false,
+     "error": 0.000389074,
+     "kind": "bddc",
+     "layout": "1x16",
+     "metric": "max_rel_dRe_f",
+     "order": 2,
+     "plausible": "pass",
+     "rescored": null,
+     "resolved": true,
+     "same_code_error": 4.11849e-16,
+     "same_code_label": "solver error",
+     "solver": "gfem:bddc",
+     "tolerance": 1e-08
+    },
+    {
+     "accuracy_reason": null,
+     "bound": 1e-12,
+     "ceiling": 0.0038907,
+     "code": "gfem",
+     "default": true,
+     "delta": null,
+     "delta_floor": false,
+     "error": 0.000389074,
+     "kind": "direct",
+     "layout": "1x16",
+     "metric": "max_rel_dRe_f",
+     "order": 2,
+     "plausible": "pass",
+     "rescored": null,
+     "resolved": true,
+     "same_code_error": 0.0,
+     "same_code_label": "solver error",
+     "solver": "gfem:direct",
+     "tolerance": null
+    },
+    {
+     "accuracy_reason": null,
+     "bound": 1e-12,
+     "ceiling": 0.0038907,
+     "code": "gfem",
+     "default": true,
+     "delta": null,
+     "delta_floor": false,
+     "error": 0.000389074,
+     "kind": "petsc-mumps",
+     "layout": "1x16",
+     "metric": "max_rel_dRe_f",
+     "order": 2,
+     "plausible": "pass",
+     "rescored": null,
+     "resolved": true,
+     "same_code_error": 4.11849e-16,
+     "same_code_label": "solver error",
+     "solver": "gfem:petsc-mumps",
+     "tolerance": null
+    }
+   ],
+   "campaigns": [
+    "20261117-4d64c1c-release-gfem"
+   ],
+   "cells": [
+    {
+     "accuracy_reason": null,
+     "bound": 1e-12,
+     "case": "lcavity",
+     "class": "iterative",
+     "code": "gfem",
+     "default": true,
+     "error": 0.000389074,
+     "error_items": [
+      0.000389074
+     ],
+     "imbalance": null,
+     "iterations": 0.0,
+     "jobs": [
+      "49175437"
+     ],
+     "kind": "bddc",
+     "layout": "1x16",
+     "memory": {
+      "peak_rss_largest_node_gib": 2.06836,
+      "peak_rss_rank_max_gib": 2.06836,
+      "peak_rss_sum_gib": 2.06836,
+      "pss_peak_sum_gib": 2.05561,
+      "sacct_max_rss_gib": null
+     },
+     "metric": "max_rel_dRe_f",
+     "n": 3,
+     "names": [
+      "lcavity/gfem-bddc__wheels__default__rep1",
+      "lcavity/gfem-bddc__wheels__default__rep2",
+      "lcavity/gfem-bddc__wheels__default__rep3"
+     ],
+     "ndof": 246416,
+     "noisy": false,
+     "order": 2,
+     "plausible": "pass",
+     "rank0": null,
+     "rank_reduction": "max",
+     "ranks": 1,
+     "reference": "lcavity-20261117-058b2f5",
+     "resolved": true,
+     "same_code_against": "lcavity/gfem-direct__wheels__default__rep1",
+     "same_code_error": 4.11849e-16,
+     "same_code_label": "solver error",
+     "self_reports": {
+      "solver_nbytes": 216805000.0
+     },
+     "setups": 2.0,
+     "solver": "gfem:bddc",
+     "solves": 1.0,
+     "spread": 0.0179195,
+     "stack": "wheels",
+     "timings": {
+      "assemble_s": 0.763385,
+      "discretize_s": 0.0687277,
+      "estimate_s": null,
+      "mesh_read_s": 0.269187,
+      "other_s": 0.502817,
+      "per_sample_s": null,
+      "postpro_s": null,
+      "rom_s": null,
+      "setup_s": 0.262491,
+      "setup_total_s": 1.36263,
+      "solve_s": 21.0725,
+      "solve_total_s": 21.0725,
+      "startup_s": 1.35211,
+      "work_s": 22.9547
+     },
+     "tolerance": 1e-08,
+     "version": "0.1.0",
+     "work_max_s": 22.9576,
+     "work_min_s": 22.5463,
+     "work_s": 22.9547
+    },
+    {
+     "accuracy_reason": null,
+     "bound": 1e-12,
+     "case": "lcavity",
+     "class": "direct",
+     "code": "gfem",
+     "default": true,
+     "error": 0.000389074,
+     "error_items": [
+      0.000389074
+     ],
+     "imbalance": null,
+     "iterations": 0.0,
+     "jobs": [
+      "49175437"
+     ],
+     "kind": "direct",
+     "layout": "1x16",
+     "memory": {
+      "peak_rss_largest_node_gib": 3.95194,
+      "peak_rss_rank_max_gib": 3.95194,
+      "peak_rss_sum_gib": 3.95194,
+      "pss_peak_sum_gib": 3.89514,
+      "sacct_max_rss_gib": null
+     },
+     "metric": "max_rel_dRe_f",
+     "n": 3,
+     "names": [
+      "lcavity/gfem-direct__wheels__default__rep1",
+      "lcavity/gfem-direct__wheels__default__rep2",
+      "lcavity/gfem-direct__wheels__default__rep3"
+     ],
+     "ndof": 246416,
+     "noisy": false,
+     "order": 2,
+     "plausible": "pass",
+     "rank0": null,
+     "rank_reduction": "max",
+     "ranks": 1,
+     "reference": "lcavity-20261117-058b2f5",
+     "resolved": true,
+     "same_code_against": "lcavity/gfem-direct__wheels__default__rep1",
+     "same_code_error": 0.0,
+     "same_code_label": "solver error",
+     "self_reports": {
+      "solver_nbytes": 2394690000.0
+     },
+     "setups": 2.0,
+     "solver": "gfem:direct",
+     "solves": 1.0,
+     "spread": 0.0406946,
+     "stack": "wheels",
+     "timings": {
+      "assemble_s": 0.150655,
+      "discretize_s": 0.0698069,
+      "estimate_s": null,
+      "mesh_read_s": 0.268867,
+      "other_s": 0.519678,
+      "per_sample_s": null,
+      "postpro_s": null,
+      "rom_s": null,
+      "setup_s": 2.58546,
+      "setup_total_s": 3.0734,
+      "solve_s": 4.02508,
+      "solve_total_s": 4.02508,
+      "startup_s": 1.33404,
+      "work_s": 7.59957
+     },
+     "tolerance": null,
+     "version": "0.1.0",
+     "work_max_s": 7.70349,
+     "work_min_s": 7.39423,
+     "work_s": 7.59957
+    },
+    {
+     "accuracy_reason": null,
+     "bound": 1e-12,
+     "case": "lcavity",
+     "class": "direct",
+     "code": "gfem",
+     "default": true,
+     "error": 0.000389074,
+     "error_items": [
+      0.000389074
+     ],
+     "imbalance": null,
+     "iterations": 0.0,
+     "jobs": [
+      "49175437"
+     ],
+     "kind": "petsc-mumps",
+     "layout": "1x16",
+     "memory": {
+      "peak_rss_largest_node_gib": 3.60222,
+      "peak_rss_rank_max_gib": 3.60222,
+      "peak_rss_sum_gib": 3.60222,
+      "pss_peak_sum_gib": 3.60717,
+      "sacct_max_rss_gib": null
+     },
+     "metric": "max_rel_dRe_f",
+     "n": 3,
+     "names": [
+      "lcavity/gfem-petsc-mumps__wheels__default__rep1",
+      "lcavity/gfem-petsc-mumps__wheels__default__rep2",
+      "lcavity/gfem-petsc-mumps__wheels__default__rep3"
+     ],
+     "ndof": 246416,
+     "noisy": false,
+     "order": 2,
+     "plausible": "pass",
+     "rank0": null,
+     "rank_reduction": "max",
+     "ranks": 1,
+     "reference": "lcavity-20261117-058b2f5",
+     "resolved": true,
+     "same_code_against": "lcavity/gfem-direct__wheels__default__rep1",
+     "same_code_error": 4.11849e-16,
+     "same_code_label": "solver error",
+     "self_reports": {
+      "solver_nbytes": 2338110000.0
+     },
+     "setups": 2.0,
+     "solver": "gfem:petsc-mumps",
+     "solves": 1.0,
+     "spread": 0.0195649,
+     "stack": "wheels",
+     "timings": {
+      "assemble_s": 0.166215,
+      "discretize_s": 0.0808598,
+      "estimate_s": null,
+      "mesh_read_s": 0.267458,
+      "other_s": 1.50341,
+      "per_sample_s": null,
+      "postpro_s": null,
+      "rom_s": null,
+      "setup_s": 8.84896,
+      "setup_total_s": 9.36682,
+      "solve_s": 20.7897,
+      "solve_total_s": 20.7897,
+      "startup_s": 1.40714,
+      "work_s": 31.8552
+     },
+     "tolerance": null,
+     "version": "0.1.0",
+     "work_max_s": 32.1842,
+     "work_min_s": 31.561,
+     "work_s": 31.8552
+    }
+   ],
+   "comparison": {
+    "label": null,
+    "ndof": {
+     "gfem": [
+      246416
+     ]
+    }
+   },
+   "error_cost": {
+    "differences": [],
+    "directs": [
+     {
+      "class": "direct",
+      "code": "gfem",
+      "layout": "1x16",
+      "peak_rss_sum_gib": 3.95194,
+      "solver": "gfem:direct",
+      "tolerance": null,
+      "work_s": 7.59957
+     },
+     {
+      "class": "direct",
+      "code": "gfem",
+      "layout": "1x16",
+      "peak_rss_sum_gib": 3.60222,
+      "solver": "gfem:petsc-mumps",
+      "tolerance": null,
+      "work_s": 31.8552
+     }
+    ],
+    "equal_error": null,
+    "floors": {
+     "2": 0.00038907
+    },
+    "ladders": [
+     {
+      "code": "gfem",
+      "rungs": [
+       {
+        "class": "iterative",
+        "code": "gfem",
+        "layout": "1x16",
+        "peak_rss_sum_gib": 2.06836,
+        "same_code_error": 4.11849e-16,
+        "solver": "gfem:bddc",
+        "tolerance": 1e-08,
+        "work_s": 22.9547
+       }
+      ],
+      "solver": "gfem:bddc"
+     }
+    ],
+    "points": [
+     {
+      "class": "iterative",
+      "code": "gfem",
+      "error": 0.000389074,
+      "layout": "1x16",
+      "peak_rss_sum_gib": 2.06836,
+      "plotted": 0.000389074,
+      "solver": "gfem:bddc",
+      "tolerance": 1e-08,
+      "unresolved": false,
+      "work_s": 22.9547
+     },
+     {
+      "class": "direct",
+      "code": "gfem",
+      "error": 0.000389074,
+      "layout": "1x16",
+      "peak_rss_sum_gib": 3.95194,
+      "plotted": 0.000389074,
+      "solver": "gfem:direct",
+      "tolerance": null,
+      "unresolved": false,
+      "work_s": 7.59957
+     },
+     {
+      "class": "direct",
+      "code": "gfem",
+      "error": 0.000389074,
+      "layout": "1x16",
+      "peak_rss_sum_gib": 3.60222,
+      "plotted": 0.000389074,
+      "solver": "gfem:petsc-mumps",
+      "tolerance": null,
+      "unresolved": false,
+      "work_s": 31.8552
+     }
+    ],
+    "reference": true,
+    "unresolved_band": 1e-11
+   },
+   "error_items": {
+    "lines": [
+     {
+      "class": "iterative",
+      "code": "gfem",
+      "error": [
+       0.000389074
+      ],
+      "layout": "1x16",
+      "solver": "gfem:bddc",
+      "x": [
+       1
+      ]
+     },
+     {
+      "class": "direct",
+      "code": "gfem",
+      "error": [
+       0.000389074
+      ],
+      "layout": "1x16",
+      "solver": "gfem:direct",
+      "x": [
+       1
+      ]
+     },
+     {
+      "class": "direct",
+      "code": "gfem",
+      "error": [
+       0.000389074
+      ],
+      "layout": "1x16",
+      "solver": "gfem:petsc-mumps",
+      "x": [
+       1
+      ]
+     }
+    ],
+    "x": "mode"
+   },
+   "figures": {
+    "error_cost": "fig-lcavity-error-cost.svg",
+    "error_items": "fig-lcavity-error-items.svg",
+    "memory": "fig-lcavity-memory.svg",
+    "phases": "fig-lcavity-phases.svg"
+   },
+   "kind": "eigen",
+   "layouts": [
+    {
+     "best": "1x16",
+     "cells": [
+      {
+       "default": true,
+       "labels": [
+        "default",
+        "best"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "work_max_s": 22.9576,
+       "work_min_s": 22.5463,
+       "work_s": 22.9547
+      }
+     ],
+     "default": "1x16",
+     "default_over_best": 1.0,
+     "listed_only": true,
+     "solver": "gfem:bddc",
+     "ties": [],
+     "tolerance": 1e-08,
+     "unrun": []
+    },
+    {
+     "best": "1x16",
+     "cells": [
+      {
+       "default": true,
+       "labels": [
+        "default",
+        "best"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "work_max_s": 7.70349,
+       "work_min_s": 7.39423,
+       "work_s": 7.59957
+      }
+     ],
+     "default": "1x16",
+     "default_over_best": 1.0,
+     "listed_only": true,
+     "solver": "gfem:direct",
+     "ties": [],
+     "tolerance": null,
+     "unrun": []
+    },
+    {
+     "best": "1x16",
+     "cells": [
+      {
+       "default": true,
+       "labels": [
+        "default",
+        "best"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "work_max_s": 32.1842,
+       "work_min_s": 31.561,
+       "work_s": 31.8552
+      }
+     ],
+     "default": "1x16",
+     "default_over_best": 1.0,
+     "listed_only": true,
+     "solver": "gfem:petsc-mumps",
+     "ties": [],
+     "tolerance": null,
+     "unrun": []
+    }
+   ],
+   "name": "lcavity",
+   "notes": [],
+   "phases": [
+    {
+     "accuracy_reason": null,
+     "bound": 1e-12,
+     "case": "lcavity",
+     "class": "iterative",
+     "code": "gfem",
+     "default": true,
+     "error": 0.000389074,
+     "error_items": [
+      0.000389074
+     ],
+     "imbalance": null,
+     "iterations": 0.0,
+     "jobs": [
+      "49175437"
+     ],
+     "kind": "bddc",
+     "layout": "1x16",
+     "memory": {
+      "peak_rss_largest_node_gib": 2.06836,
+      "peak_rss_rank_max_gib": 2.06836,
+      "peak_rss_sum_gib": 2.06836,
+      "pss_peak_sum_gib": 2.05561,
+      "sacct_max_rss_gib": null
+     },
+     "metric": "max_rel_dRe_f",
+     "n": 3,
+     "names": [
+      "lcavity/gfem-bddc__wheels__default__rep1",
+      "lcavity/gfem-bddc__wheels__default__rep2",
+      "lcavity/gfem-bddc__wheels__default__rep3"
+     ],
+     "ndof": 246416,
+     "noisy": false,
+     "order": 2,
+     "plausible": "pass",
+     "rank0": null,
+     "rank_reduction": "max",
+     "ranks": 1,
+     "reference": "lcavity-20261117-058b2f5",
+     "resolved": true,
+     "role": "default, best",
+     "same_code_against": "lcavity/gfem-direct__wheels__default__rep1",
+     "same_code_error": 4.11849e-16,
+     "same_code_label": "solver error",
+     "self_reports": {
+      "solver_nbytes": 216805000.0
+     },
+     "setups": 2.0,
+     "solver": "gfem:bddc",
+     "solves": 1.0,
+     "spread": 0.0179195,
+     "stack": "wheels",
+     "timings": {
+      "assemble_s": 0.763385,
+      "discretize_s": 0.0687277,
+      "estimate_s": null,
+      "mesh_read_s": 0.269187,
+      "other_s": 0.502817,
+      "per_sample_s": null,
+      "postpro_s": null,
+      "rom_s": null,
+      "setup_s": 0.262491,
+      "setup_total_s": 1.36263,
+      "solve_s": 21.0725,
+      "solve_total_s": 21.0725,
+      "startup_s": 1.35211,
+      "work_s": 22.9547
+     },
+     "tolerance": 1e-08,
+     "version": "0.1.0",
+     "work_max_s": 22.9576,
+     "work_min_s": 22.5463,
+     "work_s": 22.9547
+    },
+    {
+     "accuracy_reason": null,
+     "bound": 1e-12,
+     "case": "lcavity",
+     "class": "direct",
+     "code": "gfem",
+     "default": true,
+     "error": 0.000389074,
+     "error_items": [
+      0.000389074
+     ],
+     "imbalance": null,
+     "iterations": 0.0,
+     "jobs": [
+      "49175437"
+     ],
+     "kind": "direct",
+     "layout": "1x16",
+     "memory": {
+      "peak_rss_largest_node_gib": 3.95194,
+      "peak_rss_rank_max_gib": 3.95194,
+      "peak_rss_sum_gib": 3.95194,
+      "pss_peak_sum_gib": 3.89514,
+      "sacct_max_rss_gib": null
+     },
+     "metric": "max_rel_dRe_f",
+     "n": 3,
+     "names": [
+      "lcavity/gfem-direct__wheels__default__rep1",
+      "lcavity/gfem-direct__wheels__default__rep2",
+      "lcavity/gfem-direct__wheels__default__rep3"
+     ],
+     "ndof": 246416,
+     "noisy": false,
+     "order": 2,
+     "plausible": "pass",
+     "rank0": null,
+     "rank_reduction": "max",
+     "ranks": 1,
+     "reference": "lcavity-20261117-058b2f5",
+     "resolved": true,
+     "role": "default, best",
+     "same_code_against": "lcavity/gfem-direct__wheels__default__rep1",
+     "same_code_error": 0.0,
+     "same_code_label": "solver error",
+     "self_reports": {
+      "solver_nbytes": 2394690000.0
+     },
+     "setups": 2.0,
+     "solver": "gfem:direct",
+     "solves": 1.0,
+     "spread": 0.0406946,
+     "stack": "wheels",
+     "timings": {
+      "assemble_s": 0.150655,
+      "discretize_s": 0.0698069,
+      "estimate_s": null,
+      "mesh_read_s": 0.268867,
+      "other_s": 0.519678,
+      "per_sample_s": null,
+      "postpro_s": null,
+      "rom_s": null,
+      "setup_s": 2.58546,
+      "setup_total_s": 3.0734,
+      "solve_s": 4.02508,
+      "solve_total_s": 4.02508,
+      "startup_s": 1.33404,
+      "work_s": 7.59957
+     },
+     "tolerance": null,
+     "version": "0.1.0",
+     "work_max_s": 7.70349,
+     "work_min_s": 7.39423,
+     "work_s": 7.59957
+    },
+    {
+     "accuracy_reason": null,
+     "bound": 1e-12,
+     "case": "lcavity",
+     "class": "direct",
+     "code": "gfem",
+     "default": true,
+     "error": 0.000389074,
+     "error_items": [
+      0.000389074
+     ],
+     "imbalance": null,
+     "iterations": 0.0,
+     "jobs": [
+      "49175437"
+     ],
+     "kind": "petsc-mumps",
+     "layout": "1x16",
+     "memory": {
+      "peak_rss_largest_node_gib": 3.60222,
+      "peak_rss_rank_max_gib": 3.60222,
+      "peak_rss_sum_gib": 3.60222,
+      "pss_peak_sum_gib": 3.60717,
+      "sacct_max_rss_gib": null
+     },
+     "metric": "max_rel_dRe_f",
+     "n": 3,
+     "names": [
+      "lcavity/gfem-petsc-mumps__wheels__default__rep1",
+      "lcavity/gfem-petsc-mumps__wheels__default__rep2",
+      "lcavity/gfem-petsc-mumps__wheels__default__rep3"
+     ],
+     "ndof": 246416,
+     "noisy": false,
+     "order": 2,
+     "plausible": "pass",
+     "rank0": null,
+     "rank_reduction": "max",
+     "ranks": 1,
+     "reference": "lcavity-20261117-058b2f5",
+     "resolved": true,
+     "role": "default, best",
+     "same_code_against": "lcavity/gfem-direct__wheels__default__rep1",
+     "same_code_error": 4.11849e-16,
+     "same_code_label": "solver error",
+     "self_reports": {
+      "solver_nbytes": 2338110000.0
+     },
+     "setups": 2.0,
+     "solver": "gfem:petsc-mumps",
+     "solves": 1.0,
+     "spread": 0.0195649,
+     "stack": "wheels",
+     "timings": {
+      "assemble_s": 0.166215,
+      "discretize_s": 0.0808598,
+      "estimate_s": null,
+      "mesh_read_s": 0.267458,
+      "other_s": 1.50341,
+      "per_sample_s": null,
+      "postpro_s": null,
+      "rom_s": null,
+      "setup_s": 8.84896,
+      "setup_total_s": 9.36682,
+      "solve_s": 20.7897,
+      "solve_total_s": 20.7897,
+      "startup_s": 1.40714,
+      "work_s": 31.8552
+     },
+     "tolerance": null,
+     "version": "0.1.0",
+     "work_max_s": 32.1842,
+     "work_min_s": 31.561,
+     "work_s": 31.8552
+    }
+   ],
+   "pins": {
+    "gfem": [
+     "linear_solver per kind",
+     "the run tolerance",
+     "eigen_tolerance 1e-10",
+     "no field output"
+    ]
+   },
+   "reference": {
+    "bounds": {
+     "f_hz": 1e-12
+    },
+    "computed_utc": "2026-11-17T18:55:07Z",
+    "id": "lcavity-20261117-058b2f5",
+    "ids": [
+     "lcavity-20261117-058b2f5"
+    ],
+    "in_store": true,
+    "method": "closed_form",
+    "reason": null,
+    "sha256": "b812a4ddaf0ed0f40b68a4777f24ef5687e9de6a188dcbce347caff2daad3003",
+    "sha256_matches": true
+   },
+   "rescore_flag": null,
+   "rescored_against": null,
+   "snapshot": [
+    {
+     "class": "direct",
+     "entries": [
+      {
+       "code": "gfem",
+       "error": 0.000389074,
+       "jobs": [
+        "49175437"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "peak_rss_sum_gib": 3.95194,
+       "role": "default",
+       "slow_node": false,
+       "solver": "gfem:direct",
+       "work_s": 7.59957
+      },
+      {
+       "code": "gfem",
+       "error": 0.000389074,
+       "jobs": [
+        "49175437"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "peak_rss_sum_gib": 3.95194,
+       "role": "best",
+       "slow_node": false,
+       "solver": "gfem:direct",
+       "work_s": 7.59957
+      },
+      {
+       "code": "gfem",
+       "error": 0.000389074,
+       "jobs": [
+        "49175437"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "peak_rss_sum_gib": 3.60222,
+       "role": "default",
+       "slow_node": false,
+       "solver": "gfem:petsc-mumps",
+       "work_s": 31.8552
+      },
+      {
+       "code": "gfem",
+       "error": 0.000389074,
+       "jobs": [
+        "49175437"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "peak_rss_sum_gib": 3.60222,
+       "role": "best",
+       "slow_node": false,
+       "solver": "gfem:petsc-mumps",
+       "work_s": 31.8552
+      }
+     ],
+     "ratios": []
+    },
+    {
+     "class": "iterative",
+     "entries": [
+      {
+       "code": "gfem",
+       "error": 0.000389074,
+       "jobs": [
+        "49175437"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "peak_rss_sum_gib": 2.06836,
+       "role": "default",
+       "slow_node": false,
+       "solver": "gfem:bddc",
+       "work_s": 22.9547
+      },
+      {
+       "code": "gfem",
+       "error": 0.000389074,
+       "jobs": [
+        "49175437"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "peak_rss_sum_gib": 2.06836,
+       "role": "best",
+       "slow_node": false,
+       "solver": "gfem:bddc",
+       "work_s": 22.9547
+      }
+     ],
+     "ratios": []
+    }
+   ],
+   "structural": {
+    "gfem:bddc": [
+     "bddc_build: NGSolve builds the BDDC preconditioner while it assembles the first matrix of a setup, so the build is timed inside assemble"
+    ],
+    "gfem:direct": [
+     "direct_arm: PARDISO (MKL), one process"
+    ],
+    "gfem:petsc-mumps": [
+     "direct_arm: PETSc MUMPS"
+    ]
+   }
+  },
+  {
+   "accuracy": [
+    {
+     "accuracy_reason": "no_reference",
+     "bound": null,
+     "ceiling": null,
+     "code": "gfem",
+     "default": true,
+     "delta": null,
+     "delta_floor": false,
+     "error": null,
+     "kind": "bddc",
+     "layout": "1x16",
+     "metric": null,
+     "order": 2,
+     "plausible": "skipped",
+     "rescored": null,
+     "resolved": null,
+     "same_code_error": 9.37353e-09,
+     "same_code_label": "solver error",
+     "solver": "gfem:bddc",
+     "tolerance": 1e-08
+    },
+    {
+     "accuracy_reason": "no_reference",
+     "bound": null,
+     "ceiling": null,
+     "code": "gfem",
+     "default": true,
+     "delta": null,
+     "delta_floor": false,
+     "error": null,
+     "kind": "direct",
+     "layout": "1x16",
+     "metric": null,
+     "order": 2,
+     "plausible": "skipped",
+     "rescored": null,
+     "resolved": null,
+     "same_code_error": 1.99479e-12,
+     "same_code_label": "solver error",
+     "solver": "gfem:direct",
+     "tolerance": null
+    },
+    {
+     "accuracy_reason": "no_reference",
+     "bound": null,
+     "ceiling": null,
+     "code": "gfem",
+     "default": true,
+     "delta": null,
+     "delta_floor": false,
+     "error": null,
+     "kind": "petsc-mumps",
+     "layout": "1x16",
+     "metric": null,
+     "order": 2,
+     "plausible": "skipped",
+     "rescored": null,
+     "resolved": null,
+     "same_code_error": 4.19937e-11,
+     "same_code_label": "solver error",
+     "solver": "gfem:petsc-mumps",
+     "tolerance": null
+    }
+   ],
+   "campaigns": [
+    "20261117-4d64c1c-release-gfem"
+   ],
+   "cells": [
+    {
+     "accuracy_reason": "no_reference",
+     "bound": null,
+     "case": "microstrip",
+     "class": "iterative",
+     "code": "gfem",
+     "default": true,
+     "error": null,
+     "error_items": null,
+     "imbalance": null,
+     "iterations": 783.0,
+     "jobs": [
+      "49175437"
+     ],
+     "kind": "bddc",
+     "layout": "1x16",
+     "memory": {
+      "peak_rss_largest_node_gib": 3.50394,
+      "peak_rss_rank_max_gib": 3.50394,
+      "peak_rss_sum_gib": 3.50394,
+      "pss_peak_sum_gib": 3.49438,
+      "sacct_max_rss_gib": null
+     },
+     "metric": null,
+     "n": 3,
+     "names": [
+      "microstrip/gfem-bddc__wheels__default__rep1",
+      "microstrip/gfem-bddc__wheels__default__rep2",
+      "microstrip/gfem-bddc__wheels__default__rep3"
+     ],
+     "ndof": 315870,
+     "noisy": false,
+     "order": 2,
+     "plausible": "skipped",
+     "rank0": null,
+     "rank_reduction": "max",
+     "ranks": 1,
+     "reference": null,
+     "resolved": null,
+     "same_code_against": "microstrip/gfem-direct__wheels__default__rep1",
+     "same_code_error": 9.37353e-09,
+     "same_code_label": "solver error",
+     "self_reports": {
+      "solver_nbytes": 265564000.0
+     },
+     "setups": 6.0,
+     "solver": "gfem:bddc",
+     "solves": 5.0,
+     "spread": 0.00345209,
+     "stack": "wheels",
+     "timings": {
+      "assemble_s": 3.0785,
+      "discretize_s": 0.136277,
+      "estimate_s": null,
+      "mesh_read_s": 0.409009,
+      "other_s": 0.206427,
+      "per_sample_s": 11.215,
+      "postpro_s": null,
+      "rom_s": null,
+      "setup_s": 0.0165932,
+      "setup_total_s": 3.64078,
+      "solve_s": 52.2159,
+      "solve_total_s": 52.2159,
+      "startup_s": 1.37601,
+      "work_s": 56.0748
+     },
+     "tolerance": 1e-08,
+     "version": "0.1.0",
+     "work_max_s": 56.1862,
+     "work_min_s": 55.9926,
+     "work_s": 56.0748
+    },
+    {
+     "accuracy_reason": "no_reference",
+     "bound": null,
+     "case": "microstrip",
+     "class": "direct",
+     "code": "gfem",
+     "default": true,
+     "error": null,
+     "error_items": null,
+     "imbalance": null,
+     "iterations": 0.0,
+     "jobs": [
+      "49175437"
+     ],
+     "kind": "direct",
+     "layout": "1x16",
+     "memory": {
+      "peak_rss_largest_node_gib": 4.17597,
+      "peak_rss_rank_max_gib": 4.17597,
+      "peak_rss_sum_gib": 4.17597,
+      "pss_peak_sum_gib": 4.04254,
+      "sacct_max_rss_gib": null
+     },
+     "metric": null,
+     "n": 3,
+     "names": [
+      "microstrip/gfem-direct__wheels__default__rep1",
+      "microstrip/gfem-direct__wheels__default__rep2",
+      "microstrip/gfem-direct__wheels__default__rep3"
+     ],
+     "ndof": 315870,
+     "noisy": false,
+     "order": 2,
+     "plausible": "skipped",
+     "rank0": null,
+     "rank_reduction": "max",
+     "ranks": 1,
+     "reference": null,
+     "resolved": null,
+     "same_code_against": "microstrip/gfem-direct__wheels__default__rep1",
+     "same_code_error": 1.99479e-12,
+     "same_code_label": "solver error",
+     "self_reports": {
+      "solver_nbytes": 2511890000.0
+     },
+     "setups": 5.0,
+     "solver": "gfem:direct",
+     "solves": 5.0,
+     "spread": 0.00488833,
+     "stack": "wheels",
+     "timings": {
+      "assemble_s": 1.09567,
+      "discretize_s": 0.135644,
+      "estimate_s": null,
+      "mesh_read_s": 0.40757,
+      "other_s": 0.182642,
+      "per_sample_s": 1.64583,
+      "postpro_s": null,
+      "rom_s": null,
+      "setup_s": 5.81736,
+      "setup_total_s": 7.45171,
+      "solve_s": 0.592371,
+      "solve_total_s": 0.592371,
+      "startup_s": 1.36522,
+      "work_s": 8.22916
+     },
+     "tolerance": null,
+     "version": "0.1.0",
+     "work_max_s": 8.23722,
+     "work_min_s": 8.19699,
+     "work_s": 8.22916
+    },
+    {
+     "accuracy_reason": "no_reference",
+     "bound": null,
+     "case": "microstrip",
+     "class": "direct",
+     "code": "gfem",
+     "default": true,
+     "error": null,
+     "error_items": null,
+     "imbalance": null,
+     "iterations": 0.0,
+     "jobs": [
+      "49175437"
+     ],
+     "kind": "petsc-mumps",
+     "layout": "1x16",
+     "memory": {
+      "peak_rss_largest_node_gib": 4.03825,
+      "peak_rss_rank_max_gib": 4.03825,
+      "peak_rss_sum_gib": 4.03825,
+      "pss_peak_sum_gib": 3.83558,
+      "sacct_max_rss_gib": null
+     },
+     "metric": null,
+     "n": 3,
+     "names": [
+      "microstrip/gfem-petsc-mumps__wheels__default__rep1",
+      "microstrip/gfem-petsc-mumps__wheels__default__rep2",
+      "microstrip/gfem-petsc-mumps__wheels__default__rep3"
+     ],
+     "ndof": 315870,
+     "noisy": false,
+     "order": 2,
+     "plausible": "skipped",
+     "rank0": null,
+     "rank_reduction": "max",
+     "ranks": 1,
+     "reference": null,
+     "resolved": null,
+     "same_code_against": "microstrip/gfem-direct__wheels__default__rep1",
+     "same_code_error": 4.19937e-11,
+     "same_code_label": "solver error",
+     "self_reports": {
+      "solver_nbytes": 2768850000.0
+     },
+     "setups": 5.0,
+     "solver": "gfem:petsc-mumps",
+     "solves": 5.0,
+     "spread": 0.00715368,
+     "stack": "wheels",
+     "timings": {
+      "assemble_s": 0.910682,
+      "discretize_s": 0.15529,
+      "estimate_s": null,
+      "mesh_read_s": 0.410628,
+      "other_s": 0.994888,
+      "per_sample_s": 8.4428,
+      "postpro_s": null,
+      "rom_s": null,
+      "setup_s": 38.209,
+      "setup_total_s": 39.6815,
+      "solve_s": 1.5228,
+      "solve_total_s": 1.5228,
+      "startup_s": 1.44038,
+      "work_s": 42.214
+     },
+     "tolerance": null,
+     "version": "0.1.0",
+     "work_max_s": 42.4501,
+     "work_min_s": 42.1481,
+     "work_s": 42.214
+    }
+   ],
+   "comparison": {
+    "label": null,
+    "ndof": {
+     "gfem": [
+      315870
+     ]
+    }
+   },
+   "error_cost": {
+    "differences": [
+     {
+      "class": "iterative",
+      "code": "gfem",
+      "difference": 9.37353e-09,
+      "layout": "1x16",
+      "peak_rss_sum_gib": 3.50394,
+      "solver": "gfem:bddc",
+      "tolerance": 1e-08,
+      "work_s": 56.0748
+     },
+     {
+      "class": "direct",
+      "code": "gfem",
+      "difference": 4.19937e-11,
+      "layout": "1x16",
+      "peak_rss_sum_gib": 4.03825,
+      "solver": "gfem:petsc-mumps",
+      "tolerance": null,
+      "work_s": 42.214
+     }
+    ],
+    "directs": [
+     {
+      "class": "direct",
+      "code": "gfem",
+      "layout": "1x16",
+      "peak_rss_sum_gib": 4.17597,
+      "solver": "gfem:direct",
+      "tolerance": null,
+      "work_s": 8.22916
+     },
+     {
+      "class": "direct",
+      "code": "gfem",
+      "layout": "1x16",
+      "peak_rss_sum_gib": 4.03825,
+      "solver": "gfem:petsc-mumps",
+      "tolerance": null,
+      "work_s": 42.214
+     }
+    ],
+    "equal_error": null,
+    "floors": {},
+    "ladders": [
+     {
+      "code": "gfem",
+      "rungs": [
+       {
+        "class": "iterative",
+        "code": "gfem",
+        "layout": "1x16",
+        "peak_rss_sum_gib": 3.50394,
+        "same_code_error": 9.37353e-09,
+        "solver": "gfem:bddc",
+        "tolerance": 1e-08,
+        "work_s": 56.0748
+       }
+      ],
+      "solver": "gfem:bddc"
+     }
+    ],
+    "points": [],
+    "reference": false,
+    "unresolved_band": null
+   },
+   "error_items": {
+    "lines": [],
+    "x": "frequency_hz"
+   },
+   "figures": {
+    "error_cost": "fig-microstrip-error-cost.svg",
+    "memory": "fig-microstrip-memory.svg",
+    "phases": "fig-microstrip-phases.svg"
+   },
+   "kind": "driven",
+   "layouts": [
+    {
+     "best": "1x16",
+     "cells": [
+      {
+       "default": true,
+       "labels": [
+        "default",
+        "best"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "work_max_s": 56.1862,
+       "work_min_s": 55.9926,
+       "work_s": 56.0748
+      }
+     ],
+     "default": "1x16",
+     "default_over_best": 1.0,
+     "listed_only": true,
+     "solver": "gfem:bddc",
+     "ties": [],
+     "tolerance": 1e-08,
+     "unrun": []
+    },
+    {
+     "best": "1x16",
+     "cells": [
+      {
+       "default": true,
+       "labels": [
+        "default",
+        "best"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "work_max_s": 8.23722,
+       "work_min_s": 8.19699,
+       "work_s": 8.22916
+      }
+     ],
+     "default": "1x16",
+     "default_over_best": 1.0,
+     "listed_only": true,
+     "solver": "gfem:direct",
+     "ties": [],
+     "tolerance": null,
+     "unrun": []
+    },
+    {
+     "best": "1x16",
+     "cells": [
+      {
+       "default": true,
+       "labels": [
+        "default",
+        "best"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "work_max_s": 42.4501,
+       "work_min_s": 42.1481,
+       "work_s": 42.214
+      }
+     ],
+     "default": "1x16",
+     "default_over_best": 1.0,
+     "listed_only": true,
+     "solver": "gfem:petsc-mumps",
+     "ties": [],
+     "tolerance": null,
+     "unrun": []
+    }
+   ],
+   "name": "microstrip",
+   "notes": [],
+   "phases": [
+    {
+     "accuracy_reason": "no_reference",
+     "bound": null,
+     "case": "microstrip",
+     "class": "iterative",
+     "code": "gfem",
+     "default": true,
+     "error": null,
+     "error_items": null,
+     "imbalance": null,
+     "iterations": 783.0,
+     "jobs": [
+      "49175437"
+     ],
+     "kind": "bddc",
+     "layout": "1x16",
+     "memory": {
+      "peak_rss_largest_node_gib": 3.50394,
+      "peak_rss_rank_max_gib": 3.50394,
+      "peak_rss_sum_gib": 3.50394,
+      "pss_peak_sum_gib": 3.49438,
+      "sacct_max_rss_gib": null
+     },
+     "metric": null,
+     "n": 3,
+     "names": [
+      "microstrip/gfem-bddc__wheels__default__rep1",
+      "microstrip/gfem-bddc__wheels__default__rep2",
+      "microstrip/gfem-bddc__wheels__default__rep3"
+     ],
+     "ndof": 315870,
+     "noisy": false,
+     "order": 2,
+     "plausible": "skipped",
+     "rank0": null,
+     "rank_reduction": "max",
+     "ranks": 1,
+     "reference": null,
+     "resolved": null,
+     "role": "default, best",
+     "same_code_against": "microstrip/gfem-direct__wheels__default__rep1",
+     "same_code_error": 9.37353e-09,
+     "same_code_label": "solver error",
+     "self_reports": {
+      "solver_nbytes": 265564000.0
+     },
+     "setups": 6.0,
+     "solver": "gfem:bddc",
+     "solves": 5.0,
+     "spread": 0.00345209,
+     "stack": "wheels",
+     "timings": {
+      "assemble_s": 3.0785,
+      "discretize_s": 0.136277,
+      "estimate_s": null,
+      "mesh_read_s": 0.409009,
+      "other_s": 0.206427,
+      "per_sample_s": 11.215,
+      "postpro_s": null,
+      "rom_s": null,
+      "setup_s": 0.0165932,
+      "setup_total_s": 3.64078,
+      "solve_s": 52.2159,
+      "solve_total_s": 52.2159,
+      "startup_s": 1.37601,
+      "work_s": 56.0748
+     },
+     "tolerance": 1e-08,
+     "version": "0.1.0",
+     "work_max_s": 56.1862,
+     "work_min_s": 55.9926,
+     "work_s": 56.0748
+    },
+    {
+     "accuracy_reason": "no_reference",
+     "bound": null,
+     "case": "microstrip",
+     "class": "direct",
+     "code": "gfem",
+     "default": true,
+     "error": null,
+     "error_items": null,
+     "imbalance": null,
+     "iterations": 0.0,
+     "jobs": [
+      "49175437"
+     ],
+     "kind": "direct",
+     "layout": "1x16",
+     "memory": {
+      "peak_rss_largest_node_gib": 4.17597,
+      "peak_rss_rank_max_gib": 4.17597,
+      "peak_rss_sum_gib": 4.17597,
+      "pss_peak_sum_gib": 4.04254,
+      "sacct_max_rss_gib": null
+     },
+     "metric": null,
+     "n": 3,
+     "names": [
+      "microstrip/gfem-direct__wheels__default__rep1",
+      "microstrip/gfem-direct__wheels__default__rep2",
+      "microstrip/gfem-direct__wheels__default__rep3"
+     ],
+     "ndof": 315870,
+     "noisy": false,
+     "order": 2,
+     "plausible": "skipped",
+     "rank0": null,
+     "rank_reduction": "max",
+     "ranks": 1,
+     "reference": null,
+     "resolved": null,
+     "role": "default, best",
+     "same_code_against": "microstrip/gfem-direct__wheels__default__rep1",
+     "same_code_error": 1.99479e-12,
+     "same_code_label": "solver error",
+     "self_reports": {
+      "solver_nbytes": 2511890000.0
+     },
+     "setups": 5.0,
+     "solver": "gfem:direct",
+     "solves": 5.0,
+     "spread": 0.00488833,
+     "stack": "wheels",
+     "timings": {
+      "assemble_s": 1.09567,
+      "discretize_s": 0.135644,
+      "estimate_s": null,
+      "mesh_read_s": 0.40757,
+      "other_s": 0.182642,
+      "per_sample_s": 1.64583,
+      "postpro_s": null,
+      "rom_s": null,
+      "setup_s": 5.81736,
+      "setup_total_s": 7.45171,
+      "solve_s": 0.592371,
+      "solve_total_s": 0.592371,
+      "startup_s": 1.36522,
+      "work_s": 8.22916
+     },
+     "tolerance": null,
+     "version": "0.1.0",
+     "work_max_s": 8.23722,
+     "work_min_s": 8.19699,
+     "work_s": 8.22916
+    },
+    {
+     "accuracy_reason": "no_reference",
+     "bound": null,
+     "case": "microstrip",
+     "class": "direct",
+     "code": "gfem",
+     "default": true,
+     "error": null,
+     "error_items": null,
+     "imbalance": null,
+     "iterations": 0.0,
+     "jobs": [
+      "49175437"
+     ],
+     "kind": "petsc-mumps",
+     "layout": "1x16",
+     "memory": {
+      "peak_rss_largest_node_gib": 4.03825,
+      "peak_rss_rank_max_gib": 4.03825,
+      "peak_rss_sum_gib": 4.03825,
+      "pss_peak_sum_gib": 3.83558,
+      "sacct_max_rss_gib": null
+     },
+     "metric": null,
+     "n": 3,
+     "names": [
+      "microstrip/gfem-petsc-mumps__wheels__default__rep1",
+      "microstrip/gfem-petsc-mumps__wheels__default__rep2",
+      "microstrip/gfem-petsc-mumps__wheels__default__rep3"
+     ],
+     "ndof": 315870,
+     "noisy": false,
+     "order": 2,
+     "plausible": "skipped",
+     "rank0": null,
+     "rank_reduction": "max",
+     "ranks": 1,
+     "reference": null,
+     "resolved": null,
+     "role": "default, best",
+     "same_code_against": "microstrip/gfem-direct__wheels__default__rep1",
+     "same_code_error": 4.19937e-11,
+     "same_code_label": "solver error",
+     "self_reports": {
+      "solver_nbytes": 2768850000.0
+     },
+     "setups": 5.0,
+     "solver": "gfem:petsc-mumps",
+     "solves": 5.0,
+     "spread": 0.00715368,
+     "stack": "wheels",
+     "timings": {
+      "assemble_s": 0.910682,
+      "discretize_s": 0.15529,
+      "estimate_s": null,
+      "mesh_read_s": 0.410628,
+      "other_s": 0.994888,
+      "per_sample_s": 8.4428,
+      "postpro_s": null,
+      "rom_s": null,
+      "setup_s": 38.209,
+      "setup_total_s": 39.6815,
+      "solve_s": 1.5228,
+      "solve_total_s": 1.5228,
+      "startup_s": 1.44038,
+      "work_s": 42.214
+     },
+     "tolerance": null,
+     "version": "0.1.0",
+     "work_max_s": 42.4501,
+     "work_min_s": 42.1481,
+     "work_s": 42.214
+    }
+   ],
+   "pins": {
+    "gfem": [
+     "linear_solver per kind",
+     "the run tolerance",
+     "eigen_tolerance 1e-10",
+     "no field output"
+    ]
+   },
+   "reference": {
+    "id": null,
+    "ids": [],
+    "in_store": false
+   },
+   "rescore_flag": null,
+   "rescored_against": null,
+   "snapshot": [
+    {
+     "class": "direct",
+     "entries": [
+      {
+       "code": "gfem",
+       "error": null,
+       "jobs": [
+        "49175437"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "peak_rss_sum_gib": 4.17597,
+       "role": "default",
+       "slow_node": false,
+       "solver": "gfem:direct",
+       "work_s": 8.22916
+      },
+      {
+       "code": "gfem",
+       "error": null,
+       "jobs": [
+        "49175437"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "peak_rss_sum_gib": 4.17597,
+       "role": "best",
+       "slow_node": false,
+       "solver": "gfem:direct",
+       "work_s": 8.22916
+      },
+      {
+       "code": "gfem",
+       "error": null,
+       "jobs": [
+        "49175437"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "peak_rss_sum_gib": 4.03825,
+       "role": "default",
+       "slow_node": false,
+       "solver": "gfem:petsc-mumps",
+       "work_s": 42.214
+      },
+      {
+       "code": "gfem",
+       "error": null,
+       "jobs": [
+        "49175437"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "peak_rss_sum_gib": 4.03825,
+       "role": "best",
+       "slow_node": false,
+       "solver": "gfem:petsc-mumps",
+       "work_s": 42.214
+      }
+     ],
+     "ratios": []
+    },
+    {
+     "class": "iterative",
+     "entries": [
+      {
+       "code": "gfem",
+       "error": null,
+       "jobs": [
+        "49175437"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "peak_rss_sum_gib": 3.50394,
+       "role": "default",
+       "slow_node": false,
+       "solver": "gfem:bddc",
+       "work_s": 56.0748
+      },
+      {
+       "code": "gfem",
+       "error": null,
+       "jobs": [
+        "49175437"
+       ],
+       "layout": "1x16",
+       "n": 3,
+       "peak_rss_sum_gib": 3.50394,
+       "role": "best",
+       "slow_node": false,
+       "solver": "gfem:bddc",
+       "work_s": 56.0748
+      }
+     ],
+     "ratios": []
+    }
+   ],
+   "structural": {
+    "gfem:bddc": [
+     "bddc_build: NGSolve builds the BDDC preconditioner while it assembles the first matrix of a setup, so the build is timed inside assemble"
+    ],
+    "gfem:direct": [
+     "direct_arm: PARDISO (MKL), one process"
+    ],
+    "gfem:petsc-mumps": [
+     "direct_arm: PETSc MUMPS"
+    ]
+   }
+  }
+ ],
+ "caveats": [
+  "Times and memory are observations of one machine, software stack and campaign; nothing here is a pass/fail, and no ratio is a claim beyond this campaign.",
+  "Headline time is work time (wall minus startup); startup is shown apart. Estimator and postprocessing are inside work time because Palace users cannot switch them off.",
+  "Memory is the sum of per-rank peak RSS (shared pages counted per rank); PSS and sacct are cross-checks.",
+  "Palace phases are max-of-rows (an upper bound on the slowest rank); rank 0 shown beside.",
+  "Nominal Krylov tolerances mean different things in the two codes; iterative codes are compared only at equal achieved error.",
+  "Accuracy is against the named converged reference; unresolved errors are shown as such; Palace errors carry the definition offset δ; same-code error is solver error, not accuracy.",
+  "Each code runs at its own defaults except the listed pins; structural differences are listed per case, never removed.",
+  "Excluded records: everything in the failures table. Medians over passing repeats; n < 3 shown.",
+  "Ratios across Slurm jobs are labelled \"different nodes\"; node class is observed, not controlled."
+ ],
+ "command": "python -m benchmarks report 20261117-4d64c1c-release-gfem --out DIR",
+ "flags": {
+  "allow_mixed": false,
+  "no_figures": false,
+  "rescore": {}
+ },
+ "gates": {
+  "campaigns": [
+   {
+    "campaign": "20261117-4d64c1c-release-gfem",
+    "complete": "pass",
+    "dof_equal": "skipped",
+    "dof_equal_detail": {},
+    "harness_failures": [],
+    "mixed": [],
+    "provenance": "pass"
+   }
+  ],
+  "failures": [
+   {
+    "campaign": "20261117-4d64c1c-release-gfem",
+    "failing": [
+     "complete"
+    ],
+    "failure_class": "solver",
+    "name": "bragg/gfem-bddc__wheels__default__rep1",
+    "reason": "solve: ValueError: Eigenmode.wave_vector sets a Bloch phase, so the operator is not symmetric, and linear_solver='bddc_gmres' cannot solve the transposed system that two-sided refinement solves on the shift's factors: use linear_solver='direct'.",
+    "status": "failed"
+   },
+   {
+    "campaign": "20261117-4d64c1c-release-gfem",
+    "failing": [
+     "complete"
+    ],
+    "failure_class": "solver",
+    "name": "bragg/gfem-bddc__wheels__default__rep2",
+    "reason": "solve: ValueError: Eigenmode.wave_vector sets a Bloch phase, so the operator is not symmetric, and linear_solver='bddc_gmres' cannot solve the transposed system that two-sided refinement solves on the shift's factors: use linear_solver='direct'.",
+    "status": "failed"
+   },
+   {
+    "campaign": "20261117-4d64c1c-release-gfem",
+    "failing": [
+     "complete"
+    ],
+    "failure_class": "solver",
+    "name": "bragg/gfem-bddc__wheels__default__rep3",
+    "reason": "solve: ValueError: Eigenmode.wave_vector sets a Bloch phase, so the operator is not symmetric, and linear_solver='bddc_gmres' cannot solve the transposed system that two-sided refinement solves on the shift's factors: use linear_solver='direct'.",
+    "status": "failed"
+   },
+   {
+    "campaign": "20261117-4d64c1c-release-gfem",
+    "failing": [
+     "complete"
+    ],
+    "failure_class": "solver",
+    "name": "bragg/gfem-petsc-mumps__wheels__default__rep1",
+    "reason": "solve: ValueError: Eigenmode.wave_vector sets a Bloch phase, so the operator is not symmetric, and linear_solver='petsc' cannot solve the transposed system that two-sided refinement solves on the shift's factors: use linear_solver='direct'.",
+    "status": "failed"
+   },
+   {
+    "campaign": "20261117-4d64c1c-release-gfem",
+    "failing": [
+     "complete"
+    ],
+    "failure_class": "solver",
+    "name": "bragg/gfem-petsc-mumps__wheels__default__rep2",
+    "reason": "solve: ValueError: Eigenmode.wave_vector sets a Bloch phase, so the operator is not symmetric, and linear_solver='petsc' cannot solve the transposed system that two-sided refinement solves on the shift's factors: use linear_solver='direct'.",
+    "status": "failed"
+   },
+   {
+    "campaign": "20261117-4d64c1c-release-gfem",
+    "failing": [
+     "complete"
+    ],
+    "failure_class": "solver",
+    "name": "bragg/gfem-petsc-mumps__wheels__default__rep3",
+    "reason": "solve: ValueError: Eigenmode.wave_vector sets a Bloch phase, so the operator is not symmetric, and linear_solver='petsc' cannot solve the transposed system that two-sided refinement solves on the shift's factors: use linear_solver='direct'.",
+    "status": "failed"
+   }
+  ]
+ },
+ "header": {
+  "campaigns": [
+   {
+    "billed_core_h": 19.724,
+    "core_budget": 16,
+    "gfem_commit": "4d64c1c3ed928cd1aef502f49a658a89c3ad847c",
+    "gfem_commit_utc": "2026-11-17T21:27:19Z",
+    "harness_commit": "4d64c1c3ed928cd1aef502f49a658a89c3ad847c",
+    "id": "20261117-4d64c1c-release-gfem",
+    "jobs": [
+     {
+      "billed_core_h": 19.724,
+      "job": "wheels",
+      "nodes": [
+       "gs03r2b69"
+      ],
+      "slurm_ids": [
+       "49175437"
+      ],
+      "state": "COMPLETED"
+     }
+    ],
+    "machine": "mn5-gpp",
+    "name": "release-gfem",
+    "node_classes": [
+     "standard"
+    ],
+    "solvers": {},
+    "stacks": {
+     "wheels": {
+      "description_sha256": "f8638f63c753db57df400ee3e42d06f94756d81ff2a96e234379b6bc9ce84da2",
+      "env_manifest_sha256": "3636a79428c8952f9858f12dfb17406da6905c7047cfe223bf773ac80d3eb3c5",
+      "fingerprint": "63af6b40668284c5eb08ef1e2eb76b1ee3ef261abd473362d418e0475f1e25f8",
+      "palace_manifest_sha256": null
+     }
+    }
+   }
+  ]
+ },
+ "id": "20261117-6e34eb3",
+ "inputs": [
+  "campaigns/20261117-4d64c1c-release-gfem"
+ ],
+ "inputs_root": "../..",
+ "inputs_sha256": "6e34eb3dfec8a24484499d50f0e1b18c81af43ad34952b8cd9ffdd4937af701a",
+ "machines": [
+  {
+   "campaign": "20261117-4d64c1c-release-gfem",
+   "dgemm_gflops": 1066.11,
+   "host": "gs03r2b69",
+   "job": "49175437",
+   "slow_node": false,
+   "threads": 16,
+   "triad_gbs": 136.84,
+   "zgemm_gflops": 1061.35
+  }
+ ],
+ "matplotlib": "3.11.2",
+ "notes": [],
+ "schema": "suite-report/1",
+ "stamps": [],
+ "trend": {
+  "note": "trend needs two campaigns",
+  "series": []
+ }
+}

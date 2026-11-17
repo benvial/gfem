@@ -1,0 +1,37 @@
+{
+ "format": "suite-reference/1",
+ "id": "r10M_void-20261117-058b2f5",
+ "family": "r10M_void",
+ "computed_utc": "2026-11-17T18:55:08Z",
+ "case": {
+  "name": "r10M_void",
+  "definition_sha256": "c74781c077962f4f7ff938d840f4ea0bd742aeb451080997e85fbc08cc7656c8",
+  "mesh_sha256": "74278001c74e47adb8c5a6e582bdb3019c7ff9e730bbfbcea5b73481808539d2"
+ },
+ "physics_sha256": "0dd5b1780ef3bdeb66ea0966742e5828b93d10e35566ce47060ae04c3542a8ee",
+ "meshes": {
+  "74278001c74e47adb8c5a6e582bdb3019c7ff9e730bbfbcea5b73481808539d2": {
+   "level": 0,
+   "dof": {
+    "2": 10248856
+   }
+  }
+ },
+ "method": "none",
+ "reason": "no_reference: no converged reference fits the budget (one split is about 80 M DOF); records carry the same-code error only",
+ "quantities": {},
+ "ceiling": {},
+ "same_mesh_error": {},
+ "cross_checks": [],
+ "inputs": {
+  "meshes": [
+   "74278001c74e47adb8c5a6e582bdb3019c7ff9e730bbfbcea5b73481808539d2"
+  ]
+ },
+ "provenance": {
+  "gfem_commit": "058b2f523ff4af15c1f0108ea8c60bb3a1015086",
+  "script": "benchmarks/references/closed.py"
+ },
+ "runs": null,
+ "cost_core_h": 0.0
+}

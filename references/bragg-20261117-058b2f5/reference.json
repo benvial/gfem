@@ -1,0 +1,53 @@
+{
+ "format": "suite-reference/1",
+ "id": "bragg-20261117-058b2f5",
+ "family": "bragg",
+ "computed_utc": "2026-11-17T18:55:08Z",
+ "case": {
+  "name": "bragg",
+  "definition_sha256": "12d5bc3490322cbbca1be204fdc554c8fe56d20f46e5e79a473e964235cd4da9",
+  "mesh_sha256": "18019f17cc2a57c17f77a09fa1d429d3a0305ddec0e5a9c5b46eaf4203f1e88e"
+ },
+ "physics_sha256": "31884fe9c043d961c8200d8bf5178571b48a01b18a36df348c2d3ccd142a3b20",
+ "meshes": {
+  "18019f17cc2a57c17f77a09fa1d429d3a0305ddec0e5a9c5b46eaf4203f1e88e": {
+   "level": 0,
+   "dof": {
+    "3": 1560
+   }
+  }
+ },
+ "method": "closed_form",
+ "quantities": {
+  "f_hz": {
+   "values": [
+    5185529649.204526,
+    7206816174.790155
+   ],
+   "values_decimal": [
+    "5185529649.204525515010303243418928684121",
+    "7206816174.790155504179802522783596054447"
+   ],
+   "bound": 1e-12,
+   "bound_kind": "relative",
+   "metric": "max_rel_dRe_f"
+  }
+ },
+ "ceiling": {
+  "3": 1e-05
+ },
+ "same_mesh_error": {},
+ "cross_checks": [],
+ "inputs": {
+  "meshes": [
+   "18019f17cc2a57c17f77a09fa1d429d3a0305ddec0e5a9c5b46eaf4203f1e88e"
+  ]
+ },
+ "provenance": {
+  "gfem_commit": "058b2f523ff4af15c1f0108ea8c60bb3a1015086",
+  "script": "benchmarks/references/closed.py",
+  "formula": "TMM (Rytov) roots at k = pi/a, a = 10 mm, d1 = 4 mm, eps 2 and 9 (tests/periodic_cases.py tmm_frequency and C3_* at 858bc66)"
+ },
+ "runs": null,
+ "cost_core_h": 0.0
+}

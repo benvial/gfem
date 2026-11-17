@@ -1,0 +1,53 @@
+{
+ "format": "suite-reference/1",
+ "id": "lcavity-20261117-058b2f5",
+ "family": "lcavity",
+ "computed_utc": "2026-11-17T18:55:07Z",
+ "case": {
+  "name": "lcavity",
+  "definition_sha256": "24f9e8cb8ff735568bff35c8135f7f7fe058932f64a076894bbd99cc974e1a71",
+  "mesh_sha256": "11ac5172e1a64f60e7c7e7c2846defa24cbb990a076f96d2e8578bf4a86390e6"
+ },
+ "physics_sha256": "26b41a540d2cf12504130ac48f356dc7a55c389d4ae2e9d893b3fa7df088200c",
+ "meshes": {
+  "11ac5172e1a64f60e7c7e7c2846defa24cbb990a076f96d2e8578bf4a86390e6": {
+   "level": 0,
+   "dof": {
+    "2": 246416
+   }
+  }
+ },
+ "method": "closed_form",
+ "quantities": {
+  "f_hz": {
+   "values": [
+    148140269652.022
+   ],
+   "values_decimal": [
+    "148140269652.0220093031869864197563864665"
+   ],
+   "bound": 1e-12,
+   "bound_kind": "relative",
+   "metric": "max_rel_dRe_f"
+  }
+ },
+ "ceiling": {
+  "2": 0.0038907
+ },
+ "same_mesh_error": {
+  "2": 0.00038907
+ },
+ "cross_checks": [],
+ "inputs": {
+  "meshes": [
+   "11ac5172e1a64f60e7c7e7c2846defa24cbb990a076f96d2e8578bf4a86390e6"
+  ]
+ },
+ "provenance": {
+  "gfem_commit": "058b2f523ff4af15c1f0108ea8c60bb3a1015086",
+  "script": "benchmarks/references/closed.py",
+  "formula": "c sqrt(lambda1) / (2 pi), lambda1 = 9.6397238440219 mm^-2 (tests/refinement_cases.py CAVITY_LAMBDA1 at 858bc66)"
+ },
+ "runs": null,
+ "cost_core_h": 0.0
+}

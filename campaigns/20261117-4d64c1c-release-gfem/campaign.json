@@ -1,0 +1,105 @@
+{
+ "schema": "suite-campaign/1",
+ "id": "20261117-4d64c1c-release-gfem",
+ "name": "release-gfem",
+ "planned_utc": "2026-11-17T22:29:53Z",
+ "campaign_file": {
+  "path": "benchmarks/campaigns/release-gfem.toml",
+  "sha256": "964a7251f6e56375e8d761ca6a127fa4bf137d220b1267095f4f8544c5763acb"
+ },
+ "pins": {
+  "gfem": {
+   "commit": "4d64c1c3ed928cd1aef502f49a658a89c3ad847c",
+   "commit_utc": "2026-11-17T21:27:19Z"
+  },
+  "harness": {
+   "commit": "4d64c1c3ed928cd1aef502f49a658a89c3ad847c"
+  },
+  "solvers": {},
+  "stacks": {
+   "wheels": {
+    "description_sha256": "f8638f63c753db57df400ee3e42d06f94756d81ff2a96e234379b6bc9ce84da2",
+    "env_manifest_sha256": "3636a79428c8952f9858f12dfb17406da6905c7047cfe223bf773ac80d3eb3c5",
+    "fingerprint": "63af6b40668284c5eb08ef1e2eb76b1ee3ef261abd473362d418e0475f1e25f8",
+    "palace_manifest_sha256": null
+   }
+  }
+ },
+ "machine": "mn5-gpp",
+ "core_budget": 16,
+ "jobs": [
+  {
+   "job": "wheels",
+   "group": "stack",
+   "qos": "gp_debug",
+   "constraint": null,
+   "nodes": [
+    "gs03r2b69"
+   ],
+   "elapsed_s": 634.0,
+   "billed_core_h": 19.724,
+   "state": "COMPLETED",
+   "cases": [
+    "bragg",
+    "lcavity",
+    "microstrip"
+   ],
+   "stack": "wheels",
+   "runs": 27,
+   "est_s": 1575.0,
+   "est_core_h": 49.0,
+   "time_limit": "0:40:00",
+   "slurm_ids": [
+    "49175437"
+   ]
+  }
+ ],
+ "records": {
+  "records/bragg/gfem-bddc__wheels__default__rep1.json": "de3ba70c2996a4576b884eabfcc558ec7f1e0392978dde7f39f0b5d0c65aed48",
+  "records/bragg/gfem-bddc__wheels__default__rep2.json": "759b9ae65d5aa2c5b6f8c73c4a5845cfd3e324d7b948a6af5464e13385cd1472",
+  "records/bragg/gfem-bddc__wheels__default__rep3.json": "4d5d15770b0e13add64243abe627245a087e5997bf48256aa6c4c10493e61d61",
+  "records/bragg/gfem-direct__wheels__default__rep1.json": "05c7c8d036179c1ba2d00645fc049fa5dcf9a99f95eab1463e59d16234bc70a0",
+  "records/bragg/gfem-direct__wheels__default__rep2.json": "f0dd84da0a32f720d201927c0419cedcc5f19a8205ae72028653c0196e0a1574",
+  "records/bragg/gfem-direct__wheels__default__rep3.json": "7a9142cc81a282a957dffdfd2d37f6d3e72ea31b7480b64dc50fc1006722006a",
+  "records/bragg/gfem-petsc-mumps__wheels__default__rep1.json": "9343e11b3736c2bf515ffba08a46791c780264534710d39588eef2ad63b2d7d3",
+  "records/bragg/gfem-petsc-mumps__wheels__default__rep2.json": "2d819c3c59554c8c88c562435c6fcac19deac433104551a1ad80bad2cfbad3ea",
+  "records/bragg/gfem-petsc-mumps__wheels__default__rep3.json": "ae75ca8b03f7cf71114120da58e913e3be042e9f090c174e6fb4d2d3ebef128f",
+  "records/lcavity/gfem-bddc__wheels__default__rep1.json": "0708d05bf8364fa33ac71ea06c7d5140969473ddfa3d955fc4bf3cadbc6527e5",
+  "records/lcavity/gfem-bddc__wheels__default__rep2.json": "df8cb9099812ca9e55a760f6a1b9faa9330566674ce0ab12661b5ace18d2bf82",
+  "records/lcavity/gfem-bddc__wheels__default__rep3.json": "d9f2d157bcb3e82c9739b7c61ae4da686ca39bcdbd27808c4ba76632274487b0",
+  "records/lcavity/gfem-direct__wheels__default__rep1.json": "ed19d6e1d78f5fb06f7ed561a370835df47703dab5121d125eaf5d717f0c3b75",
+  "records/lcavity/gfem-direct__wheels__default__rep2.json": "82f24f4d72dd1e9e90254fff6cdc757e803fc81eb3ff63bed251b56ab56aa60a",
+  "records/lcavity/gfem-direct__wheels__default__rep3.json": "4616adf58af320e4458626bd960e811cc031719108021162777b91eee7a3cfb1",
+  "records/lcavity/gfem-petsc-mumps__wheels__default__rep1.json": "65aa8d5dc1ab7e332f4add28aaccec7c30c9407dba9f381bb3329c7959df8f1f",
+  "records/lcavity/gfem-petsc-mumps__wheels__default__rep2.json": "25135074366412ba2dc6a5df83cb692832943c83cb0ab497f082d5457d847f23",
+  "records/lcavity/gfem-petsc-mumps__wheels__default__rep3.json": "3689991112962386840cd03ed510a9cbb90487827b8023adb57a4ef186431957",
+  "records/microstrip/gfem-bddc__wheels__default__rep1.json": "df52c13b3ca66f9ce6cba08d9a63c75ed203b6e5a2c260d2aa7753bc5dcdaeaf",
+  "records/microstrip/gfem-bddc__wheels__default__rep2.json": "af5e265fb3618a5aeb756aecbdb4aa82caa871600d3a43d725eb3bac06bd58fd",
+  "records/microstrip/gfem-bddc__wheels__default__rep3.json": "f336497ce473858aa85d612bd828b8a4b0bad45d56aaaf1a4f7328ec2b9a7111",
+  "records/microstrip/gfem-direct__wheels__default__rep1.json": "ba6158f4a6f448b12807b23b2a01f6bf68ca82c571f4dcb21f839638672e2e62",
+  "records/microstrip/gfem-direct__wheels__default__rep2.json": "6f25e90cb85cd53ab23358b1ee3a1d401747270a4e8ae5f47d7c0b594a86c771",
+  "records/microstrip/gfem-direct__wheels__default__rep3.json": "58068029cea15c6ab34a3353e51e135cbe49ca08052134894aac722b4ac79944",
+  "records/microstrip/gfem-petsc-mumps__wheels__default__rep1.json": "197252d23746f307a6b6947c1fbeb46b785eac3b1d30397bdc35592a093d7d7a",
+  "records/microstrip/gfem-petsc-mumps__wheels__default__rep2.json": "1f119c4a03e9a77ad2293420616df880b7f2902cc6eb4a9c79d5583ae25a2ffb",
+  "records/microstrip/gfem-petsc-mumps__wheels__default__rep3.json": "1765d8289b7fb7676c2d9434d233de6039a36ae65026ea5dd1273c6da63845e3"
+ },
+ "checks": {
+  "complete": "pass",
+  "provenance": "pass",
+  "dof_equal": "skipped",
+  "node_class": {
+   "observed": [
+    "standard"
+   ],
+   "planned": "standard"
+  },
+  "harness_failures": []
+ },
+ "closed_utc": "2026-11-17T22:41:18Z",
+ "node_class": "standard",
+ "repeats": 3,
+ "runs": 27,
+ "est_core_h": 49.0,
+ "limit_core_h": 73.5,
+ "notes": []
+}
