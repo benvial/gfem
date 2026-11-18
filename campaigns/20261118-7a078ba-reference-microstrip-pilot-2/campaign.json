@@ -1,0 +1,85 @@
+{
+ "schema": "suite-campaign/1",
+ "id": "20261118-7a078ba-reference-microstrip-pilot-2",
+ "name": "reference-microstrip-pilot",
+ "planned_utc": "2026-11-18T01:18:17Z",
+ "campaign_file": {
+  "path": "benchmarks/campaigns/reference-microstrip-pilot.toml",
+  "sha256": "bcb0a819ba604aae3d9ff1cc81b85786a781db1bae9a7a85a3883abca5933330"
+ },
+ "pins": {
+  "gfem": {
+   "commit": "7a078ba60e657062c7b90bdf27bfaef9ec3dde8e",
+   "commit_utc": "2026-11-18T01:04:48Z"
+  },
+  "harness": {
+   "commit": "7a078ba60e657062c7b90bdf27bfaef9ec3dde8e"
+  },
+  "solvers": {},
+  "stacks": {
+   "wheels": {
+    "description_sha256": "f8638f63c753db57df400ee3e42d06f94756d81ff2a96e234379b6bc9ce84da2",
+    "env_manifest_sha256": "2bd31c03cb5536a90659762f30863e1d5da91d4d974130d0516f3fd66d3a7411",
+    "fingerprint": "63af6b40668284c5eb08ef1e2eb76b1ee3ef261abd473362d418e0475f1e25f8",
+    "palace_manifest_sha256": null
+   }
+  }
+ },
+ "machine": "mn5-gpp",
+ "core_budget": 112,
+ "jobs": [
+  {
+   "job": "wheels",
+   "group": "stack",
+   "qos": "gp_debug",
+   "constraint": null,
+   "nodes": [
+    "gs05r3b23"
+   ],
+   "elapsed_s": 1056.0,
+   "billed_core_h": 32.853,
+   "state": "COMPLETED",
+   "cases": [
+    "microstrip_L0_p1",
+    "microstrip_L0_p2",
+    "microstrip_L0_p3",
+    "microstrip_L1_p2",
+    "microstrip_L1_p3"
+   ],
+   "stack": "wheels",
+   "runs": 5,
+   "est_s": 2385.0,
+   "est_core_h": 74.2,
+   "time_limit": "1:00:00",
+   "slurm_ids": [
+    "49180274"
+   ]
+  }
+ ],
+ "records": {
+  "records/microstrip_L0_p1/gfem-direct__wheels__default__rep1.json": "dbabab2835358c8acc7dace460dcb8d27e03470ec85e7d256f8ac85c046192be",
+  "records/microstrip_L0_p2/gfem-direct__wheels__default__rep1.json": "553b97001ad290939ac8156be2c318540619868dfc55d4deb9967423c301be5d",
+  "records/microstrip_L0_p3/gfem-direct__wheels__default__rep1.json": "69fcb18fe0433c5e3514bdb94f9f01866450e0ff177b2ab4c390182be13b0411",
+  "records/microstrip_L1_p2/gfem-direct__wheels__default__rep1.json": "15b44d3eddfc36b2dc6c40db99f89429c8ee4fa5a414bb73e867b31db386e3f3",
+  "records/microstrip_L1_p3/gfem-direct__wheels__default__rep1.json": "27bbc2ab58aacf0badee4735506db77c0e9bb5e43403612dd9583fd111b62f8d"
+ },
+ "checks": {
+  "complete": "pass",
+  "provenance": "pass",
+  "dof_equal": "skipped",
+  "node_class": {
+   "observed": [
+    "standard"
+   ],
+   "planned": "standard"
+  },
+  "harness_failures": []
+ },
+ "closed_utc": "2026-11-18T01:44:29Z",
+ "node_class": "standard",
+ "repeats": 1,
+ "runs": 5,
+ "est_core_h": 74.2,
+ "limit_core_h": 111.3,
+ "notes": []
+}

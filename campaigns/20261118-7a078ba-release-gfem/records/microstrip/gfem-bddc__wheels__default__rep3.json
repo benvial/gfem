@@ -1,0 +1,393 @@
+{
+ "schema": "suite-record/1",
+ "campaign": "20261118-7a078ba-release-gfem",
+ "name": "microstrip/gfem-bddc__wheels__default__rep3",
+ "run": {
+  "case": "microstrip",
+  "solver": "gfem:bddc",
+  "stack": "wheels",
+  "layout": {
+   "asked": "default",
+   "ranks": 1,
+   "threads": 16
+  },
+  "core_budget": 16,
+  "repeat": 3,
+  "tolerance": 1e-08,
+  "order_in_job": 19,
+  "job": "49180275",
+  "step": "17",
+  "started_utc": "2026-11-18T01:53:15Z",
+  "finished_utc": "2026-11-18T01:54:27Z",
+  "added_for": null,
+  "launch": "srun"
+ },
+ "status": "ok",
+ "reason": null,
+ "failure_class": null,
+ "slurm_state": "COMPLETED",
+ "returncode": 0,
+ "case": {
+  "definition_sha256": "7b0c58694fea8d377a02a5c43e98ec6da2da4a1deb8cf7bb63e84a1371523c19",
+  "mesh_sha256": "52caa88ac88570ddd58d1128063b60f7d925f802d3ce66c58cf562c9689e1b89",
+  "order": 2,
+  "ndof": 315870,
+  "reference": {
+   "id": "microstrip-20261118-1a0108b",
+   "sha256": "811894b6ade23f0b9bc5d965e0c9e5229a392bb0989fe4082c565344c2a656f6"
+  }
+ },
+ "outputs": {
+  "frequencies_hz": [
+   1000000000.0,
+   25000000000.0,
+   50000000000.0,
+   75000000000.0,
+   100000000000.0
+  ],
+  "s": {
+   "p1,p1": [
+    [
+     0.033882659137163484,
+     0.008280507424776746
+    ],
+    [
+     0.05319009391789531,
+     -0.022775851736899354
+    ],
+    [
+     0.015527303259925684,
+     -0.0394399979636125
+    ],
+    [
+     0.0015091583466961822,
+     -0.009717154785435993
+    ],
+    [
+     0.02507578605174654,
+     -0.006150718723676883
+    ]
+   ],
+   "p2,p1": [
+    [
+     0.9652823058940361,
+     -0.04881690714564769
+    ],
+    [
+     0.46529746165165975,
+     -0.8204279566966142
+    ],
+    [
+     -0.4656189804769813,
+     -0.8068570316389029
+    ],
+    [
+     -0.9207458313355196,
+     -0.009972943336469942
+    ],
+    [
+     -0.4742944092040146,
+     0.7774513138386294
+    ]
+   ],
+   "p1,p2": [
+    [
+     0.9652823055504451,
+     -0.04881690612703431
+    ],
+    [
+     0.46529746578429254,
+     -0.8204279580030672
+    ],
+    [
+     -0.4656189796958404,
+     -0.8068570314432457
+    ],
+    [
+     -0.920745831337688,
+     -0.009972943255804579
+    ],
+    [
+     -0.47429440939238365,
+     0.777451314428508
+    ]
+   ],
+   "p2,p2": [
+    [
+     0.03388286264920537,
+     0.008280195876101303
+    ],
+    [
+     0.053240627862348955,
+     -0.022854707030995212
+    ],
+    [
+     0.015463066978182116,
+     -0.0396307514505104
+    ],
+    [
+     0.0015246012035949885,
+     -0.009791298059695211
+    ],
+    [
+     0.025305544426652782,
+     -0.006659470386067437
+    ]
+   ]
+  },
+  "iterations": [
+   112,
+   245,
+   224,
+   148,
+   168
+  ]
+ },
+ "accuracy": {
+  "metric": "max_abs_dS",
+  "value": 0.027185209953155345,
+  "per_item": [
+   0.01411348248060193,
+   0.027185209953155345,
+   0.02524532775091003,
+   0.02677497522905343,
+   0.026964829336291685
+  ],
+  "bound": 0.004343899485829044,
+  "resolved": false
+ },
+ "same_code_error": {
+  "metric": "max_abs_dS",
+  "value": 1.030366045231953e-08,
+  "per_item": [
+   4.9662442468533145e-09,
+   1.030366045231953e-08,
+   3.889511962369241e-09,
+   5.360613984175093e-09,
+   2.9495907565487684e-09
+  ],
+  "against": "microstrip/gfem-direct__wheels__default__rep1",
+  "label": "solver error"
+ },
+ "timings": {
+  "wall_s": 71.901,
+  "startup_s": 2.436174110043794,
+  "work_s": 69.46513564325869,
+  "mesh_read_s": 0.41306692687794566,
+  "discretize_s": 0.1328181172721088,
+  "assemble_s": 3.168609690386802,
+  "setup_s": 0.020018379669636488,
+  "solve_s": 65.5152832553722,
+  "estimate_s": null,
+  "postpro_s": null,
+  "rom_s": null,
+  "other_s": 0.2153392736800015,
+  "setup_total_s": 3.734513114206493,
+  "solve_total_s": 65.5152832553722,
+  "per_sample_s": 13.893027128651738,
+  "rank_reduction": "max",
+  "source": "gfem.timing",
+  "rank0": {
+   "mesh_read_s": 0.41306692687794566,
+   "discretize_s": 0.1328181172721088,
+   "assemble_s": 3.168609690386802,
+   "setup_s": 0.020018379669636488,
+   "solve_s": 65.5152832553722,
+   "estimate_s": null,
+   "postpro_s": null,
+   "rom_s": null,
+   "other_s": 0.2153392736800015
+  }
+ },
+ "memory": {
+  "peak_rss_sum_gib": 3.5432815551757812,
+  "peak_rss_rank_max_gib": 3.5432815551757812,
+  "peak_rss_largest_node_gib": 3.5432815551757812,
+  "metric": "VmHWM_sum",
+  "pss_peak_sum_gib": 3.5134267807006836,
+  "sacct_max_rss_gib": 2.525684356689453,
+  "self_reports": {
+   "solver_nbytes": 265564200
+  }
+ },
+ "checks": {
+  "mesh_hash": "pass",
+  "complete": "pass",
+  "dof": "pass",
+  "converged": "pass",
+  "provenance": "pass",
+  "layout": "pass",
+  "placement": "pass",
+  "reference_matches": "pass",
+  "accuracy_plausible": "pass"
+ },
+ "structural": {
+  "setups": 6,
+  "solves": 5,
+  "excitations": 2,
+  "bddc_build": "NGSolve builds the BDDC preconditioner while it assembles the first matrix of a setup, so the build is timed inside assemble"
+ },
+ "stack": {
+  "name": "wheels",
+  "kind": "wheels",
+  "closed": [
+   "mkl (pip, PARDISO)"
+  ],
+  "versions": {
+   "palace": "0.19.0",
+   "ngsolve": "6.2.2608",
+   "petsc": "3.26.0"
+  },
+  "fingerprint": "63af6b40668284c5eb08ef1e2eb76b1ee3ef261abd473362d418e0475f1e25f8",
+  "description": {
+   "name": "wheels",
+   "kind": "wheels",
+   "closed": [
+    "mkl (pip, PARDISO)"
+   ],
+   "versions": {
+    "palace": "0.19.0",
+    "ngsolve": "6.2.2608",
+    "petsc": "3.26.0"
+   },
+   "codes": {
+    "gfem": {
+     "modules": [
+      "openmpi/4.1.6-gcc"
+     ],
+     "packages": [],
+     "env": {
+      "JAX_PLATFORMS": "cpu",
+      "JAX_ENABLE_X64": "1",
+      "OMPI_MCA_opal_warn_on_missing_libcuda": "0"
+     },
+     "threads": {
+      "OMP_NUM_THREADS": "threads",
+      "MKL_NUM_THREADS": "threads",
+      "NGS_NUM_THREADS": "threads",
+      "OPENBLAS_NUM_THREADS": "threads"
+     },
+     "caps": {
+      "OPENBLAS_NUM_THREADS": 64
+     },
+     "mpi": "pmix",
+     "launcher": null,
+     "entry": null,
+     "python": null,
+     "launch_r1": "srun"
+    },
+    "palace": {
+     "modules": [],
+     "packages": [],
+     "env": {},
+     "threads": {
+      "OMP_NUM_THREADS": "threads",
+      "OPENBLAS_NUM_THREADS": 1
+     },
+     "caps": {},
+     "mpi": "pmi2",
+     "launcher": "srun",
+     "entry": "palace-real",
+     "python": null,
+     "launch_r1": "srun"
+    }
+   },
+   "inputs": {
+    "base_venv": "{stacks.wheels.base_venv}",
+    "wheel_dirs": [
+     "{stacks.wheels.wheel_dirs[0]}",
+     "{stacks.wheels.wheel_dirs[1]}"
+    ],
+    "petsc_wheelhouse": "{stacks.wheels.petsc_wheelhouse}",
+    "palace_wheelhouse": "{stacks.wheels.palace_wheelhouse}",
+    "python": "{stacks.wheels.python}"
+   },
+   "env": {},
+   "env_dir": "{cluster.root}/envs/bench-7a078ba-wheels-63af6b40",
+   "code_env": {
+    "gfem": "{cluster.root}/envs/bench-7a078ba-wheels-63af6b40",
+    "palace": "{cluster.root}/envs/palace-0.19.0"
+   },
+   "prefixes": {}
+  },
+  "provenance": {
+   "gfem_manifest": {
+    "sha256": "2bd31c03cb5536a90659762f30863e1d5da91d4d974130d0516f3fd66d3a7411",
+    "text": "commit 7a078ba60e657062c7b90bdf27bfaef9ec3dde8e\n71dea36af1e1037e51523a5625507b7670fd84f8ddf6a80a16a8825f51d4714a  {cluster.root}/refs/7a078ba/dist/gfem-0.1.0-py3-none-any.whl\n830acc20a7c9260de84d01b4ca9a00d80c642442f79ac73d56897d543ced8583  {stacks.wheels.petsc_wheelhouse}/petsc-3.26.0-py3-none-linux_x86_64.whl\n72e73e3b25bb77bbf910aff4474036360cc8464441578b8dc1b06ad60e4ffc4e  {stacks.wheels.petsc_wheelhouse}/petsc4py-3.26.0-cp312-cp312-linux_x86_64.whl\n18e8cca8c0b42891c8994793f6035b16e3adf8d3f125d3516594bab0aeda6b5d  {stacks.wheels.petsc_wheelhouse}/slepc-3.26.0-py3-none-linux_x86_64.whl\na724ea7ec244830809c66d9544e211d79a11fe9cdaab9aa78c0f920dcd689f05  {stacks.wheels.petsc_wheelhouse}/slepc4py-3.26.0-cp312-cp312-linux_x86_64.whl\ncoverage==7.16.2\ngfem @ file://{cluster.root}/refs/7a078ba/dist/gfem-0.1.0-py3-none-any.whl#sha256=71dea36af1e1037e51523a5625507b7670fd84f8ddf6a80a16a8825f51d4714a\niniconfig==2.3.1\nintel-cmplr-lib-ur==2026.2.0\nintel-openmp==2026.2.0\njax==0.12.0\njaxlib==0.12.0\nmarkdown-it-py==4.2.0\nmdurl==0.1.2\nmeshio==5.3.5\nmkl==2026.2.0\nml_dtypes==0.6.0\nmpi4py==4.1.2\nnetgen-mesher==6.2.2608\nnetgen_occt==7.8.1\nngsolve==6.2.2608\nngsolve_openblas==0.3.33\nnumpy==2.5.4\nopt_einsum==3.4.0\npackaging==26.3\npandas==3.0.6\npetsc @ file://{stacks.wheels.petsc_wheelhouse}/petsc-3.26.0-py3-none-linux_x86_64.whl#sha256=830acc20a7c9260de84d01b4ca9a00d80c642442f79ac73d56897d543ced8583\npetsc4py @ file://{stacks.wheels.petsc_wheelhouse}/petsc4py-3.26.0-cp312-cp312-linux_x86_64.whl#sha256=72e73e3b25bb77bbf910aff4474036360cc8464441578b8dc1b06ad60e4ffc4e\npluggy==1.7.0\nPygments==2.21.0\npytest==9.1.1\npytest-cov==7.1.0\npython-dateutil==2.9.0.post0\nrich==15.0.0\nscipy==1.18.1\nsix==1.17.0\nslepc @ file://{stacks.wheels.petsc_wheelhouse}/slepc-3.26.0-py3-none-linux_x86_64.whl#sha256=18e8cca8c0b42891c8994793f6035b16e3adf8d3f125d3516594bab0aeda6b5d\nslepc4py @ file://{stacks.wheels.petsc_wheelhouse}/slepc4py-3.26.0-cp312-cp312-linux_x86_64.whl#sha256=a724ea7ec244830809c66d9544e211d79a11fe9cdaab9aa78c0f920dcd689f05\ntbb==2023.2.0\ntcmlib==1.6.0\numf==1.2.0\nxarray==2026.9.0\n"
+   }
+  },
+  "env": "module purge >/dev/null 2>&1\nmodule load openmpi/4.1.6-gcc\nexport PATH={cluster.root}/envs/bench-7a078ba-wheels-63af6b40/bin:\"$PATH\"\nunset OMP_NUM_THREADS MKL_NUM_THREADS OPENBLAS_NUM_THREADS NGS_NUM_THREADS OMP_PLACES OMP_PROC_BIND GOMP_CPU_AFFINITY KMP_AFFINITY\nexport JAX_PLATFORMS=cpu\nexport JAX_ENABLE_X64=1\nexport OMPI_MCA_opal_warn_on_missing_libcuda=0\nexport OMP_NUM_THREADS=16\nexport MKL_NUM_THREADS=16\nexport NGS_NUM_THREADS=16\nexport OPENBLAS_NUM_THREADS=16\nexport OMP_PLACES=cores OMP_PROC_BIND=close\n",
+  "modules": "openmpi/4.1.6-gcc\n",
+  "ldd": ""
+ },
+ "provenance": {
+  "gfem": {
+   "commit": "7a078ba60e657062c7b90bdf27bfaef9ec3dde8e",
+   "version": "0.1.0"
+  },
+  "harness": {
+   "commit": "7a078ba60e657062c7b90bdf27bfaef9ec3dde8e"
+  },
+  "solver": {
+   "code": "gfem",
+   "version": "0.1.0"
+  },
+  "stack": {
+   "name": "wheels",
+   "description_sha256": "f8638f63c753db57df400ee3e42d06f94756d81ff2a96e234379b6bc9ce84da2",
+   "env_manifest_sha256": "2bd31c03cb5536a90659762f30863e1d5da91d4d974130d0516f3fd66d3a7411",
+   "fingerprint": "63af6b40668284c5eb08ef1e2eb76b1ee3ef261abd473362d418e0475f1e25f8"
+  },
+  "versions": {
+   "gfem": "0.1.0",
+   "jax": "0.12.0",
+   "mpi4py": "4.1.2",
+   "ngsolve": "6.2.2608",
+   "numpy": "2.5.4",
+   "petsc4py": "3.26.0"
+  },
+  "env": {
+   "I_MPI_HYDRA_BOOTSTRAP": "slurm",
+   "I_MPI_HYDRA_BOOTSTRAP_EXEC_EXTRA_ARGS": "--external-launcher",
+   "JAX_ENABLE_X64": "1",
+   "JAX_PLATFORMS": "cpu",
+   "MKL_NUM_THREADS": "16",
+   "NGS_NUM_THREADS": "16",
+   "OMP_NUM_THREADS": "16",
+   "OMP_PLACES": "cores",
+   "OMP_PROC_BIND": "close",
+   "OPENBLAS_NUM_THREADS": "16",
+   "SLURM_CPUS_ON_NODE": "112",
+   "SLURM_NTASKS": "1"
+  },
+  "machine": {
+   "name": "mn5-gpp",
+   "nodes": [
+    "gs05r3b23"
+   ],
+   "node_class": "standard",
+   "cpu": "Intel(R) Xeon(R) Platinum 8480+",
+   "mem_total_kb": [
+    263774788
+   ],
+   "cpus_allowed": 32,
+   "pinned_cpus": "0-15,112-127",
+   "exclusive": true,
+   "partition": "gpp",
+   "qos": "gp_debug",
+   "constraint": null,
+   "mpi_library": null
+  }
+ },
+ "observations": {
+  "busy_threads_per_core_max": 1,
+  "placement": {
+   "status": "pass",
+   "masks": [
+    "0-15,112-127"
+   ],
+   "reason": null
+  },
+  "dof_seen_in_stdout": null
+ }
+}
