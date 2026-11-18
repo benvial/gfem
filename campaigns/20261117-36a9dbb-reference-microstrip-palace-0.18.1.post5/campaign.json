@@ -1,0 +1,79 @@
+{
+ "schema": "suite-campaign/1",
+ "id": "20261117-36a9dbb-reference-microstrip-palace-0.18.1.post5",
+ "name": "reference-microstrip-palace-0.18.1.post5",
+ "planned_utc": "2026-11-17T22:48:00Z",
+ "campaign_file": {
+  "path": "benchmarks/campaigns/reference-microstrip-palace-0.18.1.post5.toml",
+  "sha256": "c75c3e2d0e5ec3faa100dc36e83e18795204438a6306bba4b8a8ae5304c9143c"
+ },
+ "pins": {
+  "gfem": {
+   "commit": "36a9dbbf8a9f5bf90aabea7f81ac0779f4d1eac8",
+   "commit_utc": "2026-11-17T22:45:22Z"
+  },
+  "harness": {
+   "commit": "36a9dbbf8a9f5bf90aabea7f81ac0779f4d1eac8"
+  },
+  "solvers": {
+   "palace": "0.18.1.post5"
+  },
+  "stacks": {
+   "wheels": {
+    "description_sha256": "f8638f63c753db57df400ee3e42d06f94756d81ff2a96e234379b6bc9ce84da2",
+    "env_manifest_sha256": "9dd668cd2731b3ba8a0e4b1390d49ffbb492bf76d5a88ce2a19099d1ff27167a",
+    "fingerprint": "6a5f35271919710270884155dc8812e6e23b56124f3e8877547ee8d896c5225b",
+    "palace_manifest_sha256": "4042f2e425a3b843d31df59a8721980828aae525f6e0a071f50f0bfb456f9635"
+   }
+  }
+ },
+ "machine": "mn5-gpp",
+ "core_budget": 112,
+ "jobs": [
+  {
+   "job": "wheels",
+   "group": "stack",
+   "qos": "gp_debug",
+   "constraint": null,
+   "nodes": [
+    "gs04r3b28"
+   ],
+   "elapsed_s": 1924.0,
+   "billed_core_h": 59.858,
+   "state": "COMPLETED",
+   "cases": [
+    "microstrip_L1_p2"
+   ],
+   "stack": "wheels",
+   "runs": 1,
+   "est_s": 3120.0,
+   "est_core_h": 97.1,
+   "time_limit": "1:18:00",
+   "slurm_ids": [
+    "49176387"
+   ]
+  }
+ ],
+ "records": {
+  "records/microstrip_L1_p2/palace-mumps__wheels__default__rep1.json": "ae66403edbcd5f85aeaf9a580afd9ebf98178f64d254d6b46adbdc41e43dd3ae"
+ },
+ "checks": {
+  "complete": "pass",
+  "provenance": "pass",
+  "dof_equal": "skipped",
+  "node_class": {
+   "observed": [
+    "standard"
+   ],
+   "planned": "standard"
+  },
+  "harness_failures": []
+ },
+ "closed_utc": "2026-11-17T23:29:01Z",
+ "node_class": "standard",
+ "repeats": 1,
+ "runs": 1,
+ "est_core_h": 97.1,
+ "limit_core_h": 145.6,
+ "notes": []
+}

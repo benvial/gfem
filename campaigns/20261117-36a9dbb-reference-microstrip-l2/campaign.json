@@ -1,0 +1,77 @@
+{
+ "schema": "suite-campaign/1",
+ "id": "20261117-36a9dbb-reference-microstrip-l2",
+ "name": "reference-microstrip-l2",
+ "planned_utc": "2026-11-17T22:47:59Z",
+ "campaign_file": {
+  "path": "benchmarks/campaigns/reference-microstrip-l2.toml",
+  "sha256": "7388997568276c8f68d634df47ccd809f1a18b3e87c40d5dac7897f86f995b00"
+ },
+ "pins": {
+  "gfem": {
+   "commit": "36a9dbbf8a9f5bf90aabea7f81ac0779f4d1eac8",
+   "commit_utc": "2026-11-17T22:45:22Z"
+  },
+  "harness": {
+   "commit": "36a9dbbf8a9f5bf90aabea7f81ac0779f4d1eac8"
+  },
+  "solvers": {},
+  "stacks": {
+   "wheels": {
+    "description_sha256": "f8638f63c753db57df400ee3e42d06f94756d81ff2a96e234379b6bc9ce84da2",
+    "env_manifest_sha256": "9dd668cd2731b3ba8a0e4b1390d49ffbb492bf76d5a88ce2a19099d1ff27167a",
+    "fingerprint": "63af6b40668284c5eb08ef1e2eb76b1ee3ef261abd473362d418e0475f1e25f8",
+    "palace_manifest_sha256": null
+   }
+  }
+ },
+ "machine": "mn5-gpp",
+ "core_budget": 112,
+ "jobs": [
+  {
+   "job": "wheels",
+   "group": "stack",
+   "qos": "gp_ehpc",
+   "constraint": "highmem",
+   "nodes": [
+    "gs01r2b03"
+   ],
+   "elapsed_s": 6905.0,
+   "billed_core_h": 214.822,
+   "state": "COMPLETED",
+   "cases": [
+    "microstrip_L2_p2"
+   ],
+   "stack": "wheels",
+   "runs": 1,
+   "est_s": 7920.0,
+   "est_core_h": 246.4,
+   "time_limit": "3:18:00",
+   "slurm_ids": [
+    "49176384"
+   ]
+  }
+ ],
+ "records": {
+  "records/microstrip_L2_p2/gfem-bddc__wheels__default__rep1.json": "dc918a3259cb3cc2a3ae64cab208f923f7092a2ae907ccde5580f9f06b50183a"
+ },
+ "checks": {
+  "complete": "pass",
+  "provenance": "pass",
+  "dof_equal": "skipped",
+  "node_class": {
+   "observed": [
+    "highmem"
+   ],
+   "planned": "highmem"
+  },
+  "harness_failures": []
+ },
+ "closed_utc": "2026-11-18T00:50:22Z",
+ "node_class": "highmem",
+ "repeats": 1,
+ "runs": 1,
+ "est_core_h": 246.4,
+ "limit_core_h": 369.6,
+ "notes": []
+}
