@@ -1,0 +1,95 @@
+{
+ "schema": "suite-campaign/1",
+ "id": "20261119-43f36e5-smoke-r10m",
+ "name": "smoke-r10m",
+ "planned_utc": "2026-11-19T13:17:30Z",
+ "campaign_file": {
+  "path": "benchmarks/campaigns/smoke-r10m.toml",
+  "sha256": "7ddbfc506d701566ec0c4a9452399a0cf272b40ce710818ecf546167590f73b2"
+ },
+ "pins": {
+  "gfem": {
+   "commit": "43f36e5af87e4a76194e08eeaee84964370887a8",
+   "commit_utc": "2026-11-19T13:16:31Z"
+  },
+  "harness": {
+   "commit": "43f36e5af87e4a76194e08eeaee84964370887a8"
+  },
+  "solvers": {
+   "palace": "0.19.0"
+  },
+  "stacks": {
+   "wheels": {
+    "description_sha256": "f8638f63c753db57df400ee3e42d06f94756d81ff2a96e234379b6bc9ce84da2",
+    "env_manifest_sha256": "f1092569b0b52f1bded6c040874e596047afa73eb893dd8ba510b4216637721e",
+    "fingerprint": "63af6b40668284c5eb08ef1e2eb76b1ee3ef261abd473362d418e0475f1e25f8",
+    "palace_manifest_sha256": "a133a028deb5b856593d4fc53cc9c9791244721624168baf4d59d8b6a0a557e0"
+   }
+  }
+ },
+ "machine": "mn5-gpp",
+ "core_budget": 112,
+ "jobs": [
+  {
+   "job": "r10M_void-wheels",
+   "group": "case",
+   "qos": "gp_debug",
+   "constraint": "highmem",
+   "nodes": [
+    "gs01r3b15"
+   ],
+   "elapsed_s": 720.0,
+   "billed_core_h": 22.4,
+   "state": "COMPLETED",
+   "cases": [
+    "r10M_void"
+   ],
+   "stack": "wheels",
+   "runs": 4,
+   "est_s": 1620.0,
+   "est_core_h": 50.4,
+   "time_limit": "0:41:00",
+   "slurm_ids": [
+    "49240721"
+   ]
+  }
+ ],
+ "records": {
+  "records/r10M_void/gfem-bddc__wheels__default__rep1.json": "e663de0b45f4c88e21b8759a12539bd1628c2cf4185d74ef80c625600ea505d5",
+  "records/r10M_void/gfem-direct__wheels__default__rep1.json": "7e1f6b6cca90cee182c4410df9a5614168183be355a53bb30d3ff7b4318b1d34",
+  "records/r10M_void/palace-mumps__wheels__default__rep1.json": "a28635223c81a5ed3a558b1ccd21e810949a1a66da1ca90ca0949d1312af2c92",
+  "records/r10M_void/palace-pmg__wheels__default__rep1.json": "b4af95db81a7eefec6dea659662f5c48421f2ebfa2d4c04851800749fb0fd6d8"
+ },
+ "checks": {
+  "complete": "pass",
+  "provenance": "pass",
+  "dof_equal": "pass",
+  "dof_equal_detail": {
+   "r10M_void": {
+    "result": "pass",
+    "ndof": {
+     "gfem": [
+      10248856
+     ],
+     "palace": [
+      10248856
+     ]
+    }
+   }
+  },
+  "node_class": {
+   "observed": [
+    "highmem"
+   ],
+   "planned": "highmem"
+  },
+  "harness_failures": []
+ },
+ "closed_utc": "2026-11-19T14:52:46Z",
+ "node_class": "highmem",
+ "repeats": 1,
+ "runs": 4,
+ "est_core_h": 50.4,
+ "limit_core_h": 75.6,
+ "notes": []
+}

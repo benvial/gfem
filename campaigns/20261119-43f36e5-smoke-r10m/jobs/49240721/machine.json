@@ -1,0 +1,83 @@
+{
+ "schema": "scale-bench/1",
+ "commit": null,
+ "job": "49240721",
+ "qos": null,
+ "constraint": null,
+ "modules": null,
+ "host": "gs01r3b15",
+ "cpu": "Intel(R) Xeon(R) Platinum 8480+",
+ "mem_total_kb": 1056497632,
+ "started_utc": "2026-11-19T14:38:01Z",
+ "mode": "node",
+ "triad_binary": {
+  "path": "{tmpdir}/triad",
+  "compiler": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-5)",
+  "flags": [
+   "-O3",
+   "-march=native",
+   "-fopenmp"
+  ]
+ },
+ "array_log2": 27,
+ "physical_cores": 112,
+ "rows": [
+  {
+   "threads": 1,
+   "mkl_threads": 1,
+   "dgemm": {
+    "n": 4000,
+    "reps": 1,
+    "gflops_best": 67.28783421340309,
+    "gflops_median": 67.28783421340309
+   },
+   "zgemm": {
+    "n": 2000,
+    "reps": 1,
+    "gflops_best": 67.80994549706993,
+    "gflops_median": 67.80994549706993
+   },
+   "triad": {
+    "omp_threads": 1,
+    "n": 134217728,
+    "gbs_best": 17.653301060907765,
+    "gbs_median": 17.638936475820927
+   },
+   "held": true
+  },
+  {
+   "threads": 112,
+   "mkl_threads": 112,
+   "dgemm": {
+    "n": 4000,
+    "reps": 19,
+    "gflops_best": 4747.139531233326,
+    "gflops_median": 4629.480461390659
+   },
+   "zgemm": {
+    "n": 2000,
+    "reps": 41,
+    "gflops_best": 5306.789254225945,
+    "gflops_median": 5187.054030236559
+   },
+   "triad": {
+    "omp_threads": 112,
+    "n": 134217728,
+    "gbs_best": 479.9083503273458,
+    "gbs_median": 477.0833088217652
+   },
+   "held": true
+  }
+ ],
+ "concurrent": {
+  "layout": "112x1",
+  "n_per_process": 1198372,
+  "omp_threads": [
+   1
+  ],
+  "gbs_sum_of_medians": 488.903450662274,
+  "gbs_median_per_process": 4.334649899068282,
+  "held": true
+ },
+ "held": true
+}

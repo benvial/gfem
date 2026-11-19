@@ -1,0 +1,37 @@
+coverage==7.16.2
+gfem @ file:{cluster.root}/refs/43f36e5/dist/gfem-0.1.0-py3-none-any.whl#sha256=71dea36af1e1037e51523a5625507b7670fd84f8ddf6a80a16a8825f51d4714a
+iniconfig==2.3.1
+intel-cmplr-lib-ur==2026.2.0
+intel-openmp==2026.2.0
+jax==0.12.0
+jaxlib==0.12.0
+markdown-it-py==4.2.0
+mdurl==0.1.2
+meshio==5.3.5
+mkl==2026.2.0
+ml_dtypes==0.6.0
+mpi4py==4.1.2
+netgen-mesher==6.2.2608
+netgen_occt==7.8.1
+ngsolve==6.2.2608
+ngsolve_openblas==0.3.33
+numpy==2.5.4
+opt_einsum==3.4.0
+packaging==26.3
+pandas==3.0.6
+petsc @ file:{stacks.wheels.petsc_wheelhouse}/petsc-3.26.0-py3-none-linux_x86_64.whl#sha256=830acc20a7c9260de84d01b4ca9a00d80c642442f79ac73d56897d543ced8583
+petsc4py @ file:{stacks.wheels.petsc_wheelhouse}/petsc4py-3.26.0-cp312-cp312-linux_x86_64.whl#sha256=72e73e3b25bb77bbf910aff4474036360cc8464441578b8dc1b06ad60e4ffc4e
+pluggy==1.7.0
+Pygments==2.21.0
+pytest==9.1.1
+pytest-cov==7.1.0
+python-dateutil==2.9.0.post0
+rich==15.0.0
+scipy==1.18.1
+six==1.17.0
+slepc @ file:{stacks.wheels.petsc_wheelhouse}/slepc-3.26.0-py3-none-linux_x86_64.whl#sha256=18e8cca8c0b42891c8994793f6035b16e3adf8d3f125d3516594bab0aeda6b5d
+slepc4py @ file:{stacks.wheels.petsc_wheelhouse}/slepc4py-3.26.0-cp312-cp312-linux_x86_64.whl#sha256=a724ea7ec244830809c66d9544e211d79a11fe9cdaab9aa78c0f920dcd689f05
+tbb==2023.2.0
+tcmlib==1.6.0
+umf==1.2.0
+xarray==2026.9.0
