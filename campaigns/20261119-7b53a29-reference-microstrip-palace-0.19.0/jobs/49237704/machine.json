@@ -1,0 +1,60 @@
+{
+ "schema": "scale-bench/1",
+ "commit": null,
+ "job": "49237704",
+ "qos": null,
+ "constraint": null,
+ "modules": null,
+ "host": "gs06r1b70",
+ "cpu": "Intel(R) Xeon(R) Platinum 8480+",
+ "mem_total_kb": 263774796,
+ "started_utc": "2026-11-19T12:52:14Z",
+ "mode": "node",
+ "triad_binary": {
+  "path": "{tmpdir}/triad",
+  "compiler": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-5)",
+  "flags": [
+   "-O3",
+   "-march=native",
+   "-fopenmp"
+  ]
+ },
+ "array_log2": 27,
+ "physical_cores": 112,
+ "rows": [
+  {
+   "threads": 1,
+   "mkl_threads": 1,
+   "dgemm": {
+    "n": 4000,
+    "reps": 1,
+    "gflops_best": 65.72709101974542,
+    "gflops_median": 65.72709101974542
+   },
+   "zgemm": {
+    "n": 2000,
+    "reps": 1,
+    "gflops_best": 67.74708367163632,
+    "gflops_median": 67.74708367163632
+   },
+   "triad": {
+    "omp_threads": 1,
+    "n": 134217728,
+    "gbs_best": 17.780892855075848,
+    "gbs_median": 17.758722853383663
+   },
+   "held": true
+  }
+ ],
+ "concurrent": {
+  "layout": "112x1",
+  "n_per_process": 1198372,
+  "omp_threads": [
+   1
+  ],
+  "gbs_sum_of_medians": 413.1463429664073,
+  "gbs_median_per_process": 3.659643055085568,
+  "held": true
+ },
+ "held": true
+}

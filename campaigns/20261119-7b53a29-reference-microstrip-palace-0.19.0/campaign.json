@@ -1,0 +1,81 @@
+{
+ "schema": "suite-campaign/1",
+ "id": "20261119-7b53a29-reference-microstrip-palace-0.19.0",
+ "name": "reference-microstrip-palace-0.19.0",
+ "planned_utc": "2026-11-19T12:42:12Z",
+ "campaign_file": {
+  "path": "benchmarks/campaigns/reference-microstrip-palace-0.19.0.toml",
+  "sha256": "346bf366482ebe8233261818c370a5d4106d6cbc5af11a34a0a7d0b4e590772f"
+ },
+ "pins": {
+  "gfem": {
+   "commit": "7b53a294e587cd6860118d8eecfab9d9125e7633",
+   "commit_utc": "2026-11-19T12:41:45Z"
+  },
+  "harness": {
+   "commit": "7b53a294e587cd6860118d8eecfab9d9125e7633"
+  },
+  "solvers": {
+   "palace": "0.19.0"
+  },
+  "stacks": {
+   "wheels": {
+    "description_sha256": "f8638f63c753db57df400ee3e42d06f94756d81ff2a96e234379b6bc9ce84da2",
+    "env_manifest_sha256": "008ee3666d67d2787b82bfbac7faea6b3164e79399599de2f11fdb0d9d126ad2",
+    "fingerprint": "63af6b40668284c5eb08ef1e2eb76b1ee3ef261abd473362d418e0475f1e25f8",
+    "palace_manifest_sha256": "a133a028deb5b856593d4fc53cc9c9791244721624168baf4d59d8b6a0a557e0"
+   }
+  }
+ },
+ "machine": "mn5-gpp",
+ "core_budget": 112,
+ "jobs": [
+  {
+   "job": "wheels",
+   "group": "stack",
+   "qos": "gp_debug",
+   "constraint": null,
+   "nodes": [
+    "gs06r1b70"
+   ],
+   "elapsed_s": 1398.0,
+   "billed_core_h": 43.493,
+   "state": "COMPLETED",
+   "cases": [
+    "microstrip_L0_p2",
+    "microstrip_L1_p2"
+   ],
+   "stack": "wheels",
+   "runs": 2,
+   "est_s": 3210.0,
+   "est_core_h": 99.9,
+   "time_limit": "1:21:00",
+   "slurm_ids": [
+    "49237704"
+   ]
+  }
+ ],
+ "records": {
+  "records/microstrip_L0_p2/palace-mumps__wheels__default__rep1.json": "fd1e5dc96d0527aba1c636059027faaf66ce6f3c770e0a41e94a985a03043291",
+  "records/microstrip_L1_p2/palace-mumps__wheels__default__rep1.json": "2b64dae97f1dfbf3d872bfe6b9befc955d659f1b4ca58fbfe8106376667819f2"
+ },
+ "checks": {
+  "complete": "pass",
+  "provenance": "pass",
+  "dof_equal": "skipped",
+  "node_class": {
+   "observed": [
+    "standard"
+   ],
+   "planned": "standard"
+  },
+  "harness_failures": []
+ },
+ "closed_utc": "2026-11-19T13:15:40Z",
+ "node_class": "standard",
+ "repeats": 1,
+ "runs": 2,
+ "est_core_h": 99.9,
+ "limit_core_h": 149.8,
+ "notes": []
+}
