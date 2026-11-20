@@ -1,0 +1,114 @@
+{
+ "schema": "suite-campaign/1",
+ "id": "20261120-e7d58a9-full-bragg-c32",
+ "name": "full-bragg-c32",
+ "planned_utc": "2026-11-20T03:05:36Z",
+ "campaign_file": {
+  "path": "benchmarks/campaigns/full-bragg-c32.toml",
+  "sha256": "bdf26f5a95c06c53855d3bd4ee1d8d0e8f898fc8142d8849e229b68d834f10ef"
+ },
+ "pins": {
+  "gfem": {
+   "commit": "e7d58a9a9db93af772fb234c29c2ecc238f7d279",
+   "commit_utc": "2026-11-20T02:59:00Z"
+  },
+  "harness": {
+   "commit": "e7d58a9a9db93af772fb234c29c2ecc238f7d279"
+  },
+  "solvers": {
+   "palace": "0.19.0"
+  },
+  "stacks": {
+   "wheels": {
+    "description_sha256": "f8638f63c753db57df400ee3e42d06f94756d81ff2a96e234379b6bc9ce84da2",
+    "env_manifest_sha256": "ecfc3e2097c4c0cb260c4942141d3bc755662e6fb4a5ee577b61204b3524a07c",
+    "fingerprint": "63af6b40668284c5eb08ef1e2eb76b1ee3ef261abd473362d418e0475f1e25f8",
+    "palace_manifest_sha256": "a133a028deb5b856593d4fc53cc9c9791244721624168baf4d59d8b6a0a557e0"
+   }
+  }
+ },
+ "machine": "mn5-gpp",
+ "core_budget": 32,
+ "jobs": [
+  {
+   "job": "bragg-wheels",
+   "group": "case",
+   "qos": "gp_ehpc",
+   "constraint": null,
+   "nodes": [
+    "gs09r1b58"
+   ],
+   "elapsed_s": 199.0,
+   "billed_core_h": 6.191,
+   "state": "COMPLETED",
+   "cases": [
+    "bragg"
+   ],
+   "stack": "wheels",
+   "runs": 23,
+   "est_s": 534.0,
+   "est_core_h": 16.6,
+   "time_limit": "0:14:00",
+   "slurm_ids": [
+    "49256957"
+   ]
+  }
+ ],
+ "records": {
+  "records/bragg/gfem-bddc__wheels__1x32__rep1.json": "9de22972bd1cb71dbed8b8e549d1dc54870aff37dd2a2fed632b09a3407e849c",
+  "records/bragg/gfem-direct__wheels__1x32__rep1.json": "829518b5e655833cd1b82ee25be936378ef044326a4932f7db5bbb71a19efa66",
+  "records/bragg/gfem-direct__wheels__1x32__rep2.json": "a2163932d2ad54d3cd24cb98584ae10277e18705b358056ab744f0f5a6b0a928",
+  "records/bragg/gfem-direct__wheels__1x32__rep3.json": "cd1c79800a22feb9aefdd68b3a3228577fb25c74b4aae96e35a02753f9189945",
+  "records/bragg/gfem-petsc-mumps__wheels__1x32__rep1.json": "f9eeaa72cf6328ef0f03c28e1ca16021f0a3118a99e240fcd952ddc929d42fd3",
+  "records/bragg/palace-mumps__wheels__16x2__rep1.json": "cc2e526d01ab626e7cdd976b2e5a5fda69e2a8133e5bc5934b41d7ae7e6f1a51",
+  "records/bragg/palace-mumps__wheels__16x2__rep2.json": "eee3216b7cd102ad5cce6fe79b1cab5517936da644cfc2fd4c9a6cee18774771",
+  "records/bragg/palace-mumps__wheels__16x2__rep3.json": "34f02225e0e29c6ce347736eccff29790174ce563bb5b4ff25ef77f39950ab27",
+  "records/bragg/palace-mumps__wheels__1x32__rep1.json": "83b8989272fb81395320b3748308e87130111f3ac58c9168c283313a4dae4ec9",
+  "records/bragg/palace-mumps__wheels__1x32__rep2.json": "687e0d4d4c051b6207b105aae33eb9a700f02bf89181bd7a1d0de7dd47911381",
+  "records/bragg/palace-mumps__wheels__1x32__rep3.json": "fd272dcbd58e4f02f8b9e7565b0d0563fed3ec18dd9356a4dda2c22c9288d723",
+  "records/bragg/palace-mumps__wheels__2x16__rep1.json": "5f8607630fa4458ff58f843e4eddf3c0465c850a2f75a4cd13a19cb3a24b9d40",
+  "records/bragg/palace-mumps__wheels__2x16__rep2.json": "e38cd35dceea87af37feef3b918755d34db42a027b688d8c67fd7565e15fc8fb",
+  "records/bragg/palace-mumps__wheels__2x16__rep3.json": "5bd1d3ec822c8b8533ebbd497b1e453909788ec157889dc91494fbfa91f1d20a",
+  "records/bragg/palace-mumps__wheels__32x1__rep1.json": "e3e6aaa894e13c53b93e418ccdf7c4522815b327ffdf18a5347ceea30483f196",
+  "records/bragg/palace-mumps__wheels__32x1__rep2.json": "48d8d1a388fe058e155add947836972e4af14e3f934f983ed274db39d562d633",
+  "records/bragg/palace-mumps__wheels__32x1__rep3.json": "654b8a18341f613fa8039fdb9fbfa72d249923b4c2d625414ecc6ca976651a19",
+  "records/bragg/palace-mumps__wheels__4x8__rep1.json": "040a5b2a6d2b41facfec461b73536fa583c0436fadb764211af2fc831ffed062",
+  "records/bragg/palace-mumps__wheels__4x8__rep2.json": "0fd32cfc28f4e624a8a1fbddce3ecaabfbcec7f0f021814909ec61b4b27414e7",
+  "records/bragg/palace-mumps__wheels__4x8__rep3.json": "05d0b4a1081e015ae57c30629c95a5b29cb88a90caf8f8701396e254dcd87f4d",
+  "records/bragg/palace-mumps__wheels__8x4__rep1.json": "ba92dce712dd7b438cbb2d710f6a3fb9524bddab29d22655eef3b6ab4bb3ecf4",
+  "records/bragg/palace-mumps__wheels__8x4__rep2.json": "e5657b774be4216685e3070c62e1871eb8f56a45d0c8a1e6f3b7d6cfca900097",
+  "records/bragg/palace-mumps__wheels__8x4__rep3.json": "c842585f2729d60101a62da811196d033dfed271fa6ae42855898ef6cce0988d"
+ },
+ "checks": {
+  "complete": "pass",
+  "provenance": "pass",
+  "dof_equal": "pass",
+  "dof_equal_detail": {
+   "bragg": {
+    "result": "pass",
+    "ndof": {
+     "gfem": [
+      10620
+     ],
+     "palace": [
+      10620
+     ]
+    }
+   }
+  },
+  "node_class": {
+   "observed": [
+    "standard"
+   ],
+   "planned": "standard"
+  },
+  "harness_failures": []
+ },
+ "closed_utc": "2026-11-20T04:08:55Z",
+ "node_class": "standard",
+ "repeats": 3,
+ "runs": 23,
+ "est_core_h": 16.6,
+ "limit_core_h": 24.9,
+ "notes": []
+}

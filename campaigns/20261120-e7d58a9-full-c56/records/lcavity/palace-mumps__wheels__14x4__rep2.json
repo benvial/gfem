@@ -1,0 +1,359 @@
+{
+ "schema": "suite-record/1",
+ "campaign": "20261120-e7d58a9-full-c56",
+ "name": "lcavity/palace-mumps__wheels__14x4__rep2",
+ "run": {
+  "case": "lcavity",
+  "solver": "palace:mumps",
+  "stack": "wheels",
+  "layout": {
+   "asked": "grid",
+   "ranks": 14,
+   "threads": 4
+  },
+  "core_budget": 56,
+  "repeat": 2,
+  "tolerance": null,
+  "order_in_job": 21,
+  "job": "49256966",
+  "step": "21",
+  "started_utc": "2026-11-20T04:17:02Z",
+  "finished_utc": "2026-11-20T04:17:24Z",
+  "added_for": null,
+  "launch": "srun"
+ },
+ "status": "ok",
+ "reason": null,
+ "failure_class": null,
+ "slurm_state": "COMPLETED",
+ "returncode": 0,
+ "case": {
+  "definition_sha256": "24f9e8cb8ff735568bff35c8135f7f7fe058932f64a076894bbd99cc974e1a71",
+  "mesh_sha256": "11ac5172e1a64f60e7c7e7c2846defa24cbb990a076f96d2e8578bf4a86390e6",
+  "order": 2,
+  "ndof": 246416,
+  "reference": {
+   "id": "lcavity-20261117-058b2f5",
+   "sha256": "b812a4ddaf0ed0f40b68a4777f24ef5687e9de6a188dcbce347caff2daad3003"
+  }
+ },
+ "outputs": {
+  "f_hz": [
+   [
+    148197907237.3,
+    1.033314819883e-05
+   ],
+   [
+    186005203649.7,
+    -0.009726894241185
+   ]
+  ],
+  "q": [
+   7170994956505000.0,
+   9561387172391.0
+  ],
+  "error_bkwd": [
+   7.374646567365e-17,
+   3.751597896123e-12
+  ],
+  "iterations": [
+   2,
+   2,
+   1,
+   2,
+   1,
+   2,
+   2,
+   1,
+   1,
+   1,
+   1,
+   2,
+   1,
+   1,
+   1,
+   1
+  ]
+ },
+ "accuracy": {
+  "metric": "max_rel_dRe_f",
+  "value": 0.00038907439154373043,
+  "per_item": [
+   0.00038907439154373043
+  ],
+  "bound": 1e-12,
+  "resolved": true,
+  "im_over_abs": [
+   6.972533142647001e-17
+  ]
+ },
+ "same_code_error": {
+  "metric": "max_rel_dRe_f",
+  "value": 0.0,
+  "per_item": [
+   0.0
+  ],
+  "against": "lcavity/palace-mumps__wheels__14x4__rep1",
+  "label": "solver error"
+ },
+ "timings": {
+  "wall_s": 22.913,
+  "startup_s": 0.5355780407339346,
+  "work_s": 22.377,
+  "mesh_read_s": 0.278,
+  "discretize_s": null,
+  "assemble_s": 0.82,
+  "setup_s": 16.513,
+  "solve_s": 3.902,
+  "estimate_s": 0.158,
+  "postpro_s": 0.084,
+  "rom_s": 0.0,
+  "other_s": 0.6219999999999928,
+  "setup_total_s": 17.611,
+  "solve_total_s": 3.902,
+  "per_sample_s": null,
+  "rank_reduction": "max-of-rows",
+  "source": "palace.json",
+  "rank0": {
+   "mesh_read_s": 0.23088008699999998,
+   "discretize_s": null,
+   "assemble_s": 0.8185300769999999,
+   "setup_s": 16.512918904,
+   "solve_s": 3.8953773249999992,
+   "estimate_s": 0.15667799100000002,
+   "postpro_s": 0.083326822,
+   "rom_s": 0.0,
+   "other_s": 0.6790685910000036
+  }
+ },
+ "memory": {
+  "peak_rss_sum_gib": 10.771732330322266,
+  "peak_rss_rank_max_gib": 0.8889923095703125,
+  "peak_rss_largest_node_gib": 10.771732330322266,
+  "metric": "PeakNodeMemoryMegabytes.Total",
+  "pss_peak_sum_gib": 10.281818389892578,
+  "sacct_max_rss_gib": null,
+  "self_reports": {}
+ },
+ "checks": {
+  "mesh_hash": "pass",
+  "inputs_match": "pass",
+  "converged": "pass",
+  "complete": "pass",
+  "dof": "pass",
+  "provenance": "pass",
+  "layout": "pass",
+  "placement": "pass",
+  "reference_matches": "pass",
+  "accuracy_plausible": "pass"
+ },
+ "structural": {
+  "setups": 1,
+  "solves": 16,
+  "estimator": "always on, lightened (EstimatorTol 1e-2, EstimatorMG)",
+  "direct_arm": "GMRES around complex MUMPS (MGMaxLevels 1)"
+ },
+ "stack": {
+  "name": "wheels",
+  "kind": "wheels",
+  "closed": [
+   "mkl (pip, PARDISO)"
+  ],
+  "versions": {
+   "palace": "0.19.0",
+   "ngsolve": "6.2.2608",
+   "petsc": "3.26.0"
+  },
+  "fingerprint": "63af6b40668284c5eb08ef1e2eb76b1ee3ef261abd473362d418e0475f1e25f8",
+  "description": {
+   "name": "wheels",
+   "kind": "wheels",
+   "closed": [
+    "mkl (pip, PARDISO)"
+   ],
+   "versions": {
+    "palace": "0.19.0",
+    "ngsolve": "6.2.2608",
+    "petsc": "3.26.0"
+   },
+   "codes": {
+    "gfem": {
+     "modules": [
+      "openmpi/4.1.6-gcc"
+     ],
+     "packages": [],
+     "env": {
+      "JAX_PLATFORMS": "cpu",
+      "JAX_ENABLE_X64": "1",
+      "OMPI_MCA_opal_warn_on_missing_libcuda": "0"
+     },
+     "threads": {
+      "OMP_NUM_THREADS": "threads",
+      "MKL_NUM_THREADS": "threads",
+      "NGS_NUM_THREADS": "threads",
+      "OPENBLAS_NUM_THREADS": "threads"
+     },
+     "caps": {
+      "OPENBLAS_NUM_THREADS": 64
+     },
+     "mpi": "pmix",
+     "launcher": null,
+     "entry": null,
+     "python": null,
+     "launch_r1": "srun"
+    },
+    "palace": {
+     "modules": [],
+     "packages": [],
+     "env": {},
+     "threads": {
+      "OMP_NUM_THREADS": "threads",
+      "OPENBLAS_NUM_THREADS": 1
+     },
+     "caps": {},
+     "mpi": "pmi2",
+     "launcher": "srun",
+     "entry": "palace-real",
+     "python": null,
+     "launch_r1": "srun"
+    }
+   },
+   "inputs": {
+    "base_venv": "{stacks.wheels.base_venv}",
+    "wheel_dirs": [
+     "{stacks.wheels.wheel_dirs[0]}",
+     "{stacks.wheels.wheel_dirs[1]}"
+    ],
+    "petsc_wheelhouse": "{stacks.wheels.petsc_wheelhouse}",
+    "palace_wheelhouse": "{stacks.wheels.palace_wheelhouse}",
+    "python": "{stacks.wheels.python}"
+   },
+   "env": {},
+   "env_dir": "{cluster.root}/envs/bench-e7d58a9-wheels-63af6b40",
+   "code_env": {
+    "gfem": "{cluster.root}/envs/bench-e7d58a9-wheels-63af6b40",
+    "palace": "{cluster.root}/envs/palace-0.19.0"
+   },
+   "prefixes": {}
+  },
+  "provenance": {
+   "gfem_manifest": {
+    "sha256": "ecfc3e2097c4c0cb260c4942141d3bc755662e6fb4a5ee577b61204b3524a07c",
+    "text": "commit e7d58a9a9db93af772fb234c29c2ecc238f7d279\na7126d4304d3286ecbb4580c23af98ef1b7525254d9dc6871ba5bd0ef0400879  {cluster.root}/refs/e7d58a9/dist/gfem-0.1.0-py3-none-any.whl\n830acc20a7c9260de84d01b4ca9a00d80c642442f79ac73d56897d543ced8583  {stacks.wheels.petsc_wheelhouse}/petsc-3.26.0-py3-none-linux_x86_64.whl\n72e73e3b25bb77bbf910aff4474036360cc8464441578b8dc1b06ad60e4ffc4e  {stacks.wheels.petsc_wheelhouse}/petsc4py-3.26.0-cp312-cp312-linux_x86_64.whl\n18e8cca8c0b42891c8994793f6035b16e3adf8d3f125d3516594bab0aeda6b5d  {stacks.wheels.petsc_wheelhouse}/slepc-3.26.0-py3-none-linux_x86_64.whl\na724ea7ec244830809c66d9544e211d79a11fe9cdaab9aa78c0f920dcd689f05  {stacks.wheels.petsc_wheelhouse}/slepc4py-3.26.0-cp312-cp312-linux_x86_64.whl\ncoverage==7.16.2\ngfem @ file://{cluster.root}/refs/e7d58a9/dist/gfem-0.1.0-py3-none-any.whl#sha256=a7126d4304d3286ecbb4580c23af98ef1b7525254d9dc6871ba5bd0ef0400879\niniconfig==2.3.1\nintel-cmplr-lib-ur==2026.2.0\nintel-openmp==2026.2.0\njax==0.12.0\njaxlib==0.12.0\nmarkdown-it-py==4.2.0\nmdurl==0.1.2\nmeshio==5.3.5\nmkl==2026.2.0\nml_dtypes==0.6.0\nmpi4py==4.1.2\nnetgen-mesher==6.2.2608\nnetgen_occt==7.8.1\nngsolve==6.2.2608\nngsolve_openblas==0.3.33\nnumpy==2.5.4\nopt_einsum==3.4.0\npackaging==26.3\npandas==3.0.6\npetsc @ file://{stacks.wheels.petsc_wheelhouse}/petsc-3.26.0-py3-none-linux_x86_64.whl#sha256=830acc20a7c9260de84d01b4ca9a00d80c642442f79ac73d56897d543ced8583\npetsc4py @ file://{stacks.wheels.petsc_wheelhouse}/petsc4py-3.26.0-cp312-cp312-linux_x86_64.whl#sha256=72e73e3b25bb77bbf910aff4474036360cc8464441578b8dc1b06ad60e4ffc4e\npluggy==1.7.0\nPygments==2.21.0\npytest==9.1.1\npytest-cov==7.1.0\npython-dateutil==2.9.0.post0\nrich==15.0.0\nscipy==1.18.1\nsix==1.17.0\nslepc @ file://{stacks.wheels.petsc_wheelhouse}/slepc-3.26.0-py3-none-linux_x86_64.whl#sha256=18e8cca8c0b42891c8994793f6035b16e3adf8d3f125d3516594bab0aeda6b5d\nslepc4py @ file://{stacks.wheels.petsc_wheelhouse}/slepc4py-3.26.0-cp312-cp312-linux_x86_64.whl#sha256=a724ea7ec244830809c66d9544e211d79a11fe9cdaab9aa78c0f920dcd689f05\ntbb==2023.2.0\ntcmlib==1.6.0\numf==1.2.0\nxarray==2026.9.0\n"
+   },
+   "palace_manifest": {
+    "sha256": "a133a028deb5b856593d4fc53cc9c9791244721624168baf4d59d8b6a0a557e0",
+    "text": "05b8ef647e2c21b37cd14e4f64672f3986b8c7cc81c334e86c4289373ca9d8ce  {stacks.wheels.palace_wheelhouse}/palace_solver-0.19.0-py3-none-manylinux_2_28_x86_64.whl\npalace --version: Palace version: v0.19.0\npalace-solver @ file://{stacks.wheels.palace_wheelhouse}/palace_solver-0.19.0-py3-none-manylinux_2_28_x86_64.whl#sha256=05b8ef647e2c21b37cd14e4f64672f3986b8c7cc81c334e86c4289373ca9d8ce\n"
+   },
+   "palace_wheel_sha256": "05b8ef647e2c21b37cd14e4f64672f3986b8c7cc81c334e86c4289373ca9d8ce",
+   "palace_version": "Palace version: v0.19.0"
+  },
+  "env": "module purge >/dev/null 2>&1\nexport PATH={cluster.root}/envs/palace-0.19.0/bin:\"$PATH\"\nunset OMP_NUM_THREADS MKL_NUM_THREADS OPENBLAS_NUM_THREADS NGS_NUM_THREADS OMP_PLACES OMP_PROC_BIND GOMP_CPU_AFFINITY KMP_AFFINITY\nexport OMP_NUM_THREADS=4\nexport OPENBLAS_NUM_THREADS=1\nexport OMP_PLACES=cores OMP_PROC_BIND=close\n",
+  "modules": "openmpi/4.1.6-gcc\n",
+  "ldd": "palace-real: libscalapack-a1f7267b.so.2.2.3 => {cluster.root}/envs/palace-0.19.0/lib/python3.12/site-packages/palace_solver/bin/../../palace_solver.libs/libscalapack-a1f7267b.so.2.2.3 (0x00007f77fa2ec000)\npalace-real: libopenblasp-r0-0e52a401.3.34.so => {cluster.root}/envs/palace-0.19.0/lib/python3.12/site-packages/palace_solver/bin/../../palace_solver.libs/libopenblasp-r0-0e52a401.3.34.so (0x00007f77f7e34000)\n"
+ },
+ "provenance": {
+  "gfem": {
+   "commit": "e7d58a9a9db93af772fb234c29c2ecc238f7d279",
+   "version": null
+  },
+  "harness": {
+   "commit": "e7d58a9a9db93af772fb234c29c2ecc238f7d279"
+  },
+  "solver": {
+   "code": "palace",
+   "dialect": "0.19",
+   "stack_version": "0.19.0",
+   "version": "0.19.0",
+   "text": "\nPalace version: v0.19.0\nSchema version: 4-1-0\n\nDependencies:\n  MPI: MPICH Version:      4.3.2\n  MFEM: MFEM v4.10.0 (release)\n  libCEED: 1.0.1\n  HYPRE: 3.2.0\n  LAPACK API: 3.12.0\n  OpenBLAS: OpenBLAS 0.3.34 DYNAMIC_ARCH NO_AFFINITY USE_OPENMP SapphireRapids MAX_THREADS=64\n  SLEPc: 3.26.0\n  PETSc: 3.26.0\n  ARPACK-NG: 3.9.1\n  SuperLU_DIST: 9.3.0\n  STRUMPACK: 8.1.0\n  ZFP: 1.0.1\n  MUMPS: 5.9.1\n  SUNDIALS: 7.9.0\n  GSLIB: 1.0.9\n  METIS: 5.1.0\n  ParMETIS: 4.0.3\n  libxsmm: 2.1.0\n  zlib: 1.2.11\n  Eigen: 5.0.1\n  fmt: 12.2.0\n  scn: 4.0.1\n  nlohmann/json-schema-validator: 2.4.1\n  nlohmann/json: 3.12.0\n",
+   "schema": "4-1-0",
+   "dependencies": {
+    "MPI": "MPICH Version:      4.3.2",
+    "MFEM": "MFEM v4.10.0 (release)",
+    "libCEED": "1.0.1",
+    "HYPRE": "3.2.0",
+    "LAPACK API": "3.12.0",
+    "OpenBLAS": "OpenBLAS 0.3.34 DYNAMIC_ARCH NO_AFFINITY USE_OPENMP SapphireRapids MAX_THREADS=64",
+    "SLEPc": "3.26.0",
+    "PETSc": "3.26.0",
+    "ARPACK-NG": "3.9.1",
+    "SuperLU_DIST": "9.3.0",
+    "STRUMPACK": "8.1.0",
+    "ZFP": "1.0.1",
+    "MUMPS": "5.9.1",
+    "SUNDIALS": "7.9.0",
+    "GSLIB": "1.0.9",
+    "METIS": "5.1.0",
+    "ParMETIS": "4.0.3",
+    "libxsmm": "2.1.0",
+    "zlib": "1.2.11",
+    "Eigen": "5.0.1",
+    "fmt": "12.2.0",
+    "scn": "4.0.1",
+    "nlohmann/json-schema-validator": "2.4.1",
+    "nlohmann/json": "3.12.0"
+   },
+   "binary_version": "v0.19.0",
+   "git_tag": "v0.19.0"
+  },
+  "stack": {
+   "name": "wheels",
+   "description_sha256": "f8638f63c753db57df400ee3e42d06f94756d81ff2a96e234379b6bc9ce84da2",
+   "env_manifest_sha256": "ecfc3e2097c4c0cb260c4942141d3bc755662e6fb4a5ee577b61204b3524a07c",
+   "fingerprint": "63af6b40668284c5eb08ef1e2eb76b1ee3ef261abd473362d418e0475f1e25f8"
+  },
+  "versions": {},
+  "env": {
+   "I_MPI_HYDRA_BOOTSTRAP": "slurm",
+   "I_MPI_HYDRA_BOOTSTRAP_EXEC_EXTRA_ARGS": "--external-launcher",
+   "OMP_NUM_THREADS": "4",
+   "OMP_PLACES": "cores",
+   "OMP_PROC_BIND": "close",
+   "OPENBLAS_NUM_THREADS": "1",
+   "SLURM_CPUS_ON_NODE": "112",
+   "SLURM_NTASKS": "1"
+  },
+  "machine": {
+   "name": "mn5-gpp",
+   "nodes": [
+    "gs14r1b70"
+   ],
+   "node_class": "standard",
+   "cpu": "Intel(R) Xeon(R) Platinum 8480+",
+   "mem_total_kb": [
+    263774812
+   ],
+   "cpus_allowed": 112,
+   "pinned_cpus": "0-55,112-167",
+   "exclusive": true,
+   "partition": "gpp",
+   "qos": "gp_ehpc",
+   "constraint": null,
+   "mpi_library": null
+  }
+ },
+ "observations": {
+  "busy_threads_per_core_max": 1,
+  "placement": {
+   "status": "pass",
+   "masks": [
+    "0-3,112-115",
+    "4-7,116-119",
+    "8-11,120-123",
+    "12-15,124-127",
+    "16-19,128-131",
+    "20-23,132-135",
+    "24-27,136-139",
+    "28-31,140-143",
+    "32-35,144-147",
+    "36-39,148-151",
+    "40-43,152-155",
+    "44-47,156-159",
+    "48-51,160-163",
+    "52-55,164-167"
+   ],
+   "reason": null
+  },
+  "dof_seen_in_stdout": 246416
+ }
+}

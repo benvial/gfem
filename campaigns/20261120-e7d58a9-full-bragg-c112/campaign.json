@@ -1,0 +1,123 @@
+{
+ "schema": "suite-campaign/1",
+ "id": "20261120-e7d58a9-full-bragg-c112",
+ "name": "full-bragg-c112",
+ "planned_utc": "2026-11-20T03:05:36Z",
+ "campaign_file": {
+  "path": "benchmarks/campaigns/full-bragg-c112.toml",
+  "sha256": "917929509cd3c2f7bcfb2db2e097ca1a0b10437814b20f5fdbb6c196cddfd06c"
+ },
+ "pins": {
+  "gfem": {
+   "commit": "e7d58a9a9db93af772fb234c29c2ecc238f7d279",
+   "commit_utc": "2026-11-20T02:59:00Z"
+  },
+  "harness": {
+   "commit": "e7d58a9a9db93af772fb234c29c2ecc238f7d279"
+  },
+  "solvers": {
+   "palace": "0.19.0"
+  },
+  "stacks": {
+   "wheels": {
+    "description_sha256": "f8638f63c753db57df400ee3e42d06f94756d81ff2a96e234379b6bc9ce84da2",
+    "env_manifest_sha256": "ecfc3e2097c4c0cb260c4942141d3bc755662e6fb4a5ee577b61204b3524a07c",
+    "fingerprint": "63af6b40668284c5eb08ef1e2eb76b1ee3ef261abd473362d418e0475f1e25f8",
+    "palace_manifest_sha256": "a133a028deb5b856593d4fc53cc9c9791244721624168baf4d59d8b6a0a557e0"
+   }
+  }
+ },
+ "machine": "mn5-gpp",
+ "core_budget": 112,
+ "jobs": [
+  {
+   "job": "bragg-wheels",
+   "group": "case",
+   "qos": "gp_ehpc",
+   "constraint": null,
+   "nodes": [
+    "gs12r2b64"
+   ],
+   "elapsed_s": 249.0,
+   "billed_core_h": 7.747,
+   "state": "COMPLETED",
+   "cases": [
+    "bragg"
+   ],
+   "stack": "wheels",
+   "runs": 32,
+   "est_s": 519.0,
+   "est_core_h": 16.1,
+   "time_limit": "0:13:00",
+   "slurm_ids": [
+    "49256961"
+   ]
+  }
+ ],
+ "records": {
+  "records/bragg/gfem-bddc__wheels__1x112__rep1.json": "4ae0fd17e0e13c430dba06a712a692c46753442ba8404446dc6dd5c57dc25a2a",
+  "records/bragg/gfem-direct__wheels__1x112__rep1.json": "2ec30136a3e32a1db3f83b6249636d91afaa8179256af5e7954eefb10f5ee93e",
+  "records/bragg/gfem-direct__wheels__1x112__rep2.json": "40daed8a66dcdcf00502becbd10ae7680304944b19a643f5271f8c8c3eede327",
+  "records/bragg/gfem-direct__wheels__1x112__rep3.json": "23aa7afcda43826e63e0b2adadf08b8b3c42ef99184c5d607f4c4faec5ce6c3a",
+  "records/bragg/gfem-petsc-mumps__wheels__1x112__rep1.json": "2681e65092141ac92c1416085258af762b8153c87678036c8137ecd4a2863025",
+  "records/bragg/palace-mumps__wheels__112x1__rep1.json": "d629f00d04b468254ff7a41589049200850d0371859d8adf218796294bef62b7",
+  "records/bragg/palace-mumps__wheels__112x1__rep2.json": "d2f2e1a2d34a5c45691126de0eef7c07f69787ed7f77215d22defac7689fcb07",
+  "records/bragg/palace-mumps__wheels__112x1__rep3.json": "7e8c4c9056de1aa6fd055f768ff74c11400b122e5a6cd00ea419344195bd762c",
+  "records/bragg/palace-mumps__wheels__14x8__rep1.json": "55487ee41908168d3e5fd1a1908743758bfd835cbbb2fdff93ad97a5a8e7c48c",
+  "records/bragg/palace-mumps__wheels__14x8__rep2.json": "0ad9a1eb92d8150647458d3e3849649041e4f0e9b68e0dd31536d979726a721c",
+  "records/bragg/palace-mumps__wheels__14x8__rep3.json": "7fbe0e15cd8c193bd8f72d91516712295420316222e5a209fefae2a2615b4a85",
+  "records/bragg/palace-mumps__wheels__16x7__rep1.json": "f19eaac0f3f0a9c86050e64877e1b5046f394d59b5aac8af311e9fbca6afbe45",
+  "records/bragg/palace-mumps__wheels__16x7__rep2.json": "e9d154aa57acf351c7ffda1fda1ef4a0201fe9eaf76a4cfdc5f02cbea8f02988",
+  "records/bragg/palace-mumps__wheels__16x7__rep3.json": "35018f7727b05e7c21bfcf2f33ed74178915789b2129f7e2362280a2b2b09d3f",
+  "records/bragg/palace-mumps__wheels__1x112__rep1.json": "4dce818cc4e9ba55caf18704a6e2a8cbad56ed55d5706f9827165cf30944f832",
+  "records/bragg/palace-mumps__wheels__1x112__rep2.json": "a410b59a53ef48a568ed164bb2ba31d9e6446d3cdc03941cafef6498bd54f5ad",
+  "records/bragg/palace-mumps__wheels__1x112__rep3.json": "1217e27eb6be5941bcd474acbc905756489366608bda3f1380ef1ac33659384f",
+  "records/bragg/palace-mumps__wheels__28x4__rep1.json": "dc7f459e3d6c7b3d7dfd7022273df35bbd3ee273891cd05048fc142c45abc54a",
+  "records/bragg/palace-mumps__wheels__28x4__rep2.json": "2d452c76a2b5d814e23dbb19bc5d65182f604e326e18d4d00854b022388e656a",
+  "records/bragg/palace-mumps__wheels__28x4__rep3.json": "a2b11aef01d728bdc005a7ea60265cd728e10ab608487fa401cb2939b205cfeb",
+  "records/bragg/palace-mumps__wheels__2x56__rep1.json": "0a559f86e2dddac5670d4b966858bc4d156076d8d01a14936087ffe8a0b1f597",
+  "records/bragg/palace-mumps__wheels__2x56__rep2.json": "ea1490fc97281943a29dd15cc20169ba5fa99f52aab9a150db976d068273080e",
+  "records/bragg/palace-mumps__wheels__2x56__rep3.json": "27a455deb8a69deecc6b3794ff2db4f2bf590636b1b7777d606be741e3a781c2",
+  "records/bragg/palace-mumps__wheels__4x28__rep1.json": "39a23618b73d310465321c86f32089d0a9de7bf498f2e9cdde6bb6efc6c6db08",
+  "records/bragg/palace-mumps__wheels__4x28__rep2.json": "21d087cb1382b0f32254dc99539470c82a26621c80184de21610bc0c8a6576d9",
+  "records/bragg/palace-mumps__wheels__4x28__rep3.json": "3f04d377475344b36c5bcf89ad30a2e47375e239940a19bbad8ddd69944ec8a3",
+  "records/bragg/palace-mumps__wheels__56x2__rep1.json": "5d4c63c6569ad5d93dbc4ea5f44f430011bb31ed25bbcb4c953113fa0e6bc021",
+  "records/bragg/palace-mumps__wheels__56x2__rep2.json": "f3565cab135815fe24ac8b27ebe5ba4c6145ccd561c44ad5298789610bce2116",
+  "records/bragg/palace-mumps__wheels__56x2__rep3.json": "22537bf6c39b0ba98a16eae4be366b2c582a8142610a8bd3c31077c5e37bb3d9",
+  "records/bragg/palace-mumps__wheels__8x14__rep1.json": "c2252057f24e9f510cf4ae9aa2b95c5e506b45b90954b1c954ede94540185ec7",
+  "records/bragg/palace-mumps__wheels__8x14__rep2.json": "33600ef3bb01d3460ee76452b372312d8ced27f87076f153286d3b835e27a598",
+  "records/bragg/palace-mumps__wheels__8x14__rep3.json": "8833ff7639ee1b8f358a20de4287e41ff467259170f54ab2b3c4dcd0b20dda25"
+ },
+ "checks": {
+  "complete": "pass",
+  "provenance": "pass",
+  "dof_equal": "pass",
+  "dof_equal_detail": {
+   "bragg": {
+    "result": "pass",
+    "ndof": {
+     "gfem": [
+      10620
+     ],
+     "palace": [
+      10620
+     ]
+    }
+   }
+  },
+  "node_class": {
+   "observed": [
+    "standard"
+   ],
+   "planned": "standard"
+  },
+  "harness_failures": []
+ },
+ "closed_utc": "2026-11-20T04:08:57Z",
+ "node_class": "standard",
+ "repeats": 3,
+ "runs": 32,
+ "est_core_h": 16.1,
+ "limit_core_h": 24.2,
+ "notes": []
+}

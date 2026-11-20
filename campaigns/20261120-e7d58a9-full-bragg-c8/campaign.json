@@ -1,0 +1,108 @@
+{
+ "schema": "suite-campaign/1",
+ "id": "20261120-e7d58a9-full-bragg-c8",
+ "name": "full-bragg-c8",
+ "planned_utc": "2026-11-20T03:05:36Z",
+ "campaign_file": {
+  "path": "benchmarks/campaigns/full-bragg-c8.toml",
+  "sha256": "9b83ae0f40259c0baf289330993b5ec2272603436c7ba686cc59d9faaefe63a7"
+ },
+ "pins": {
+  "gfem": {
+   "commit": "e7d58a9a9db93af772fb234c29c2ecc238f7d279",
+   "commit_utc": "2026-11-20T02:59:00Z"
+  },
+  "harness": {
+   "commit": "e7d58a9a9db93af772fb234c29c2ecc238f7d279"
+  },
+  "solvers": {
+   "palace": "0.19.0"
+  },
+  "stacks": {
+   "wheels": {
+    "description_sha256": "f8638f63c753db57df400ee3e42d06f94756d81ff2a96e234379b6bc9ce84da2",
+    "env_manifest_sha256": "ecfc3e2097c4c0cb260c4942141d3bc755662e6fb4a5ee577b61204b3524a07c",
+    "fingerprint": "63af6b40668284c5eb08ef1e2eb76b1ee3ef261abd473362d418e0475f1e25f8",
+    "palace_manifest_sha256": "a133a028deb5b856593d4fc53cc9c9791244721624168baf4d59d8b6a0a557e0"
+   }
+  }
+ },
+ "machine": "mn5-gpp",
+ "core_budget": 8,
+ "jobs": [
+  {
+   "job": "bragg-wheels",
+   "group": "case",
+   "qos": "gp_ehpc",
+   "constraint": null,
+   "nodes": [
+    "gs09r1b56"
+   ],
+   "elapsed_s": 174.0,
+   "billed_core_h": 5.413,
+   "state": "COMPLETED",
+   "cases": [
+    "bragg"
+   ],
+   "stack": "wheels",
+   "runs": 17,
+   "est_s": 621.0,
+   "est_core_h": 19.3,
+   "time_limit": "0:16:00",
+   "slurm_ids": [
+    "49256956"
+   ]
+  }
+ ],
+ "records": {
+  "records/bragg/gfem-bddc__wheels__1x8__rep1.json": "a003210ff44180bc416d128b1bb64cbd76134ef9286c43c39f5aff41770d553a",
+  "records/bragg/gfem-direct__wheels__1x8__rep1.json": "8e73334036670161934ac88365e0d8b134051a712cb974c6d0a122dced11b257",
+  "records/bragg/gfem-direct__wheels__1x8__rep2.json": "9eb0c83ee1e237db4e522b7ef5be44b8f162b0d3c4677ea8c29c55370c33045b",
+  "records/bragg/gfem-direct__wheels__1x8__rep3.json": "a85ece6918fb4671c3d7f1b18c0838e5ec6b7f3fa300807974a87d20ceb8595e",
+  "records/bragg/gfem-petsc-mumps__wheels__1x8__rep1.json": "f6fcc8ffe6eb4d43ebee496febcf6de609786b310ff6a7a625026684595fe747",
+  "records/bragg/palace-mumps__wheels__1x8__rep1.json": "2594d010e1d5c87074daeb456a04ea133170591ed087f3f5fabc02eba5a337bb",
+  "records/bragg/palace-mumps__wheels__1x8__rep2.json": "2ce9173d93f183f3111c7e834fce8c72ac7e860ee317e3805c19a9887d4a32e8",
+  "records/bragg/palace-mumps__wheels__1x8__rep3.json": "459afa8b40791a5139bc7243413a94dd0a43eb94244692170d2cbe70c1c311fa",
+  "records/bragg/palace-mumps__wheels__2x4__rep1.json": "37547da5517738d3636cd221571a71b6d615466d1824ae751667366efdaa5374",
+  "records/bragg/palace-mumps__wheels__2x4__rep2.json": "c753c5cb1a3f56d75ba43afb6c273874b1795e94638fb50e429c8805a9838c28",
+  "records/bragg/palace-mumps__wheels__2x4__rep3.json": "29fc67ef2251f7f68f9e185927fc41384b25b7c7dba715f52dd7097e8a8c84e1",
+  "records/bragg/palace-mumps__wheels__4x2__rep1.json": "78f3857bf1267e832d80725c6a382fd24bf5caabf859b85a65be3adef0606f9d",
+  "records/bragg/palace-mumps__wheels__4x2__rep2.json": "db09324ddcf763743e170e40ead5830d567668cfe74980d9b89b9f75cef91caf",
+  "records/bragg/palace-mumps__wheels__4x2__rep3.json": "cd99f18c4f1cc2e27ba31238a8ee3a413572299559b65fcb4f8c47faec6d8c4f",
+  "records/bragg/palace-mumps__wheels__8x1__rep1.json": "ff10c935ffb1a3e1ca99ec654f44dadf9bcb92d8637f7cea0a869129daf117e2",
+  "records/bragg/palace-mumps__wheels__8x1__rep2.json": "8472700bce342ece7f4d5d8fb74735b652c3aebbfaef7e357b0bbcbf685e4362",
+  "records/bragg/palace-mumps__wheels__8x1__rep3.json": "046f2d70179bdcf32c5b252d96bdea9c321b38262a64a8718223943b8fa9c391"
+ },
+ "checks": {
+  "complete": "pass",
+  "provenance": "pass",
+  "dof_equal": "pass",
+  "dof_equal_detail": {
+   "bragg": {
+    "result": "pass",
+    "ndof": {
+     "gfem": [
+      10620
+     ],
+     "palace": [
+      10620
+     ]
+    }
+   }
+  },
+  "node_class": {
+   "observed": [
+    "standard"
+   ],
+   "planned": "standard"
+  },
+  "harness_failures": []
+ },
+ "closed_utc": "2026-11-20T04:08:54Z",
+ "node_class": "standard",
+ "repeats": 3,
+ "runs": 17,
+ "est_core_h": 19.3,
+ "limit_core_h": 29.0,
+ "notes": []
+}

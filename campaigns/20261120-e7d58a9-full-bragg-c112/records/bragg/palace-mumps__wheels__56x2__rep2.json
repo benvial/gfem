@@ -1,0 +1,420 @@
+{
+ "schema": "suite-record/1",
+ "campaign": "20261120-e7d58a9-full-bragg-c112",
+ "name": "bragg/palace-mumps__wheels__56x2__rep2",
+ "run": {
+  "case": "bragg",
+  "solver": "palace:mumps",
+  "stack": "wheels",
+  "layout": {
+   "asked": "grid",
+   "ranks": 56,
+   "threads": 2
+  },
+  "core_budget": 112,
+  "repeat": 2,
+  "tolerance": null,
+  "order_in_job": 19,
+  "job": "49256961",
+  "step": "17",
+  "started_utc": "2026-11-20T04:04:55Z",
+  "finished_utc": "2026-11-20T04:05:01Z",
+  "added_for": null,
+  "launch": "srun"
+ },
+ "status": "ok",
+ "reason": null,
+ "failure_class": null,
+ "slurm_state": "COMPLETED",
+ "returncode": 0,
+ "case": {
+  "definition_sha256": "8de244805b83cc3fe5e305f99406dd7a611483c99bd71698b6318c412b9f4690",
+  "mesh_sha256": "6b6cdb1893d61a8572cfff7a54c62c7bb9965b613b453ef089edac15c1aaa163",
+  "order": 3,
+  "ndof": 10620,
+  "reference": {
+   "id": "bragg-20261118-a0ff134",
+   "sha256": "d08ce2ae8b7ea83af18f78e9077397f5674a770e0bd7ea5e178dc07a2278bf98"
+  }
+ },
+ "outputs": {
+  "f_hz": [
+   [
+    5185529659.906,
+    -8.994151097575001e-07
+   ],
+   [
+    7206816209.273,
+    1.119738452689e-06
+   ],
+   [
+    18002432453.5,
+    -0.002097091452331
+   ]
+  ],
+  "q": [
+   2882723229602000.0,
+   3218080165044000.0,
+   4292238288773.0
+  ],
+  "error_bkwd": [
+   7.30093841149e-17,
+   1.66520249667e-16,
+   3.565139274806e-13
+  ],
+  "iterations": [
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2
+  ]
+ },
+ "accuracy": {
+  "metric": "max_rel_dRe_f",
+  "value": 4.784754254360626e-09,
+  "per_item": [
+   2.0637186389243642e-09,
+   4.784754254360626e-09
+  ],
+  "bound": 1e-12,
+  "resolved": true,
+  "im_over_abs": [
+   1.7344710545418114e-16,
+   1.5537213939884222e-16
+  ]
+ },
+ "same_code_error": {
+  "metric": "max_rel_dRe_f",
+  "value": 0.0,
+  "per_item": [
+   0.0,
+   0.0
+  ],
+  "against": "bragg/palace-mumps__wheels__112x1__rep1",
+  "label": "solver error"
+ },
+ "timings": {
+  "wall_s": 5.941,
+  "startup_s": 2.8443365037180484,
+  "work_s": 3.097,
+  "mesh_read_s": 0.035,
+  "discretize_s": null,
+  "assemble_s": 0.08,
+  "setup_s": 0.218,
+  "solve_s": 0.265,
+  "estimate_s": 0.048999999999999995,
+  "postpro_s": 0.043,
+  "rom_s": 0.0,
+  "other_s": 2.407,
+  "setup_total_s": 0.333,
+  "solve_total_s": 0.265,
+  "per_sample_s": null,
+  "rank_reduction": "max-of-rows",
+  "source": "palace.json",
+  "rank0": {
+   "mesh_read_s": 0.032236211,
+   "discretize_s": null,
+   "assemble_s": 0.07941290399999999,
+   "setup_s": 0.218036367,
+   "solve_s": 0.2630239800000001,
+   "estimate_s": 0.047483928,
+   "postpro_s": 0.040013749,
+   "rom_s": 0.0,
+   "other_s": 2.415992567
+  }
+ },
+ "memory": {
+  "peak_rss_sum_gib": 12.989326477050781,
+  "peak_rss_rank_max_gib": 0.2721748352050781,
+  "peak_rss_largest_node_gib": 12.989326477050781,
+  "metric": "PeakNodeMemoryMegabytes.Total",
+  "pss_peak_sum_gib": 1.3493309020996094,
+  "sacct_max_rss_gib": null,
+  "self_reports": {}
+ },
+ "checks": {
+  "mesh_hash": "pass",
+  "inputs_match": "pass",
+  "converged": "pass",
+  "complete": "pass",
+  "dof": "pass",
+  "provenance": "pass",
+  "layout": "pass",
+  "placement": "skipped",
+  "reference_matches": "pass",
+  "accuracy_plausible": "pass"
+ },
+ "structural": {
+  "setups": 1,
+  "solves": 26,
+  "estimator": "always on, lightened (EstimatorTol 1e-2, EstimatorMG)",
+  "direct_arm": "GMRES around complex MUMPS (MGMaxLevels 1)"
+ },
+ "stack": {
+  "name": "wheels",
+  "kind": "wheels",
+  "closed": [
+   "mkl (pip, PARDISO)"
+  ],
+  "versions": {
+   "palace": "0.19.0",
+   "ngsolve": "6.2.2608",
+   "petsc": "3.26.0"
+  },
+  "fingerprint": "63af6b40668284c5eb08ef1e2eb76b1ee3ef261abd473362d418e0475f1e25f8",
+  "description": {
+   "name": "wheels",
+   "kind": "wheels",
+   "closed": [
+    "mkl (pip, PARDISO)"
+   ],
+   "versions": {
+    "palace": "0.19.0",
+    "ngsolve": "6.2.2608",
+    "petsc": "3.26.0"
+   },
+   "codes": {
+    "gfem": {
+     "modules": [
+      "openmpi/4.1.6-gcc"
+     ],
+     "packages": [],
+     "env": {
+      "JAX_PLATFORMS": "cpu",
+      "JAX_ENABLE_X64": "1",
+      "OMPI_MCA_opal_warn_on_missing_libcuda": "0"
+     },
+     "threads": {
+      "OMP_NUM_THREADS": "threads",
+      "MKL_NUM_THREADS": "threads",
+      "NGS_NUM_THREADS": "threads",
+      "OPENBLAS_NUM_THREADS": "threads"
+     },
+     "caps": {
+      "OPENBLAS_NUM_THREADS": 64
+     },
+     "mpi": "pmix",
+     "launcher": null,
+     "entry": null,
+     "python": null,
+     "launch_r1": "srun"
+    },
+    "palace": {
+     "modules": [],
+     "packages": [],
+     "env": {},
+     "threads": {
+      "OMP_NUM_THREADS": "threads",
+      "OPENBLAS_NUM_THREADS": 1
+     },
+     "caps": {},
+     "mpi": "pmi2",
+     "launcher": "srun",
+     "entry": "palace-real",
+     "python": null,
+     "launch_r1": "srun"
+    }
+   },
+   "inputs": {
+    "base_venv": "{stacks.wheels.base_venv}",
+    "wheel_dirs": [
+     "{stacks.wheels.wheel_dirs[0]}",
+     "{stacks.wheels.wheel_dirs[1]}"
+    ],
+    "petsc_wheelhouse": "{stacks.wheels.petsc_wheelhouse}",
+    "palace_wheelhouse": "{stacks.wheels.palace_wheelhouse}",
+    "python": "{stacks.wheels.python}"
+   },
+   "env": {},
+   "env_dir": "{cluster.root}/envs/bench-e7d58a9-wheels-63af6b40",
+   "code_env": {
+    "gfem": "{cluster.root}/envs/bench-e7d58a9-wheels-63af6b40",
+    "palace": "{cluster.root}/envs/palace-0.19.0"
+   },
+   "prefixes": {}
+  },
+  "provenance": {
+   "gfem_manifest": {
+    "sha256": "ecfc3e2097c4c0cb260c4942141d3bc755662e6fb4a5ee577b61204b3524a07c",
+    "text": "commit e7d58a9a9db93af772fb234c29c2ecc238f7d279\na7126d4304d3286ecbb4580c23af98ef1b7525254d9dc6871ba5bd0ef0400879  {cluster.root}/refs/e7d58a9/dist/gfem-0.1.0-py3-none-any.whl\n830acc20a7c9260de84d01b4ca9a00d80c642442f79ac73d56897d543ced8583  {stacks.wheels.petsc_wheelhouse}/petsc-3.26.0-py3-none-linux_x86_64.whl\n72e73e3b25bb77bbf910aff4474036360cc8464441578b8dc1b06ad60e4ffc4e  {stacks.wheels.petsc_wheelhouse}/petsc4py-3.26.0-cp312-cp312-linux_x86_64.whl\n18e8cca8c0b42891c8994793f6035b16e3adf8d3f125d3516594bab0aeda6b5d  {stacks.wheels.petsc_wheelhouse}/slepc-3.26.0-py3-none-linux_x86_64.whl\na724ea7ec244830809c66d9544e211d79a11fe9cdaab9aa78c0f920dcd689f05  {stacks.wheels.petsc_wheelhouse}/slepc4py-3.26.0-cp312-cp312-linux_x86_64.whl\ncoverage==7.16.2\ngfem @ file://{cluster.root}/refs/e7d58a9/dist/gfem-0.1.0-py3-none-any.whl#sha256=a7126d4304d3286ecbb4580c23af98ef1b7525254d9dc6871ba5bd0ef0400879\niniconfig==2.3.1\nintel-cmplr-lib-ur==2026.2.0\nintel-openmp==2026.2.0\njax==0.12.0\njaxlib==0.12.0\nmarkdown-it-py==4.2.0\nmdurl==0.1.2\nmeshio==5.3.5\nmkl==2026.2.0\nml_dtypes==0.6.0\nmpi4py==4.1.2\nnetgen-mesher==6.2.2608\nnetgen_occt==7.8.1\nngsolve==6.2.2608\nngsolve_openblas==0.3.33\nnumpy==2.5.4\nopt_einsum==3.4.0\npackaging==26.3\npandas==3.0.6\npetsc @ file://{stacks.wheels.petsc_wheelhouse}/petsc-3.26.0-py3-none-linux_x86_64.whl#sha256=830acc20a7c9260de84d01b4ca9a00d80c642442f79ac73d56897d543ced8583\npetsc4py @ file://{stacks.wheels.petsc_wheelhouse}/petsc4py-3.26.0-cp312-cp312-linux_x86_64.whl#sha256=72e73e3b25bb77bbf910aff4474036360cc8464441578b8dc1b06ad60e4ffc4e\npluggy==1.7.0\nPygments==2.21.0\npytest==9.1.1\npytest-cov==7.1.0\npython-dateutil==2.9.0.post0\nrich==15.0.0\nscipy==1.18.1\nsix==1.17.0\nslepc @ file://{stacks.wheels.petsc_wheelhouse}/slepc-3.26.0-py3-none-linux_x86_64.whl#sha256=18e8cca8c0b42891c8994793f6035b16e3adf8d3f125d3516594bab0aeda6b5d\nslepc4py @ file://{stacks.wheels.petsc_wheelhouse}/slepc4py-3.26.0-cp312-cp312-linux_x86_64.whl#sha256=a724ea7ec244830809c66d9544e211d79a11fe9cdaab9aa78c0f920dcd689f05\ntbb==2023.2.0\ntcmlib==1.6.0\numf==1.2.0\nxarray==2026.9.0\n"
+   },
+   "palace_manifest": {
+    "sha256": "a133a028deb5b856593d4fc53cc9c9791244721624168baf4d59d8b6a0a557e0",
+    "text": "05b8ef647e2c21b37cd14e4f64672f3986b8c7cc81c334e86c4289373ca9d8ce  {stacks.wheels.palace_wheelhouse}/palace_solver-0.19.0-py3-none-manylinux_2_28_x86_64.whl\npalace --version: Palace version: v0.19.0\npalace-solver @ file://{stacks.wheels.palace_wheelhouse}/palace_solver-0.19.0-py3-none-manylinux_2_28_x86_64.whl#sha256=05b8ef647e2c21b37cd14e4f64672f3986b8c7cc81c334e86c4289373ca9d8ce\n"
+   },
+   "palace_wheel_sha256": "05b8ef647e2c21b37cd14e4f64672f3986b8c7cc81c334e86c4289373ca9d8ce",
+   "palace_version": "Palace version: v0.19.0"
+  },
+  "env": "module purge >/dev/null 2>&1\nexport PATH={cluster.root}/envs/palace-0.19.0/bin:\"$PATH\"\nunset OMP_NUM_THREADS MKL_NUM_THREADS OPENBLAS_NUM_THREADS NGS_NUM_THREADS OMP_PLACES OMP_PROC_BIND GOMP_CPU_AFFINITY KMP_AFFINITY\nexport OMP_NUM_THREADS=2\nexport OPENBLAS_NUM_THREADS=1\nexport OMP_PLACES=cores OMP_PROC_BIND=close\n",
+  "modules": "openmpi/4.1.6-gcc\n",
+  "ldd": "palace-real: libscalapack-a1f7267b.so.2.2.3 => {cluster.root}/envs/palace-0.19.0/lib/python3.12/site-packages/palace_solver/bin/../../palace_solver.libs/libscalapack-a1f7267b.so.2.2.3 (0x00007f9bb5dee000)\npalace-real: libopenblasp-r0-0e52a401.3.34.so => {cluster.root}/envs/palace-0.19.0/lib/python3.12/site-packages/palace_solver/bin/../../palace_solver.libs/libopenblasp-r0-0e52a401.3.34.so (0x00007f9bb3936000)\n"
+ },
+ "provenance": {
+  "gfem": {
+   "commit": "e7d58a9a9db93af772fb234c29c2ecc238f7d279",
+   "version": null
+  },
+  "harness": {
+   "commit": "e7d58a9a9db93af772fb234c29c2ecc238f7d279"
+  },
+  "solver": {
+   "code": "palace",
+   "dialect": "0.19",
+   "stack_version": "0.19.0",
+   "version": "0.19.0",
+   "text": "\nPalace version: v0.19.0\nSchema version: 4-1-0\n\nDependencies:\n  MPI: MPICH Version:      4.3.2\n  MFEM: MFEM v4.10.0 (release)\n  libCEED: 1.0.1\n  HYPRE: 3.2.0\n  LAPACK API: 3.12.0\n  OpenBLAS: OpenBLAS 0.3.34 DYNAMIC_ARCH NO_AFFINITY USE_OPENMP SapphireRapids MAX_THREADS=64\n  SLEPc: 3.26.0\n  PETSc: 3.26.0\n  ARPACK-NG: 3.9.1\n  SuperLU_DIST: 9.3.0\n  STRUMPACK: 8.1.0\n  ZFP: 1.0.1\n  MUMPS: 5.9.1\n  SUNDIALS: 7.9.0\n  GSLIB: 1.0.9\n  METIS: 5.1.0\n  ParMETIS: 4.0.3\n  libxsmm: 2.1.0\n  zlib: 1.2.11\n  Eigen: 5.0.1\n  fmt: 12.2.0\n  scn: 4.0.1\n  nlohmann/json-schema-validator: 2.4.1\n  nlohmann/json: 3.12.0\n",
+   "schema": "4-1-0",
+   "dependencies": {
+    "MPI": "MPICH Version:      4.3.2",
+    "MFEM": "MFEM v4.10.0 (release)",
+    "libCEED": "1.0.1",
+    "HYPRE": "3.2.0",
+    "LAPACK API": "3.12.0",
+    "OpenBLAS": "OpenBLAS 0.3.34 DYNAMIC_ARCH NO_AFFINITY USE_OPENMP SapphireRapids MAX_THREADS=64",
+    "SLEPc": "3.26.0",
+    "PETSc": "3.26.0",
+    "ARPACK-NG": "3.9.1",
+    "SuperLU_DIST": "9.3.0",
+    "STRUMPACK": "8.1.0",
+    "ZFP": "1.0.1",
+    "MUMPS": "5.9.1",
+    "SUNDIALS": "7.9.0",
+    "GSLIB": "1.0.9",
+    "METIS": "5.1.0",
+    "ParMETIS": "4.0.3",
+    "libxsmm": "2.1.0",
+    "zlib": "1.2.11",
+    "Eigen": "5.0.1",
+    "fmt": "12.2.0",
+    "scn": "4.0.1",
+    "nlohmann/json-schema-validator": "2.4.1",
+    "nlohmann/json": "3.12.0"
+   },
+   "binary_version": "v0.19.0",
+   "git_tag": "v0.19.0"
+  },
+  "stack": {
+   "name": "wheels",
+   "description_sha256": "f8638f63c753db57df400ee3e42d06f94756d81ff2a96e234379b6bc9ce84da2",
+   "env_manifest_sha256": "ecfc3e2097c4c0cb260c4942141d3bc755662e6fb4a5ee577b61204b3524a07c",
+   "fingerprint": "63af6b40668284c5eb08ef1e2eb76b1ee3ef261abd473362d418e0475f1e25f8"
+  },
+  "versions": {},
+  "env": {
+   "I_MPI_HYDRA_BOOTSTRAP": "slurm",
+   "I_MPI_HYDRA_BOOTSTRAP_EXEC_EXTRA_ARGS": "--external-launcher",
+   "OMP_NUM_THREADS": "2",
+   "OMP_PLACES": "cores",
+   "OMP_PROC_BIND": "close",
+   "OPENBLAS_NUM_THREADS": "1",
+   "SLURM_CPUS_ON_NODE": "112",
+   "SLURM_NTASKS": "1"
+  },
+  "machine": {
+   "name": "mn5-gpp",
+   "nodes": [
+    "gs12r2b64"
+   ],
+   "node_class": "standard",
+   "cpu": "Intel(R) Xeon(R) Platinum 8480+",
+   "mem_total_kb": [
+    263774812
+   ],
+   "cpus_allowed": 114,
+   "pinned_cpus": "0-2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38,40,42,44,46,48,50,52,54,56,58,60,62,64,66,68,70,72,74,76,78,80,82,84,86,88,90,92,94,96,98,100,102,104,106,108,110,112-114,116,118,120,122,124,126,128,130,132,134,136,138,140,142,144,146,148,150,152,154,156,158,160,162,164,166,168,170,172,174,176,178,180,182,184,186,188,190,192,194,196,198,200,202,204,206,208,210,212,214,216,218,220,222",
+   "exclusive": true,
+   "partition": "gpp",
+   "qos": "gp_ehpc",
+   "constraint": null,
+   "mpi_library": null
+  }
+ },
+ "observations": {
+  "busy_threads_per_core_max": 0,
+  "placement": {
+   "status": "skipped",
+   "masks": [
+    "0-1,112-113",
+    "2,114",
+    "4,116",
+    "6,118",
+    "8,120",
+    "10,122",
+    "12,124",
+    "14,126",
+    "16,128",
+    "18,130",
+    "20,132",
+    "22,134",
+    "24,136",
+    "26,138",
+    "28,140",
+    "30,142",
+    "32,144",
+    "34,146",
+    "36,148",
+    "38,150",
+    "40,152",
+    "42,154",
+    "44,156",
+    "46,158",
+    "48,160",
+    "50,162",
+    "52,164",
+    "54,166",
+    "56,168",
+    "58,170",
+    "60,172",
+    "62,174",
+    "64,176",
+    "66,178",
+    "68,180",
+    "70,182",
+    "72,184",
+    "74,186",
+    "76,188",
+    "78,190",
+    "80,192",
+    "82,194",
+    "84,196",
+    "86,198",
+    "88,200",
+    "90,202",
+    "92,204",
+    "94,206",
+    "96,208",
+    "98,210",
+    "100,212",
+    "102,214",
+    "104,216",
+    "106,218",
+    "108,220",
+    "110,222"
+   ],
+   "reason": "rank 1: saw 1 of 2 working threads; rank 2: saw 1 of 2 working threads; rank 3: saw 1 of 2 working threads; rank 4: saw 1 of 2 working threads; rank 5: saw 1 of 2 working threads; rank 6: saw 1 of 2 working threads; rank 7: saw 1 of 2 working threads; rank 8: saw 1 of 2 working threads; rank 9: saw 1 of 2 working threads; rank 10: saw 1 of 2 working threads; rank 11: saw 1 of 2 working threads; rank 12: saw 1 of 2 working threads; rank 13: saw 1 of 2 working threads; rank 14: saw 1 of 2 working threads; rank 15: saw 1 of 2 working threads; rank 16: saw 1 of 2 working threads; rank 17: saw 1 of 2 working threads; rank 18: saw 1 of 2 working threads; rank 19: saw 1 of 2 working threads; rank 20: saw 1 of 2 working threads; rank 21: saw 1 of 2 working threads; rank 22: saw 1 of 2 working threads; rank 23: saw 1 of 2 working threads; rank 24: saw 1 of 2 working threads; rank 25: saw 1 of 2 working threads; rank 26: saw 1 of 2 working threads; rank 27: saw 1 of 2 working threads; rank 28: saw 1 of 2 working threads; rank 29: saw 1 of 2 working threads; rank 30: saw 1 of 2 working threads; rank 31: saw 1 of 2 working threads; rank 32: saw 1 of 2 working threads; rank 33: saw 1 of 2 working threads; rank 34: saw 1 of 2 working threads; rank 35: saw 1 of 2 working threads; rank 36: saw 1 of 2 working threads; rank 37: saw 1 of 2 working threads; rank 38: saw 1 of 2 working threads; rank 39: saw 1 of 2 working threads; rank 40: saw 1 of 2 working threads; rank 41: saw 1 of 2 working threads; rank 42: saw 1 of 2 working threads; rank 43: saw 1 of 2 working threads; rank 44: saw 1 of 2 working threads; rank 45: saw 1 of 2 working threads; rank 46: saw 1 of 2 working threads; rank 47: saw 1 of 2 working threads; rank 48: saw 1 of 2 working threads; rank 49: saw 1 of 2 working threads; rank 50: saw 1 of 2 working threads; rank 51: saw 1 of 2 working threads; rank 52: saw 1 of 2 working threads; rank 53: saw 1 of 2 working threads; rank 54: saw 1 of 2 working threads; rank 55: saw 1 of 2 working threads (run too short to verify)"
+  },
+  "dof_seen_in_stdout": 10620
+ }
+}

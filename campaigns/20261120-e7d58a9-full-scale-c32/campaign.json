@@ -1,0 +1,205 @@
+{
+ "schema": "suite-campaign/1",
+ "id": "20261120-e7d58a9-full-scale-c32",
+ "name": "full-scale-c32",
+ "planned_utc": "2026-11-20T03:05:37Z",
+ "campaign_file": {
+  "path": "benchmarks/campaigns/full-scale-c32.toml",
+  "sha256": "1051d69894225077f3540b06024ff87854a41eb99a966d5ceb2197de08198d80"
+ },
+ "pins": {
+  "gfem": {
+   "commit": "e7d58a9a9db93af772fb234c29c2ecc238f7d279",
+   "commit_utc": "2026-11-20T02:59:00Z"
+  },
+  "harness": {
+   "commit": "e7d58a9a9db93af772fb234c29c2ecc238f7d279"
+  },
+  "solvers": {
+   "palace": "0.19.0"
+  },
+  "stacks": {
+   "wheels": {
+    "description_sha256": "f8638f63c753db57df400ee3e42d06f94756d81ff2a96e234379b6bc9ce84da2",
+    "env_manifest_sha256": "ecfc3e2097c4c0cb260c4942141d3bc755662e6fb4a5ee577b61204b3524a07c",
+    "fingerprint": "63af6b40668284c5eb08ef1e2eb76b1ee3ef261abd473362d418e0475f1e25f8",
+    "palace_manifest_sha256": "a133a028deb5b856593d4fc53cc9c9791244721624168baf4d59d8b6a0a557e0"
+   }
+  }
+ },
+ "machine": "mn5-gpp",
+ "core_budget": 32,
+ "jobs": [
+  {
+   "job": "r10M_void-wheels",
+   "group": "case",
+   "qos": "gp_ehpc",
+   "constraint": "highmem",
+   "nodes": [
+    "gs01r3b42"
+   ],
+   "elapsed_s": 9565.0,
+   "billed_core_h": 297.578,
+   "state": "COMPLETED",
+   "cases": [
+    "r10M_void"
+   ],
+   "stack": "wheels",
+   "runs": 40,
+   "est_s": 11604.0,
+   "est_core_h": 361.0,
+   "time_limit": "4:51:00",
+   "slurm_ids": [
+    "49258769"
+   ]
+  },
+  {
+   "job": "microstrip_p3-wheels",
+   "group": "case",
+   "qos": "gp_ehpc",
+   "constraint": "highmem",
+   "nodes": [
+    "gs01r3b37"
+   ],
+   "elapsed_s": 12394.0,
+   "billed_core_h": 385.591,
+   "state": "COMPLETED",
+   "cases": [
+    "microstrip_p3"
+   ],
+   "stack": "wheels",
+   "runs": 40,
+   "est_s": 11943.0,
+   "est_core_h": 371.6,
+   "time_limit": "4:59:00",
+   "slurm_ids": [
+    "49258768"
+   ]
+  }
+ ],
+ "records": {
+  "records/microstrip_p3/gfem-bddc__wheels__8x4__rep1.json": "8e665cf3df84aa377d43438c2ad723737b2d7b3390714fd5639093d6983ff2c6",
+  "records/microstrip_p3/gfem-bddc__wheels__8x4__rep2.json": "251ad15d89378df1717a364f2d482c21234b853a95c947329d9a2206f1487cc2",
+  "records/microstrip_p3/gfem-bddc__wheels__8x4__rep3.json": "b8730a43312cbe97b901e74ddcc63b3c8431f9da7ade0d5925f28fc9c99a089c",
+  "records/microstrip_p3/gfem-bddc__wheels__default__rep1.json": "602932832dcde7fd808256fa641578f461dad913817dda0f7d1b7f41a8a13625",
+  "records/microstrip_p3/gfem-bddc__wheels__default__rep2.json": "5c25c3378696314973c7e7b6a4842c42c0e2f6b22559d9e192faedee14d88f6b",
+  "records/microstrip_p3/gfem-bddc__wheels__default__rep3.json": "2c18d731325aca7327299adb8fc0302ed00fe3e1b738e3ce4b285b1be25a56f1",
+  "records/microstrip_p3/gfem-bddc__wheels__default__tol1e-06__rep1.json": "ad6a7a02592de7093e8af42e8347350c74e5127acd447db66b8f977770a0b8ce",
+  "records/microstrip_p3/gfem-bddc__wheels__default__tol1e-06__rep2.json": "b1da62110efb8208c4755171b4ed9045691f4fcf8214ad3fee9999307558e855",
+  "records/microstrip_p3/gfem-bddc__wheels__default__tol1e-06__rep3.json": "e6f00353519aeafb93a1efc08ac45d344325ded3ad4d8d9b73f52a4a1b256756",
+  "records/microstrip_p3/gfem-bddc__wheels__default__tol1e-10__rep1.json": "c3750dc243b530b03c714c4c2307ef8c2a6275de475445f0acb87f74b9e68ad4",
+  "records/microstrip_p3/gfem-bddc__wheels__default__tol1e-10__rep2.json": "fde07cde964834efe7b65b6d4fae76f15153dab425038e806ace7e1cf17b997b",
+  "records/microstrip_p3/gfem-bddc__wheels__default__tol1e-10__rep3.json": "58a977bf775568cd333dfdf0d7214e2f95b71c982c2fb4d81f5705df4fce1bd2",
+  "records/microstrip_p3/gfem-direct__wheels__8x4__rep1.json": "7b1464a65ae975b3bbe34e320e7c4a71235a5d1adbf854e5b4c4d1fdb786a811",
+  "records/microstrip_p3/gfem-direct__wheels__default__rep1.json": "2f40773bcc038d2fc5f555f7feffc81210fedcfa4dcef095263ec7830f5367e5",
+  "records/microstrip_p3/gfem-direct__wheels__default__rep2.json": "b6c230e39d1812e3805608c497002ed1c02fa7c73bf2716977560ce819065642",
+  "records/microstrip_p3/gfem-direct__wheels__default__rep3.json": "4348d6fa171c1f90709977d3b9b8c7733e10850b405783c5e386d9bdd2701b38",
+  "records/microstrip_p3/gfem-petsc-mumps__wheels__8x4__rep1.json": "0325576ba5473dc25ba58e6450fbcdd991ba807fa9d238fa2312d07b86d9a2dc",
+  "records/microstrip_p3/gfem-petsc-mumps__wheels__8x4__rep2.json": "9e16b36407a8ce2014dc4c744dd388fdf05e8ebb98dd4d212cb1d29664f721f9",
+  "records/microstrip_p3/gfem-petsc-mumps__wheels__8x4__rep3.json": "a307b64f5c1cf5bdced8a4f6b386d7d21704a8db666cf058c4eb2f1f7b97fead",
+  "records/microstrip_p3/gfem-petsc-mumps__wheels__default__rep1.json": "9d84e730d115b1579b7c1a8ceb5468251eebe8852e37ee5e9219af20fe6ed057",
+  "records/microstrip_p3/gfem-petsc-mumps__wheels__default__rep2.json": "27f81403057d13dd6a5051cadc6e130c8f75c49cd826a07634176f2ad0e99c9f",
+  "records/microstrip_p3/gfem-petsc-mumps__wheels__default__rep3.json": "d721dd2db08b1b5fea7d64eb9e7b3a8dcfa9764939b8fc528b149c2bae77a00d",
+  "records/microstrip_p3/palace-mumps__wheels__8x4__rep1.json": "4a28a9e22c6609c3b93efb92e8814751881785c9c4e0d8900c4db7c4cb2d4eed",
+  "records/microstrip_p3/palace-mumps__wheels__8x4__rep2.json": "29576556039b4ad2cc41421b353c4c30bff3136d399c52b56140eedd2c6d6439",
+  "records/microstrip_p3/palace-mumps__wheels__8x4__rep3.json": "8042371582c78142b192ab2b4eba0e1b653c17d7e940c38c2c66147ab62de82f",
+  "records/microstrip_p3/palace-mumps__wheels__default__rep1.json": "bb21b74e780ba1e1a7d4121dd55675c5b9bb24143b0711b34bbfba677775f904",
+  "records/microstrip_p3/palace-mumps__wheels__default__rep2.json": "8d3c8cb3b50c63a1760698f6ed403d4997a044cfc27056209db419fa0fca4950",
+  "records/microstrip_p3/palace-mumps__wheels__default__rep3.json": "671a586fc507d008245f46618872c954b7bdf3b1e3d46047750a36b48a90a86c",
+  "records/microstrip_p3/palace-pmg__wheels__8x4__rep1.json": "1387250998eab75deea9c9c56a3086bdb4106d02a86ad7c61ac7ef210e3eb914",
+  "records/microstrip_p3/palace-pmg__wheels__8x4__rep2.json": "9f20f6a1eac3bbcafcf96c4e58ecbea243ae0a439960753f8a2581d1f2ccb7c1",
+  "records/microstrip_p3/palace-pmg__wheels__8x4__rep3.json": "8512108e69181adf79cd45c0484f070d521c6f02a8416399af61e265b45c5b1b",
+  "records/microstrip_p3/palace-pmg__wheels__default__rep1.json": "4d7b6e2406ca494dcfc47010babf511b34b934ba457201bc4301d6c8e0d1332c",
+  "records/microstrip_p3/palace-pmg__wheels__default__rep2.json": "cbeb2ee0e10487549e6ebc9e828a5321ff889933ae241dadfb304b793feea014",
+  "records/microstrip_p3/palace-pmg__wheels__default__rep3.json": "fcb6d1db5399637ae365d0c5861bdfc5754b7733156788482d7390a4d6576ae2",
+  "records/microstrip_p3/palace-pmg__wheels__default__tol1e-06__rep1.json": "9b26db421809053fe3447cf2069bd060b5cb49e2d7d3ede30ec22323843a7b1d",
+  "records/microstrip_p3/palace-pmg__wheels__default__tol1e-06__rep2.json": "33f4cb82a2eb31f9affc6e587c368680578f1ae347367e4d3545c0ab1d3430c4",
+  "records/microstrip_p3/palace-pmg__wheels__default__tol1e-06__rep3.json": "0d17a12be7f0842c106091624a6838ce3eaa82122e7d499315f1cdf25a40bd80",
+  "records/microstrip_p3/palace-pmg__wheels__default__tol1e-10__rep1.json": "f23a0ddc25d55bb6d2f3c50e46c686462f76d127bb43f4a7dfb8569d4942a9c8",
+  "records/microstrip_p3/palace-pmg__wheels__default__tol1e-10__rep2.json": "0b76bed994f3c0fd84eb0f1485969195c0170724ffcc6f7ac037f884a256890f",
+  "records/microstrip_p3/palace-pmg__wheels__default__tol1e-10__rep3.json": "a11639bbe0b9de0e1b5ec36aaa51511d0a14ae427f1c5fbb052a0b0edc6b428d",
+  "records/r10M_void/gfem-bddc__wheels__8x4__rep1.json": "02e162c5b46bedb07dad94d636f29bef42a20793d04d9235ae462d7dfd5c7989",
+  "records/r10M_void/gfem-bddc__wheels__8x4__rep2.json": "462f5c9033cd23491fd6ebe69ac2a1a952279b7e9df8ce9ddec8f76dad626848",
+  "records/r10M_void/gfem-bddc__wheels__8x4__rep3.json": "72164a4f88108121d42594c92c069c45df145ea0cc2987a99382cccbc44c2496",
+  "records/r10M_void/gfem-bddc__wheels__default__rep1.json": "d7fdec14a98a33d4f50d628ddea00433dd60796e3cedf1c6f10652bdc68e596c",
+  "records/r10M_void/gfem-bddc__wheels__default__rep2.json": "484e06e0d6ace3871b1123b7a915b536216797467b4f7bd0e98e96607c8ab3b0",
+  "records/r10M_void/gfem-bddc__wheels__default__rep3.json": "12e88bff6b465b3bd2292b6c7f306e7baf7eec331ffd0dd2f1adaab45274862e",
+  "records/r10M_void/gfem-bddc__wheels__default__tol1e-06__rep1.json": "e849d8fb7e79291b123a9f0d6977bc3bc752839648659422e9d3924ac4713f31",
+  "records/r10M_void/gfem-bddc__wheels__default__tol1e-06__rep2.json": "2cc6288582490340e2064a13b22ad4161c010a3025af1206ef85f7a5348f0f7c",
+  "records/r10M_void/gfem-bddc__wheels__default__tol1e-06__rep3.json": "05bb26222417d31354eb826a5699883c80062596742f2d0452f282fed377835e",
+  "records/r10M_void/gfem-bddc__wheels__default__tol1e-10__rep1.json": "f647931db5820c131886bfc6607564c8e2be504d0008362515e5fec67aeff421",
+  "records/r10M_void/gfem-bddc__wheels__default__tol1e-10__rep2.json": "72ef9260da6fbf33a3bcdefca15214b25d33b4db7e56e4dc779c84598dd53007",
+  "records/r10M_void/gfem-bddc__wheels__default__tol1e-10__rep3.json": "69fcb446af4225a19b2f25b4edeca8ce41844f5772a1289775e3b1171f3f7ee4",
+  "records/r10M_void/gfem-direct__wheels__8x4__rep1.json": "12b504612bac9a390ab57158932a3df7defd260eb4903800d588fd1f83d37d59",
+  "records/r10M_void/gfem-direct__wheels__default__rep1.json": "73d729fc5a130417629a7ea7d2f720a19c5729112c065ba7606f0c34857f484f",
+  "records/r10M_void/gfem-direct__wheels__default__rep2.json": "d1134f04ab6912bef10f788e0c9bfb77d93ab6ba90d68ac591e8e77d7aeb6fbc",
+  "records/r10M_void/gfem-direct__wheels__default__rep3.json": "050ce5541feeb6af53457022e1e7df9eed071a7afe8040a7367d3d8f6095a1e2",
+  "records/r10M_void/gfem-petsc-mumps__wheels__8x4__rep1.json": "6f366cafeeacbdc3bb5b6070263e90d59f9cd8db1a57eee91f03ae32ba958d57",
+  "records/r10M_void/gfem-petsc-mumps__wheels__8x4__rep2.json": "54feb365b62d8fdd62095ea02735bad9c739f525cc4076b17c7446a8eec018b7",
+  "records/r10M_void/gfem-petsc-mumps__wheels__8x4__rep3.json": "d3b3e0d13384d60dbd512df1bb35b53b1ef5c908c66d7cb62c2edd51caeb4144",
+  "records/r10M_void/gfem-petsc-mumps__wheels__default__rep1.json": "20c1c764cccd8c582e885deb1776fe7f90504c52040a5d9a33215cd749988c50",
+  "records/r10M_void/gfem-petsc-mumps__wheels__default__rep2.json": "03f7cfc9f0db397321253874f826eb35cde34f52b6261761c60bb135b05f8cef",
+  "records/r10M_void/gfem-petsc-mumps__wheels__default__rep3.json": "eaecd0aaee0e8ad4cdf545c90e0b4a7c4efcfdc7c4a99fd942494cfb1c184fcc",
+  "records/r10M_void/palace-mumps__wheels__8x4__rep1.json": "54255515fa0ad403ef97326e6b04d4e1c20f30ff380f43bfc8abff4c58bb5717",
+  "records/r10M_void/palace-mumps__wheels__8x4__rep2.json": "aa1c1bdfe26ebed728dd8d177c2290e7ae8637f71449a797b94bb5b8ef700900",
+  "records/r10M_void/palace-mumps__wheels__8x4__rep3.json": "8a19571b419784b581c0640c24f897b1f04dd7f6fd4ef321bd81dfc28fdba72f",
+  "records/r10M_void/palace-mumps__wheels__default__rep1.json": "558fd88c796c4f19b003545874b2be7d64bbcae7f1bea6199d09376585a4e1e0",
+  "records/r10M_void/palace-mumps__wheels__default__rep2.json": "964fe284dd5c1b268bb03e01c8e8a80a54c92e2681935aeacd511c93145f6329",
+  "records/r10M_void/palace-mumps__wheels__default__rep3.json": "f25478133ac0dfe7ec76b6fc89ee331079a02f5b526d6eebc6b57b7bfdbf594a",
+  "records/r10M_void/palace-pmg__wheels__8x4__rep1.json": "dbed9ac1d63d707d5159a5a295a489fccc90ea17957f7cdc05fc77a591dddedb",
+  "records/r10M_void/palace-pmg__wheels__8x4__rep2.json": "0172ecb14af55aad18558eef71242e3024a8f0a694f790ba0f3bdd7f548ba391",
+  "records/r10M_void/palace-pmg__wheels__8x4__rep3.json": "dc1f937eed6caf9451cd0db12816d2b343fe32aed9805571e4d73a4c0a1ebade",
+  "records/r10M_void/palace-pmg__wheels__default__rep1.json": "e3e1abc1e70fb456230b719b2abe7b186e2970d754c39dc22673530cb992cca9",
+  "records/r10M_void/palace-pmg__wheels__default__rep2.json": "6d9cf9d9e57f4888395e271d00ad708532a8c36123be165c312ef21041f17e6f",
+  "records/r10M_void/palace-pmg__wheels__default__rep3.json": "256f716a1f235e3abb5f32d63cf009a817b58f827b1c4e1336db681f80446bed",
+  "records/r10M_void/palace-pmg__wheels__default__tol1e-06__rep1.json": "069a8d05c641215b6ec34fe8f89882d7a99328b1fe5bba38ed80aa82c84a73ee",
+  "records/r10M_void/palace-pmg__wheels__default__tol1e-06__rep2.json": "e0ac4873d94b97773d88accc0f78cf1d845151c223a4f1cab30aace6ebd12c04",
+  "records/r10M_void/palace-pmg__wheels__default__tol1e-06__rep3.json": "10defde21339cd9ef6d2c3c177881c5d93155ee8d0fcfbd1bddd4563819d516b",
+  "records/r10M_void/palace-pmg__wheels__default__tol1e-10__rep1.json": "ce1082747ce3d1bd0bf61cad2166e2adf0b0b8d346fdd58d4f7b7c7cff1f02c3",
+  "records/r10M_void/palace-pmg__wheels__default__tol1e-10__rep2.json": "36448091b855ba85d6e38fc36ace7d24b0ddd36fdfccca55c2e2d32aa9437794",
+  "records/r10M_void/palace-pmg__wheels__default__tol1e-10__rep3.json": "bd155d7176292032e1d321e298c688c4e5ac8407f5e92782cb44073782b063bd"
+ },
+ "checks": {
+  "complete": "pass",
+  "provenance": "pass",
+  "dof_equal": "pass",
+  "dof_equal_detail": {
+   "microstrip_p3": {
+    "result": "pass",
+    "ndof": {
+     "gfem": [
+      907791
+     ],
+     "palace": [
+      907791
+     ]
+    }
+   },
+   "r10M_void": {
+    "result": "pass",
+    "ndof": {
+     "gfem": [
+      10248856
+     ],
+     "palace": [
+      10248856
+     ]
+    }
+   }
+  },
+  "node_class": {
+   "observed": [
+    "highmem"
+   ],
+   "planned": "highmem"
+  },
+  "harness_failures": []
+ },
+ "closed_utc": "2026-11-20T10:13:21Z",
+ "node_class": "highmem",
+ "repeats": 3,
+ "runs": 80,
+ "est_core_h": 732.6,
+ "limit_core_h": 1098.9,
+ "notes": []
+}

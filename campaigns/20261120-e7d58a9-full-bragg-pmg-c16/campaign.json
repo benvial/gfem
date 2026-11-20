@@ -1,0 +1,82 @@
+{
+ "schema": "suite-campaign/1",
+ "id": "20261120-e7d58a9-full-bragg-pmg-c16",
+ "name": "full-bragg-pmg-c16",
+ "planned_utc": "2026-11-20T03:05:36Z",
+ "campaign_file": {
+  "path": "benchmarks/campaigns/full-bragg-pmg-c16.toml",
+  "sha256": "77cb3784df5776ec37c20b5bc3f74184a3b364dcfc79754e23054c90662e5a4b"
+ },
+ "pins": {
+  "gfem": {
+   "commit": "e7d58a9a9db93af772fb234c29c2ecc238f7d279",
+   "commit_utc": "2026-11-20T02:59:00Z"
+  },
+  "harness": {
+   "commit": "e7d58a9a9db93af772fb234c29c2ecc238f7d279"
+  },
+  "solvers": {
+   "palace": "0.19.0"
+  },
+  "stacks": {
+   "wheels": {
+    "description_sha256": "f8638f63c753db57df400ee3e42d06f94756d81ff2a96e234379b6bc9ce84da2",
+    "env_manifest_sha256": "ecfc3e2097c4c0cb260c4942141d3bc755662e6fb4a5ee577b61204b3524a07c",
+    "fingerprint": "63af6b40668284c5eb08ef1e2eb76b1ee3ef261abd473362d418e0475f1e25f8",
+    "palace_manifest_sha256": "a133a028deb5b856593d4fc53cc9c9791244721624168baf4d59d8b6a0a557e0"
+   }
+  }
+ },
+ "machine": "mn5-gpp",
+ "core_budget": 16,
+ "jobs": [
+  {
+   "job": "bragg-wheels",
+   "group": "case",
+   "qos": "gp_ehpc",
+   "constraint": null,
+   "nodes": [
+    "gs12r2b65"
+   ],
+   "elapsed_s": 1010.0,
+   "billed_core_h": 31.422,
+   "state": "COMPLETED",
+   "cases": [
+    "bragg"
+   ],
+   "stack": "wheels",
+   "runs": 4,
+   "est_s": 1506.0,
+   "est_core_h": 46.9,
+   "time_limit": "0:38:00",
+   "slurm_ids": [
+    "49256962"
+   ]
+  }
+ ],
+ "records": {
+  "records/bragg/palace-mumps__wheels__default__rep1.json": "1a9a02d8042c63cf3cc260d2fb6d371972e4bae13a5f5d6affe4716ab6201846",
+  "records/bragg/palace-pmg__wheels__default__rep1.json": "5f45b08a70239e6d4c989afa6dd108d84763ca190039f3aedf26b178816481c5",
+  "records/bragg/palace-pmg__wheels__default__rep2.json": "8fdd3ff92cbe3bdd23673430708671d4890ac63ca39a701a61db0e0a3ef1f21f",
+  "records/bragg/palace-pmg__wheels__default__rep3.json": "16f05a7047859cdbe4e39d65b87bd0ad26a2eb234f5eb12931fb35694eff2369"
+ },
+ "checks": {
+  "complete": "pass",
+  "provenance": "pass",
+  "dof_equal": "skipped",
+  "node_class": {
+   "observed": [
+    "standard"
+   ],
+   "planned": "standard"
+  },
+  "harness_failures": []
+ },
+ "closed_utc": "2026-11-20T04:19:16Z",
+ "node_class": "standard",
+ "repeats": 3,
+ "runs": 4,
+ "est_core_h": 46.9,
+ "limit_core_h": 70.3,
+ "notes": []
+}

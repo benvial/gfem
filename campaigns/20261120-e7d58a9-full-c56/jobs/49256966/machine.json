@@ -1,0 +1,221 @@
+{
+ "schema": "scale-bench/1",
+ "commit": null,
+ "job": "49256966",
+ "qos": null,
+ "constraint": null,
+ "modules": null,
+ "host": "gs14r1b70",
+ "cpu": "Intel(R) Xeon(R) Platinum 8480+",
+ "mem_total_kb": 263774812,
+ "started_utc": "2026-11-20T04:02:41Z",
+ "mode": "node",
+ "triad_binary": {
+  "path": "{tmpdir}/triad",
+  "compiler": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-5)",
+  "flags": [
+   "-O3",
+   "-march=native",
+   "-fopenmp"
+  ]
+ },
+ "array_log2": 27,
+ "physical_cores": 56,
+ "rows": [
+  {
+   "threads": 1,
+   "mkl_threads": 1,
+   "dgemm": {
+    "n": 4000,
+    "reps": 1,
+    "gflops_best": 67.29601146412344,
+    "gflops_median": 67.29601146412344
+   },
+   "zgemm": {
+    "n": 2000,
+    "reps": 1,
+    "gflops_best": 67.4747935772804,
+    "gflops_median": 67.4747935772804
+   },
+   "triad": {
+    "omp_threads": 1,
+    "n": 134217728,
+    "gbs_best": 17.85781191710466,
+    "gbs_median": 17.83930237382295
+   },
+   "held": true
+  },
+  {
+   "threads": 2,
+   "mkl_threads": 2,
+   "dgemm": {
+    "n": 4000,
+    "reps": 1,
+    "gflops_best": 133.32750325542426,
+    "gflops_median": 133.32750325542426
+   },
+   "zgemm": {
+    "n": 2000,
+    "reps": 2,
+    "gflops_best": 133.3845090993336,
+    "gflops_median": 133.35005241621613
+   },
+   "triad": {
+    "omp_threads": 2,
+    "n": 134217728,
+    "gbs_best": 34.93389623615188,
+    "gbs_median": 34.87482370419082
+   },
+   "held": true
+  },
+  {
+   "threads": 4,
+   "mkl_threads": 4,
+   "dgemm": {
+    "n": 4000,
+    "reps": 2,
+    "gflops_best": 267.0877671213555,
+    "gflops_median": 266.9561338352638
+   },
+   "zgemm": {
+    "n": 2000,
+    "reps": 3,
+    "gflops_best": 267.35239005879373,
+    "gflops_median": 266.9863816774103
+   },
+   "triad": {
+    "omp_threads": 4,
+    "n": 134217728,
+    "gbs_best": 64.25509702139726,
+    "gbs_median": 64.05788311410008
+   },
+   "held": true
+  },
+  {
+   "threads": 7,
+   "mkl_threads": 7,
+   "dgemm": {
+    "n": 4000,
+    "reps": 2,
+    "gflops_best": 468.92598171006534,
+    "gflops_median": 468.82000204932933
+   },
+   "zgemm": {
+    "n": 2000,
+    "reps": 4,
+    "gflops_best": 467.9572911903441,
+    "gflops_median": 467.8785490991374
+   },
+   "triad": {
+    "omp_threads": 7,
+    "n": 134217728,
+    "gbs_best": 97.23618537600709,
+    "gbs_median": 97.11471520201385
+   },
+   "held": true
+  },
+  {
+   "threads": 8,
+   "mkl_threads": 8,
+   "dgemm": {
+    "n": 4000,
+    "reps": 3,
+    "gflops_best": 534.6383562038911,
+    "gflops_median": 534.5168673528522
+   },
+   "zgemm": {
+    "n": 2000,
+    "reps": 5,
+    "gflops_best": 534.0622494237513,
+    "gflops_median": 533.0602061801355
+   },
+   "triad": {
+    "omp_threads": 8,
+    "n": 134217728,
+    "gbs_best": 104.37136263234082,
+    "gbs_median": 104.1117672936174
+   },
+   "held": true
+  },
+  {
+   "threads": 14,
+   "mkl_threads": 14,
+   "dgemm": {
+    "n": 4000,
+    "reps": 4,
+    "gflops_best": 936.314972896442,
+    "gflops_median": 935.9666246497148
+   },
+   "zgemm": {
+    "n": 2000,
+    "reps": 8,
+    "gflops_best": 932.1658383130442,
+    "gflops_median": 931.2820831339702
+   },
+   "triad": {
+    "omp_threads": 14,
+    "n": 134217728,
+    "gbs_best": 130.50725449620919,
+    "gbs_median": 130.28839819948456
+   },
+   "held": true
+  },
+  {
+   "threads": 28,
+   "mkl_threads": 28,
+   "dgemm": {
+    "n": 4000,
+    "reps": 8,
+    "gflops_best": 1851.3571484324436,
+    "gflops_median": 1847.861446390545
+   },
+   "zgemm": {
+    "n": 2000,
+    "reps": 14,
+    "gflops_best": 1786.9260565953591,
+    "gflops_median": 1777.1423446256435
+   },
+   "triad": {
+    "omp_threads": 28,
+    "n": 134217728,
+    "gbs_best": 164.98132896500593,
+    "gbs_median": 164.45840032335946
+   },
+   "held": true
+  },
+  {
+   "threads": 56,
+   "mkl_threads": 56,
+   "dgemm": {
+    "n": 4000,
+    "reps": 13,
+    "gflops_best": 3102.43248387119,
+    "gflops_median": 3083.8770681938167
+   },
+   "zgemm": {
+    "n": 2000,
+    "reps": 24,
+    "gflops_best": 3092.299810469198,
+    "gflops_median": 3037.9487755143005
+   },
+   "triad": {
+    "omp_threads": 56,
+    "n": 134217728,
+    "gbs_best": 201.8838545271996,
+    "gbs_median": 201.06076453668695
+   },
+   "held": true
+  }
+ ],
+ "concurrent": {
+  "layout": "56x1",
+  "n_per_process": 2396745,
+  "omp_threads": [
+   1
+  ],
+  "gbs_sum_of_medians": 202.57153087856761,
+  "gbs_median_per_process": 3.631152782520281,
+  "held": true
+ },
+ "held": true
+}

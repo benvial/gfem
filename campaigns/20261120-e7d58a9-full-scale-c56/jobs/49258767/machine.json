@@ -1,0 +1,106 @@
+{
+ "schema": "scale-bench/1",
+ "commit": null,
+ "job": "49258767",
+ "qos": null,
+ "constraint": null,
+ "modules": null,
+ "host": "gs01r3b36",
+ "cpu": "Intel(R) Xeon(R) Platinum 8480+",
+ "mem_total_kb": 1056497584,
+ "started_utc": "2026-11-20T06:39:47Z",
+ "mode": "node",
+ "triad_binary": {
+  "path": "{tmpdir}/triad",
+  "compiler": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-5)",
+  "flags": [
+   "-O3",
+   "-march=native",
+   "-fopenmp"
+  ]
+ },
+ "array_log2": 27,
+ "physical_cores": 56,
+ "rows": [
+  {
+   "threads": 1,
+   "mkl_threads": 1,
+   "dgemm": {
+    "n": 4000,
+    "reps": 1,
+    "gflops_best": 67.32427638852988,
+    "gflops_median": 67.32427638852988
+   },
+   "zgemm": {
+    "n": 2000,
+    "reps": 1,
+    "gflops_best": 67.6815251171593,
+    "gflops_median": 67.6815251171593
+   },
+   "triad": {
+    "omp_threads": 1,
+    "n": 134217728,
+    "gbs_best": 17.62124866401609,
+    "gbs_median": 17.611016357001457
+   },
+   "held": true
+  },
+  {
+   "threads": 4,
+   "mkl_threads": 4,
+   "dgemm": {
+    "n": 4000,
+    "reps": 2,
+    "gflops_best": 267.2171511616968,
+    "gflops_median": 267.07134814190266
+   },
+   "zgemm": {
+    "n": 2000,
+    "reps": 3,
+    "gflops_best": 266.95135246929163,
+    "gflops_median": 266.88869475056833
+   },
+   "triad": {
+    "omp_threads": 4,
+    "n": 134217728,
+    "gbs_best": 64.52274015005926,
+    "gbs_median": 64.26595504634786
+   },
+   "held": true
+  },
+  {
+   "threads": 56,
+   "mkl_threads": 56,
+   "dgemm": {
+    "n": 4000,
+    "reps": 13,
+    "gflops_best": 3117.2429887865264,
+    "gflops_median": 3105.511470087431
+   },
+   "zgemm": {
+    "n": 2000,
+    "reps": 24,
+    "gflops_best": 3110.760331202531,
+    "gflops_median": 3072.1852452396583
+   },
+   "triad": {
+    "omp_threads": 56,
+    "n": 134217728,
+    "gbs_best": 239.01356353405455,
+    "gbs_median": 236.54403699609955
+   },
+   "held": true
+  }
+ ],
+ "concurrent": {
+  "layout": "56x1",
+  "n_per_process": 2396745,
+  "omp_threads": [
+   1
+  ],
+  "gbs_sum_of_medians": 240.6817761356897,
+  "gbs_median_per_process": 4.302349178790507,
+  "held": true
+ },
+ "held": true
+}

@@ -1,0 +1,441 @@
+{
+ "schema": "suite-record/1",
+ "campaign": "20261120-e7d58a9-full-scale-c16",
+ "name": "microstrip_p3/palace-pmg__wheels__default__rep2",
+ "run": {
+  "case": "microstrip_p3",
+  "solver": "palace:pmg",
+  "stack": "wheels",
+  "layout": {
+   "asked": "default",
+   "ranks": 16,
+   "threads": 1
+  },
+  "core_budget": 16,
+  "repeat": 2,
+  "tolerance": 1e-08,
+  "order_in_job": 20,
+  "job": "49258770",
+  "step": "18",
+  "started_utc": "2026-11-20T08:47:14Z",
+  "finished_utc": "2026-11-20T08:50:48Z",
+  "added_for": null,
+  "launch": "srun"
+ },
+ "status": "ok",
+ "reason": null,
+ "failure_class": null,
+ "slurm_state": "COMPLETED",
+ "returncode": 0,
+ "case": {
+  "definition_sha256": "c2ad029b3152b8442a0ca703460483c31cb7f7e3132f297dfe44e6ef2eea35d8",
+  "mesh_sha256": "52caa88ac88570ddd58d1128063b60f7d925f802d3ce66c58cf562c9689e1b89",
+  "order": 3,
+  "ndof": 907791,
+  "reference": {
+   "id": "microstrip-20261120-7a078ba",
+   "sha256": "dda0357961e0787644bf28fa27ada9cb42825f285f8fbf114e50cb9a58fdee1c"
+  }
+ },
+ "outputs": {
+  "frequencies_hz": [
+   1000000000.0,
+   25000000000.0,
+   50000000000.0,
+   75000000000.0,
+   100000000000.0
+  ],
+  "s": {
+   "p1,p1": [
+    [
+     0.034004400680186224,
+     0.008921558874097218
+    ],
+    [
+     0.0651142020248729,
+     -0.014863005426386345
+    ],
+    [
+     0.02905892656095494,
+     -0.045343722095109264
+    ],
+    [
+     0.002650441446138521,
+     -0.010350446679058368
+    ],
+    [
+     0.036431878666451985,
+     0.0011950324125063177
+    ]
+   ],
+   "p2,p1": [
+    [
+     0.9651962612530806,
+     -0.04857991560916709
+    ],
+    [
+     0.46984478744374253,
+     -0.8185671465545479
+    ],
+    [
+     -0.4590226298097272,
+     -0.8130024106015491
+    ],
+    [
+     -0.9236650270717545,
+     -0.021435206183237136
+    ],
+    [
+     -0.48807537759690517,
+     0.7727010366079123
+    ]
+   ],
+   "p1,p2": [
+    [
+     0.9651964915201289,
+     -0.04858015356937588
+    ],
+    [
+     0.46984480494948494,
+     -0.8185671071950341
+    ],
+    [
+     -0.4590226194220477,
+     -0.8130024155959558
+    ],
+    [
+     -0.9236650259338569,
+     -0.021435199929161673
+    ],
+    [
+     -0.4880753723548702,
+     0.7727010811238141
+    ]
+   ],
+   "p2,p2": [
+    [
+     0.0340042281764989,
+     0.008921703372919034
+    ],
+    [
+     0.06512865192716973,
+     -0.014882746463390353
+    ],
+    [
+     0.02904139132831164,
+     -0.04540587999486296
+    ],
+    [
+     0.0026169571063531603,
+     -0.010375262962272562
+    ],
+    [
+     0.036466406814566525,
+     0.0011064641770861243
+    ]
+   ]
+  },
+  "iterations": [
+   24,
+   27,
+   32,
+   36,
+   32,
+   44,
+   27,
+   32,
+   36,
+   32
+  ]
+ },
+ "accuracy": {
+  "metric": "max_abs_dS",
+  "value": 0.014429007620191527,
+  "per_item": [
+   0.0002799223783975346,
+   0.006986160752131754,
+   0.008951326861788803,
+   0.011873615131882842,
+   0.014429007620191527
+  ],
+  "bound": 0.010714453623019026,
+  "resolved": false
+ },
+ "same_code_error": {
+  "metric": "max_abs_dS",
+  "value": 3.692444285656856e-07,
+  "per_item": [
+   3.140875079245615e-07,
+   3.692444285656856e-07,
+   1.5896039998908107e-07,
+   3.515464436720754e-08,
+   2.5098926654171593e-07
+  ],
+  "against": "microstrip_p3/palace-mumps__wheels__default__rep1",
+  "label": "solver error"
+ },
+ "timings": {
+  "wall_s": 213.441,
+  "startup_s": 2.6329635886550022,
+  "work_s": 210.808,
+  "mesh_read_s": 1.081,
+  "discretize_s": null,
+  "assemble_s": 2.804,
+  "setup_s": 19.46,
+  "solve_s": 145.037,
+  "estimate_s": 34.501,
+  "postpro_s": 33.159,
+  "rom_s": 0.0,
+  "other_s": 0.0,
+  "setup_total_s": 23.345,
+  "solve_total_s": 145.037,
+  "per_sample_s": 42.1616,
+  "rank_reduction": "max-of-rows",
+  "source": "palace.json",
+  "rank0": {
+   "mesh_read_s": 0.413841544,
+   "discretize_s": null,
+   "assemble_s": 2.3282791759999997,
+   "setup_s": 19.424104642,
+   "solve_s": 144.75027545200004,
+   "estimate_s": 8.962668707999999,
+   "postpro_s": 29.287752203000004,
+   "rom_s": 0.0,
+   "other_s": 5.640793659999957
+  }
+ },
+ "memory": {
+  "peak_rss_sum_gib": 6.406734466552734,
+  "peak_rss_rank_max_gib": 0.42687225341796875,
+  "peak_rss_largest_node_gib": 6.406734466552734,
+  "metric": "PeakNodeMemoryMegabytes.Total",
+  "pss_peak_sum_gib": 5.819314956665039,
+  "sacct_max_rss_gib": 0.4075155258178711,
+  "self_reports": {}
+ },
+ "checks": {
+  "mesh_hash": "pass",
+  "inputs_match": "pass",
+  "converged": "pass",
+  "complete": "pass",
+  "dof": "pass",
+  "provenance": "pass",
+  "layout": "pass",
+  "placement": "pass",
+  "reference_matches": "pass",
+  "accuracy_plausible": "pass"
+ },
+ "structural": {
+  "setups": 10,
+  "solves": 10,
+  "estimator": "always on, lightened (EstimatorTol 1e-2, EstimatorMG)",
+  "excitations": 2,
+  "fine_level": "matrix-free (partial assembly)",
+  "pmg_coarse": "SuperLU on the real-valued coarse matrix"
+ },
+ "stack": {
+  "name": "wheels",
+  "kind": "wheels",
+  "closed": [
+   "mkl (pip, PARDISO)"
+  ],
+  "versions": {
+   "palace": "0.19.0",
+   "ngsolve": "6.2.2608",
+   "petsc": "3.26.0"
+  },
+  "fingerprint": "63af6b40668284c5eb08ef1e2eb76b1ee3ef261abd473362d418e0475f1e25f8",
+  "description": {
+   "name": "wheels",
+   "kind": "wheels",
+   "closed": [
+    "mkl (pip, PARDISO)"
+   ],
+   "versions": {
+    "palace": "0.19.0",
+    "ngsolve": "6.2.2608",
+    "petsc": "3.26.0"
+   },
+   "codes": {
+    "gfem": {
+     "modules": [
+      "openmpi/4.1.6-gcc"
+     ],
+     "packages": [],
+     "env": {
+      "JAX_PLATFORMS": "cpu",
+      "JAX_ENABLE_X64": "1",
+      "OMPI_MCA_opal_warn_on_missing_libcuda": "0"
+     },
+     "threads": {
+      "OMP_NUM_THREADS": "threads",
+      "MKL_NUM_THREADS": "threads",
+      "NGS_NUM_THREADS": "threads",
+      "OPENBLAS_NUM_THREADS": "threads"
+     },
+     "caps": {
+      "OPENBLAS_NUM_THREADS": 64
+     },
+     "mpi": "pmix",
+     "launcher": null,
+     "entry": null,
+     "python": null,
+     "launch_r1": "srun"
+    },
+    "palace": {
+     "modules": [],
+     "packages": [],
+     "env": {},
+     "threads": {
+      "OMP_NUM_THREADS": "threads",
+      "OPENBLAS_NUM_THREADS": 1
+     },
+     "caps": {},
+     "mpi": "pmi2",
+     "launcher": "srun",
+     "entry": "palace-real",
+     "python": null,
+     "launch_r1": "srun"
+    }
+   },
+   "inputs": {
+    "base_venv": "{stacks.wheels.base_venv}",
+    "wheel_dirs": [
+     "{stacks.wheels.wheel_dirs[0]}",
+     "{stacks.wheels.wheel_dirs[1]}"
+    ],
+    "petsc_wheelhouse": "{stacks.wheels.petsc_wheelhouse}",
+    "palace_wheelhouse": "{stacks.wheels.palace_wheelhouse}",
+    "python": "{stacks.wheels.python}"
+   },
+   "env": {},
+   "env_dir": "{cluster.root}/envs/bench-e7d58a9-wheels-63af6b40",
+   "code_env": {
+    "gfem": "{cluster.root}/envs/bench-e7d58a9-wheels-63af6b40",
+    "palace": "{cluster.root}/envs/palace-0.19.0"
+   },
+   "prefixes": {}
+  },
+  "provenance": {
+   "gfem_manifest": {
+    "sha256": "ecfc3e2097c4c0cb260c4942141d3bc755662e6fb4a5ee577b61204b3524a07c",
+    "text": "commit e7d58a9a9db93af772fb234c29c2ecc238f7d279\na7126d4304d3286ecbb4580c23af98ef1b7525254d9dc6871ba5bd0ef0400879  {cluster.root}/refs/e7d58a9/dist/gfem-0.1.0-py3-none-any.whl\n830acc20a7c9260de84d01b4ca9a00d80c642442f79ac73d56897d543ced8583  {stacks.wheels.petsc_wheelhouse}/petsc-3.26.0-py3-none-linux_x86_64.whl\n72e73e3b25bb77bbf910aff4474036360cc8464441578b8dc1b06ad60e4ffc4e  {stacks.wheels.petsc_wheelhouse}/petsc4py-3.26.0-cp312-cp312-linux_x86_64.whl\n18e8cca8c0b42891c8994793f6035b16e3adf8d3f125d3516594bab0aeda6b5d  {stacks.wheels.petsc_wheelhouse}/slepc-3.26.0-py3-none-linux_x86_64.whl\na724ea7ec244830809c66d9544e211d79a11fe9cdaab9aa78c0f920dcd689f05  {stacks.wheels.petsc_wheelhouse}/slepc4py-3.26.0-cp312-cp312-linux_x86_64.whl\ncoverage==7.16.2\ngfem @ file://{cluster.root}/refs/e7d58a9/dist/gfem-0.1.0-py3-none-any.whl#sha256=a7126d4304d3286ecbb4580c23af98ef1b7525254d9dc6871ba5bd0ef0400879\niniconfig==2.3.1\nintel-cmplr-lib-ur==2026.2.0\nintel-openmp==2026.2.0\njax==0.12.0\njaxlib==0.12.0\nmarkdown-it-py==4.2.0\nmdurl==0.1.2\nmeshio==5.3.5\nmkl==2026.2.0\nml_dtypes==0.6.0\nmpi4py==4.1.2\nnetgen-mesher==6.2.2608\nnetgen_occt==7.8.1\nngsolve==6.2.2608\nngsolve_openblas==0.3.33\nnumpy==2.5.4\nopt_einsum==3.4.0\npackaging==26.3\npandas==3.0.6\npetsc @ file://{stacks.wheels.petsc_wheelhouse}/petsc-3.26.0-py3-none-linux_x86_64.whl#sha256=830acc20a7c9260de84d01b4ca9a00d80c642442f79ac73d56897d543ced8583\npetsc4py @ file://{stacks.wheels.petsc_wheelhouse}/petsc4py-3.26.0-cp312-cp312-linux_x86_64.whl#sha256=72e73e3b25bb77bbf910aff4474036360cc8464441578b8dc1b06ad60e4ffc4e\npluggy==1.7.0\nPygments==2.21.0\npytest==9.1.1\npytest-cov==7.1.0\npython-dateutil==2.9.0.post0\nrich==15.0.0\nscipy==1.18.1\nsix==1.17.0\nslepc @ file://{stacks.wheels.petsc_wheelhouse}/slepc-3.26.0-py3-none-linux_x86_64.whl#sha256=18e8cca8c0b42891c8994793f6035b16e3adf8d3f125d3516594bab0aeda6b5d\nslepc4py @ file://{stacks.wheels.petsc_wheelhouse}/slepc4py-3.26.0-cp312-cp312-linux_x86_64.whl#sha256=a724ea7ec244830809c66d9544e211d79a11fe9cdaab9aa78c0f920dcd689f05\ntbb==2023.2.0\ntcmlib==1.6.0\numf==1.2.0\nxarray==2026.9.0\n"
+   },
+   "palace_manifest": {
+    "sha256": "a133a028deb5b856593d4fc53cc9c9791244721624168baf4d59d8b6a0a557e0",
+    "text": "05b8ef647e2c21b37cd14e4f64672f3986b8c7cc81c334e86c4289373ca9d8ce  {stacks.wheels.palace_wheelhouse}/palace_solver-0.19.0-py3-none-manylinux_2_28_x86_64.whl\npalace --version: Palace version: v0.19.0\npalace-solver @ file://{stacks.wheels.palace_wheelhouse}/palace_solver-0.19.0-py3-none-manylinux_2_28_x86_64.whl#sha256=05b8ef647e2c21b37cd14e4f64672f3986b8c7cc81c334e86c4289373ca9d8ce\n"
+   },
+   "palace_wheel_sha256": "05b8ef647e2c21b37cd14e4f64672f3986b8c7cc81c334e86c4289373ca9d8ce",
+   "palace_version": "Palace version: v0.19.0"
+  },
+  "env": "module purge >/dev/null 2>&1\nexport PATH={cluster.root}/envs/palace-0.19.0/bin:\"$PATH\"\nunset OMP_NUM_THREADS MKL_NUM_THREADS OPENBLAS_NUM_THREADS NGS_NUM_THREADS OMP_PLACES OMP_PROC_BIND GOMP_CPU_AFFINITY KMP_AFFINITY\nexport OMP_NUM_THREADS=1\nexport OPENBLAS_NUM_THREADS=1\nexport OMP_PLACES=cores OMP_PROC_BIND=close\n",
+  "modules": "openmpi/4.1.6-gcc\n",
+  "ldd": "palace-real: libscalapack-a1f7267b.so.2.2.3 => {cluster.root}/envs/palace-0.19.0/lib/python3.12/site-packages/palace_solver/bin/../../palace_solver.libs/libscalapack-a1f7267b.so.2.2.3 (0x00007f72c8ae1000)\npalace-real: libopenblasp-r0-0e52a401.3.34.so => {cluster.root}/envs/palace-0.19.0/lib/python3.12/site-packages/palace_solver/bin/../../palace_solver.libs/libopenblasp-r0-0e52a401.3.34.so (0x00007f72c6629000)\n"
+ },
+ "provenance": {
+  "gfem": {
+   "commit": "e7d58a9a9db93af772fb234c29c2ecc238f7d279",
+   "version": null
+  },
+  "harness": {
+   "commit": "e7d58a9a9db93af772fb234c29c2ecc238f7d279"
+  },
+  "solver": {
+   "code": "palace",
+   "dialect": "0.19",
+   "stack_version": "0.19.0",
+   "version": "0.19.0",
+   "text": "\nPalace version: v0.19.0\nSchema version: 4-1-0\n\nDependencies:\n  MPI: MPICH Version:      4.3.2\n  MFEM: MFEM v4.10.0 (release)\n  libCEED: 1.0.1\n  HYPRE: 3.2.0\n  LAPACK API: 3.12.0\n  OpenBLAS: OpenBLAS 0.3.34 DYNAMIC_ARCH NO_AFFINITY USE_OPENMP SapphireRapids MAX_THREADS=64\n  SLEPc: 3.26.0\n  PETSc: 3.26.0\n  ARPACK-NG: 3.9.1\n  SuperLU_DIST: 9.3.0\n  STRUMPACK: 8.1.0\n  ZFP: 1.0.1\n  MUMPS: 5.9.1\n  SUNDIALS: 7.9.0\n  GSLIB: 1.0.9\n  METIS: 5.1.0\n  ParMETIS: 4.0.3\n  libxsmm: 2.1.0\n  zlib: 1.2.11\n  Eigen: 5.0.1\n  fmt: 12.2.0\n  scn: 4.0.1\n  nlohmann/json-schema-validator: 2.4.1\n  nlohmann/json: 3.12.0\n",
+   "schema": "4-1-0",
+   "dependencies": {
+    "MPI": "MPICH Version:      4.3.2",
+    "MFEM": "MFEM v4.10.0 (release)",
+    "libCEED": "1.0.1",
+    "HYPRE": "3.2.0",
+    "LAPACK API": "3.12.0",
+    "OpenBLAS": "OpenBLAS 0.3.34 DYNAMIC_ARCH NO_AFFINITY USE_OPENMP SapphireRapids MAX_THREADS=64",
+    "SLEPc": "3.26.0",
+    "PETSc": "3.26.0",
+    "ARPACK-NG": "3.9.1",
+    "SuperLU_DIST": "9.3.0",
+    "STRUMPACK": "8.1.0",
+    "ZFP": "1.0.1",
+    "MUMPS": "5.9.1",
+    "SUNDIALS": "7.9.0",
+    "GSLIB": "1.0.9",
+    "METIS": "5.1.0",
+    "ParMETIS": "4.0.3",
+    "libxsmm": "2.1.0",
+    "zlib": "1.2.11",
+    "Eigen": "5.0.1",
+    "fmt": "12.2.0",
+    "scn": "4.0.1",
+    "nlohmann/json-schema-validator": "2.4.1",
+    "nlohmann/json": "3.12.0"
+   },
+   "binary_version": "v0.19.0",
+   "git_tag": "v0.19.0"
+  },
+  "stack": {
+   "name": "wheels",
+   "description_sha256": "f8638f63c753db57df400ee3e42d06f94756d81ff2a96e234379b6bc9ce84da2",
+   "env_manifest_sha256": "ecfc3e2097c4c0cb260c4942141d3bc755662e6fb4a5ee577b61204b3524a07c",
+   "fingerprint": "63af6b40668284c5eb08ef1e2eb76b1ee3ef261abd473362d418e0475f1e25f8"
+  },
+  "versions": {},
+  "env": {
+   "I_MPI_HYDRA_BOOTSTRAP": "slurm",
+   "I_MPI_HYDRA_BOOTSTRAP_EXEC_EXTRA_ARGS": "--external-launcher",
+   "OMP_NUM_THREADS": "1",
+   "OMP_PLACES": "cores",
+   "OMP_PROC_BIND": "close",
+   "OPENBLAS_NUM_THREADS": "1",
+   "SLURM_CPUS_ON_NODE": "112",
+   "SLURM_NTASKS": "1"
+  },
+  "machine": {
+   "name": "mn5-gpp",
+   "nodes": [
+    "gs01r3b50"
+   ],
+   "node_class": "highmem",
+   "cpu": "Intel(R) Xeon(R) Platinum 8480+",
+   "mem_total_kb": [
+    1056497648
+   ],
+   "cpus_allowed": 32,
+   "pinned_cpus": "0-15,112-127",
+   "exclusive": true,
+   "partition": "gpp",
+   "qos": "gp_ehpc",
+   "constraint": "highmem",
+   "mpi_library": null
+  }
+ },
+ "observations": {
+  "busy_threads_per_core_max": 1,
+  "placement": {
+   "status": "pass",
+   "masks": [
+    "0,112",
+    "1,113",
+    "2,114",
+    "3,115",
+    "4,116",
+    "5,117",
+    "6,118",
+    "7,119",
+    "8,120",
+    "9,121",
+    "10,122",
+    "11,123",
+    "12,124",
+    "13,125",
+    "14,126",
+    "15,127"
+   ],
+   "reason": null
+  },
+  "dof_seen_in_stdout": 907791
+ }
+}

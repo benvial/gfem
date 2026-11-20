@@ -1,0 +1,111 @@
+{
+ "schema": "suite-campaign/1",
+ "id": "20261120-e7d58a9-full-bragg-c16",
+ "name": "full-bragg-c16",
+ "planned_utc": "2026-11-20T03:05:35Z",
+ "campaign_file": {
+  "path": "benchmarks/campaigns/full-bragg-c16.toml",
+  "sha256": "51b4a2f8bd57efd00e0fbd539804cd070ed6e859d4856089840f636a353cf6f7"
+ },
+ "pins": {
+  "gfem": {
+   "commit": "e7d58a9a9db93af772fb234c29c2ecc238f7d279",
+   "commit_utc": "2026-11-20T02:59:00Z"
+  },
+  "harness": {
+   "commit": "e7d58a9a9db93af772fb234c29c2ecc238f7d279"
+  },
+  "solvers": {
+   "palace": "0.19.0"
+  },
+  "stacks": {
+   "wheels": {
+    "description_sha256": "f8638f63c753db57df400ee3e42d06f94756d81ff2a96e234379b6bc9ce84da2",
+    "env_manifest_sha256": "ecfc3e2097c4c0cb260c4942141d3bc755662e6fb4a5ee577b61204b3524a07c",
+    "fingerprint": "63af6b40668284c5eb08ef1e2eb76b1ee3ef261abd473362d418e0475f1e25f8",
+    "palace_manifest_sha256": "a133a028deb5b856593d4fc53cc9c9791244721624168baf4d59d8b6a0a557e0"
+   }
+  }
+ },
+ "machine": "mn5-gpp",
+ "core_budget": 16,
+ "jobs": [
+  {
+   "job": "bragg-wheels",
+   "group": "case",
+   "qos": "gp_debug",
+   "constraint": null,
+   "nodes": [
+    "gs06r1b09"
+   ],
+   "elapsed_s": 179.0,
+   "billed_core_h": 5.569,
+   "state": "COMPLETED",
+   "cases": [
+    "bragg"
+   ],
+   "stack": "wheels",
+   "runs": 20,
+   "est_s": 555.0,
+   "est_core_h": 17.3,
+   "time_limit": "0:14:00",
+   "slurm_ids": [
+    "49256509"
+   ]
+  }
+ ],
+ "records": {
+  "records/bragg/gfem-bddc__wheels__1x16__rep1.json": "2680af63be2ad6cb7ea27996dfa52cd89e8b24ecf82718d6ba644b2ec753e307",
+  "records/bragg/gfem-direct__wheels__1x16__rep1.json": "ff9c4695ac800ce9c5bdd99e07877f4e9bc4717cbf6aeaa95983bf56da25c736",
+  "records/bragg/gfem-direct__wheels__1x16__rep2.json": "8afe4b156b447bd2dfd6d5d733b49e9bfb0d37e00b398018bebd9823baec9f48",
+  "records/bragg/gfem-direct__wheels__1x16__rep3.json": "3913e53a318b0111ce8cb519b21f8de763ab47995c7639f583d4417736f1548f",
+  "records/bragg/gfem-petsc-mumps__wheels__1x16__rep1.json": "aa5ec6a383fe7f436a599763f991d39a72e24cf5675a7b9be05653dae49ca7c6",
+  "records/bragg/palace-mumps__wheels__16x1__rep1.json": "3540047e9b04c8d5eaf6da9ce253dda6de2b16414e6c241c21bb252d81b765ee",
+  "records/bragg/palace-mumps__wheels__16x1__rep2.json": "1493254e35435f5e8b95f98d3cc0f3a84384e49f03b3a746daedc38a41319776",
+  "records/bragg/palace-mumps__wheels__16x1__rep3.json": "9227d23d40d2338f02e9e3fa472df1ff7c70da5a8eab660563f11bd28cff1469",
+  "records/bragg/palace-mumps__wheels__1x16__rep1.json": "3d27d292532319d59ff2e59b267ddbda2efb294c5564f582ac94d9aa5190da6c",
+  "records/bragg/palace-mumps__wheels__1x16__rep2.json": "f7fc6ab7df92a2f7271108763672c1e7d0f41b4fba175e21fe543993e064b9a6",
+  "records/bragg/palace-mumps__wheels__1x16__rep3.json": "be83451f52510974030610c384badf402226dfcff87a3e7d5809debb0ba8e452",
+  "records/bragg/palace-mumps__wheels__2x8__rep1.json": "87c3e28e1efebbe8e00fc047496d7a18e3f86be39ed65616f06be60e2cf50ea1",
+  "records/bragg/palace-mumps__wheels__2x8__rep2.json": "c3f3d00ecf98778cbb42436c5c4637ec89362581ced0c3a4a3d98cc51c0d2d06",
+  "records/bragg/palace-mumps__wheels__2x8__rep3.json": "d47d9ec1e5d80cd56ee34e9e117b0af1eda3fdeb5c83f7d58cc01252c0a1a467",
+  "records/bragg/palace-mumps__wheels__4x4__rep1.json": "306a6fd71614edae40c238f718c755629ab3b6b4e2303b8e2329f3eb1f7d5a19",
+  "records/bragg/palace-mumps__wheels__4x4__rep2.json": "c0563eb3df7a4824da9f533fd249d9d3d8cdd1395fa43bc15434946b9165addf",
+  "records/bragg/palace-mumps__wheels__4x4__rep3.json": "00f9358a8f70fc176a04c4076aed10aeef9d59aec17d4f2045ec75922bcc4f5d",
+  "records/bragg/palace-mumps__wheels__8x2__rep1.json": "75f435efa286931791b2c85d830ffa560814e89353ce45b10f5959dc193ebcfa",
+  "records/bragg/palace-mumps__wheels__8x2__rep2.json": "d10bfa2d4cd4806d08d1ac76dc9109f9f86f2aae2260edb400f59a860dc93e76",
+  "records/bragg/palace-mumps__wheels__8x2__rep3.json": "d781eb414cd4bde50f318684bd34a77116646f55826a16eb60672124e73440f7"
+ },
+ "checks": {
+  "complete": "pass",
+  "provenance": "pass",
+  "dof_equal": "pass",
+  "dof_equal_detail": {
+   "bragg": {
+    "result": "pass",
+    "ndof": {
+     "gfem": [
+      10620
+     ],
+     "palace": [
+      10620
+     ]
+    }
+   }
+  },
+  "node_class": {
+   "observed": [
+    "standard"
+   ],
+   "planned": "standard"
+  },
+  "harness_failures": []
+ },
+ "closed_utc": "2026-11-20T03:23:09Z",
+ "node_class": "standard",
+ "repeats": 3,
+ "runs": 20,
+ "est_core_h": 17.3,
+ "limit_core_h": 25.9,
+ "notes": []
+}

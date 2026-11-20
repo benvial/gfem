@@ -1,0 +1,106 @@
+{
+ "schema": "scale-bench/1",
+ "commit": null,
+ "job": "49258772",
+ "qos": null,
+ "constraint": null,
+ "modules": null,
+ "host": "gs01r3b64",
+ "cpu": "Intel(R) Xeon(R) Platinum 8480+",
+ "mem_total_kb": 1056497612,
+ "started_utc": "2026-11-20T06:39:47Z",
+ "mode": "node",
+ "triad_binary": {
+  "path": "{tmpdir}/triad",
+  "compiler": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-5)",
+  "flags": [
+   "-O3",
+   "-march=native",
+   "-fopenmp"
+  ]
+ },
+ "array_log2": 27,
+ "physical_cores": 8,
+ "rows": [
+  {
+   "threads": 1,
+   "mkl_threads": 1,
+   "dgemm": {
+    "n": 4000,
+    "reps": 1,
+    "gflops_best": 67.34523365258218,
+    "gflops_median": 67.34523365258218
+   },
+   "zgemm": {
+    "n": 2000,
+    "reps": 1,
+    "gflops_best": 67.74406580298565,
+    "gflops_median": 67.74406580298565
+   },
+   "triad": {
+    "omp_threads": 1,
+    "n": 134217728,
+    "gbs_best": 17.65498797971852,
+    "gbs_median": 17.64772312451267
+   },
+   "held": true
+  },
+  {
+   "threads": 4,
+   "mkl_threads": 4,
+   "dgemm": {
+    "n": 4000,
+    "reps": 2,
+    "gflops_best": 267.3863622133027,
+    "gflops_median": 267.17867516917175
+   },
+   "zgemm": {
+    "n": 2000,
+    "reps": 3,
+    "gflops_best": 266.9716120653051,
+    "gflops_median": 266.9117138486397
+   },
+   "triad": {
+    "omp_threads": 4,
+    "n": 134217728,
+    "gbs_best": 64.9046925286408,
+    "gbs_median": 64.67140806141238
+   },
+   "held": true
+  },
+  {
+   "threads": 8,
+   "mkl_threads": 8,
+   "dgemm": {
+    "n": 4000,
+    "reps": 3,
+    "gflops_best": 535.1674801820743,
+    "gflops_median": 535.0147712517565
+   },
+   "zgemm": {
+    "n": 2000,
+    "reps": 5,
+    "gflops_best": 533.1361661199775,
+    "gflops_median": 532.7194460047675
+   },
+   "triad": {
+    "omp_threads": 8,
+    "n": 134217728,
+    "gbs_best": 111.9229395876632,
+    "gbs_median": 111.65227710162381
+   },
+   "held": true
+  }
+ ],
+ "concurrent": {
+  "layout": "8x1",
+  "n_per_process": 16777216,
+  "omp_threads": [
+   1
+  ],
+  "gbs_sum_of_medians": 113.59008953432436,
+  "gbs_median_per_process": 14.220291786846268,
+  "held": true
+ },
+ "held": true
+}
