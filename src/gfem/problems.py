@@ -1348,9 +1348,10 @@ class Eigenmode:
     frequency) makes the eigenproblem nonlinear. The eigen solver's first pass
     then freezes those factors at ``target``. Each mode is refined on the
     exact frequency dependence, reusing that pass's factorization, so
-    frequency and Q do not depend on ``target``. Conductor, port and
-    radiation losses must be perturbations (Q above about 5); for a strongly
-    radiating structure, find the resonance from a `gfem.Driven` sweep.
+    frequency and Q do not depend on ``target``. Conductor and radiation
+    losses must be perturbations (Q above about 5), and so must a wave port's
+    outside the strip below; for a strongly radiating structure, find the
+    resonance from a `gfem.Driven` sweep.
 
     With a perfectly matched layer (`gfem.PML`) the radiation it absorbs
     need not be a perturbation, unlike an `Absorbing` boundary's: Q is the
@@ -1373,6 +1374,17 @@ class Eigenmode:
     `gfem.AntiBoundRootWarning`, and the next mode is returned; a root that
     decays in time is a resonance and is kept. Each port's mode sweep covers
     a band around ``target``, solved to ``SolverOptions.port_mode_tolerance``.
+    With wave ports the modes returned are the ``n_modes`` with
+    :math:`\mathrm{Im}\,\omega \le \omega_t / 4` (:math:`\omega_t = 2\pi`
+    ``target``; Q above about 2 near the target) whose
+    :math:`\mathrm{Re}\,\omega / 2\pi` is nearest ``target``, nearest first:
+    the search certifies that it listed every resonance of that strip within
+    the farthest mode's distance, so the set does not depend on ``n_modes``
+    beyond its length. A resonance beyond the strip (Q below about 2) is out of
+    reach, also when it lies nearest ``target``; find it from a `gfem.Driven`
+    sweep. When the certificate cannot be met (the strip holds more modes than
+    the search's seed solves can list) `gfem.solve` raises
+    `gfem.EigenmodeConvergenceError`: lower ``n_modes`` or move ``target``.
     A port mode family no wave port requests is partly reflected, as in a
     driven problem, and can show up as a spurious mode of finite Q: request
     it, or check a mode by moving ``target``.

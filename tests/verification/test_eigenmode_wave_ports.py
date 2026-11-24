@@ -160,7 +160,7 @@ def test_a_lossy_anisotropic_port_section_meets_its_root(meshes):
         assert error <= 1e-4  # 7.9e-6
         assert w.im_error(result, j, w.ROOT_L) <= 1e-3  # 4.4e-5
         found.append(complex(result.omega[0]))
-    assert abs(found[0] - found[1]) <= 1e-7 * abs(found[1])  # MEASURED_DIFF_L
+    assert abs(found[0] - found[1]) <= 1e-10 * abs(found[1])  # 3.9e-16
 
 
 def test_a_coax_s_tem_roots_meet_the_closed_form(meshes):
@@ -208,9 +208,10 @@ def test_a_port_mode_with_a_normal_field_meets_the_line_root(meshes):
         error, j = w.nearest_error(result, root)
         assert j == 0
         assert error <= 1e-5  # 2.3e-6
-        assert w.im_error(result, j, root) <= IM_E  # MEASURED_IM
+        assert w.im_error(result, j, root) <= 1e-4  # 1.3e-5
         found.append(complex(result.omega[0]))
-    assert abs(found[0] - found[1]) <= 1e-7 * abs(found[1])  # MEASURED_DIFF
+    # the same seed, refined the same way: equal to round-off (3.7e-16 measured)
+    assert abs(found[0] - found[1]) <= 1e-10 * abs(found[1])
 
 
 # --- the driven cross-check -----------------------------------------------------
@@ -303,8 +304,8 @@ def share_warnings(model, target, n_modes, order=3):
 def test_a_requested_root_carries_the_port_s_loss_on_a_lone_te_line(meshes):
     # A: measured 1 - eta = -3.7e-3; L (lossy, anisotropic section): 3.9e-3
     for name, layers, root, target, n in (
-        ("a", w.CASE_A, w.ROOT_A, 11.67e9, 3),
-        ("l", w.CASE_L, w.ROOT_L, 11.67e9, 12),
+        ("a", w.CASE_A, w.ROOT_A, 11.67e9, 1),
+        ("l", w.CASE_L, w.ROOT_L, 11.67e9, 1),
     ):
         result, _ = share_warnings(lone_port(meshes, name, layers), target, n)
         _, j = w.nearest_error(result, root)
@@ -314,11 +315,12 @@ def test_a_requested_root_carries_the_port_s_loss_on_a_lone_te_line(meshes):
 
 def test_the_tm_root_of_a_circular_guide_carries_most_of_the_port_s_loss(meshes):
     # E (Q 3.7): measured eta 0.962, the O(1/Q^2) floor reaching 0.04; the
-    # search finds it among the guide's other families from six modes
+    # search finds it among the guide's other families at one mode
     mesh = meshes("e", w.circular_guide, w.CASE_A, n=16)
     model = w.ported_model(mesh, w.CASE_A, [gfem.WavePort("p1", "port", mode=3)])
-    result, _ = share_warnings(model, 13.4e9, 6)
+    result, _ = share_warnings(model, 13.4e9, 1)
     error, j = w.nearest_error(result, ROOT_E)
+    assert j == 0
     assert error <= 1e-4
     assert float(result.requested_power_share["port"][j]) >= 0.9
 
@@ -363,19 +365,23 @@ def test_unrequested_modes_of_a_lossy_multimode_section_are_warned_in_the_open_f
 ):
     # L's section carries seven unrequested ranks at the target: the modes at
     # 11.32, 11.27 and 11.13 GHz (Q 4 to 47, beside the root's 2.8) are warned
-    # with the conditional wording, and the root, whenever the four modes
-    # include it, is not named. Measured eta 1.3e-9 and below, Q/q_s 0.95 to 1.0
+    # with the conditional wording, and the root, mode 0, is not named.
+    # Measured eta 1.3e-9 and below, Q/q_s 0.95 to 1.0
     result, texts = share_warnings(lone_port(meshes, "l", w.CASE_L), 11.67e9, 4)
     share = np.asarray(result.requested_power_share["port"])
-    others = [j for j in range(4) if share[j] <= 1e-3]
-    assert len(others) >= 3
+    f = w.ghz(result.omega)
+    _, root = w.nearest_error(result, w.ROOT_L)
+    assert root == 0
+    assert abs(1 - share[0]) <= 2e-2
+    others = [1, 2, 3]
+    for j, expected in zip(others, (11.32, 11.27, 11.13), strict=True):
+        assert share[j] <= 1e-3
+        assert abs(f[j].real - expected) <= 5e-3, f[j]
     assert len(texts) == 1
     assert "propagates at that frequency" in texts[0]
     assert "mode=" in texts[0]
     assert all(f"{j} at" in texts[0] for j in others)
-    for j in set(range(4)) - set(others):
-        assert abs(1 - share[j]) <= 2e-2
-        assert f"{j} at" not in texts[0].split("on wave port")[0]
+    assert "0 at" not in texts[0].split("on wave port")[0]
 
 
 def test_a_share_between_one_half_and_one_is_reported_and_not_warned(case_h):

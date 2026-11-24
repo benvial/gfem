@@ -454,7 +454,7 @@ class DeviceMemoryWarning(UserWarning):
 
 
 class EigenmodeConvergenceError(RuntimeError):
-    """Fewer modes than ``Eigenmode.n_modes`` converged.
+    r"""Fewer modes than ``Eigenmode.n_modes`` converged.
 
     gfem returns no partial result. The message names the modes that did
     not converge, their best backward error, and the remedies: move
@@ -471,6 +471,13 @@ class EigenmodeConvergenceError(RuntimeError):
     target when it holds about 10 or more, and for a permittivity law its
     term nearest the target. Move ``target`` where the modes are separated,
     or find the resonances from a `Driven` sweep.
+
+    With wave ports it is also raised when the search cannot certify that it
+    listed every resonance of the strip it searches (the modes with
+    :math:`\mathrm{Im}\,\omega \le \omega_t / 4`, nearest ``target``) after
+    four seed solves: the strip holds more modes of other families than the
+    solves can list. The message says so; lower ``n_modes`` or move
+    ``target``.
     """
 
 
