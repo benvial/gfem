@@ -22,6 +22,7 @@ from pathlib import Path
 import jax
 import numpy as np
 import pytest
+import structured_meshes as sm
 from finite_differences import assert_gradient_matches, unit_directions
 from wave_port_cases import (
     ANTI_BOUND_A3,
@@ -54,6 +55,7 @@ from gfem._engine import cache
 from gfem._engine.driven import driven_operator, operator_terms
 from gfem._engine.eigen import eigen_ports
 from gfem._engine.port_term import PortTerm, PortTermRefusalError
+from gfem._sweep.port_mode import _Reduced
 from gfem.errors import AntiBoundRootWarning
 
 DATA = Path(__file__).parent / "data"
@@ -853,3 +855,56 @@ def test_a_seed_shift_the_port_term_refuses_raises_a_convergence_error(
     monkeypatch.setattr(PortTerm, "at", at)
     with pytest.raises(gfem.EigenmodeConvergenceError, match="cannot follow"):
         gfem.solve(case_h, gfem.Eigenmode(target=7.3e9, n_modes=1), options=ORDER_3)
+
+
+# --- tracking a port mode independently of the length unit -----------------------
+
+
+def solve_h_in(unit, tmp_path, monkeypatch):
+    """Case H written in ``unit`` ("mm" or "m"), solved for the root near 7.3 GHz."""
+    if unit == "m":  # the same guide, its coordinates written in metres
+        write, load = sm.write_msh22, gfem.Mesh.from_gmsh
+        monkeypatch.setattr(
+            sm,
+            "write_msh22",
+            lambda path, mesh: write(path, (mesh[0] * 1e-3, *mesh[1:])),
+        )
+        monkeypatch.setattr(
+            gfem.Mesh,
+            "from_gmsh",
+            staticmethod(lambda path, **kw: load(path, length_unit="m", **kw)),
+        )
+    model = hybrid_model(hybrid_guide(tmp_path / f"h_{unit}.msh"))
+    problem = gfem.Eigenmode(target=7.3e9, n_modes=1)
+    return gfem.solve(model, problem, options=ORDER_3)
+
+
+def test_the_same_guide_in_mm_and_in_m_gives_one_root(tmp_path, monkeypatch):
+    # a unit-dependent tracking measure refused this iterate in mm only
+    roots = [solve_h_in(u, tmp_path, monkeypatch).omega for u in ("mm", "m")]
+    assert [len(r) for r in roots] == [1, 1]
+    assert abs(roots[0][0] - roots[1][0]) <= 1e-9 * abs(roots[1][0])
+
+
+def test_an_ambiguous_but_accurate_pair_is_refused_without_enriching(
+    hybrid, monkeypatch
+):
+    ports = hybrid[3]
+    term = ports[0].term
+    k = term._k[len(term._k) // 2] * (1 + 0.04j)
+    real = _Reduced.solve
+
+    def solve(self, *args, **kw):  # the pairs stay accurate; the tracking is not clear
+        pairs = real(self, *args, **kw)
+        return [(lam, y, math.inf) for lam, y, _ in pairs]
+
+    monkeypatch.setattr(_Reduced, "solve", solve)
+    size, version = term.vectors.shape[1], term.version
+    with pytest.raises(PortTermRefusalError) as raised:
+        term.at(k)
+    assert term.version == version
+    assert term.vectors.shape[1] == size
+    text = str(raised.value)
+    assert "port_mode_tolerance" not in text
+    assert "GHz" in text
+    assert "overlap" in text

@@ -317,6 +317,16 @@ class PortTerm:
     def _columns(self) -> None:
         """``vectors`` and the face reactions of the current basis."""
         modes = self.modes
+        # the tracking mass splits by field part: $e_t = \gamma E_t$ scales with the
+        # file unit, $e_n$ does not (`_pairs` weighs the parts alike)
+        v = self._reduced.v
+        n_t = getattr(modes, "n_t", None)
+        if n_t is None:  # a line port's mass has no normal part
+            self._mass_t, self._mass_n = self._reduced.mass, None
+        else:
+            t = (np.asarray(modes.free) < n_t)[:, None]
+            self._mass_t = v.T @ (modes.mass @ (v * t))
+            self._mass_n = v.T @ (modes.mass @ (v * ~t))
         self._reduction = modes.reduce(self._reduced.v)
         w = self._reduction.w
         basis = np.zeros((modes.space.ndof, w.shape[1]))
@@ -349,6 +359,7 @@ class PortTerm:
             bad = [i for i, (_, _, eta) in enumerate(pairs) if not eta <= floor[i]]
             if not bad:
                 break
+            self._refuse_ambiguous(k, pairs, bad, floor)
             if attempt == _ENRICHMENTS:
                 raise PortTermRefusalError(
                     self.label,
@@ -365,6 +376,36 @@ class PortTerm:
             self._cache.clear()
         self._cache[k] = value
         return value
+
+    def _refuse_ambiguous(
+        self, k: complex, pairs: list, bad: list[int], floor: list[float]
+    ) -> None:
+        """Refuse at once a pair that passes the guard but is not told apart.
+
+        An exact solve cannot separate two accurate modes (it moves the basis
+        and the pair stays ambiguous), so enriching would only spend solves.
+
+        Raises:
+            PortTermRefusalError: A bad pair is finite and passes the guard on
+                its own backward error.
+        """
+        theta = self.modes.pencil.theta(k)  # ty: ignore[invalid-argument-type]
+        for i in bad:
+            lam, y, eta = pairs[i]
+            if eta != math.inf or not np.isfinite(lam):
+                continue
+            if self._reduced.backward_error(theta, lam, y) > floor[i]:
+                continue
+            first, second = self._reduced.margins[i]
+            f = k * scipy.constants.c / (2 * math.pi * self.modes.section.scale)
+            raise PortTermRefusalError(
+                self.label,
+                k,
+                f"{self.label}: two reduced modes overlap the port mode at "
+                f"the complex frequency {f / 1e9:.6g} GHz almost equally "
+                f"(overlaps {first:.3f} and {second:.3f}), so it cannot be "
+                "followed there.",
+            )
 
     def below_cutoff(self, k: float) -> bool:
         """Whether a port mode of the surface is below its cutoff at the real ``k``.
@@ -414,8 +455,27 @@ class PortTerm:
                 for s, y in zip(self.sweeps, refs, strict=True)
             ], floors
         k_max = 2 * self._k_max[j] * abs(k) / self._k[j]
-        pairs = self._reduced.solve(k, k_max, refs)  # ty: ignore[invalid-argument-type]
+        pairs = self._reduced.solve(k, k_max, refs, mass=self._tracking_mass(k))  # ty: ignore[invalid-argument-type]
         return pairs, floors
+
+    def _tracking_mass(self, k: complex) -> np.ndarray:
+        r"""The reduced matrix of :math:`M_t + |k|^2 M_n`, the pairs' inner product.
+
+        The tangential part of a port mode's field carries :math:`\gamma`
+        (:math:`e_t = \gamma E_t`) and the normal part does not, so the plain
+        mass weighs them by the file unit; :math:`|k|` per file unit balances
+        them, and the margin between two pairs no longer depends on the unit.
+        """
+        if self._mass_n is None:
+            return self._mass_t
+        return self._mass_t + abs(k) ** 2 * self._mass_n
+
+    def _weights(self, k: complex) -> np.ndarray:
+        """The diagonal ``D`` of the tracking inner product ``D M D`` on free DOFs."""
+        n_t = getattr(self.modes, "n_t", None)
+        if n_t is None:
+            return np.ones(len(self.modes.free))
+        return np.where(np.asarray(self.modes.free) < n_t, 1.0, abs(k))
 
     def _enrich(self, k: complex, pairs: list, bad: list[int]) -> None:
         """Exact solves at ``k`` for modes ``bad``, added to the basis."""
@@ -430,7 +490,19 @@ class PortTerm:
                 lam, y = g**2 * (k / self._k[j]) ** 2, self._ref(i, j)
             _, vecs = shift_invert_eigs(a, b, lam, min(_NEV, n - 2))
             ref = self._reduced.lift(y)
-            found.append(vecs[:, int(np.argmax(_overlaps(self.modes.mass, ref, vecs)))])
+            weight = self._weights(k)
+            found.append(
+                vecs[
+                    :,
+                    int(
+                        np.argmax(
+                            _overlaps(
+                                self.modes.mass, ref * weight, vecs * weight[:, None]
+                            )
+                        )
+                    ),
+                ]
+            )
         self._reduced.add(np.stack(found, axis=1))
         self._columns()
         self._cache.clear()
