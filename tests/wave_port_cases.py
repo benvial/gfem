@@ -294,8 +294,12 @@ def line_root(family, kc, layers, guess_ghz):
 H_Z_MM = (0.0, 20.0, 22.4, 25.4)  # short, window, window end, port
 
 
-def hybrid_guide(path):
-    """Case H's mesh: "air", "block", "window"; PEC "walls", "port"."""
+def hybrid_guide(path, gap_mm=None):
+    """Case H's mesh: "air", "block", "window"; PEC "walls", "port".
+
+    ``gap_mm`` is the guide's length from the window to the port (3 mm, two
+    cells, by default), 1.5 mm cells beyond.
+    """
     a, b = A_MM, B_MM
     xs = np.unique(
         np.concatenate(
@@ -306,13 +310,14 @@ def hybrid_guide(path):
             ]
         )
     )
-    z = H_Z_MM
+    z = H_Z_MM if gap_mm is None else (*H_Z_MM[:3], H_Z_MM[2] + gap_mm)
+    cells = 2 if gap_mm is None else max(2, round(gap_mm / 1.5))
     zs = np.unique(
         np.concatenate(
             [
                 np.linspace(z[0], z[1], 11),
                 np.linspace(z[1], z[2], 2),
-                np.linspace(z[2], z[3], 3),
+                np.linspace(z[2], z[3], cells + 1),
             ]
         )
     )

@@ -246,6 +246,31 @@ class SkippedPortModeWarning(UserWarning):
     """
 
 
+class UnrequestedPortModeWarning(UserWarning):
+    r"""A mode of an eigenmode solve that its wave ports' requested modes do not carry.
+
+    A wave port absorbs the modes it requests exactly and any other field on
+    its surface only partly (the rest reflects), so a mode carried by an
+    unrequested port mode family, or trapped against the port, has a Q and a
+    coupling Q that are the port's, not the device's. The solve warns once per
+    wave port surface and message form, listing the modes, when
+    :math:`\eta_s < 1/2` and the surface takes at least 1 % of the mode's loss
+    (:math:`Q / q_s \ge 0.01`), with :math:`\eta_s` the
+    `gfem.EigenmodeResult.requested_power_share`.
+
+    Two readings, told by whether an unrequested mode of the surface
+    propagates at the mode's frequency. If one does, the mode may be carried
+    by it: add a `gfem.WavePort` on the surface for that mode and solve
+    again; if the warning persists, the mode is trapped. If none does, the
+    mode is trapped inside the model, where its port mode family propagates:
+    its Q is the port's absorption of the evanescent tail, a lower bound on
+    the device's, which grows as the port moves away; move the port. A share
+    from 1/2 to 1 is reported on the result, never warned. Eigenmode solves
+    only; a driven solve's missing modes are `SkippedPortModeWarning`'s.
+    Filter it with Python's `warnings` module.
+    """
+
+
 class UnrequestedOrderWarning(UserWarning):
     r"""A propagating diffraction order that no Floquet port requests.
 

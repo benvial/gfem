@@ -81,6 +81,7 @@ REFUSED_LEAVES: dict[str, str] = {
     ".principal_participation[": "principal_participation",
     ".sheet_participation[": "sheet_participation",
     ".error": "eigen error",
+    ".requested_power_share[": "requested power share",
     ".port_modes[": "port mode output",
     ".diffraction_orders[": "diffraction order output",
 }
@@ -1204,6 +1205,7 @@ _MODE_MAPS = (
     "bulk_participation",
     "principal_participation",
     "sheet_participation",
+    "requested_power_share",
 )
 
 

@@ -93,6 +93,7 @@ from gfem._boundaries import (
     Impedance,
     LumpedPort,
     WavePort,
+    wave_port_surfaces,
 )
 from gfem._eigen import arpack, slepc, velocity
 from gfem._eigen.adjoint import deflated_solve, reshift_offset
@@ -107,6 +108,7 @@ from gfem._eigen.ratios import (
 from gfem._eigen.reach import FIELD_TOLERANCE, ModeReach, blocker
 from gfem._eigen.refine import Refined
 from gfem._eigen.search import FoundModes, ModeSearch
+from gfem._eigen.share import Unrequested, requested_power_shares
 from gfem._engine import dispersion, terms
 from gfem._engine.cache import Entry, discretization
 from gfem._engine.coefficients import anisotropic_regions
@@ -156,6 +158,7 @@ from gfem.errors import (
     LinearSolverConvergenceError,
     LowFrequencyWarning,
     SolverUnavailableError,
+    UnrequestedPortModeWarning,
 )
 from gfem.mesh import Mesh, _at_imported_nodes
 from gfem.model import Model
@@ -346,6 +349,9 @@ class EigenmodeRule:
             if isinstance(p, WavePort) or p.name in self.resistive
         )
         self.inductive = tuple(p.name for p in lumped if p.rlc[1] is not None)
+        #: The wave port surfaces (``requested_power_share``), in the order of
+        #: each surface's first wave port.
+        self.port_surfaces = tuple(wave_port_surfaces(model.ports))
         #: The surfaces of the `Impedance` sheets with an inductance (sheet
         #: participation), in model order.
         self.kinetic = tuple(
@@ -403,7 +409,8 @@ class EigenmodeRule:
                 region)``.
 
         Returns:
-            ``{"omega": (n,) complex rad/s, "error": (n,), "q_port":
+            ``{"omega": (n,) complex rad/s, "error": (n,), "share":
+            (n_surfaces, n), "q_port":
             (n_coupled, n), "participation": (n_inductive, n), "bulk":
             (n_regions, n), "principal": (n_anisotropic, n, 3), "sheet":
             (n_kinetic, n), "e_field": (ndof, n) complex, "cluster": (n,)
@@ -482,7 +489,12 @@ class EigenmodeRule:
                     model, op, eop, found=found, x=x, stretch=stretch
                 )
                 ks = [m.k for m in modes]
+                share, loss = requested_power_shares(
+                    ports, op.space, x, ks, scale=built.scale, pair=_layout(op).pair
+                )
+                outputs["share"] = share
                 self._warn_modes(found, built.scale)
+                self._warn_unrequested(ports, share, loss, ks, built.scale)
                 lowest = min(k.real for k in ks) * const.c / built.scale
                 _check_low_frequency(
                     model,
@@ -760,6 +772,24 @@ class EigenmodeRule:
         """`_warn_gain` for the modes found, and `_warn_anti_bound`."""
         self._warn_gain(found.ks, scale)
         self._warn_anti_bound(found.anti_bound, scale)
+
+    def _warn_unrequested(
+        self,
+        ports: Sequence[EigenPort],
+        share: np.ndarray,
+        loss: np.ndarray,
+        ks: Sequence[complex],
+        scale: float,
+    ) -> None:
+        """Warn `UnrequestedPortModeWarning` once per surface and form."""
+        q = np.array([abs(k) / (2 * abs(k.imag)) if k.imag else math.inf for k in ks])
+        for i, port in enumerate(ports):
+            flagged = Unrequested(port, share[i], loss[i])
+            if not len(flagged.flagged):
+                continue
+            name = port.term.ports[0].surface
+            for message in flagged.messages(name, ks, scale, q):
+                _mpi.warn(self.comm, message, UnrequestedPortModeWarning, stacklevel=4)
 
     def _warn_anti_bound(self, roots: Sequence[complex], scale: float) -> None:
         """Warn `AntiBoundRootWarning` once for the roots dropped below cutoff."""
@@ -1220,6 +1250,7 @@ class EigenmodeRule:
         return {
             "omega": jax.ShapeDtypeStruct((n,), jnp.complex128),
             "error": jax.ShapeDtypeStruct((n,), jnp.float64),
+            "share": jax.ShapeDtypeStruct((len(self.port_surfaces), n), jnp.float64),
             "q_port": jax.ShapeDtypeStruct((len(self.coupled), n), jnp.float64),
             "participation": jax.ShapeDtypeStruct(
                 (len(self.inductive), n), jnp.float64
@@ -1305,14 +1336,20 @@ class EigenmodeRule:
         )
         if name not in _MODE_FIELD:
             what = (
-                "the band group velocity, read from the modes"
+                "a diagnostic of the found mode, no derivative"
+                if name == "share"
+                else "the band group velocity, read from the modes, which has no "
+                "derivative with respect to anything"
                 if name == "v_g"
-                else "the backward error of the solve"
+                else "the backward error of the solve, which has no derivative "
+                "with respect to anything"
             )
-            return (
-                f"{head}: it is {what}, which has no derivative with respect "
-                "to anything. " + opt_out
-            )
+            if name == "share":
+                head = (
+                    "gfem cannot differentiate the eigenmode output "
+                    "'requested_power_share'"
+                )
+            return f"{head}: it is {what}. " + opt_out
         why = self._solve_refusal()
         refusal = None if why is not None else self._input_refusal(name, kinds)
         if refusal is not None and refusal.kind == "law":
@@ -1878,6 +1915,10 @@ class EigenmodeRule:
         return EigenmodeResult(
             omega=jnp.asarray(omega),
             error=jnp.asarray(outputs["error"]),
+            requested_power_share={
+                surface: jnp.asarray(outputs["share"][i])
+                for i, surface in enumerate(self.port_surfaces)
+            },
             q_port={
                 name: jnp.asarray(outputs["q_port"][p])
                 for p, name in enumerate(self.coupled)

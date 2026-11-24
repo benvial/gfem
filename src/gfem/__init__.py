@@ -77,6 +77,7 @@ from gfem.errors import (  # noqa: E402
     ThinLayerWarning,
     UnanchoredBandWindowWarning,
     UnrequestedOrderWarning,
+    UnrequestedPortModeWarning,
     UnsampledPixelsWarning,
     UnsettledTraceWarning,
 )
@@ -323,6 +324,7 @@ __all__ = [
     "TransientThermalResult",
     "UnanchoredBandWindowWarning",
     "UnrequestedOrderWarning",
+    "UnrequestedPortModeWarning",
     "UnsampledPixelsWarning",
     "UnsettledTraceWarning",
     "WavePort",

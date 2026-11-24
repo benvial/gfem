@@ -15,6 +15,11 @@ at 3x to 30x the measured errors, written beside each.
 - L, a lossy anisotropic port section; D, a coax (TEM); A3, a root just
   above the port's cutoff; E, a circular guide on TM01, a port mode with
   :math:`E_n \ne 0`.
+- The requested power share and its warning: the share of the port's loss
+  that its requested modes carry is near 1 on a requested family's root, near
+  0 on modes trapped against the port or carried by an unrequested family
+  (warned, in two forms), and 0.87 on the hybrid guide, whose window 3 mm
+  from the port puts an evanescent tail on the port (reported, not warned).
 - The driven cross-check: eigen and driven solves share the mesh, the port
   modes and the operator, so the pole of a one-pole fit of the driven S
   (degree-6 numerator, 41 points over one half-width each side) matches the
@@ -23,13 +28,15 @@ at 3x to 30x the measured errors, written beside each.
   port mode has no exact value.
 """
 
+import warnings
+
 import numpy as np
 import pytest
 import wave_port_cases as w
 from resonance import fit_resonance
 
 import gfem
-from gfem.errors import PortModeError
+from gfem.errors import PortModeError, UnrequestedPortModeWarning
 
 
 def direct(order, **options):
@@ -270,3 +277,122 @@ def test_a_hybrid_dispersive_port_s_root_is_the_driven_pole(case_h):
     error, im = cross_check(case_h, 7.3e9, 1, 2)
     assert error <= 3e-7
     assert im <= 1.5e-6
+
+
+# --- the requested power share and its warning ----------------------------------
+
+#: E's root (TM01, Q 3.7) from its line, 13.4 GHz target; the probe's value.
+ROOT_E = 13.3815 + 1.8108j
+
+
+def share_warnings(model, target, n_modes, order=3):
+    """The result of an eigen solve and its `UnrequestedPortModeWarning` texts."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = eigen(model, target, n_modes, order)
+    texts = [str(c.message) for c in caught if c.category is UnrequestedPortModeWarning]
+    return result, texts
+
+
+def test_a_requested_root_carries_the_port_s_loss_on_a_lone_te_line(meshes):
+    # A: measured 1 - eta = -3.7e-3; L (lossy, anisotropic section): 3.9e-3
+    for name, layers, root, target, n in (
+        ("a", w.CASE_A, w.ROOT_A, 11.67e9, 3),
+        ("l", w.CASE_L, w.ROOT_L, 11.67e9, 12),
+    ):
+        result, _ = share_warnings(lone_port(meshes, name, layers), target, n)
+        _, j = w.nearest_error(result, root)
+        eta = float(result.requested_power_share["port"][j])
+        assert abs(1 - eta) <= 2e-2, (name, eta)
+
+
+def test_the_tm_root_of_a_circular_guide_carries_most_of_the_port_s_loss(meshes):
+    # E (Q 3.7): measured eta 0.962, the O(1/Q^2) floor reaching 0.04; the
+    # search finds it among the guide's other families from six modes
+    mesh = meshes("e", w.circular_guide, w.CASE_A, n=16)
+    model = w.ported_model(mesh, w.CASE_A, [gfem.WavePort("p1", "port", mode=3)])
+    result, _ = share_warnings(model, 13.4e9, 6)
+    error, j = w.nearest_error(result, ROOT_E)
+    assert error <= 1e-4
+    assert float(result.requested_power_share["port"][j]) >= 0.9
+
+
+def test_modes_trapped_against_a_port_are_warned_in_the_trapped_form(meshes):
+    # A at three modes: the two modes beside the root are TE30 and TE21-like,
+    # below cutoff at the port, whose Q (190) is the port's Robin scalar on
+    # their evanescent tail. Measured eta 2e-8 and 2e-12
+    result, texts = share_warnings(lone_port(meshes, "a", w.CASE_A), 11.67e9, 3)
+    f = w.ghz(result.omega)
+    root = int(np.argmin(np.abs(f - w.ROOT_A)))
+    trapped = [j for j in range(3) if j != root]
+    share = np.asarray(result.requested_power_share["port"])
+    assert all(share[j] <= 1e-3 for j in trapped)
+    assert len(texts) == 1
+    assert "'port'" in texts[0]
+    assert "trapped" in texts[0]
+    assert "propagates" not in texts[0]
+    assert all(f"{j} at" in texts[0] for j in trapped)
+    assert f"{root} at" not in texts[0]
+
+
+def test_a_surface_that_takes_little_of_a_mode_s_loss_is_not_named(meshes):
+    # B3, two ports: the trapped modes (Q 420) lose their power at "port" (Q/q_s
+    # 0.999); at "portl", far from the structure's side, their share is a
+    # ratio of two tiny powers (Q/q_s 7.3e-4, 14x below the 0.01 gate)
+    mesh = meshes("b3", w.ported_guide, w.CASE_B3, left_port=True)
+    result, texts = share_warnings(
+        w.ported_model(mesh, w.CASE_B3, w.TWO_PORTS), 9.97e9, 3
+    )
+    assert list(result.requested_power_share) == ["portl", "port"]
+    _, j = w.nearest_error(result, w.ROOT_B3)
+    for surface in ("portl", "port"):
+        assert abs(1 - float(result.requested_power_share[surface][j])) <= 1e-3
+    assert len(texts) == 1
+    assert "'port'" in texts[0]
+    assert "'portl'" not in texts[0]
+
+
+def test_unrequested_modes_of_a_lossy_multimode_section_are_warned_in_the_open_form(
+    meshes,
+):
+    # L's section carries seven unrequested ranks at the target: the modes at
+    # 11.32, 11.27 and 11.13 GHz (Q 4 to 47, beside the root's 2.8) are warned
+    # with the conditional wording, and the root is not named. Measured eta
+    # 1.3e-9 and below, Q/q_s 0.95 to 1.0
+    result, texts = share_warnings(lone_port(meshes, "l", w.CASE_L), 11.67e9, 4)
+    root = int(np.argmin(np.abs(w.ghz(result.omega) - w.ROOT_L)))
+    others = [j for j in range(4) if j != root]
+    assert len(texts) == 1
+    assert "propagates at that frequency" in texts[0]
+    assert "mode=" in texts[0]
+    assert all(f"{j} at" in texts[0] for j in others)
+    assert f"{root} at" not in texts[0]
+    share = np.asarray(result.requested_power_share["port"])
+    assert all(share[j] <= 1e-3 for j in others)
+    assert abs(1 - share[root]) <= 2e-2
+
+
+def test_a_share_between_one_half_and_one_is_reported_and_not_warned(case_h):
+    # H: a window 3 mm from the port puts an evanescent tail on it; measured
+    # 0.87 at order 3 (eta of the order-2 fixture is pinned below)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UnrequestedPortModeWarning)
+        result = eigen(case_h, 7.3e9, 1, 2)
+    eta = float(result.requested_power_share["p"][0])
+    assert 0.5 < eta < 1
+
+
+def test_the_share_of_the_hybrid_guide_is_the_q_error_of_its_near_port(meshes):
+    # moving the port from 3 mm to 15 mm behind the window raises the share
+    # toward 1 and the Q to 20.2; Q / eta at 3 mm (19.6) is within 3 % of it
+    q, eta = {}, {}
+    for gap in (3.0, 15.0):
+        mesh = meshes(f"h{gap:g}", w.hybrid_guide, gap_mm=gap)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UnrequestedPortModeWarning)
+            result = eigen(w.hybrid_model(mesh), 7.3e9, 3, 3)
+        j = int(np.argmax(np.asarray(result.requested_power_share["p"])))
+        q[gap] = float(result.q[j])
+        eta[gap] = float(result.requested_power_share["p"][j])
+    assert 0.5 < eta[3.0] < eta[15.0] <= 1.01
+    assert abs(q[3.0] / eta[3.0] - q[15.0]) <= 0.1 * q[15.0]
