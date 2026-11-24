@@ -30,9 +30,11 @@ with k0 = ω scale / c, the wavenumber per file unit, and the pieces
   boundary multiplies its pieces' coefficients face by face by the fill
   (`sheet_fill`, `Piece.sheet`): the design enters the form, never θ.
 
-- a wave port, θ = i beta(ω) per file unit (the real part of its mode's
-  propagation constant, tabulated on the output grid by the port mode
-  sweep, see `Tabulated`): ∫ (A E_t) · v_t on the port surface, with A
+- a wave port, θ = gamma_0(ω) per file unit, the complex propagation constant
+  of its mode: i beta(ω) with beta real on the driven solve (tabulated on
+  the output grid by the port mode sweep, see `Tabulated`), and the port
+  term's complex gamma_0 at the complex frequency of an eigenmode solve
+  (`gfem._engine.port_term`): ∫ (A E_t) · v_t on the port surface, with A
   the port's tangential inverse-permeability tensor (``mu_r^-1`` for an
   isotropic material, `wave_port_coefficients`).
 

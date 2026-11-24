@@ -29,6 +29,7 @@ from gfem._eigen.operator import EigenOperator
 from gfem._eigen.reach import GapSet, ModeReach, _close
 from gfem._eigen.refine import TRUSTED, Refined, refine
 from gfem._eigen.seed import MIN_SUBSPACE, SeedBoundReached
+from gfem._engine.port_term import PortTermRefusalError
 from gfem._linalg import report
 from gfem._linalg.layout import ONE_PROCESS, DofLayout
 from gfem._text import hertz
@@ -359,7 +360,7 @@ class ModeSearch:
             out.append(m)
         return out, failed
 
-    def _select(  # noqa: PLR0915 - one selection loop over the seeds
+    def _select(  # noqa: PLR0912, PLR0915 - one selection loop over the seeds
         self,
         op: EigenOperator,
         k: np.ndarray,
@@ -505,10 +506,20 @@ class ModeSearch:
                     kept = distinct(mode)
                     if kept is not None:
                         accepted.append(kept)
-                op.reshift(seed)
-                mode = self.refine(
-                    op, seed, vectors[:, j], tolerance=tolerance, max_iterations=steps
-                )
+                try:
+                    op.reshift(seed)
+                except PortTermRefusalError as refusal:
+                    mode = Refined(
+                        seed, vectors[:, j], math.inf, 0, False, None, refusal
+                    )
+                else:
+                    mode = self.refine(
+                        op,
+                        seed,
+                        vectors[:, j],
+                        tolerance=tolerance,
+                        max_iterations=steps,
+                    )
             if (
                 mode.k.real <= _STATIC * sigma
                 or self._longitudinal(op, mode)
@@ -653,14 +664,7 @@ class ModeSearch:
                 f"Eigenmode found {len(accepted)} of the {self.n_modes} "
                 f"requested mode(s) near {target} to {tolerance}."
             )
-        lines = [
-            head,
-            *(
-                f"  not converged: {hertz(m.k.real * c)}, best backward "
-                f"error {m.error:.3g} after {m.iterations} refinement steps"
-                for m in (skipped or failed)
-            ),
-        ]
+        lines = [head, *(_unconverged_line(m, c) for m in (skipped or failed))]
         if dropped:
             lines.append(
                 f"  dropped: {len(dropped)} pair(s) with more than half "
@@ -799,6 +803,27 @@ def _outside(
     if norm <= _TWIN * layout.state_norm(mode.x):
         return None
     return rest / norm
+
+
+def _unconverged_line(mode: Refined, c: float) -> str:
+    """The line of a seed that did not converge, or was lost to a port refusal.
+
+    ``c``: file-unit wavenumber to hertz.
+    """
+    refusal = mode.refusal
+    if refusal is None:
+        return (
+            f"  not converged: {hertz(mode.k.real * c)}, best backward "
+            f"error {mode.error:.3g} after {mode.iterations} refinement steps"
+        )
+    f = refusal.k * c
+    sign = "-" if f.imag < 0 else "+"
+    return (
+        f"  lost: {hertz(mode.k.real * c)}, an iterate at complex frequency "
+        f"{hertz(f.real)} {sign} i {hertz(abs(f.imag))} left the range where "
+        f"{refusal.label} "
+        "can follow its port mode"
+    )
 
 
 def _lost(

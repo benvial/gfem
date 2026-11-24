@@ -72,7 +72,13 @@ from gfem._text import hertz
 from gfem.errors import PortModeError
 from gfem.model import Model
 
-__all__ = ["PortTerm", "PortTermValue", "port_terms", "sweep_band"]
+__all__ = [
+    "PortTerm",
+    "PortTermRefusalError",
+    "PortTermValue",
+    "port_terms",
+    "sweep_band",
+]
 
 # The band [max(_CUTOFF f_c, _LOW f_t), _HIGH f_t] with _POINTS frequencies.
 _CUTOFF, _LOW, _HIGH, _POINTS = 1.05, 0.7, 1.4, 9
@@ -186,6 +192,25 @@ def _below_cutoff(
         "Raise the target above the cutoff, pick a lower mode, or find the "
         "response from a gfem.Driven sweep."
     )
+
+
+class PortTermRefusalError(PortModeError):
+    """The port term cannot evaluate at an iterate of a mode refinement.
+
+    Internal: the eigen search catches it and loses the seed (a mode
+    refinement may wander to a complex frequency where the port's mode cannot
+    be followed), so it never reaches a caller. The public `PortModeError`
+    stays for a target below a requested mode's cutoff.
+
+    Attributes:
+        label: The surface's wave ports, for messages.
+        k: The complex wavenumber (per file unit) of the iterate.
+    """
+
+    def __init__(self, label: str, k: complex, why: str) -> None:
+        super().__init__(why)
+        self.label = label
+        self.k = k
 
 
 @dataclasses.dataclass(frozen=True)
@@ -308,8 +333,8 @@ class PortTerm:
         Raises:
             NotImplementedError: The cross-section has an absorbing edge
                 beside a permittivity law (not analytic in the frequency).
-            PortModeError: Enrichment does not bring a mode's reduced pair
-                under the guard.
+            PortTermRefusalError: Enrichment does not bring a mode's reduced pair
+                under the guard (a `PortModeError`).
         """
         k = complex(k)
         hit = self._cache.get(k)
@@ -325,13 +350,14 @@ class PortTerm:
             if not bad:
                 break
             if attempt == _ENRICHMENTS:
-                raise PortModeError(
+                raise PortTermRefusalError(
+                    self.label,
+                    k,
                     f"{self.label}: the port mode at the complex wavenumber "
                     f"{k:.6g} per file unit has a backward error "
                     f"{max(pairs[i][2] for i in bad):.1e} above the port mode "
                     f"tolerance {self.tolerance:.1e} after {_ENRICHMENTS} exact "
-                    "solves. Raise SolverOptions.port_mode_tolerance, or move the "
-                    "target nearer the resonance."
+                    "solves.",
                 )
             self._enrich(k, pairs, bad)
         value = self._value(k, pairs, d_theta)

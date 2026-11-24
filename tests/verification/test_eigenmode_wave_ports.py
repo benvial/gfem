@@ -396,3 +396,12 @@ def test_the_share_of_the_hybrid_guide_is_the_q_error_of_its_near_port(meshes):
         q[gap], eta[gap] = float(result.q[j]), float(share[j])
     assert 0.5 < eta[3.0] < eta[15.0] <= 1.01
     assert abs(q[3.0] / eta[3.0] - q[15.0]) <= 0.1 * q[15.0]
+
+
+def test_a_hybrid_guide_s_single_mode_root_is_the_three_mode_root(case_h):
+    # order 3: the guard seed's refinement wanders to a complex frequency
+    # where the port term cannot follow its mode; losing that seed must not
+    # lose the solve (it raised PortModeError with one mode)
+    one = eigen(case_h, 7.3e9, 1, 3)
+    three = eigen(case_h, 7.3e9, 3, 3)
+    assert abs(one.omega[0] - three.omega[0]) <= 1e-7 * abs(three.omega[0])

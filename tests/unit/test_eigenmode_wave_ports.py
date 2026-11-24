@@ -53,7 +53,7 @@ from gfem._eigen.operator import split
 from gfem._engine import cache
 from gfem._engine.driven import driven_operator, operator_terms
 from gfem._engine.eigen import eigen_ports
-from gfem._engine.port_term import PortTerm
+from gfem._engine.port_term import PortTerm, PortTermRefusalError
 from gfem.errors import AntiBoundRootWarning
 
 DATA = Path(__file__).parent / "data"
@@ -734,3 +734,73 @@ def test_the_warning_is_public_and_replayed_by_the_solve_cache():
     assert "UnrequestedPortModeWarning" in gfem.__all__
     assert issubclass(gfem.UnrequestedPortModeWarning, UserWarning)
     assert gfem.UnrequestedPortModeWarning in _solve_cache.REPLAYED
+
+
+# --- a refusal of the port term at an iterate -----------------------------------
+
+
+@pytest.fixture
+def refuses_off_axis(monkeypatch):
+    """The port term refuses where Im k exceeds 5 % of Re k (a stand-in for a
+    complex frequency its port mode cannot be followed to)."""
+    real = PortTerm.at
+
+    def at(self, k):
+        if complex(k).imag > 0.05 * complex(k).real:
+            raise PortTermRefusalError(self.label, complex(k), "forced")
+        return real(self, k)
+
+    monkeypatch.setattr(PortTerm, "at", at)
+
+
+@pytest.mark.usefixtures("refuses_off_axis")
+def test_a_guard_seed_the_port_term_refuses_is_dropped_silently(case_h):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        result = gfem.solve(
+            case_h, gfem.Eigenmode(target=7.3e9, n_modes=1), options=ORDER_3
+        )
+    assert len(result.omega) == 1
+    assert abs(ghz(result.omega[0]) - (7.30912 + 0.21415j)) <= 1e-3
+
+
+@pytest.mark.usefixtures("refuses_off_axis")
+def test_a_requested_seed_the_port_term_refuses_is_reported_on_a_lost_line(case_h):
+    problem = gfem.Eigenmode(target=7.3e9, n_modes=2)
+    with pytest.raises(gfem.EigenmodeConvergenceError) as raised:
+        gfem.solve(case_h, problem, options=ORDER_3)
+    lines = str(raised.value).splitlines()
+    lost = [x for x in lines if x.lstrip().startswith("lost:")]
+    assert lost
+    assert "GHz" in lost[0]
+    assert "WavePort 'p' on surface" in lost[0]
+    assert "can follow its port mode" in lost[0]
+
+
+def test_a_refusal_in_a_reshift_leaves_the_operator_usable(hybrid, monkeypatch):
+    _, rule, op, ports = hybrid
+    sigma = 2 * math.pi * 12e9 / C0 * op.built.scale
+    eop = rule.operator(op, sigma, ports=ports)
+    try:
+        x = free_vector(eop, 3)
+        eop.solve(x)  # prepared at sigma
+        far = sigma * (1.01 + 0.03j)
+        real = PortTerm.at
+
+        def at(self, k):
+            if complex(k) == far:
+                raise PortTermRefusalError(self.label, complex(k), "forced")
+            return real(self, k)
+
+        monkeypatch.setattr(PortTerm, "at", at)
+        with pytest.raises(PortTermRefusalError):
+            eop.reshift(far)
+        assert eop.shift == sigma
+        back = eop.solve(eop.apply(sigma, x))  # the old factorization lives
+        assert np.linalg.norm(back - x) <= 1e-10 * np.linalg.norm(x)
+        near = sigma * (1.01 + 0.02j)
+        eop.reshift(near)
+        back = eop.solve(eop.apply(near, x))
+        assert np.linalg.norm(back - x) <= 1e-10 * np.linalg.norm(x)
+    finally:
+        eop.free_handle()
