@@ -864,16 +864,16 @@ def solve_h_in(unit, tmp_path, monkeypatch):
     """Case H written in ``unit`` ("mm" or "m"), solved for the root near 7.3 GHz."""
     if unit == "m":  # the same guide, its coordinates written in metres
         write, load = sm.write_msh22, gfem.Mesh.from_gmsh
+
+        def from_gmsh(path, **kw):
+            return load(path, **{**kw, "length_unit": "m"})
+
         monkeypatch.setattr(
             sm,
             "write_msh22",
             lambda path, mesh: write(path, (mesh[0] * 1e-3, *mesh[1:])),
         )
-        monkeypatch.setattr(
-            gfem.Mesh,
-            "from_gmsh",
-            staticmethod(lambda path, **kw: load(path, length_unit="m", **kw)),
-        )
+        monkeypatch.setattr(gfem.Mesh, "from_gmsh", staticmethod(from_gmsh))
     model = hybrid_model(hybrid_guide(tmp_path / f"h_{unit}.msh"))
     problem = gfem.Eigenmode(target=7.3e9, n_modes=1)
     return gfem.solve(model, problem, options=ORDER_3)
