@@ -79,6 +79,21 @@ _CONTRACTION = 0.5
 #: Arnoldi runs, each asking for twice as many pairs as the last, before
 #: too few modes near the target is an error.
 _ATTEMPTS = 3
+#: A wave port model's coverage search: the lowest Q whose resonances it
+#: certifies it found (ports damp a mode by its own radiation, so a root of Q
+#: down to about 2 is a resonance of the device).
+_Q_MIN = 2.0
+#: The coverage certificate's radius margin: a frozen seed lies off its
+#: mode's root, and measured up to 0.29 of the strip's half height beyond the
+#: certificate's disc in the strip's far corners.
+_COVER_MARGIN = 1.3
+#: The coverage search's first seed solve asks for at least this many pairs
+#: (the subspace is at least 20 anyway).
+_COVER_NEV = 9
+#: Arnoldi runs of the coverage search, each asking for twice as many pairs as
+#: the last, before an uncovered strip is an error (the densest trapped-mode
+#: disc measured needs three).
+_COVER_ATTEMPTS = 4
 #: Arnoldi tolerance of a nonlinear problem's frozen seeds. Their roots are
 #: off the true ones by the freeze error anyway (small for a conductor,
 #: whose seeds reach backward error 1e-8 to 1e-4 now that the projection
@@ -258,47 +273,31 @@ class ModeSearch:
         else:
             nev = max(2 * n_modes, n_modes + 2)
             nev *= 2 if eop.seed_damped else 1
-        found = None
-        bound = None
-        # the k of the pairs the attempt's selection dropped as modes of the
-        # layer
         dropped: list[complex] = []
         # the roots dropped below a port mode's cutoff, over every attempt
         anti_bound: list[complex] = []
-        for attempt in range(1, _ATTEMPTS + 1):
-            if eop.shift != sigma:
-                # a retry is a seed solve: at the target, on a
-                # factorization counted for the seed (refinement
-                # reshifted it)
-                eop.reshift(sigma, solves=MIN_SUBSPACE)
-            dropped = []
-            row.note(seed_solve=f"{attempt}/{_ATTEMPTS}")
-            try:
-                k, vectors = self.eigen_solver(eop, project, nev, tol=seed_tolerance)
-            except SeedBoundReached as err:
-                bound = err
-                k, vectors = err.k, err.vectors
-            modes, failed, found, pool, ritz = self._select(
+        if self.below_cutoff is not None:
+            modes, failed, found, pool, ritz, bound = self._cover(
                 eop,
-                k,
-                vectors,
+                project,
                 sigma,
                 guard=guard,
                 dropped=dropped,
                 anti_bound=anti_bound,
                 row=row,
             )
-            report.seed_solve(
-                attempt=attempt,
-                pairs=nev,
-                returned=len(k),
-                modes=len(modes),
-                wanted=n_modes,
-                bound=bound is not None,
+        else:
+            modes, failed, found, pool, ritz, bound = self._attempts(
+                eop,
+                project,
+                sigma,
+                nev,
+                seed_tolerance,
+                guard=guard,
+                dropped=dropped,
+                anti_bound=anti_bound,
+                row=row,
             )
-            if len(modes) == n_modes or failed or bound is not None:
-                break
-            nev *= 2  # too few candidates near the target: look wider
         if bound is not None and len(modes) < n_modes:
             raise EigenmodeConvergenceError(self._seed_message(bound))
         skipped = self._skipped(modes, failed, sigma, layout=eop.layout)
@@ -328,6 +327,71 @@ class ModeSearch:
             [m.k for m in modes], guard_k, gaps, unpolished, self.cluster_rtol
         )
         return FoundModes(modes, found, gaps, reach, tuple(anti_bound))
+
+    def _attempts(
+        self,
+        eop: EigenOperator,
+        project,
+        sigma: float,
+        nev: int,
+        seed_tolerance: float,
+        *,
+        guard: bool,
+        dropped: list[complex],
+        anti_bound: list[complex],
+        row: _progress.ProgressRow,
+    ) -> tuple[
+        list[Refined],
+        list[Refined],
+        Refined | None,
+        np.ndarray,
+        np.ndarray,
+        SeedBoundReached | None,
+    ]:
+        """The seed solves at the target, each asking for twice as many pairs.
+
+        Ends when ``n_modes`` modes are accepted, a seed failed or a solve
+        stopped at its restart bound. Returns what `_select` does, and the
+        bound error when a solve reached it.
+        """
+        n_modes = self.n_modes
+        found = None
+        bound = None
+        for attempt in range(1, _ATTEMPTS + 1):
+            if eop.shift != sigma:
+                # a retry is a seed solve: at the target, on a
+                # factorization counted for the seed (refinement
+                # reshifted it)
+                eop.reshift(sigma, solves=MIN_SUBSPACE)
+            dropped.clear()
+            row.note(seed_solve=f"{attempt}/{_ATTEMPTS}")
+            try:
+                k, vectors = self.eigen_solver(eop, project, nev, tol=seed_tolerance)
+            except SeedBoundReached as err:
+                bound = err
+                k, vectors = err.k, err.vectors
+            modes, failed, found, pool, ritz = self._select(
+                eop,
+                k,
+                vectors,
+                sigma,
+                guard=guard,
+                dropped=dropped,
+                anti_bound=anti_bound,
+                row=row,
+            )
+            report.seed_solve(
+                attempt=attempt,
+                pairs=nev,
+                returned=len(k),
+                modes=len(modes),
+                wanted=n_modes,
+                bound=bound is not None,
+            )
+            if len(modes) == n_modes or failed or bound is not None:
+                break
+            nev *= 2  # too few candidates near the target: look wider
+        return modes, failed, found, pool, ritz, bound
 
     def _polish(
         self,
@@ -553,6 +617,253 @@ class ModeSearch:
             np.array(ritz, dtype=complex),
         )
 
+    def _cover(
+        self,
+        eop: EigenOperator,
+        project,
+        sigma: float,
+        *,
+        guard: bool,
+        dropped: list[complex],
+        anti_bound: list[complex],
+        row: _progress.ProgressRow,
+    ) -> tuple[
+        list[Refined],
+        list[Refined],
+        Refined | None,
+        np.ndarray,
+        np.ndarray,
+        SeedBoundReached | None,
+    ]:
+        r"""The coverage search of a wave port model.
+
+        A resonance behind a wave port can have a Q of a few, while modes of
+        port families the model does not request (trapped against the port,
+        Q of hundreds) crowd the seed solve at the real target and push its
+        seed out of the returned pairs. The seed solve is therefore shifted
+        into the middle of the strip $0 \le \mathrm{Im}\,k \le h$, $h =
+        \sigma / (2 Q_\text{min})$, to $\sigma_s = \sigma (1 + i / (4
+        Q_\text{min}))$ (the nonpolynomial port term is frozen there), and
+        asks for ``max(n_modes + 1, 9)`` pairs, twice as many each attempt, at
+        most `_COVER_ATTEMPTS` times, until the farthest returned Ritz value is
+        at least $m \sqrt{r^2 + (h/2)^2}$ from $\sigma_s$ ($m$ =
+        `_COVER_MARGIN`, $r$ the real distance from ``sigma`` of the
+        ``n_modes``-th accepted mode): every seed of a root in the
+        rectangle $[\sigma - r, \sigma + r] \times [0, h]$ is then returned.
+        Failed seeds do not end the doubling (`_skipped` judges them at the
+        end). Modes above the strip are dropped, the others ranked by
+        $|\mathrm{Re}\,k - \sigma|$ (`_select_cover`).
+
+        Raises:
+            EigenmodeConvergenceError: ``n_modes`` modes were accepted but
+                the strip is not certified covered after the attempts.
+        """
+        n_modes = self.n_modes
+        h = sigma / (2 * _Q_MIN)
+        shift = complex(sigma, h / 2)
+        nev = max(n_modes + 1, _COVER_NEV)
+        seed_tolerance = max(self.eigen_tolerance, _SEED_TOLERANCE)
+        bound = None
+        memo: list[_Outcome] = []
+        for attempt in range(1, _COVER_ATTEMPTS + 1):
+            if eop.shift != shift:
+                eop.reshift(shift, solves=MIN_SUBSPACE)
+            dropped.clear()
+            row.note(seed_solve=f"{attempt}/{_COVER_ATTEMPTS}")
+            try:
+                k, vectors = self.eigen_solver(eop, project, nev, tol=seed_tolerance)
+            except SeedBoundReached as err:
+                bound = err
+                k, vectors = err.k, err.vectors
+            modes, failed, found, pool, ritz = self._select_cover(
+                eop,
+                k,
+                vectors,
+                sigma,
+                shift=shift,
+                h=h,
+                guard=guard,
+                dropped=dropped,
+                anti_bound=anti_bound,
+                memo=memo,
+                row=row,
+            )
+            report.seed_solve(
+                attempt=attempt,
+                pairs=nev,
+                returned=len(k),
+                modes=len(modes),
+                wanted=n_modes,
+                bound=bound is not None,
+            )
+            if bound is not None or (len(modes) < n_modes and len(k) < nev):
+                break  # nothing wider to ask for: the count raises
+            if len(modes) == n_modes:
+                reach = max(abs(m.k.real - sigma) for m in modes)
+                need = _COVER_MARGIN * math.hypot(reach, h / 2)
+                if len(k) < nev or float(np.max(np.abs(k - shift), initial=0)) >= need:
+                    break
+                if attempt == _COVER_ATTEMPTS:
+                    raise EigenmodeConvergenceError(
+                        self._uncovered_message(eop, h, attempt)
+                    )
+            nev *= 2
+        return modes, failed, found, pool, ritz, bound
+
+    def _uncovered_message(self, op: EigenOperator, h: float, attempts: int) -> str:
+        """Why the solve raises when the strip is not covered after ``attempts``."""
+        c = const.c / op.scale / (2 * math.pi)
+        return (
+            f"Eigenmode's seed search near {hertz(self.target)} could not cover "
+            f"the modes of decay rate up to {hertz(h * c)} (Im f) nearest the "
+            f"target after {attempts} attempts: more modes of other families "
+            "lie there than the seed solves can list; lower n_modes or move "
+            "target."
+        )
+
+    def _select_cover(
+        self,
+        op: EigenOperator,
+        k: np.ndarray,
+        vectors: np.ndarray,
+        sigma: float,
+        *,
+        shift: complex,
+        h: float,
+        guard: bool,
+        dropped: list[complex],
+        anti_bound: list[complex],
+        memo: list[_Outcome],
+        row: _progress.ProgressRow,
+    ) -> tuple[list[Refined], list[Refined], Refined | None, np.ndarray, np.ndarray]:
+        """`_select` of the coverage search: every seed of the disc, refined once.
+
+        Seeds are refined nearest the seed ``shift`` first; once ``n_modes``
+        are accepted, a seed beyond the certificate's disc (`_COVER_MARGIN`
+        times the hypotenuse of the ``n_modes``-th mode's distance from
+        ``sigma`` and half the strip height ``h``) is not refined. A seed met
+        in an earlier attempt (the same frozen Ritz value and vector, in
+        ``memo``) replays its outcome through the acceptance checks. A far
+        seed is refined on a factorization at its own Ritz value at once, a
+        near one on the current one; a port term refusal at either loses the
+        seed. Modes above the strip, ``Im k > h``, are dropped.
+        """
+        n_modes = self.n_modes
+        tolerance = self.eigen_tolerance
+        seeds = [
+            j
+            for j in range(len(k))
+            if k[j].real > _STATIC * sigma
+            and not self._in_layer(k[j], vectors[:, j], dropped)
+        ]
+        seeds.sort(key=lambda j: abs(k[j] - shift))
+        layout = op.layout
+        vectors = _orthonormal_multiples(k, vectors, layout=layout)
+        accepted: list[Refined] = []
+        failed: list[Refined] = []
+        window = self._window()
+        steps = self.max_refine_iterations
+        replayed: set[int] = set()
+
+        def distinct(mode: Refined) -> Refined | None:
+            if not _in_span(mode, accepted, window, layout=layout):
+                return mode
+            rest = _outside(mode, accepted, window, layout=layout)
+            if rest is None:
+                return None
+            twin = self.refine(
+                op,
+                mode.k,
+                rest,
+                tolerance=tolerance,
+                max_iterations=steps,
+                reshift=False,
+            )
+            if (
+                twin.converged
+                and twin.k.real > _STATIC * sigma
+                and not self._longitudinal(op, twin)
+                and not _in_span(twin, accepted, window, layout=layout)
+                and not self._in_layer(twin.k, twin.x, dropped)
+                and not self._anti_bound(twin, anti_bound)
+                and twin.k.imag <= h
+            ):
+                return twin
+            return None
+
+        def refined(j: int) -> Refined:
+            seed = complex(k[j])
+            if _contraction(seed, op.shift, k) > _CONTRACTION:
+                try:
+                    op.reshift(seed)
+                except PortTermRefusalError as refusal:
+                    return Refined(
+                        seed, vectors[:, j], math.inf, 0, False, None, refusal
+                    )
+                return self.refine(
+                    op,
+                    seed,
+                    vectors[:, j],
+                    tolerance=tolerance,
+                    max_iterations=steps,
+                )
+            return self.refine(
+                op,
+                seed,
+                vectors[:, j],
+                tolerance=tolerance,
+                max_iterations=steps,
+            )
+
+        for n, j in enumerate(seeds, 1):
+            seed = complex(k[j])
+            if len(accepted) >= n_modes:
+                # r only shrinks as modes are accepted: a seed beyond the disc
+                # now stays beyond it
+                reach = sorted(abs(m.k.real - sigma) for m in accepted)[n_modes - 1]
+                if abs(seed - shift) > _COVER_MARGIN * math.hypot(reach, h / 2):
+                    continue
+            row.note(mode_refinement=f"{n}/{len(seeds)}")
+            earlier = next(
+                (
+                    o
+                    for o in memo
+                    if id(o) not in replayed and o.matches(seed, vectors[:, j], shift)
+                ),
+                None,
+            )
+            if earlier is None:
+                earlier = _Outcome(seed, vectors[:, j].copy(), refined(j))
+                memo.append(earlier)
+            replayed.add(id(earlier))
+            mode = earlier.mode
+            if (
+                mode.k.real <= _STATIC * sigma
+                or self._longitudinal(op, mode)
+                or (mode.converged and self._in_layer(mode.k, mode.x, dropped))
+                or self._anti_bound(mode, anti_bound)
+            ):
+                continue
+            if not mode.converged:
+                failed.append(mode)
+                continue
+            if mode.k.imag > h:
+                continue
+            kept = distinct(mode)
+            if kept is not None:
+                accepted.append(kept)
+        accepted.sort(key=lambda m: abs(m.k.real - sigma))
+        pool = [m.k for m in accepted]
+        ritz = [complex(k[j]) for j in seeds] if not op.nonpolynomial else []
+        extra = accepted[n_modes] if guard and len(accepted) > n_modes else None
+        return (
+            accepted[:n_modes],
+            failed,
+            extra,
+            np.array(pool, dtype=complex),
+            np.array(ritz, dtype=complex),
+        )
+
     def _longitudinal(self, op: EigenOperator, mode: Refined) -> bool:
         """Whether ``mode`` is a converged longitudinal mode of a law model.
 
@@ -704,6 +1015,28 @@ class ModeSearch:
             "(SLEPc) only if the modes are known to be separated."
         )
         return "\n".join(lines)
+
+
+@dataclasses.dataclass
+class _Outcome:
+    """A seed of the coverage search and what its refinement gave.
+
+    A later attempt's seed with the same frozen Ritz value and vector replays
+    the ``mode`` instead of refining again.
+    """
+
+    seed: complex
+    vector: np.ndarray
+    mode: Refined
+
+    def matches(self, seed: complex, vector: np.ndarray, shift: complex) -> bool:
+        """Whether ``(seed, vector)`` is this seed again."""
+        if abs(seed - self.seed) > 1e-2 * abs(seed - shift) + 1e-9 * abs(seed):
+            return False
+        overlap = abs(np.vdot(self.vector, vector))
+        return bool(
+            overlap >= 0.95 * np.linalg.norm(self.vector) * np.linalg.norm(vector)
+        )
 
 
 def _contraction(seed: complex, shift: complex, ritz: np.ndarray) -> float:

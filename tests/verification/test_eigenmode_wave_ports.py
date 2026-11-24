@@ -78,7 +78,7 @@ def test_a_lone_port_s_resonance_converges_with_order(meshes, name):
     model = lone_port(meshes, name, layers)
     errors, im = [], None
     for order in (2, 3, 4):
-        result = eigen(model, target, 3 if name == "A" else 1, order)
+        result = eigen(model, target, 1, order)
         error, j = w.nearest_error(result, root)
         errors.append(error)
         if order == 3:
@@ -149,12 +149,18 @@ def test_two_port_surfaces_meet_the_root_and_split_the_coupling_q(meshes):
 
 
 def test_a_lossy_anisotropic_port_section_meets_its_root(meshes):
-    # Q 2.8: twelve modes, since higher-Q modes of other families lie nearer
-    # the real target
-    result = eigen(lone_port(meshes, "l", w.CASE_L), 11.67e9, 12, 3)
-    error, j = w.nearest_error(result, w.ROOT_L)
-    assert error <= 1e-4  # 7.9e-6
-    assert w.im_error(result, j, w.ROOT_L) <= 1e-3  # 4.4e-5
+    # Q 2.8, behind higher-Q modes of other families that lie nearer the real
+    # target: found from its own seed at one mode and at four, the same mode 0
+    model = lone_port(meshes, "l", w.CASE_L)
+    found = []
+    for n in (1, 4):
+        result = eigen(model, 11.67e9, n, 3)
+        error, j = w.nearest_error(result, w.ROOT_L)
+        assert j == 0
+        assert error <= 1e-4  # 7.9e-6
+        assert w.im_error(result, j, w.ROOT_L) <= 1e-3  # 4.4e-5
+        found.append(complex(result.omega[0]))
+    assert abs(found[0] - found[1]) <= 1e-7 * abs(found[1])  # MEASURED_DIFF_L
 
 
 def test_a_coax_s_tem_roots_meet_the_closed_form(meshes):
@@ -182,16 +188,10 @@ def test_a_root_just_above_the_port_s_cutoff_meets_the_exact_root(meshes):
     assert error <= 3e-6  # 3.5e-7
 
 
-# The port absorbs TM01 only, so the guide's other families ring at high Q
-# around the target, nearer it than the low-Q TM01 root (Q 3.7): the eigen
-# solve returns one of them (13.65 GHz, Q 8000) instead of the root.
-@pytest.mark.xfail(
-    raises=AssertionError,
-    strict=True,
-    reason="the eigen solve's seeds miss a low-Q root among high-Q resonances "
-    "of the families the port does not absorb",
-)
 def test_a_port_mode_with_a_normal_field_meets_the_line_root(meshes):
+    # The port absorbs TM01 only, so the guide's other families ring at high Q
+    # around the target, nearer it than the low-Q TM01 root (Q 3.7): the search
+    # finds the root from its own seed whatever n_modes, the same mode 0.
     # straight-sided mesh of the disk (16 x 16): the reference takes the
     # port's discrete cutoff, so only the 3D discretization error remains
     mesh = meshes("e", w.circular_guide, w.CASE_A, n=16)
@@ -202,9 +202,15 @@ def test_a_port_mode_with_a_normal_field_meets_the_line_root(meshes):
     gamma = complex(np.asarray(modes.gamma).ravel()[0])
     kc = float(np.sqrt((gamma**2 + k0**2).real))
     root = w.line_root("TM", kc, [(4.0, 10.0), (1.0, 5.0)], 13.4 + 1.8j)
-    result = eigen(model, f0, 1, 3)
-    error, _ = w.nearest_error(result, root)
-    assert error <= 3e-4  # 2.3e-6 when found
+    found = []
+    for n in (1, 2):
+        result = eigen(model, f0, n, 3)
+        error, j = w.nearest_error(result, root)
+        assert j == 0
+        assert error <= 1e-5  # 2.3e-6
+        assert w.im_error(result, j, root) <= IM_E  # MEASURED_IM
+        found.append(complex(result.omega[0]))
+    assert abs(found[0] - found[1]) <= 1e-7 * abs(found[1])  # MEASURED_DIFF
 
 
 # --- the driven cross-check -----------------------------------------------------

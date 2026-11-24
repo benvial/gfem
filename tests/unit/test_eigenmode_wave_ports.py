@@ -804,3 +804,29 @@ def test_a_refusal_in_a_reshift_leaves_the_operator_usable(hybrid, monkeypatch):
         assert np.linalg.norm(back - x) <= 1e-10 * np.linalg.norm(x)
     finally:
         eop.free_handle()
+
+
+# --- the coverage search ---------------------------------------------------------
+
+
+def test_a_strip_the_attempts_cannot_cover_raises_instead_of_returning(
+    case_a, monkeypatch
+):
+    # a first seed solve of two pairs does not reach the certificate's radius,
+    # and one attempt cannot ask for more
+    from gfem._eigen import search
+
+    monkeypatch.setattr(search, "_COVER_NEV", 2)
+    monkeypatch.setattr(search, "_COVER_ATTEMPTS", 1)
+    with pytest.raises(gfem.EigenmodeConvergenceError, match="could not cover") as e:
+        gfem.solve(case_a, gfem.Eigenmode(target=11.67e9, n_modes=1), options=ORDER_3)
+    assert "after 1 attempts" in str(e.value)
+    assert "lower n_modes or move target" in str(e.value)
+
+
+def test_the_nearest_mode_does_not_depend_on_n_modes(case_a):
+    one = gfem.solve(case_a, gfem.Eigenmode(target=11.67e9, n_modes=1), options=ORDER_3)
+    two = gfem.solve(case_a, gfem.Eigenmode(target=11.67e9, n_modes=2), options=ORDER_3)
+    assert abs(one.omega[0] - two.omega[0]) <= 1e-7 * abs(two.omega[0])
+    f = ghz(one.omega)
+    assert abs(f[0] - ROOT_A) <= 1e-3 * ROOT_A
