@@ -295,8 +295,10 @@ def test_an_eigenmode_solve_with_a_wave_port_is_read_back(tmp_path, monkeypatch)
 def test_a_cache_hit_replays_the_unrequested_port_mode_warning(tmp_path, monkeypatch):
     from gfem._eigen import share
 
-    # every mode counts as unrequested, so the line's own mode is warned
+    # every mode counts as unrequested, so the line's own mode (a lossless one
+    # at 12.02 GHz, which the port takes no power from) is warned
     monkeypatch.setattr(share, "THRESHOLD", 2.0)
+    monkeypatch.setattr(share, "LOSS_FLOOR", 0.0)
     model, options = _wave_port_line(tmp_path)
     problem = gfem.Eigenmode(target=11.67e9)
     with pytest.warns(gfem.UnrequestedPortModeWarning) as miss:
