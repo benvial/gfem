@@ -107,3 +107,21 @@ def test_an_eigenmode_result_keeps_its_wave_port_s_coupling_q_in_model_order():
     assert list(back.q_port) == ["wave", "lumped"]
     for name, values in result.q_port.items():
         np.testing.assert_array_equal(back.q_port[name], values)
+
+
+def test_an_eigenmode_result_keeps_its_requested_power_share_and_loads_without_it():
+    import gfem.job  # registers the gfem classes
+
+    result = gfem.EigenmodeResult(
+        omega=jnp.array([1e10 + 1e6j, 2e10 + 3e6j]),
+        error=jnp.array([1e-12, 2e-12]),
+        requested_power_share={"b": jnp.array([0.97, math.nan]), "a": jnp.ones(2)},
+    )
+    doc, arrays, back = _round_trip(result)
+    assert list(back.requested_power_share) == ["b", "a"]
+    for name, values in result.requested_power_share.items():
+        np.testing.assert_array_equal(back.requested_power_share[name], values)
+    # a file written before the field existed reads through its default
+    del doc["requested_power_share"]
+    old = _codec.Decoder(CONTEXT, arrays).decode(doc)
+    assert old.requested_power_share == {}

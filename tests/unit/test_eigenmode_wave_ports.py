@@ -557,3 +557,180 @@ def test_a_port_mode_is_degenerate_within_the_relative_gap(hybrid):
     k = 2 * math.pi * 12e9 / C0 * op.built.scale * (1 + 0.02j)
     assert port.term.degenerate(k, 1e-6) == []
     assert port.term.degenerate(k, 10.0) == [0]
+
+
+# --- the requested power share and its warning ----------------------------------
+
+
+@pytest.fixture(scope="module")
+def line(case_a):
+    """Case A at three modes: the root and two modes trapped against the port."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = gfem.solve(
+            case_a, gfem.Eigenmode(target=11.67e9, n_modes=3), options=ORDER_3
+        )
+    texts = [
+        str(c.message) for c in caught if c.category is gfem.UnrequestedPortModeWarning
+    ]
+    return result, texts
+
+
+def test_the_requested_power_share_is_one_row_per_port_surface(line):
+    result, _ = line
+    share = result.requested_power_share
+    assert list(share) == ["port"]
+    assert share["port"].shape == (3,)
+    assert share["port"].dtype == np.float64
+    j = int(np.argmin(np.abs(ghz(result.omega) - ROOT_A)))
+    assert abs(1 - float(share["port"][j])) <= 2e-2
+
+
+def test_a_model_without_wave_ports_has_no_requested_power_share():
+    result = gfem.EigenmodeResult(omega=np.array([1.0]), error=np.zeros(1))
+    assert result.requested_power_share == {}
+
+
+def test_a_surface_that_absorbs_no_power_has_a_nan_share(hybrid):
+    from gfem._eigen.rule import _layout
+    from gfem._eigen.share import requested_power_shares
+    from gfem._engine import terms
+
+    _, _, op, ports = hybrid
+    k = terms.wavenumber(2 * math.pi * 12e9, op.built.scale)
+    x = np.zeros((op.space.ndof, 1), complex)
+    share, loss = requested_power_shares(
+        ports, op.space, x, [k], scale=op.built.scale, pair=_layout(op).pair
+    )
+    assert share.shape == (1, 1)
+    assert np.isnan(share).all()
+    assert np.isnan(loss).all()
+
+
+def test_the_requested_power_share_is_exported_over_mode_and_port_surface(line):
+    pytest.importorskip("xarray")
+    result, _ = line
+    data = result.to_xarray()
+    variable = data["requested_power_share"]
+    assert variable.dims == ("mode", "port_surface")
+    assert list(data["port_surface"].values) == ["port"]
+    np.testing.assert_array_equal(
+        variable.values[:, 0], np.asarray(result.requested_power_share["port"])
+    )
+
+
+def test_a_result_with_its_share_survives_pickle(line):
+    import pickle
+
+    result, _ = line
+    back = pickle.loads(pickle.dumps(result))  # noqa: S301
+    np.testing.assert_array_equal(
+        back.requested_power_share["port"], result.requested_power_share["port"]
+    )
+
+
+def test_the_requested_power_share_takes_no_gradient(lone_a):
+    mesh, eps = lone_a
+
+    def objective(read):
+        return _objective(mesh, gfem.Eigenmode(target=11.67e9), read)
+
+    with pytest.raises(gfem.NonDifferentiableError, match="requested_power_share"):
+        jax.grad(objective(lambda r: r.requested_power_share["port"][0]))(eps)
+    # the opt-out reads the value, and omega keeps its gradient
+    grad = jax.grad(
+        objective(
+            lambda r: (
+                jax.lax.stop_gradient(r.requested_power_share["port"][0])
+                + r.frequency[0]
+            )
+        )
+    )(eps)
+    assert np.all(np.isfinite(np.asarray(grad)))
+    assert np.abs(np.asarray(grad)).max() > 0
+
+
+# --- the warning's forms -----------------------------------------------------------
+
+
+def _surface(requested, share, loss=None):
+    """A stand-in surface of ``requested`` ranks and its flagged-mode rows."""
+    from types import SimpleNamespace
+
+    from gfem._eigen.share import Unrequested
+
+    ports = [SimpleNamespace(mode=r) for r in requested]
+    port = SimpleNamespace(term=SimpleNamespace(ports=ports, modes=object()))
+    share = np.asarray(share, float)
+    loss = np.ones_like(share) if loss is None else np.asarray(loss, float)
+    return Unrequested(port, share, loss)
+
+
+KS = [0.5 + 0.01j, 0.6 + 0.02j, 0.7 + 0.03j]
+
+
+def test_a_mode_with_an_unrequested_rank_propagating_gets_the_open_form(monkeypatch):
+    from gfem._eigen import share as module
+
+    monkeypatch.setattr(module, "propagating_modes", lambda _modes, _f, rank: rank)
+    flagged = _surface([1], [1.0, 1e-9, 0.2])
+    (text,) = flagged.messages("s", KS, 1.0, np.array([5.0, 190.0, 40.0]))
+    assert "mode(s) 1 at" in text
+    assert "2 at" in text
+    assert "Mode 2 of the surface propagates" in text
+    assert "mode=2" in text
+    assert "If the warning persists" in text
+    assert "0 at" not in text.split("on wave port")[0]
+
+
+def test_a_skipped_rank_always_propagates_and_gets_the_open_form(monkeypatch):
+    from gfem._eigen import share as module
+
+    def never(*_args):
+        raise AssertionError("a skipped rank needs no port mode solve")
+
+    monkeypatch.setattr(module, "propagating_modes", never)
+    flagged = _surface([2], [1.0, 1e-9, 1.0])
+    (text,) = flagged.messages("s", KS, 1.0, np.array([5.0, 190.0, 5.0]))
+    assert "Mode 1 of the surface propagates" in text
+    assert "mode=1" in text
+
+
+def test_a_mode_with_no_unrequested_rank_propagating_gets_the_trapped_form(
+    monkeypatch,
+):
+    from gfem._eigen import share as module
+
+    monkeypatch.setattr(module, "propagating_modes", lambda _modes, _f, rank: rank - 1)
+    flagged = _surface([1], [1.0, 1e-9, 1e-12])
+    (text,) = flagged.messages("s", KS, 1.0, np.array([5.0, 190.0, 191.0]))
+    assert "trapped" in text
+    assert "propagates" not in text
+    assert "1 at" in text
+    assert "2 at" in text
+
+
+def test_the_two_forms_are_two_warnings_and_a_loss_gate_drops_a_mode(monkeypatch):
+    from gfem._eigen import share as module
+
+    # mode 1's frequency has rank 2 propagating, mode 2's does not; mode 0 is a
+    # requested one, and mode 3 has a tiny share of a surface that takes
+    # little of its loss
+    monkeypatch.setattr(
+        module, "propagating_modes", lambda _modes, f, rank: rank if f < 3e7 else 0
+    )
+    ks = [0.5, 0.6, 0.7, 0.8]
+    flagged = _surface([1], [1.0, 1e-9, 1e-9, 1e-9], [1.0, 1.0, 1.0, 7e-4])
+    assert list(flagged.flagged) == [1, 2]
+    texts = flagged.messages("s", ks, 1.0, np.ones(4))
+    assert len(texts) == 2
+    assert "propagates" in texts[0]
+    assert "propagates" not in texts[1]
+
+
+def test_the_warning_is_public_and_replayed_by_the_solve_cache():
+    from gfem import _solve_cache
+
+    assert "UnrequestedPortModeWarning" in gfem.__all__
+    assert issubclass(gfem.UnrequestedPortModeWarning, UserWarning)
+    assert gfem.UnrequestedPortModeWarning in _solve_cache.REPLAYED

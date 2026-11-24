@@ -129,7 +129,7 @@ class Unrequested:
         """
         per_hz = const.c / scale / (2 * math.pi)
         ranks: dict[int, int | None] = {
-            int(j): self.rank(ks[j].real * per_hz) for j in self.flagged
+            j: self.rank(ks[j].real * per_hz) for j in map(int, self.flagged)
         }
         out = []
         for propagating in (True, False):
