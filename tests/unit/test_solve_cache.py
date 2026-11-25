@@ -294,7 +294,6 @@ def test_an_eigenmode_solve_with_a_wave_port_is_read_back(tmp_path, monkeypatch)
 
 def test_a_cache_hit_replays_the_unrequested_port_mode_warning(tmp_path, monkeypatch):
     from gfem._eigen import share
-
     from gfem._eigen.rule import EigenmodeRule
 
     # every mode counts as unrequested, so the line's own mode (at 12.02 GHz,
