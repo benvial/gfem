@@ -747,25 +747,29 @@ def test_the_warning_is_public_and_replayed_by_the_solve_cache():
 def refuse_off_axis(monkeypatch, share):
     """The port term refuses where Im k exceeds ``share`` of Re k, but at the
     search's seed shift (a stand-in for a complex frequency its port mode
-    cannot be followed to)."""
+    cannot be followed to). Returns the list of the refusals it raised."""
     real = PortTerm.at
+    refusals = []
 
     def at(self, k):
         z = complex(k)
         if z.imag > share * z.real and abs(z.imag / z.real - 0.125) > 1e-9:
+            refusals.append(z)
             raise PortTermRefusalError(self.label, z, "forced")
         return real(self, k)
 
     monkeypatch.setattr(PortTerm, "at", at)
+    return refusals
 
 
 @pytest.fixture
 def refuses_off_axis(monkeypatch):
-    refuse_off_axis(monkeypatch, 0.15)
+    return refuse_off_axis(monkeypatch, 0.05)
 
 
-@pytest.mark.usefixtures("refuses_off_axis")
-def test_a_guard_seed_the_port_term_refuses_is_dropped_silently(case_h):
+def test_a_guard_seed_the_port_term_refuses_is_dropped_silently(
+    case_h, refuses_off_axis
+):
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         result = gfem.solve(
@@ -773,6 +777,9 @@ def test_a_guard_seed_the_port_term_refuses_is_dropped_silently(case_h):
         )
     assert len(result.omega) == 1
     assert abs(ghz(result.omega[0]) - (7.30912 + 0.21415j)) <= 1e-3
+    # at Im/Re 0.15 the coverage search never refined the guard where the term
+    # refuses; at 0.05 it does, and the root (0.029) is still followed
+    assert refuses_off_axis
 
 
 def test_a_requested_seed_the_port_term_refuses_is_reported_on_a_lost_line(
@@ -962,6 +969,7 @@ def test_an_ambiguous_but_accurate_pair_is_refused_without_enriching(
 
     def solve(self, *args, **kw):  # the pairs stay accurate; the tracking is not clear
         pairs = real(self, *args, **kw)
+        self.margins = [(0.52, 0.5) for _ in pairs]
         return [(lam, y, math.inf) for lam, y, _ in pairs]
 
     monkeypatch.setattr(_Reduced, "solve", solve)

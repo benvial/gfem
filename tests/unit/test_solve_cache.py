@@ -295,8 +295,18 @@ def test_an_eigenmode_solve_with_a_wave_port_is_read_back(tmp_path, monkeypatch)
 def test_a_cache_hit_replays_the_unrequested_port_mode_warning(tmp_path, monkeypatch):
     from gfem._eigen import share
 
-    # every mode counts as unrequested, so the line's own mode (a lossless one
-    # at 12.02 GHz, which the port takes no power from) is warned
+    from gfem._eigen.rule import EigenmodeRule
+
+    # every mode counts as unrequested, so the line's own mode (at 12.02 GHz,
+    # which loses some power to the port) is warned
+    calls = []
+    forward = EigenmodeRule.forward
+
+    def counted(self, *args, **kwargs):
+        calls.append(1)
+        return forward(self, *args, **kwargs)
+
+    monkeypatch.setattr(EigenmodeRule, "forward", counted)
     monkeypatch.setattr(share, "THRESHOLD", 2.0)
     monkeypatch.setattr(share, "LOSS_FLOOR", 0.0)
     model, options = _wave_port_line(tmp_path)
@@ -305,6 +315,7 @@ def test_a_cache_hit_replays_the_unrequested_port_mode_warning(tmp_path, monkeyp
         first = gfem.solve(model, problem, options=options, cache=tmp_path / "c")
     with pytest.warns(gfem.UnrequestedPortModeWarning) as hit:
         second = gfem.solve(model, problem, options=options, cache=tmp_path / "c")
+    assert len(calls) == 1  # the second solve is read back, not recomputed
     assert [str(w.message) for w in hit] == [str(w.message) for w in miss]
     np.testing.assert_array_equal(
         second.requested_power_share["port"], first.requested_power_share["port"]
