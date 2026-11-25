@@ -43,6 +43,7 @@ __all__ = [
     "EigenmodeResult",
     "ElectrostaticResult",
     "Field",
+    "MechanicalEigenmodeResult",
     "NetworkParameters",
     "PiezoelectricResult",
     "PortModeField",
@@ -3103,6 +3104,137 @@ register_fields(
     (
         "admittance_per_length",
         "clamped_capacitance_per_length",
+        "displacement_fields",
+        "potential_fields",
+    ),
+)
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class MechanicalEigenmodeResult:
+    r"""The result of a `MechanicalEigenmode` problem: modes, nearest first.
+
+    Every array has one entry per mode, in order of increasing distance of
+    the mode's frequency from ``MechanicalEigenmode.target``. The modes are
+    :math:`u(x, y)\,e^{i\omega t - iqz}` of one axial wavenumber :math:`q`.
+
+    Attributes:
+        omega: Complex angular frequencies, rad/s, ``(n_modes,)``. Under
+            :math:`e^{+i\omega t}` a decaying mode has
+            :math:`\mathrm{Im}\,\omega > 0`.
+        error: Backward error of each mode,
+            :math:`|(\hat K - \omega^2 M) x| / ((|\hat K| + |\omega|^2 |M|)
+            |x|)` for the discrete pencil; at most
+            ``SolverOptions.eigen_tolerance``.
+        group_velocity: :math:`\mathrm{Re}\,d\omega/dq`, m/s, ``(n_modes,)``,
+            the exact derivative of the discrete band: the real part of
+            :math:`y^T (\partial_q \hat K)\, x / (2\omega\, y^T M x)` with
+            :math:`y` the left eigenvector. The derivative of the decay rate
+            is not returned. Not differentiable.
+        wavenumber: The axial wavenumber :math:`q` of the solve, rad/m.
+        cluster: Integer label per mode, ``(n_modes,)``: modes with the same
+            label form a degenerate cluster, frequencies within
+            ``SolverOptions.cluster_rtol`` of each other (a simple mode has
+            a label of its own, counting from 0 in mode order).
+        displacement_fields: One `FieldMap` per mode (read them with
+            `displacement`): the components ``x``, ``y`` and ``z`` of the
+            displacement, in m, on H1 of the solve order over the mechanical
+            domain, each with its mode's complex ``omega``. Each mode stores
+            1 J/m of energy: :math:`\tfrac12 (\mathrm{Re}\,\omega)^2 \int
+            \rho\,|u|^2\,dA`, the time-averaged energy per metre along
+            :math:`z` of a lossless mode, and its largest coefficient is real
+            and positive.
+        potential_fields: One `Field` per mode of the potential, in V, for a
+            model with piezoelectric coupling; empty otherwise.
+    """
+
+    omega: jax.Array
+    error: jax.Array
+    group_velocity: jax.Array
+    wavenumber: float
+    cluster: jax.Array | None = None
+    displacement_fields: Sequence[FieldMap] = ()
+    potential_fields: Sequence[Field] = ()
+
+    def __post_init__(self) -> None:
+        """Hold the fields as tuples; label simple modes."""
+        object.__setattr__(self, "wavenumber", float(self.wavenumber))
+        object.__setattr__(self, "displacement_fields", tuple(self.displacement_fields))
+        object.__setattr__(self, "potential_fields", tuple(self.potential_fields))
+        if self.cluster is None:
+            n = int(np.shape(self.omega)[0])
+            object.__setattr__(self, "cluster", jnp.arange(n))
+
+    @property
+    def frequency(self) -> jax.Array:
+        r"""Mode frequencies :math:`\mathrm{Re}\,\omega / (2\pi)`, Hz."""
+        return jnp.real(self.omega) / (2 * math.pi)
+
+    @property
+    def q(self) -> jax.Array:
+        r"""Quality factors :math:`\mathrm{Re}\,\omega / (2\,\mathrm{Im}\,\omega)`.
+
+        ``inf`` for a lossless mode. The real part, not :math:`|\omega|`: the
+        two differ at :math:`O(1/Q^2)`.
+        """
+        return jnp.real(self.omega) / (2 * jnp.imag(self.omega))
+
+    @property
+    def n_modes(self) -> int:
+        """The number of modes."""
+        return int(np.shape(self.omega)[0])
+
+    def _check_mode(self, mode: int) -> None:
+        if not -self.n_modes <= mode < self.n_modes:
+            raise IndexError(
+                f"Mode {mode} does not exist: this result has {self.n_modes} "
+                "mode(s), numbered from 0."
+            )
+
+    def displacement(self, mode: int) -> FieldMap:
+        """The displacement of mode ``mode`` (0 = nearest the target), in m.
+
+        Raises:
+            IndexError: No such mode.
+        """
+        self._check_mode(mode)
+        return self.displacement_fields[mode]
+
+    def potential(self, mode: int) -> Field:
+        """The potential of mode ``mode`` (0 = nearest the target), in V.
+
+        Raises:
+            IndexError: No such mode.
+            ValueError: The model has no piezoelectric region, so no
+                potential was solved.
+        """
+        self._check_mode(mode)
+        if not self.potential_fields:
+            raise ValueError(
+                "This result has no potential: the potential is solved only "
+                "for a model with a piezoelectric tensor in its mechanical "
+                "domain, and this model has none."
+            )
+        return self.potential_fields[mode]
+
+    def __repr__(self) -> str:
+        try:
+            f = np.asarray(self.frequency)
+            q = np.asarray(self.q)
+        except (TypeError, jax.errors.TracerArrayConversionError):
+            return f"MechanicalEigenmodeResult({self.n_modes} modes)"
+        rows = ", ".join(f"{hertz(a)} (Q {b:.4g})" for a, b in zip(f, q, strict=True))
+        where = f", q={self.wavenumber:g} rad/m" if self.wavenumber else ""
+        return f"MechanicalEigenmodeResult([{rows}]{where})"
+
+
+register_fields(
+    MechanicalEigenmodeResult,
+    (
+        "omega",
+        "error",
+        "group_velocity",
+        "cluster",
         "displacement_fields",
         "potential_fields",
     ),

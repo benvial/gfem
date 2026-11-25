@@ -43,6 +43,7 @@ __all__ = [
     "GaussianBeam",
     "IncidentField",
     "MagneticDipole",
+    "MechanicalEigenmode",
     "Piezoelectric",
     "PlaneWave",
     "PortMode",
@@ -1732,3 +1733,198 @@ class Piezoelectric:
 
 
 jax.tree_util.register_static(Piezoelectric)
+
+
+def _clamped_components(value: Any) -> tuple[tuple[str, str], ...]:
+    """``clamped`` as ``(name, sorted component letters)`` pairs.
+
+    Raises:
+        TypeError: Not a name, a sequence of names or a mapping of names to
+            component strings.
+        ValueError: A component string that is empty or not a subset of
+            ``"xyz"``.
+    """
+    if isinstance(value, Mapping):
+        out: dict[str, str] = {}
+        for name, letters in value.items():
+            if not isinstance(name, str) or not isinstance(letters, str):
+                raise TypeError(
+                    "MechanicalEigenmode.clamped as a mapping takes surface "
+                    "names to component strings, e.g. {'left': 'x', "
+                    f"'bottom': 'xyz'}}, got {value!r}."
+                )
+            if not letters or not set(letters) <= set("xyz"):
+                raise ValueError(
+                    f"MechanicalEigenmode.clamped[{name!r}] must be a non-empty "
+                    f"string of the components 'x', 'y' and 'z', got {letters!r}."
+                )
+            out[name] = "".join(sorted(set(letters)))
+        return tuple(out.items())
+    names = _surfaces(value, "MechanicalEigenmode.clamped") if value else ()
+    return tuple((name, "xyz") for name in dict.fromkeys(names))
+
+
+@dataclasses.dataclass(frozen=True, init=False)
+class MechanicalEigenmode:
+    r"""The mechanical modes of a 2D section nearest a target frequency.
+
+    Finds the source-free solutions of linear elasticity on a native 2D mesh
+    (`gfem.Mesh.from_gmsh` of a triangle-only file) for fields
+    :math:`u(x, y)\,e^{i\omega t - iqz}` that propagate along :math:`z` with the
+    axial wavenumber ``wavenumber`` :math:`q`: complex angular frequencies
+    :math:`\omega` and displacements :math:`u` (three components) with
+
+    .. math::
+
+        \nabla\cdot T = -\omega^2 \rho\, u, \quad T = \hat c\, S, \quad
+        \hat c = c\,(1 + i/Q_m),
+
+    under :math:`e^{+i\omega t}` and a damping frame's loss (`DampingFrame`),
+    exactly as `gfem.Piezoelectric`. The strain carries
+    :math:`\partial_z \to -iq`, so that the discrete problem is the linear
+    pencil :math:`(\hat K(q) - \omega^2 M)\,x = 0`, with :math:`\hat K(q)`
+    Hermitian for a lossless section and :math:`M` real. Each
+    mode's quality factor is :math:`Q = \mathrm{Re}\,\omega /
+    (2\,\mathrm{Im}\,\omega)`. The materials are the model's: ``stiffness``
+    :math:`c`, ``mass_density`` :math:`\rho` and ``mechanical_quality_factor``
+    :math:`Q_m`; every region of the mechanical domain (every volume not in
+    ``excluded["mechanical"]``) needs a stiffness and a density. Every line
+    is traction-free except the ``clamped`` ones.
+
+    The ``n_modes`` modes whose frequency :math:`\mathrm{Re}\,\omega / 2\pi`
+    is nearest ``target`` are returned, nearest first. Each is normalized to
+    :math:`\tfrac12 (\mathrm{Re}\,\omega)^2 \int \rho\,|u|^2\,dA = 1` J/m,
+    with its largest displacement coefficient real and positive. A section
+    that is free at :math:`q = 0` has rigid-body motions at :math:`\omega = 0`:
+    they are not returned.
+
+    A model whose materials carry a piezoelectric tensor couples the
+    potential to the displacement; that case is not available in this
+    version (`gfem.solve` raises `NotImplementedError`).
+
+    Example:
+        Two modes of a strip near 2 GHz at :math:`q = 10^5` rad/m, the strip's
+        side faces clamped along :math:`x`::
+
+            problem = gfem.MechanicalEigenmode(
+                2e9, n_modes=2, wavenumber=1e5, clamped={"left": "x", "right": "x"}
+            )
+            result = gfem.solve(model, problem)
+
+    Args:
+        target: The frequency to search around, Hz.
+        n_modes: How many modes.
+        wavenumber: The axial wavenumber :math:`q`, rad/m, finite and real;
+            the modes' phase is :math:`e^{-iqz}`, so a mode with
+            :math:`q > 0` travels along :math:`+z` where its group velocity
+            is positive.
+        clamped: Where the displacement is fixed. A line name or a sequence
+            of names fixes all three components there; a mapping from a name
+            to a string of components of ``"xyz"`` (the lab axes) fixes
+            those, for a symmetry plane or a guide with sliding walls. Each
+            line must border the mechanical domain.
+        ground: Line or area names held at 0 V; only for a model with a
+            piezoelectric region.
+        damping_frame: A `DampingFrame` naming the absorbing edge regions, or
+            ``None``.
+
+    Raises:
+        ValueError: ``target`` is not a finite positive number, ``n_modes`` is
+            not an integer >= 1, ``wavenumber`` is not a finite real number,
+            or a ``clamped`` component string is empty or not made of ``x``,
+            ``y`` and ``z``.
+        TypeError: A name is not a string, ``clamped`` is not a name, a
+            sequence of names or a mapping, or ``damping_frame`` is not a
+            `DampingFrame`.
+        NonDifferentiableError: ``target`` or ``wavenumber`` is computed
+            inside `jax.grad`, `jax.jit` or `jax.vmap` from their arguments;
+            pass a fixed value.
+
+    `gfem.solve` raises `NotImplementedError` on a 3D or slab mesh, with
+    ``linear_solver="petsc"``, under ``comm``, on a GPU ``device`` and on a
+    model with a piezoelectric tensor; `ValueError` for a ``clamped`` or
+    ``ground`` name that does not fit the model (``ground`` on a model
+    without a piezoelectric region included) and for a `gfem.Absorbing` line
+    bordering the mechanical domain (absorb with ``damping_frame``);
+    `gfem.MissingMaterialPropertyError` for a region of the mechanical
+    domain without a stiffness or density; `gfem.EigenmodeConvergenceError`
+    when fewer than ``n_modes`` modes meet ``SolverOptions.eigen_tolerance``.
+    A gradient through a solve raises `gfem.NonDifferentiableError` in this
+    version.
+    """
+
+    target: float
+    n_modes: int
+    wavenumber: float
+    clamped: tuple[tuple[str, str], ...]
+    ground: tuple[str, ...]
+    damping_frame: DampingFrame | None
+    _rule_2d: ClassVar[str] = "gfem._engine.mechanical_eigen:MechanicalEigenmodeRule"
+    #: Moved nodes solve (a node map is this problem's design input).
+    _moves_nodes_2d: ClassVar[bool] = True
+
+    def __init__(
+        self,
+        target: float,
+        *,
+        n_modes: int = 1,
+        wavenumber: float = 0.0,
+        clamped: str | Sequence[str] | Mapping[str, str] = (),
+        ground: str | list[str] | tuple[str, ...] = (),
+        damping_frame: DampingFrame | None = None,
+    ) -> None:
+        """Validate and normalize (see the class docstring)."""
+        check_fixed(target, "MechanicalEigenmode.target must be a fixed number")
+        try:
+            value = float(target)
+        except (TypeError, ValueError):
+            value = math.nan
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(
+                "MechanicalEigenmode.target must be a finite frequency > 0 Hz, "
+                f"got {target!r}."
+            )
+        if (
+            isinstance(n_modes, bool)
+            or not isinstance(n_modes, (int, np.integer))
+            or n_modes < 1
+        ):
+            raise ValueError(
+                f"MechanicalEigenmode.n_modes must be an integer >= 1, got {n_modes!r}."
+            )
+        q = static_float(
+            wavenumber,
+            "MechanicalEigenmode.wavenumber",
+            "Fix it outside the transformed function: a solve at each wavenumber "
+            "is one problem.",
+        )
+        grounded = _surfaces(ground, "MechanicalEigenmode.ground") if ground else ()
+        if damping_frame is not None and not isinstance(damping_frame, DampingFrame):
+            raise TypeError(
+                "MechanicalEigenmode.damping_frame must be a gfem.DampingFrame or "
+                f"None, got {type(damping_frame).__name__}; write "
+                'damping_frame=gfem.DampingFrame(["frame"]).'
+            )
+        object.__setattr__(self, "target", value)
+        object.__setattr__(self, "n_modes", int(n_modes))
+        object.__setattr__(self, "wavenumber", q)
+        object.__setattr__(self, "clamped", _clamped_components(clamped))
+        object.__setattr__(self, "ground", tuple(dict.fromkeys(grounded)))
+        object.__setattr__(self, "damping_frame", damping_frame)
+
+    def __repr__(self) -> str:
+        parts = [hertz_band(self.target, self.target, 4)]
+        if self.n_modes != 1:
+            parts.append(f"n_modes={self.n_modes}")
+        if self.wavenumber:
+            parts.append(f"wavenumber={self.wavenumber:g}")
+        if self.clamped:
+            parts.append(f"clamped={dict(self.clamped)}")
+        if self.ground:
+            parts.append(f"ground={list(self.ground)}")
+        if self.damping_frame is not None:
+            parts.append(f"damping_frame={self.damping_frame!r}")
+        return f"MechanicalEigenmode({', '.join(parts)})"
+
+
+jax.tree_util.register_static(MechanicalEigenmode)
