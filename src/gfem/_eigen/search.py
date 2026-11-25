@@ -420,7 +420,8 @@ class ModeSearch:
         is at least `gfem._eigen.reach.ISOLATED` (``cluster_rtol`` if
         larger). The guard mode is never
         polished. A polish that does not converge (or whose solve is not
-        accepted, or whose port term is refused at an iterate) is evidence of a neighbour the gap set missed, such as the
+        accepted, or whose port term is refused at an iterate) is evidence of
+        a neighbour the gap set missed, such as the
         twin of a degenerate pair the seed solve never returned: the mode
         is kept as mode refinement left it and flagged, and its entry
         records it as not isolated. A
@@ -442,7 +443,7 @@ class ModeSearch:
             out.append(m)
         return out, failed
 
-    def _select(  # noqa: PLR0912, PLR0915 - one selection loop over the seeds
+    def _select(  # noqa: PLR0915 - one selection loop over the seeds
         self,
         op: EigenOperator,
         k: np.ndarray,

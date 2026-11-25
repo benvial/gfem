@@ -51,9 +51,9 @@ from wave_port_cases import (
 import gfem
 from gfem._eigen import arpack
 from gfem._eigen import rule as eigen_rule
+from gfem._eigen.operator import split
 from gfem._eigen.search import ModeSearch
 from gfem._eigen.seed import SeedBoundReached
-from gfem._eigen.operator import split
 from gfem._engine import cache
 from gfem._engine.driven import driven_operator, operator_terms
 from gfem._engine.eigen import eigen_ports
@@ -825,7 +825,7 @@ def test_a_port_refusal_in_polishing_flags_the_mode_unpolished(case_a, monkeypat
     calls = []
     found = []
 
-    def polish(eop, mode, gap, *, index):
+    def polish(_eop, mode, _gap, *, index):
         calls.append(index)
         raise PortTermRefusalError("p1", complex(mode.k), "forced")
 
@@ -866,8 +866,8 @@ def test_a_strip_the_attempts_cannot_cover_raises_instead_of_returning(
 
 def test_too_few_modes_at_the_attempt_cap_is_an_uncovered_strip(case_a, monkeypatch):
     # the one attempt returns its full request but one pair of it is no mode of
-    # the strip: nothing wider can be asked for, so the strip is not covered
-    # (not "found 1 of 2")
+    # the strip: nothing wider can be asked for, so the strip is not covered,
+    # and the message says so instead of counting the modes
     from gfem._eigen import search
 
     real = ModeSearch._select_cover
