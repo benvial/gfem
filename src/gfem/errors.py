@@ -475,9 +475,13 @@ class EigenmodeConvergenceError(RuntimeError):
     With wave ports it is also raised when the search cannot certify that it
     listed every resonance of the strip it searches (the modes with
     :math:`\mathrm{Im}\,\omega \le \omega_t / 4`, nearest ``target``) after
-    four seed solves: the strip holds more modes of other families than the
+    the seed solves: the strip holds more modes of other families than the
     solves can list. The message says so; lower ``n_modes`` or move
-    ``target``.
+    ``target``. It is also raised when a seed's port mode cannot be followed
+    to the seed's complex frequency (a port term refusal): the message lists
+    each such seed on a ``lost:`` line with its frequency and the port, and,
+    when it is the seed shift itself, asks to move ``target`` away from the
+    port mode's cutoff.
     """
 
 
