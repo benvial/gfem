@@ -151,6 +151,36 @@ def rayleigh_ratio() -> float:
     return float(max(real))
 
 
+def sandwich_model(path: Path) -> gfem.Model:
+    """A 1 um soft core between two 1.5 um stiffer claddings (4x the modulus).
+
+    Regions ``core``, ``clad_lo`` and ``clad_hi``, 0.4 um wide, maxh 0.25; the lines
+    ``left``, ``right``, ``bottom`` and ``top``. Shear horizontal modes at q = 3e6
+    rad/m are confined between the core's and the cladding's shear velocity
+    (v_T q < omega < 2 v_T q) and leak above it.
+    """
+    w, core, clad = 0.4, 1.0, 1.5
+    rects = [
+        (0, -clad, w, 0, "clad_lo", None),
+        (0, 0, w, core, "core", None),
+        (0, core, w, core + clad, "clad_hi", None),
+    ]
+    edges = [
+        (lambda p: abs(p[0]) < 1e-9, "left"),
+        (lambda p: abs(p[0] - w) < 1e-9, "right"),
+        (lambda p: abs(p[1] + clad) < 1e-9, "bottom"),
+        (lambda p: abs(p[1] - core - clad) < 1e-9, "top"),
+    ]
+    nodes, tris, lines = tc._mesh2d(rects, 0.25, edges)
+    path = Path(path)
+    tc._write_section(path, nodes, tris, lines)
+    stiff = gfem.Material(
+        stiffness=gfem.isotropic_stiffness(4 * E, NU), mass_density=RHO
+    )
+    materials = {"core": material(), "clad_lo": stiff, "clad_hi": stiff}
+    return gfem.Model(gfem.Mesh.from_gmsh(path, length_unit="um"), materials=materials)
+
+
 # --- a piezoelectric plate (6mm crystal) --------------------------------------------
 
 

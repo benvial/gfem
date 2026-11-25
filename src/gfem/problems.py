@@ -1854,8 +1854,17 @@ class MechanicalEigenmode:
     `gfem.MissingMaterialPropertyError` for a region of the mechanical
     domain without a stiffness or density; `gfem.EigenmodeConvergenceError`
     when fewer than ``n_modes`` modes meet ``SolverOptions.eigen_tolerance``.
-    A gradient through a solve raises `gfem.NonDifferentiableError` in this
-    version.
+
+    ``omega`` (so frequency and Q) differentiates by the stiffness, piezoelectric
+    tensor, relative permittivity, density and quality factor of the materials
+    (as `gfem.MaterialField` leaves) and by the node coordinates of the mesh
+    (`gfem.Mesh.with_nodes`), at every wavenumber, with no further solve.
+    `gfem.NonDifferentiableError` names the rest: a cotangent on the
+    ``displacement`` or ``potential`` fields, on ``group_velocity`` or on
+    ``error``, and a mode that shares its ``cluster`` with another (break the
+    symmetry of the section, or hold the value with `jax.lax.stop_gradient`).
+    The result's ``displacement`` maps carry the ``wavenumber`` that
+    `gfem.strain` needs.
     """
 
     target: float

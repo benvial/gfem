@@ -210,26 +210,7 @@ def sandwich(tmp_path_factory):
     Shear horizontal modes at q = 3e6 rad/m are confined between the core's and the
     cladding's shear velocity (v_T q < omega < 2 v_T q) and leak above it.
     """
-    w, core, clad = 0.4, 1.0, 1.5
-    rects = [
-        (0, -clad, w, 0, "clad_lo", None),
-        (0, 0, w, core, "core", None),
-        (0, core, w, core + clad, "clad_hi", None),
-    ]
-    edges = [
-        (lambda p: abs(p[0]) < 1e-9, "left"),
-        (lambda p: abs(p[0] - w) < 1e-9, "right"),
-        (lambda p: abs(p[1] + clad) < 1e-9, "bottom"),
-        (lambda p: abs(p[1] - core - clad) < 1e-9, "top"),
-    ]
-    nodes, tris, lines = tc._mesh2d(rects, 0.25, edges)
-    path = tmp_path_factory.mktemp("sandwich") / "sandwich.msh"
-    tc._write_section(path, nodes, tris, lines)
-    stiff = gfem.Material(
-        stiffness=gfem.isotropic_stiffness(4 * mc.E, mc.NU), mass_density=mc.RHO
-    )
-    materials = {"core": mc.material(), "clad_lo": stiff, "clad_hi": stiff}
-    return gfem.Model(gfem.Mesh.from_gmsh(path, length_unit="um"), materials=materials)
+    return mc.sandwich_model(tmp_path_factory.mktemp("sandwich") / "sandwich.msh")
 
 
 def _sandwich(model, loss_factor=None):
@@ -447,7 +428,7 @@ def test_too_few_converged_modes_raise_the_convergence_error(free_rectangle):
         )
 
 
-def test_a_gradient_through_the_frequency_refuses_by_name_and_an_unread_one_is_zero(
+def test_a_group_velocity_gradient_refuses_and_an_unread_input_has_none(
     free_rectangle,
 ):
     import jax
@@ -461,7 +442,7 @@ def test_a_gradient_through_the_frequency_refuses_by_name_and_an_unread_one_is_z
         moved = gfem.Model(
             mesh.with_nodes(jnp.asarray(mesh.nodes) * scale), materials=materials
         )
-        return jnp.real(gfem.solve(moved, problem).omega[0])
+        return jnp.asarray(gfem.solve(moved, problem).group_velocity[0])
 
     with pytest.raises(gfem.NonDifferentiableError, match="MechanicalEigenmode output"):
         jax.grad(stretched)(1.0)

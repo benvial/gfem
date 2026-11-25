@@ -55,15 +55,16 @@ from gfem._engine.piezoelectric import (
     _check_mechanical,
     _coefficients,
     _element_arrays,
+    _tensors,
     _weak_forms,
 )
 from gfem._engine.runtime import serial_spaces, task_manager
-from gfem._engine.sensitivity import FieldPair
+from gfem._engine.sensitivity import FieldPair, Tensors, Term
 from gfem._engine.solve_request import SolveRequest
 from gfem._field import FieldMap
 from gfem._linalg.base import free_mask
 from gfem._linalg.direct import DirectHandle
-from gfem.errors import EigenmodeConvergenceError
+from gfem.errors import EigenmodeConvergenceError, NonDifferentiableError
 from gfem.mesh import Mesh
 from gfem.model import Model
 from gfem.options import SolverOptions
@@ -79,6 +80,8 @@ _STATIC = 1e-8
 #: The relative shift of a left vector's inverse iteration, and its step bound.
 _LEFT_SHIFT = 1e-8
 _LEFT_STEPS = 6
+#: The inverse-iteration steps that refine a coupled mode's right vector.
+_REFINE_STEPS = 2
 
 #: The assembled groups: real forms by power of the wavenumber, and the mass.
 _GROUPS = {
@@ -116,7 +119,7 @@ class MechanicalEigenmodeRule:
         }
     )
     #: Outputs whose cotangents the backward pass handles.
-    differentiable_outputs: frozenset[str] = frozenset()
+    differentiable_outputs: frozenset[str] = frozenset({"omega", "cluster"})
 
     def __init__(
         self,
@@ -180,7 +183,7 @@ class MechanicalEigenmodeRule:
         self,
         model: Model,
         *,
-        keep: bool,  # noqa: ARG002
+        keep: bool,
         request: SolveRequest | None = None,  # noqa: ARG002
     ) -> tuple[dict[str, Any], Entry | None]:
         """Find the modes nearest the target.
@@ -189,7 +192,9 @@ class MechanicalEigenmodeRule:
             ``{"omega": (n,) rad/s, "error": (n,), "group_velocity": (n,) m/s,
             "cluster": (n,), "displacement": (n, 3, n_dof) m, "potential":
             (n, n_dof) V, empty without coupling}``, the modes nearest first,
-            and no entry (nothing is differentiated yet).
+            and with ``keep`` the entry a backward reads: the right and left
+            vectors of each mode on the whole space, ``y^T M x``, the
+            eigenvalue ``omega**2`` and whether each mode shares its cluster.
 
         Raises:
             EigenmodeConvergenceError: Fewer than ``n_modes`` modes meet
@@ -199,9 +204,10 @@ class MechanicalEigenmodeRule:
             system = MechanicalSystem(model, self.problem, self.options, self)
             try:
                 found = system.modes()
+                fields = system.kept
             finally:
                 system.release()
-        return found, None
+        return found, Entry("em", fields=fields) if keep else None
 
     def result(self, outputs: dict[str, Any]) -> MechanicalEigenmodeResult:
         """The public result from the forward outputs."""
@@ -224,6 +230,7 @@ class MechanicalEigenmodeRule:
                     for a, axis in enumerate("xyz")
                 },
                 label="component",
+                wavenumber=self.problem.wavenumber,
             )
             for i in range(omegas.shape[0])
         ]
@@ -298,21 +305,179 @@ class MechanicalEigenmodeRule:
 
     def nondifferentiable_output(self, name: str) -> str:
         """The error message for a cotangent on output ``name``."""
+        why = {
+            "group_velocity": "it is read from the modes and their derivative in q",
+            "error": "it is the backward error of the solve",
+            "displacement": "the mode fields need a bordered eigenvector adjoint",
+            "potential": "the mode fields need a bordered eigenvector adjoint",
+        }[name]
         return (
-            f"gfem does not differentiate the MechanicalEigenmode output {name!r} "
-            "in this version."
+            f"gfem does not differentiate the MechanicalEigenmode output {name!r}: "
+            f"{why}. The eigenfrequencies (omega, so frequency and Q) keep their "
+            "gradients; wrap the value in jax.lax.stop_gradient to use it without "
+            "its derivative."
         )
 
-    def backward(  # pragma: no cover
+    def backward(
         self,
         model: Model,
         entry: Entry,
         cotangents: dict[str, np.ndarray],
         *,
-        wanted: frozenset | None = None,
+        wanted: frozenset | None = None,  # noqa: ARG002
     ) -> list[FieldPair]:
-        """No output is differentiable yet: `differentiable_outputs` is empty."""
-        raise NotImplementedError("A MechanicalEigenmode solve has no backward yet.")
+        r"""Fold the ``omega`` cotangents into field pairs, one per mode: no solve.
+
+        With :math:`\lambda = \omega^2`, the left vector :math:`y`, the right
+        one :math:`x` and :math:`g = y^T M x`, :math:`d\lambda = y^T (d\hat K -
+        \lambda\,dM)\,x / g` and :math:`d\omega = d\lambda / (2\omega)`: for a
+        cotangent :math:`\bar\omega` the pair is left :math:`y`, right
+        :math:`x\,\bar\omega / (2\omega g)`, with the weights of every piece of
+        :math:`\hat K` at :math:`q` and :math:`-\lambda` on the mass. The left
+        field is the test side of each form (`_terms`, `tensors`).
+
+        Raises:
+            NonDifferentiableError: A mode with a cotangent shares its cluster
+                (its vectors depend on a choice of basis).
+        """
+        ct = cotangents.get("omega")
+        if ct is None or not np.any(ct):
+            return []
+        fields = entry.fields
+        ct = np.asarray(ct, dtype=complex)
+        problem = self.problem
+        for i in np.flatnonzero(ct):
+            if fields["shared"][i]:
+                omega = np.sqrt(fields["lambda"][i])
+                raise NonDifferentiableError(
+                    f"gfem cannot differentiate the frequency {omega / (2 * np.pi):.6g}"
+                    " Hz of the MechanicalEigenmode mode "
+                    f"{i}: it is degenerate with another mode (to "
+                    "SolverOptions.cluster_rtol), so its eigenvector, and its "
+                    "derivative, depend on an arbitrary choice of basis. Break the "
+                    "symmetry of the section, or wrap the value in "
+                    "jax.lax.stop_gradient to use it without its derivative."
+                )
+        pairs: list[FieldPair] = []
+        with task_manager(self.options.threads, self.comm):
+            system = MechanicalSystem(
+                model, problem, self.options, self, assemble=False
+            )
+            built = system.built
+            domain = em_region(model, built, "em")
+            q = system.q
+            for i in np.flatnonzero(ct):
+                lam = fields["lambda"][i]
+                omega = np.sqrt(lam)
+                scale = ct[i] / (2 * omega * fields["gram"][i])
+                pairs.append(
+                    FieldPair(
+                        space=system.space,
+                        left=fields["y"][:, i : i + 1],
+                        right=fields["x"][:, i : i + 1] * scale,
+                        weights=_weights(q, lam, coupled=self.coupled),
+                        order=self.options.order,
+                        domain=domain,
+                    )
+                )
+        return pairs
+
+    def terms(self, model: Model, *, nodes: bool) -> list[Term]:  # noqa: ARG002
+        r"""The pieces of :math:`\hat K - \lambda M` for the node pass, as terms."""
+        return _terms(self, model)
+
+    def tensors(self, model: Model, wanted: frozenset) -> Tensors:
+        """The tensor pass of the wanted material leaves (see `Tensors`)."""
+        return _tensors(
+            self,
+            model,
+            wanted,
+            wavenumber=self.problem.wavenumber * discretization(model.mesh).built.scale,
+            coupled=self.coupled,
+        )
+
+
+def _weights(q: float, lam: complex, *, coupled: bool) -> dict[str, complex]:
+    r"""The weights of the pieces of :math:`\hat K - \lambda M`.
+
+    ``q`` is the wavenumber in the mesh's length unit: the first-order pieces
+    carry :math:`-iq` (:math:`q` for the loss, which has an extra :math:`i`),
+    the second-order ones :math:`q^2`. Those at :math:`q = 0` are left out.
+    """
+    out: dict[str, complex] = {"stiffness": 1.0, "loss": 1j, "mass": -lam}
+    if coupled:
+        out |= {"coupling": 1.0, "dielectric": 1.0}
+    if q != 0:
+        out |= {
+            "stiffness1": -1j * q,
+            "loss1": q,
+            "stiffness2": q**2,
+            "loss2": 1j * q**2,
+        }
+        if coupled:
+            out |= {
+                "coupling1": -1j * q,
+                "dielectric1": -1j * q,
+                "coupling2": q**2,
+                "dielectric2": q**2,
+            }
+    return out
+
+
+def _terms(rule: MechanicalEigenmodeRule, model: Model) -> list[Term]:
+    """The node pass's terms: the pieces of the pencil, as `MechanicalSystem` has them.
+
+    Each is the integral of its real-coefficient form on the pinned rule. The
+    first field of the pair is the test (left) and the second the trial: the
+    forms take ``(trial, test)``.
+    """
+    problem, options = rule.problem, rule.options
+    built = discretization(model.mesh).built
+    mech = em_region(model, built, "mechanical")
+    diel = em_region(model, built, "em")
+    spaces = [
+        h1_space(
+            model,
+            built,
+            options.order,
+            tuple(name for name, letters in problem.clamped if axis in letters),
+            physics="mechanical",
+        )
+        for axis in "xyz"
+    ]
+    if rule.electrodes is not None:
+        spaces.append(
+            h1_space(model, built, options.order, rule.electrodes.lines, physics="em")
+        )
+    with serial_spaces():
+        space = ngs.FESpace(spaces)
+    forms = _weak_forms(
+        _coefficients(model, built, rule.frame),
+        built,
+        options.order,
+        mech,
+        diel,
+        wavenumber_pieces=True,
+    )
+    names = {piece for g in _GROUPS for piece, _ in _GROUPS[g]}
+    if rule.coupled:
+        names |= {piece for g in _COUPLED for piece, _ in _COUPLED[g]}
+    n = len(spaces)
+
+    def term(name: str) -> Term:
+        form, dx = forms[name]
+
+        def integrand(left: Any, right: Any) -> Any:
+            return form(_parts(right, n), _parts(left, n)) * dx
+
+        return Term(name, "surface", integrand=integrand, space=space)
+
+    return [term(name) for name in forms if name in names]
+
+
+def _parts(u: Any, n: int) -> tuple[Any, ...]:
+    """The ``n`` components of a compound field ``u`` of the system's space."""
+    return tuple(u.components[i] for i in range(n))
 
 
 def _coupled(model: Model) -> bool:
@@ -426,6 +591,8 @@ class MechanicalSystem:
         self.q = problem.wavenumber * built.scale
         self.lossless = False
         self.matrix: ngs.BaseMatrix | None = None
+        #: What a backward reads of the modes found (`modes`).
+        self.kept: dict[str, np.ndarray] = {}
         self._handle: DirectHandle | None = None
         if assemble:
             self._assemble(model, rule, mech, diel)
@@ -604,23 +771,64 @@ class MechanicalSystem:
             theta, vectors = err.eigenvalues, err.eigenvectors
         return sigma + 1 / theta, vectors
 
-    def _left(self, lam: complex, x: np.ndarray, tolerance: float) -> np.ndarray:
-        r"""The left vector :math:`y`, :math:`y^T A(\lambda) = 0`, of a mode."""
+    def _shifted(self, lam: complex) -> DirectHandle:
+        r"""The factorization of :math:`A` at a shift next to :math:`\lambda`."""
+        return self._factor(lam * (1 + _LEFT_SHIFT), own=True)
+
+    def _refined(self, handle: DirectHandle, x: np.ndarray) -> np.ndarray:
+        r"""``x`` after steps of inverse iteration on ``handle`` (`_shifted`).
+
+        The backward error ARPACK is stopped on is relative to the norm of the
+        whole pencil, which a piezoelectric section's stiffness dominates by
+        many orders: the potential's rows of a coupled mode are left with an error
+        that a gradient, first order in it, reads through the coupling. A step
+        brings the error down by the ratio of the shift's distance to the
+        eigenvalue's gap.
+        """
+        for _ in range(_REFINE_STEPS):
+            x = handle.solve(self._embed(self.mass @ x))[self.index]
+            x = x / np.linalg.norm(x)
+        return x
+
+    def _left(
+        self, lam: complex, x: np.ndarray, tolerance: float, handle: DirectHandle | None
+    ) -> np.ndarray:
+        r"""The left vector :math:`y`, :math:`y^T A(\lambda) = 0`, of a mode.
+
+        ``handle`` is the factorization of `_shifted`, for a lossy section at a
+        wavenumber.
+        """
         if self.lossless:
             return np.conj(x)
         if self.q == 0:
             return x
-        handle = self._factor(lam * (1 + _LEFT_SHIFT), own=True)
-        try:
-            y = np.conj(x)
-            for _ in range(_LEFT_STEPS):
-                y = handle.solve(self._embed(y), transpose=True)[self.index]
-                y = y / np.linalg.norm(y)
-                if self._backward_error(lam, y, left=True) <= tolerance:
-                    break
-        finally:
-            handle.free()
+        assert handle is not None  # noqa: S101
+        y = np.conj(x)
+        for _ in range(_LEFT_STEPS):
+            y = handle.solve(self._embed(self.mass.T @ y), transpose=True)[self.index]
+            y = y / np.linalg.norm(y)
+            if self._backward_error(lam, y, left=True) <= tolerance:
+                break
         return y
+
+    def _vectors(
+        self, lam: complex, x: np.ndarray, omega: complex, tolerance: float
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """The normalized right vector of a mode and its left vector.
+
+        The refinement of a coupled mode and the left vector of a lossy mode at a
+        wavenumber share one factorization.
+        """
+        iterated = not (self.lossless or self.q == 0)
+        handle = self._shifted(lam) if self.coupled or iterated else None
+        try:
+            if handle is not None and self.coupled:
+                x = self._refined(handle, x)
+            v = self._normalized(x, omega)
+            return v, self._left(lam, v, tolerance, handle)
+        finally:
+            if handle is not None:
+                handle.free()
 
     def modes(self) -> dict[str, np.ndarray]:
         """The ``n_modes`` modes nearest the target, and their outputs.
@@ -663,7 +871,9 @@ class MechanicalSystem:
         )
         found = [found[i] for i in order]
         omega_all = omega_all[order]
-        labels = clusters(list(omega_all), options.cluster_rtol)[:want]
+        every = clusters(list(omega_all), options.cluster_rtol)
+        labels = every[:want]
+        shared = np.array([np.sum(every == label) > 1 for label in labels])
         out = {
             "omega": np.zeros(want, complex),
             "error": np.zeros(want),
@@ -672,10 +882,19 @@ class MechanicalSystem:
             "displacement": np.zeros((want, 3, self.nu), complex),
             "potential": np.zeros((want, self.nphi), complex),
         }
+        right = np.zeros((self.ndof, want), complex)
+        left = np.zeros((self.ndof, want), complex)
+        gram = np.zeros(want, complex)
+        lams = np.zeros(want, complex)
         for i, (lam, x, error) in enumerate(found[:want]):
-            omega = omega_all[i]
-            v = self._normalized(x, omega)
-            y = self._left(lam, v, tolerance)
+            v, y = self._vectors(lam, x, omega_all[i], tolerance)
+            # the two-sided Rayleigh quotient: second order in the vectors' errors,
+            # where the Ritz value is first order in its residual
+            lams[i] = (y @ (self.k @ v)) / (y @ (self.mass @ v))
+            omega = np.sqrt(lams[i])
+            v = self._normalized(v, omega)
+            right[self.index, i], left[self.index, i] = v, y
+            gram[i] = y @ (self.mass @ v)
             out["omega"][i] = omega
             out["error"][i] = error
             out["group_velocity"][i] = np.real(
@@ -684,6 +903,13 @@ class MechanicalSystem:
             full = self._embed(v)
             out["displacement"][i] = full[: 3 * self.nu].reshape(3, self.nu)
             out["potential"][i] = full[3 * self.nu :]
+        self.kept = {
+            "x": right,
+            "y": left,
+            "gram": gram,
+            "lambda": lams,
+            "shared": shared,
+        }
         return out
 
     def _normalized(self, x: np.ndarray, omega: complex) -> np.ndarray:
