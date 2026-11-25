@@ -524,16 +524,19 @@ def _weak_forms(
     node pass differentiates them.
 
     With ``wavenumber_pieces`` the forms of a field :math:`e^{-iqz}` follow,
-    for the stiffness and the loss: with :math:`S_z(u)` the strain
-    :math:`\partial_z u` per unit :math:`\partial_z` (:math:`u_z` in zz,
-    :math:`u_y` in yz, :math:`u_x` in xz), the trial's :math:`\partial_z` is
+    for the stiffness, the loss, the coupling and the dielectric: with
+    :math:`S_z(u)` the strain :math:`\partial_z u` per unit :math:`\partial_z`
+    (:math:`u_z` in zz, :math:`u_y` in yz, :math:`u_x` in xz), the trial's :math:`\partial_z` is
     :math:`-iq` and the test's :math:`+iq`, so that the form is
     ``<piece>`` :math:`-iq` ``<piece>1`` :math:`+ q^2` ``<piece>2`` with the
     three real forms ``<piece>`` (the in-plane strains alone),
     ``<piece>1`` :math:`= S_\perp(v)\cdot c\,S_z(u) - S_z(v)\cdot
     c\,S_\perp(u)` and ``<piece>2`` :math:`= S_z(v)\cdot c\,S_z(u)`. The
     wavenumber in a weight is that of the mesh's length unit
-    (:math:`q\,\text{scale}`).
+    (:math:`q\,\text{scale}`). The coupling and the dielectric split the same
+    way, with :math:`g_z(\varphi) = \varphi` for the potential in the place of
+    :math:`S_z(u)` (``coupling1``, ``coupling2``, ``dielectric1``,
+    ``dielectric2``); they read the potential, so they are for 4-tuples only.
     """
     c, e, eps, rho, loss = co["c"], co["e"], co["eps"], co["rho"], co["loss"]
     scale = built.scale
@@ -585,6 +588,33 @@ def _weak_forms(
         "stiffness2": (along, dx_mech),
         "loss1": (lambda u, v: loss * cross(u, v), dx_mech),
         "loss2": (lambda u, v: loss * along(u, v), dx_mech),
+    }
+
+    def lifted(u: Any) -> Any:
+        return ngs.CF((0, 0, u[3]))
+
+    def coupling_cross(u: Any, v: Any) -> Any:
+        return (
+            strain(v) * (e.trans * lifted(u))
+            + gradient(v) * (e * axial(u))
+            - axial(v) * (e.trans * gradient(u))
+            - lifted(v) * (e * strain(u))
+        )
+
+    def coupling_along(u: Any, v: Any) -> Any:
+        return axial(v) * (e.trans * lifted(u)) + lifted(v) * (e * axial(u))
+
+    def dielectric_cross(u: Any, v: Any) -> Any:
+        return -(gradient(v) * (eps * lifted(u)) - lifted(v) * (eps * gradient(u)))
+
+    def dielectric_along(u: Any, v: Any) -> Any:
+        return -(lifted(v) * (eps * lifted(u)))
+
+    forms |= {
+        "coupling1": (coupling_cross, dx_mech),
+        "coupling2": (coupling_along, dx_mech),
+        "dielectric1": (dielectric_cross, dx_diel),
+        "dielectric2": (dielectric_along, dx_diel),
     }
     return forms
 
