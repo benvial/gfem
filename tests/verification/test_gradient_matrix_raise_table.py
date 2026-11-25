@@ -714,6 +714,7 @@ EXPECTED |= {
         "omega",
         "error",
         "q_port.p1",
+        "requested_power_share.port",
         "participation.l1",
         *(f"bulk_participation.{r}" for r in ("dielectric", "spacer", "air")),
         "cluster",
