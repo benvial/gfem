@@ -3136,7 +3136,7 @@ class MechanicalEigenmodeResult:
             label form a degenerate cluster, frequencies within
             ``SolverOptions.cluster_rtol`` of each other (a simple mode has
             a label of its own, counting from 0 in mode order).
-        displacement_fields: One `FieldMap` per mode (read them with
+        displacement_fields: One ``FieldMap`` per mode (read them with
             `displacement`): the components ``x``, ``y`` and ``z`` of the
             displacement, in m, on H1 of the solve order over the mechanical
             domain, each with its mode's complex ``omega``. Each mode stores
