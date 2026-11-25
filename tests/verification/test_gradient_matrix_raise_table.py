@@ -17,6 +17,7 @@ v0.1's gradients (``pytest -m verification -k gradient_matrix``).
 """
 
 import dataclasses
+import importlib
 import math
 from pathlib import Path
 
@@ -2698,7 +2699,8 @@ def one_forward_per_state(monkeypatch):
     coverage search) cannot afford. A forward that keeps an entry for the
     backward, and every backward, still runs per cell.
     """
-    forward = solve_vjp._forward
+    module = importlib.import_module("gfem._adjoint.solve_vjp")
+    forward = module._forward
     memo = {}
 
     def memoized(rule, model, *, keep, request):
@@ -2718,7 +2720,7 @@ def one_forward_per_state(monkeypatch):
             memo[key] = forward(rule, model, keep=keep, request=request)
         return memo[key]
 
-    monkeypatch.setattr(solve_vjp, "_forward", memoized)
+    monkeypatch.setattr(module, "_forward", memoized)
 
 
 @pytest.mark.bitwise  # its low-Q lumped mode converges run to run only on one thread
