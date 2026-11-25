@@ -9,17 +9,18 @@ density and quality factor, the damping frame, and the node coordinates, at
 fourth-order central differences of :math:`(\mathrm{Re}\,\omega,
 \mathrm{Im}\,\omega)` at the gate of `finite_differences`.
 
-The differenced objective is the eigenfrequency of a solve whose backward error
-is that of ARPACK (about :math:`10^{-12}` relative, the ``eigen_tolerance`` of
-:math:`10^{-10}` being only the gate): round-off :math:`\delta \approx
-10^{-12}` on :math:`\omega`. A relative perturbation :math:`h` of a design leaf
-that scales :math:`\omega` as :math:`(1 + p)^{\pm 1/2}` or :math:`(1 + p)^{-1}`
-(the stretch) has a fourth-order truncation :math:`\le 4 h^4 |f'|` and a
-round-off :math:`1.5\,\delta\,\omega/(h |f'|)` relative to the derivative: at
-:math:`h = 10^{-2}` both stay under :math:`10^{-7}`. A leaf that moves
-:math:`\omega` by a smaller fraction (the quality factor on
-:math:`\mathrm{Re}\,\omega`, a tensor entry) is given a step of the same relative
-size on its own scale (see each case).
+The differenced objective is the eigenfrequency, a two-sided Rayleigh quotient of
+vectors converged to the ARPACK tolerance of :math:`10^{-12}`: round-off
+:math:`\delta \approx 10^{-12}` relative. A relative perturbation :math:`h` of a
+leaf that scales :math:`\omega` as :math:`(1 + p)^{\pm 1/2}` or :math:`(1 + p)^{-1}`
+(the density, the modulus, the stretch) has a fourth-order truncation of at most
+:math:`4 h^4` of the derivative and a round-off of :math:`1.5\,\delta / (h\,s)`, with
+:math:`s` the relative slope: for :math:`h = 10^{-2}` and :math:`s \sim 1` both sit
+under :math:`10^{-7}`. A leaf that moves :math:`\omega` less (the quality factor on
+:math:`\mathrm{Re}\,\omega`, a tensor entry, the loss of a lossless section) keeps
+the step but reads an error against the larger of its derivative and
+:math:`10^{-3}` of the biggest one of the two outputs, so that round-off on a
+derivative that is zero (or a thousand times below the other) is not a failure.
 """
 
 import dataclasses
@@ -109,9 +110,9 @@ def rectangle(tmp_path_factory):
     return mc.rectangle(path, 1.7, 1.0, 0.3)
 
 
-#: name -> (edit(model, p), shape of p, step, directions): a relative step of 1e-2 on
-#: the modulus (1e10 Pa of 1.2e11 is 8e-2: the step on p of 1e-2 is 8e-4 relative),
-#: the density and the quality factor (units of 10 %, 100 and 5).
+#: name -> (edit(model, p), shape of p, step): a unit of p is 1e10 Pa of the 1.2e11 Pa
+#: stiffness (8 %), 100 kg/m^3 of 2500 (4 %) or 5 of the quality factor 50 (10 %), so
+#: the step of 1e-2 is a relative change of 4e-4 to 1e-3 of the leaf.
 LEAVES = {
     "stiffness": (
         lambda m, p: _edited(m, ["film"], stiffness=C_BASE + 1e10 * p),
