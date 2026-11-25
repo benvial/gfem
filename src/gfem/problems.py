@@ -1386,8 +1386,10 @@ class Eigenmode:
     the search's seed solves can list) `gfem.solve` raises
     `gfem.EigenmodeConvergenceError`: lower ``n_modes`` or move ``target``.
     A port mode family no wave port requests is partly reflected, as in a
-    driven problem, and can show up as a spurious mode of finite Q: request
-    it, or check a mode by moving ``target``.
+    driven problem, so a mode that family carries, or a mode trapped inside
+    the model against the port, has a Q that is the port's, not the
+    device's. `gfem.EigenmodeResult.requested_power_share` reads it, and a
+    share below one half warns `gfem.UnrequestedPortModeWarning`.
 
     Ports are terminations here: nothing is excited. A lumped port with a
     resistance and every wave port get a coupling Q, a lumped port with an

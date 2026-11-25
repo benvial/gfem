@@ -387,15 +387,20 @@ returning a wrong value:
 - **Unrequested port modes**: a propagating mode that no wave port on its
   surface requests is partly reflected at the port, not converted; request
   it to see where its power goes ({py:obj}`gfem.SkippedPortModeWarning`
-  flags a mode left out below a requested one). In an eigenmode solve such a
-  mode can come back as a spurious mode of finite Q.
+  flags a mode left out below a requested one). An eigenmode solve flags a
+  mode such a family carries, and a mode trapped against the port, with
+  {py:obj}`gfem.UnrequestedPortModeWarning`; its Q is the port's, not the
+  device's.
 - **Eigenmodes with wave ports**: one process, no Bloch wave vector, no port
   face cutting a perfectly matched layer, no quantity estimates
   (field-estimator refinement runs), and no absorbing edge beside a
   permittivity law in a port's cross-section. A target below a requested
   port mode's cutoff raises {py:obj}`gfem.PortModeError`, and a root below
   a cutoff that does not decay in time is dropped with
-  {py:obj}`gfem.AntiBoundRootWarning`. Under `jax.grad`, a design touching
+  {py:obj}`gfem.AntiBoundRootWarning`. The solve lists the resonances of a
+  strip around `target` (Q above about 2); a resonance of lower Q is out of
+  reach, even when it lies nearest `target`: use a driven sweep. Under
+  `jax.grad`, a design touching
   a wave port face raises {py:obj}`gfem.PortGeometryError`; a driven solve
   differentiates it. The wave ports' $\sum_p 1/q_p$ matches $1/Q$ of an otherwise
   lossless model to $O(1/Q^2)$. Details: {doc}`modes-and-ports`.

@@ -165,6 +165,40 @@ The port's $\gamma$ at the complex eigenfrequency is not reported;
 its {term}`coupling Q` in `EigenmodeResult.q_port`. An example on a line:
 "A resonator loaded by a guide" in {doc}`recipes/solve-a-device`.
 
+**Which resonances are found.** With a wave port, an `Eigenmode` solve returns
+the `n_modes` resonances with $\mathrm{Im}\,\omega \le \omega_t / 4$
+($\omega_t = 2\pi\,$`target`, so a Q above about 2 near the target) whose
+$\mathrm{Re}\,f$ is nearest `target`. It checks that it listed every
+resonance of that strip within the farthest one's distance, so asking for
+more modes adds modes at the end and never changes the first ones. A
+resonance with a Q below about 2 is out of reach, even when it lies nearest
+`target`: find it from a `gfem.Driven` sweep. If the strip holds more modes
+than the search can list, `gfem.EigenmodeConvergenceError` says so; lower
+`n_modes` or move `target`.
+
+**Modes the ports do not absorb.** A wave port absorbs the modes it requests
+exactly, and any other field on its face only partly. For each port surface
+$s$, `EigenmodeResult.requested_power_share` gives the part of the surface's
+absorbed power that its requested modes carry,
+
+$$
+\eta_s = \frac{\sum_{p \in s} P_p}{P_s},
+$$
+
+with $P_p$ the power the requested mode of port $p$ carries out and $P_s$ the
+power the surface absorbs: the {term}`requested power share`. It is near 1
+for a mode of a requested family. A mode carried by an
+{term}`unrequested port mode`, or a {term}`trapped mode`, has a share near 0
+and a Q that is the port's, not the device's. When the share is below one
+half the solve warns `gfem.UnrequestedPortModeWarning` and tells which of two
+things to do. If an unrequested mode propagates at the resonance, request it
+on the surface with another `gfem.WavePort` and solve again; if the warning
+stays, the mode is trapped. If none propagates, the mode is trapped inside the
+model: its Q is a lower bound on the device's, so move the port away. A share
+from one half to 1 is reported, not warned: a discontinuity close to the port
+puts an evanescent tail on it that lowers both the share and the Q, and
+moving the port away restores them.
+
 ## One leak, seen from both sides
 
 A leaky mode is one physical wave. Fix the frequency and it decays in space
