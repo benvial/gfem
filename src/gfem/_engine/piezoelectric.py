@@ -509,13 +509,31 @@ def _coefficients(model: Model, built: Any, frame: Any) -> dict[str, Any]:
 
 
 def _weak_forms(
-    co: dict[str, Any], built: Any, order: int, mech: Any, diel: Any
+    co: dict[str, Any],
+    built: Any,
+    order: int,
+    mech: Any,
+    diel: Any,
+    *,
+    wavenumber_pieces: bool = False,
 ) -> dict[str, tuple[Callable[[Any, Any], Any], Any]]:
-    """The five pieces of :math:`A`: ``(integrand, measure)`` by name.
+    r"""The five pieces of :math:`A`: ``(integrand, measure)`` by name.
 
     The integrand takes ``(trial, test)`` 4-tuples ``(u_x, u_y, u_z, phi)``.
     The one place the forms are written: the system assembles them and the
     node pass differentiates them.
+
+    With ``wavenumber_pieces`` the forms of a field :math:`e^{-iqz}` follow,
+    for the stiffness and the loss: with :math:`S_z(u)` the strain
+    :math:`\partial_z u` per unit :math:`\partial_z` (:math:`u_z` in zz,
+    :math:`u_y` in yz, :math:`u_x` in xz), the trial's :math:`\partial_z` is
+    :math:`-iq` and the test's :math:`+iq`, so that the form is
+    ``<piece>`` :math:`-iq` ``<piece>1`` :math:`+ q^2` ``<piece>2`` with the
+    three real forms ``<piece>`` (the in-plane strains alone),
+    ``<piece>1`` :math:`= S_\perp(v)\cdot c\,S_z(u) - S_z(v)\cdot
+    c\,S_\perp(u)` and ``<piece>2`` :math:`= S_z(v)\cdot c\,S_z(u)`. The
+    wavenumber in a weight is that of the mesh's length unit
+    (:math:`q\,\text{scale}`).
     """
     c, e, eps, rho, loss = co["c"], co["e"], co["eps"], co["rho"], co["loss"]
     scale = built.scale
@@ -543,13 +561,32 @@ def _weak_forms(
     def mass(u: Any, v: Any) -> Any:
         return scale**2 * rho * (u[0] * v[0] + u[1] * v[1] + u[2] * v[2])
 
-    return {
+    forms = {
         "stiffness": (stiffness, dx_mech),
         "loss": (damping, dx_mech),
         "coupling": (coupling, dx_mech),
         "dielectric": (dielectric, dx_diel),
         "mass": (mass, dx_mech),
     }
+    if not wavenumber_pieces:
+        return forms
+
+    def axial(u: Any) -> Any:
+        return ngs.CF((0, 0, u[2], u[1], u[0], 0))
+
+    def cross(u: Any, v: Any) -> Any:
+        return strain(v) * (c * axial(u)) - axial(v) * (c * strain(u))
+
+    def along(u: Any, v: Any) -> Any:
+        return axial(v) * (c * axial(u))
+
+    forms |= {
+        "stiffness1": (cross, dx_mech),
+        "stiffness2": (along, dx_mech),
+        "loss1": (lambda u, v: loss * cross(u, v), dx_mech),
+        "loss2": (lambda u, v: loss * along(u, v), dx_mech),
+    }
+    return forms
 
 
 # --- the tensor pass ----------------------------------------------------------------
@@ -754,7 +791,7 @@ class _Contraction:
 # --- checks ------------------------------------------------------------------------
 
 
-def _check_mechanical(model: Model) -> Any:
+def _check_mechanical(model: Model, owner: str = "Piezoelectric") -> Any:
     """The mechanical domain; raise when it is empty.
 
     Raises:
@@ -764,7 +801,7 @@ def _check_mechanical(model: Model) -> Any:
     if not domain.active.any():
         raise ValueError(
             "Every volume is excluded from mechanical problems, so the "
-            "Piezoelectric problem has nothing to solve on. Exclude fewer "
+            f"{owner} problem has nothing to solve on. Exclude fewer "
             'volumes for mechanical problems (excluded={"mechanical": ...}).'
         )
     return domain
@@ -843,10 +880,14 @@ def _check_electrodes(model: Model, problem: Piezoelectric) -> Electrodes:
     return Electrodes(tuple(terminals), tuple(dict.fromkeys([*lines, *pec])), areas)
 
 
-def _check_clamped(model: Model, problem: Piezoelectric) -> None:
-    """Raise for a clamped line that does not border the mechanical domain."""
+def _check_clamped(model: Model, problem: Any) -> None:
+    """Raise for a clamped line that does not border the mechanical domain.
+
+    ``problem.clamped`` holds names, or ``(name, components)`` pairs.
+    """
     mechanical = model._domain_of("mechanical")  # noqa: SLF001
-    for name in problem.clamped:
+    for item in problem.clamped:
+        name = item if isinstance(item, str) else item[0]
         region = model.mesh.region(name)
         if region.dim == model.mesh.dim or not mechanical.touches(name):
             raise ValueError(
@@ -855,14 +896,14 @@ def _check_clamped(model: Model, problem: Piezoelectric) -> None:
             )
 
 
-def _check_absorbing(model: Model) -> None:
+def _check_absorbing(model: Model, owner: str = "Piezoelectric") -> None:
     """Raise for an `Absorbing` line that borders the mechanical domain."""
     mechanical = model._domain_of("mechanical")  # noqa: SLF001
     for b in model.boundaries:
         if isinstance(b, Absorbing) and mechanical.touches(b.surface):
             raise ValueError(
                 f"gfem.Absorbing on {b.surface!r} absorbs electromagnetic waves; "
-                "a Piezoelectric problem leaves that line traction-free. Absorb "
+                f"a {owner} problem leaves that line traction-free. Absorb "
                 "acoustic waves with damping_frame=gfem.DampingFrame(...)."
             )
 
@@ -906,7 +947,7 @@ def _check_materials(model: Model) -> None:
         raise MissingMaterialPropertyError(missing, physics="mechanical")
 
 
-def _check_frame(model: Model, problem: Piezoelectric) -> Any:
+def _check_frame(model: Model, problem: Any) -> Any:
     """The damping frame's regions checked; ``None`` without a frame.
 
     Raises:
