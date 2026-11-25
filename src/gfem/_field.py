@@ -493,11 +493,12 @@ class FieldMap(Mapping[str, Field]):
     def __eq__(self, other: object) -> bool:
         """Equal fields under equal labels at the same wavenumber."""
         if isinstance(other, FieldMap):
-            return (
-                self._wavenumber == other._wavenumber
-                and dict(self._fields) == dict(other._fields)
+            return self._wavenumber == other._wavenumber and dict(self._fields) == dict(
+                other._fields
             )
         return NotImplemented
+
+    __hash__ = None  # type: ignore[assignment]  # a mutable-valued mapping
 
     def __getitem__(self, key: str) -> Field:
         """The field ``key``.

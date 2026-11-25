@@ -666,6 +666,7 @@ class MechanicalSystem:
             wavenumber_pieces=True,
         )
         q = self.q
+        d: sp.csr_array | None
         if q == 0:
             # only the order-0 forms enter the matrix that is factorized; the
             # group velocity is 0 there by reciprocity, so no first-order form
@@ -686,7 +687,7 @@ class MechanicalSystem:
         self.k = k[i][:, i].tocsr()
         self.mass = a["m"][1][i][:, i].tocsr()
         # d/dq of the wavenumber in the mesh's unit is the mesh's unit per metre
-        self.dk = None if d is None else (self.built.scale * d)[i][:, i].tocsr()
+        self.dk = None if d is None else (d * self.built.scale)[i][:, i].tocsr()
         self.k_norm = float(spla.norm(self.k, 1))
         self.m_norm = float(spla.norm(self.mass, 1))
 

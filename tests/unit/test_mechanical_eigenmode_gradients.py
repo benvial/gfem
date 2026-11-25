@@ -200,10 +200,12 @@ def _frame_problem(q):
 
 
 @pytest.mark.parametrize("q", [0.0, Q_SANDWICH])
-@pytest.mark.parametrize("leaf", ["core stiffness", "frame stiffness", "stretch"])
+@pytest.mark.parametrize("leaf", ["stiffnesses", "stretch"])
 def test_a_damping_frame_mode_matches_finite_differences(sandwich, q, leaf):
     # the frame's loss reads the stiffness of its regions (the eta r^2 moment) and
-    # the node coordinates (its depth): the loss path of the pair and of the nodes
+    # the node coordinates (its depth): the loss path of the pair and of the nodes.
+    # The two stiffnesses are one 2-vector, so one jacobian and one generic
+    # direction (both components non-zero) check both leaves.
     problem = _frame_problem(q)
     mesh = sandwich.mesh
 
@@ -211,18 +213,22 @@ def test_a_damping_frame_mode_matches_finite_differences(sandwich, q, leaf):
         if leaf == "stretch":
             model = gfem.Model(_stretched(mesh, p, 1), materials=sandwich.materials)
         else:
-            regions = ["core"] if leaf == "core stiffness" else ["clad_lo", "clad_hi"]
-            model = _edited(
-                sandwich,
-                regions,
-                stiffness=gfem.isotropic_stiffness(
-                    mc.E * (1 + 4 * (leaf == "frame stiffness")) * (1 + 1e-1 * p), mc.NU
-                ),
-            )
+            fields = _fields(sandwich)
+            for k, regions in enumerate((["core"], ["clad_lo", "clad_hi"])):
+                for region in regions:
+                    fields[region] = dataclasses.replace(
+                        fields[region],
+                        stiffness=gfem.isotropic_stiffness(
+                            mc.E * (1 + 4 * k) * (1 + 1e-1 * p[k]), mc.NU
+                        ),
+                    )
+            model = sandwich.replace(materials=fields)
         return _omega(model, problem)
 
-    p0 = jnp.asarray(1.0 if leaf == "stretch" else 0.0)
-    _check(objective, p0, [np.asarray(1.0)], 1e-2)
+    if leaf == "stretch":
+        _check(objective, jnp.asarray(1.0), [np.asarray(1.0)], 1e-2)
+    else:
+        _check(objective, jnp.zeros(2), _directions(3, (2,)), 1e-2)
 
 
 # --- a piezoelectric plate ------------------------------------------------------------
