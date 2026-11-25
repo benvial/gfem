@@ -483,7 +483,21 @@ class FieldMap(Mapping[str, Field]):
         """Map ``fields`` in their given order; ``label`` names a key in errors."""
         self._fields = dict(fields)
         self._label = label
-        self.wavenumber = wavenumber
+        self._wavenumber = wavenumber
+
+    @property
+    def wavenumber(self) -> float:
+        """The axial wavenumber :math:`q` in rad/m (read-only)."""
+        return self._wavenumber
+
+    def __eq__(self, other: object) -> bool:
+        """Equal fields under equal labels at the same wavenumber."""
+        if isinstance(other, FieldMap):
+            return (
+                self._wavenumber == other._wavenumber
+                and dict(self._fields) == dict(other._fields)
+            )
+        return NotImplemented
 
     def __getitem__(self, key: str) -> Field:
         """The field ``key``.
@@ -515,7 +529,7 @@ class FieldMap(Mapping[str, Field]):
 def _flatten_map(m: FieldMap):
     keys = tuple(m)
     children = tuple((jax.tree_util.DictKey(k), m[k]) for k in keys)
-    return children, (keys, m._label, m.wavenumber)  # noqa: SLF001
+    return children, (keys, m._label, m._wavenumber)  # noqa: SLF001
 
 
 def _unflatten_map(aux, children) -> FieldMap:

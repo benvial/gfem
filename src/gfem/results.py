@@ -2886,7 +2886,15 @@ class PiezoelectricResult:
         object.__setattr__(
             self, "frequencies", tuple(float(f) for f in self.frequencies)
         )
-        object.__setattr__(self, "displacement_fields", tuple(self.displacement_fields))
+        # a result read back from a file holds plain mappings
+        object.__setattr__(
+            self,
+            "displacement_fields",
+            tuple(
+                m if isinstance(m, FieldMap) else FieldMap(m, label="component")
+                for m in self.displacement_fields
+            ),
+        )
         object.__setattr__(self, "potential_fields", tuple(self.potential_fields))
         object.__setattr__(
             self, "kept", tuple((float(f), str(t)) for f, t in self.kept)
@@ -3159,7 +3167,17 @@ class MechanicalEigenmodeResult:
     def __post_init__(self) -> None:
         """Hold the fields as tuples; label simple modes."""
         object.__setattr__(self, "wavenumber", float(self.wavenumber))
-        object.__setattr__(self, "displacement_fields", tuple(self.displacement_fields))
+        # a result read back from a file holds plain mappings
+        object.__setattr__(
+            self,
+            "displacement_fields",
+            tuple(
+                m
+                if isinstance(m, FieldMap)
+                else FieldMap(m, label="component", wavenumber=self.wavenumber)
+                for m in self.displacement_fields
+            ),
+        )
         object.__setattr__(self, "potential_fields", tuple(self.potential_fields))
         if self.cluster is None:
             n = int(np.shape(self.omega)[0])
@@ -3174,8 +3192,9 @@ class MechanicalEigenmodeResult:
     def q(self) -> jax.Array:
         r"""Quality factors :math:`\mathrm{Re}\,\omega / (2\,\mathrm{Im}\,\omega)`.
 
-        ``inf`` for a lossless mode. The real part, not :math:`|\omega|`: the
-        two differ at :math:`O(1/Q^2)`.
+        ``inf`` for a lossless mode, whose :math:`\omega` is real. The real part,
+        not :math:`|\omega|`: the two differ at :math:`O(1/Q^2)`. The axial
+        wavenumber is `wavenumber`.
         """
         return jnp.real(self.omega) / (2 * jnp.imag(self.omega))
 
@@ -3224,7 +3243,7 @@ class MechanicalEigenmodeResult:
         except (TypeError, jax.errors.TracerArrayConversionError):
             return f"MechanicalEigenmodeResult({self.n_modes} modes)"
         rows = ", ".join(f"{hertz(a)} (Q {b:.4g})" for a, b in zip(f, q, strict=True))
-        where = f", q={self.wavenumber:g} rad/m" if self.wavenumber else ""
+        where = f", wavenumber={self.wavenumber:g} rad/m" if self.wavenumber else ""
         return f"MechanicalEigenmodeResult([{rows}]{where})"
 
 

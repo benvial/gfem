@@ -1863,6 +1863,11 @@ class MechanicalEigenmode:
     ``displacement`` or ``potential`` fields, on ``group_velocity`` or on
     ``error``, and a mode that shares its ``cluster`` with another (break the
     symmetry of the section, or hold the value with `jax.lax.stop_gradient`).
+    The cluster refusal is raised in the backward pass, inside a host callback,
+    so a ``jax.grad`` caller sees it as a ``jax.errors.JaxRuntimeError``
+    carrying its message. The cluster is found among the converged modes returned by
+    the eigensolver (``n_modes`` plus a guard of two); a degenerate partner
+    that it does not return is not detected.
     The result's ``displacement`` maps carry the ``wavenumber`` that
     `gfem.strain` needs.
     """

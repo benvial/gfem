@@ -965,8 +965,9 @@ time-averaged energy of a lossless mode, which splits equally between kinetic
 and strain energy.
 
 **Group velocity.** `group_velocity` is $\mathrm{Re}\,\mathrm{d}\omega/\mathrm{d}q$
-in m/s, the exact derivative of the discrete band. A section with a mirror
-symmetry along $z$ has $\omega(-q) = \omega(q)$ and the opposite group velocity.
+in m/s, the exact derivative of the discrete band. Every section is
+reciprocal: $\omega(-q) = \omega(q)$, the group velocity at $-q$ is the opposite,
+and at $q = 0$ it is exactly 0 (no derivative is assembled there).
 
 **Clamped components.** `clamped` fixes all three components on a line by its
 name, or only the components named by a string of `"xyz"` in the lab axes: a

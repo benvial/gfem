@@ -88,14 +88,14 @@ def test_the_lamb_modes_of_a_plate(plate, kind):
 
 def test_the_rayleigh_wave(half_space):
     # coarse error 8.9e-4 at maxh 0.2 (3.1e-5 at 0.1); the wave decays by
-    # exp(-2 q D sqrt(1 - xi^2)) ~ 1e-30 over four wavelengths, and its group
-    # velocity is v_R (no dispersion)
+    # exp(-2 q D sqrt(1 - xi^2)) ~ 3e-9 over four wavelengths, and its group
+    # velocity is v_R (no dispersion): measured 4.1e-3 off on this mesh
     q = 2 * np.pi / (1.0 * mc.UM)
     v_r = mc.rayleigh_ratio() * mc.V_T
     clamped = {**PLANE, "bottom": "xyz"}
     result = mc.solve(half_space, v_r * q / (2 * np.pi), wavenumber=q, clamped=clamped)
     assert _relative(float(result.frequency[0]), v_r * q / (2 * np.pi)) < 2e-3
-    assert float(result.group_velocity[0]) == pytest.approx(v_r, rel=2e-2)
+    assert float(result.group_velocity[0]) == pytest.approx(v_r, rel=1e-2)
 
 
 # --- identities ------------------------------------------------------------------
@@ -115,13 +115,15 @@ def test_a_uniform_quality_factor_scales_the_frequency_exactly(free_rectangle):
     ratio = np.asarray(lossy.omega) / np.asarray(lossless.omega)
     assert abs(ratio[0] - np.sqrt(1 + 1j / quality)) < 1e-9
     # a lossless mode is real
-    assert np.abs(np.imag(lossless.omega)).max() <= 1e-10 * abs(lossless.omega[0])
+    assert np.abs(np.imag(lossless.omega)).max() == 0.0
+    assert np.isinf(np.asarray(lossless.q)).all()
+    assert (np.asarray(lossless.q) > 0).all()
     assert float(lossy.q[0]) == pytest.approx(
         float(np.real(lossy.omega[0]) / (2 * np.imag(lossy.omega[0])))
     )
 
 
-def test_an_isotropic_section_has_the_same_frequency_at_minus_q(free_rectangle):
+def test_a_section_has_the_same_frequency_at_minus_q(free_rectangle):
     target = mc.sh_strip(1, 3e6, 1.0)
     up = mc.solve(free_rectangle, target, 2, wavenumber=3e6, clamped=SLIDING)
     down = mc.solve(free_rectangle, target, 2, wavenumber=-3e6, clamped=SLIDING)
@@ -594,3 +596,10 @@ def test_the_unbounded_potential_block_never_surfaces_as_a_mode(te_plate):
     assert np.all(np.isfinite(frequencies))
     assert np.all(np.abs(frequencies - 2 * fa) < fa)
     assert float(np.max(np.asarray(result.error))) < 1e-10
+
+
+def test_the_group_velocity_at_zero_wavenumber_is_exactly_zero(free_rectangle):
+    # reciprocity: omega(-q) = omega(q) makes the band flat at q = 0
+    target = mc.sh_standing(1, 1, 1.7, 1.0)
+    result = mc.solve(free_rectangle, target, 2, wavenumber=0.0, clamped=SLIDING)
+    assert np.asarray(result.group_velocity).tolist() == [0.0, 0.0]

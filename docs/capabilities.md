@@ -484,8 +484,9 @@ returning a wrong value:
   of your own (no 2D boundary morph). Details:
   {doc}`recipes/piezoelectric-admittance`.
 - **Mechanical eigenmodes**: 2D sections only; one process and the direct
-  solver; `gfem.Absorbing` on a solid's edge raises (use a damping frame); no
-  gradient goes through the solve in this version. Details:
+  solver; `gfem.Absorbing` on a solid's edge raises (use a damping frame);
+  gradients of `omega` only (the fields, `group_velocity` and `error` raise
+  `gfem.NonDifferentiableError`, and so does a mode in a cluster). Details:
   {doc}`recipes/mechanical-modes`.
 - **Layer patterns**: width and spacing only (no minimum area), and a pre-check, not
   foundry sign-off; one flat GDS cell; layer grids only (no free-form 3D

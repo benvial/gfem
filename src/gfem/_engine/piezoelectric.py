@@ -518,7 +518,7 @@ def _weak_forms(
     *,
     wavenumber_pieces: bool = False,
 ) -> dict[str, tuple[Callable[[Any, Any], Any], Any]]:
-    r"""The five pieces of :math:`A`: ``(integrand, measure)`` by name.
+    r"""The pieces of :math:`A`: ``(integrand, measure)`` by name.
 
     The integrand takes ``(trial, test)`` 4-tuples ``(u_x, u_y, u_z, phi)``.
     The one place the forms are written: the system assembles them and the

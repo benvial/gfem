@@ -1164,7 +1164,7 @@ exactly in the discrete problem. Each check runs on every change to gfem.
   error falls at least 100 times when the edge length halves.
 - **Identities.** A uniform quality factor scales every frequency by
   $\sqrt{1 + i/Q_m}$; a lossless mode has a real frequency; $\omega(-q) =
-  \omega(q)$ for an isotropic section; a mode is normalized to 1 J/m with a real
+  \omega(q)$ for a section; a mode is normalized to 1 J/m with a real
   largest coefficient; the group velocity matches a central difference of the
   band.
 - **Piezoelectric plate.** The thickness-extensional plate of a 6mm crystal

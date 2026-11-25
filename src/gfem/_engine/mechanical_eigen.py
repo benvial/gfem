@@ -668,12 +668,11 @@ class MechanicalSystem:
         q = self.q
         if q == 0:
             # only the order-0 forms enter the matrix that is factorized; the
-            # first-order form is for the group velocity alone
+            # group velocity is 0 there by reciprocity, so no first-order form
             form, a = self._form(forms, ("k0", "m"), symmetric=True)
-            _, b = self._form(forms, ("k1",), symmetric=False)
             stored = a["k0"][0]
             k = a["k0"][1]
-            d = -1j * b["k1"][1]
+            d = None
         else:
             form, a = self._form(forms, tuple(_GROUPS), symmetric=False)
             stored = a["k0"][0] - 1j * q * a["k1"][0] + q**2 * a["k2"][0]
@@ -687,7 +686,7 @@ class MechanicalSystem:
         self.k = k[i][:, i].tocsr()
         self.mass = a["m"][1][i][:, i].tocsr()
         # d/dq of the wavenumber in the mesh's unit is the mesh's unit per metre
-        self.dk = (self.built.scale * d)[i][:, i].tocsr()
+        self.dk = None if d is None else (self.built.scale * d)[i][:, i].tocsr()
         self.k_norm = float(spla.norm(self.k, 1))
         self.m_norm = float(spla.norm(self.mass, 1))
 
@@ -791,12 +790,22 @@ class MechanicalSystem:
         return x
 
     def _left(
-        self, lam: complex, x: np.ndarray, tolerance: float, handle: DirectHandle | None
+        self,
+        lam: complex,
+        x: np.ndarray,
+        tolerance: float,
+        handle: DirectHandle | None,
+        mode: int,
     ) -> np.ndarray:
-        r"""The left vector :math:`y`, :math:`y^T A(\lambda) = 0`, of a mode.
+        r"""The left vector :math:`y`, :math:`y^T A(\lambda) = 0`, of mode ``mode``.
 
         ``handle`` is the factorization of `_shifted`, for a lossy section at a
         wavenumber.
+
+        Raises:
+            EigenmodeConvergenceError: The iteration ends above ``tolerance``
+                (the group velocity and the gradient of the mode are first
+                order in that error).
         """
         if self.lossless:
             return np.conj(x)
@@ -804,15 +813,24 @@ class MechanicalSystem:
             return x
         assert handle is not None  # noqa: S101
         y = np.conj(x)
+        error = np.inf
         for _ in range(_LEFT_STEPS):
             y = handle.solve(self._embed(self.mass.T @ y), transpose=True)[self.index]
             y = y / np.linalg.norm(y)
-            if self._backward_error(lam, y, left=True) <= tolerance:
-                break
-        return y
+            error = self._backward_error(lam, y, left=True)
+            if error <= tolerance:
+                return y
+        raise EigenmodeConvergenceError(
+            f"MechanicalEigenmode: the left vector of mode {mode} did not reach "
+            f"eigen_tolerance={tolerance:g} in {_LEFT_STEPS} steps (backward error "
+            f"{error:.2g}), so its group velocity and gradient would be inexact. "
+            "A neighbouring mode is closer than SolverOptions.cluster_rtol "
+            "separates, or the section is badly scaled: loosen "
+            "SolverOptions.eigen_tolerance or raise cluster_rtol."
+        )
 
     def _vectors(
-        self, lam: complex, x: np.ndarray, omega: complex, tolerance: float
+        self, lam: complex, x: np.ndarray, omega: complex, tolerance: float, mode: int
     ) -> tuple[np.ndarray, np.ndarray]:
         """The normalized right vector of a mode and its left vector.
 
@@ -825,7 +843,7 @@ class MechanicalSystem:
             if handle is not None and self.coupled:
                 x = self._refined(handle, x)
             v = self._normalized(x, omega)
-            return v, self._left(lam, v, tolerance, handle)
+            return v, self._left(lam, v, tolerance, handle, mode)
         finally:
             if handle is not None:
                 handle.free()
@@ -871,6 +889,9 @@ class MechanicalSystem:
         )
         found = [found[i] for i in order]
         omega_all = omega_all[order]
+        # the labels run over the kept modes and the guard modes; a partner of a
+        # kept mode among the guard modes makes it shared, and a partner the
+        # eigensolver did not return, or dropped for its error, is not seen
         every = clusters(list(omega_all), options.cluster_rtol)
         labels = every[:want]
         shared = np.array([np.sum(every == label) > 1 for label in labels])
@@ -887,19 +908,24 @@ class MechanicalSystem:
         gram = np.zeros(want, complex)
         lams = np.zeros(want, complex)
         for i, (lam, x, error) in enumerate(found[:want]):
-            v, y = self._vectors(lam, x, omega_all[i], tolerance)
+            v, y = self._vectors(lam, x, omega_all[i], tolerance, i)
             # the two-sided Rayleigh quotient: second order in the vectors' errors,
             # where the Ritz value is first order in its residual
             lams[i] = (y @ (self.k @ v)) / (y @ (self.mass @ v))
+            if self.lossless:
+                # Im of the quotient is round-off of either sign: a lossless
+                # section has a real frequency, so its quality factor is inf
+                lams[i] = lams[i].real
             omega = np.sqrt(lams[i])
             v = self._normalized(v, omega)
             right[self.index, i], left[self.index, i] = v, y
             gram[i] = y @ (self.mass @ v)
             out["omega"][i] = omega
             out["error"][i] = error
-            out["group_velocity"][i] = np.real(
-                (y @ (self.dk @ v)) / (2 * omega * (y @ (self.mass @ v)))
-            )
+            if self.dk is not None:
+                out["group_velocity"][i] = np.real(
+                    (y @ (self.dk @ v)) / (2 * omega * (y @ (self.mass @ v)))
+                )
             full = self._embed(v)
             out["displacement"][i] = full[: 3 * self.nu].reshape(3, self.nu)
             out["potential"][i] = full[3 * self.nu :]

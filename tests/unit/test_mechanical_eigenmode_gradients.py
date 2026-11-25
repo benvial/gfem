@@ -276,6 +276,25 @@ def test_a_coupled_plate_gradient_matches_finite_differences(plate, name, q):
     )
 
 
+@pytest.mark.parametrize("axis", [0, 1], ids=["x", "y"])
+def test_a_stretch_of_a_coupled_plate_matches_finite_differences(plate, axis):
+    # the node pass of the coupling and dielectric pieces at q > 0. The step is 1e-3
+    # on the stretch s: a thickness stretch of 1e-2 moves the plate between its
+    # nearest modes (the samples jump by 3 %), 1e-3 does not. The fourth-order
+    # difference truncates at about 4 h^4 = 4e-12 relative and rounds at
+    # eps / h = 2e-13 (omega is smooth to the 1e-13 backward error of the solve).
+    target = float(np.real(pc.plate_form("TE")["v"])) / (2 * pc.PLATE_THICKNESS * mc.UM)
+    problem = gfem.MechanicalEigenmode(
+        target, wavenumber=Q_PLATE, clamped=PLATE_CLAMPED
+    )
+
+    def objective(s):
+        model = gfem.Model(_stretched(plate.mesh, s, axis), materials=plate.materials)
+        return _omega(model, problem, PLATE_OPTIONS)
+
+    _check(objective, jnp.asarray(1.0), [np.asarray(1.0)], 1e-3)
+
+
 # --- what raises ----------------------------------------------------------------------
 
 
@@ -323,6 +342,16 @@ def test_a_degenerate_mode_refuses_by_name(tmp_path):
         jax.grad(objective)(mc.RHO)
 
 
+def test_a_left_vector_above_the_tolerance_raises_by_mode(rectangle, monkeypatch):
+    # no left iteration at all leaves the start vector conj(x), whose backward
+    # error is far above the 1e-10 tolerance of a lossy section at q
+    monkeypatch.setattr("gfem._engine.mechanical_eigen._LEFT_STEPS", 0)
+    model = mc.model(rectangle, quality=QUALITY)
+    problem = gfem.MechanicalEigenmode(1.2e9, wavenumber=Q_RECT)
+    with pytest.raises(gfem.EigenmodeConvergenceError, match="left vector of mode 0"):
+        gfem.solve(model, problem)
+
+
 # --- the strain of a mode ---------------------------------------------------------
 
 
@@ -348,6 +377,16 @@ def test_the_job_codec_keeps_the_wavenumber_of_the_displacement(rectangle, tmp_p
     job = gfem.Job.from_json(gfem.Job(model, problem).to_json(tmp_path / "job.json"))
     result = job.run(out=tmp_path / "out")
     assert result.displacement(0).wavenumber == Q_RECT
+    # and from the files: the displacement is still a FieldMap at its wavenumber,
+    # so gfem.strain reads it
+    back = gfem.load_result(tmp_path / "out")
+    loaded = back.displacement(0)
+    assert type(loaded).__name__ == "FieldMap"
+    assert loaded.wavenumber == Q_RECT
+    points = np.array([[0.6e-6, 0.4e-6]])
+    assert np.asarray(gfem.strain(loaded, points)) == pytest.approx(
+        np.asarray(gfem.strain(result.displacement(0), points)), rel=1e-12, abs=1e-30
+    )
 
 
 def test_the_strain_of_a_mode_adds_the_axial_derivative(rectangle):

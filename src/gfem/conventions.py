@@ -603,9 +603,9 @@ decaying mode has :math:`\mathrm{Im}\,\omega > 0` and its quality factor is
   \mathrm{d}A = 1` J per metre along :math:`z`, with its largest coefficient
   real and positive: for a lossless mode the time-averaged energy.
 - ``group_velocity`` is :math:`\mathrm{Re}\,\mathrm{d}\omega/\mathrm{d}q` in m/s,
-  the exact derivative of the discrete band; a section with a mirror symmetry
-  along :math:`z` has :math:`\omega(-q) = \omega(q)` and the opposite group
-  velocity at :math:`-q`.
+  the exact derivative of the discrete band. Every section is reciprocal:
+  :math:`\omega(-q) = \omega(q)`, the opposite group velocity at :math:`-q`, and
+  exactly 0 at :math:`q = 0`.
 - ``clamped`` fixes all three components on a line given by its name, or the
   components of a string of ``"xyz"`` (the lab axes): ``"x"`` on a line of
   constant :math:`x` keeps :math:`u_x = 0` and slides in :math:`y` and :math:`z`.

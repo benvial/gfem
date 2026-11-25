@@ -45,14 +45,14 @@ model = gfem.Model(
     mesh, materials={"film": glass, "frame_left": glass, "frame_right": glass}
 )
 
-q = 2e6  # rad/m, a wavelength of 3.1 um along z
-problem = gfem.MechanicalEigenmode(1e9, n_modes=3, wavenumber=q, clamped="end")
+wavenumber = 2e6  # rad/m, a wavelength of 3.1 um along z
+problem = gfem.MechanicalEigenmode(1e9, n_modes=3, wavenumber=wavenumber, clamped="end")
 res = gfem.solve(model, problem)
 print(res)
 ```
 
 ```text
-MechanicalEigenmodeResult([974.596 MHz (Q 1000), 1.08455 GHz (Q 1000), 1.11127 GHz (Q 1000)], q=2e+06 rad/m)
+MechanicalEigenmodeResult([974.596 MHz (Q 1000), 1.08455 GHz (Q 1000), 1.11127 GHz (Q 1000)], wavenumber=2e+06 rad/m)
 ```
 
 The modes are the `n_modes` nearest the `target`, nearest first. `res.omega` is
@@ -96,11 +96,11 @@ derivative of the discrete band, so a difference of two solves at
 $q \pm \delta q$ agrees with it:
 
 ```python
-dq = 1e-3 * q
+dq = 1e-3 * wavenumber
 bands = [
     gfem.solve(
         model,
-        gfem.MechanicalEigenmode(1e9, wavenumber=q + s * dq, clamped="end"),
+        gfem.MechanicalEigenmode(1e9, wavenumber=wavenumber + s * dq, clamped="end"),
     )
     for s in (-1, 1)
 ]
@@ -113,8 +113,8 @@ v_g = 1797.7 m/s, difference 1797.7 m/s
 ```
 
 A mode with $q > 0$ travels along $+z$ where its group velocity is positive,
-and $\omega(-q) = \omega(q)$ for a section with a mirror symmetry along $z$,
-which every isotropic one has.
+and $\omega(-q) = \omega(q)$ for every section (reciprocity), with the
+opposite group velocity; at $q = 0$ the group velocity is exactly 0.
 
 ## A damping frame
 
@@ -129,7 +129,7 @@ frames, and their $Q$ is the plate's anchor loss:
 ```python
 frame = gfem.DampingFrame(["frame_left", "frame_right"])
 problem = gfem.MechanicalEigenmode(
-    1e9, n_modes=3, wavenumber=q, clamped="end", damping_frame=frame
+    1e9, n_modes=3, wavenumber=wavenumber, clamped="end", damping_frame=frame
 )
 lossy = gfem.solve(model, problem)
 for f, quality in zip(np.asarray(lossy.frequency), np.asarray(lossy.q), strict=True):
@@ -156,8 +156,10 @@ to the target, so the order differs between the two solves.
   process and the sparse direct solver.
 - A `gfem.Absorbing` line on a solid's edge: use a damping frame.
 - A region of the mechanical domain without a stiffness or a density.
-- A gradient through the solve: the problem is not differentiable in this
-  version.
+- A gradient of anything but `omega` (so frequency and Q): the fields,
+  `group_velocity` and `error` raise `gfem.NonDifferentiableError`, and so does
+  a mode in a cluster. `omega` differentiates in the materials and the node
+  coordinates.
 - Fewer than `n_modes` modes meeting `SolverOptions.eigen_tolerance`:
   {py:obj}`gfem.EigenmodeConvergenceError`.
 
