@@ -526,8 +526,8 @@ def _weak_forms(
     With ``wavenumber_pieces`` the forms of a field :math:`e^{-iqz}` follow,
     for the stiffness, the loss, the coupling and the dielectric: with
     :math:`S_z(u)` the strain :math:`\partial_z u` per unit :math:`\partial_z`
-    (:math:`u_z` in zz, :math:`u_y` in yz, :math:`u_x` in xz), the trial's :math:`\partial_z` is
-    :math:`-iq` and the test's :math:`+iq`, so that the form is
+    (:math:`u_z` in zz, :math:`u_y` in yz, :math:`u_x` in xz), the trial's
+    :math:`\partial_z` is :math:`-iq` and the test's :math:`+iq`, so that the form is
     ``<piece>`` :math:`-iq` ``<piece>1`` :math:`+ q^2` ``<piece>2`` with the
     three real forms ``<piece>`` (the in-plane strains alone),
     ``<piece>1`` :math:`= S_\perp(v)\cdot c\,S_z(u) - S_z(v)\cdot
@@ -890,11 +890,14 @@ class Electrodes:
         return tuple(dict.fromkeys([*out, *self.ground_lines]))
 
 
-def _check_electrodes(model: Model, problem: Piezoelectric) -> Electrodes:
-    """The electrodes the problem names, checked against the model."""
+def _check_electrodes(model: Model, problem: Any) -> Electrodes:
+    """The electrodes the problem names, checked against the model.
+
+    ``problem`` is a `Piezoelectric` or a `MechanicalEigenmode` (``ground`` only).
+    """
     terminals = []
     named = set()
-    for name, surfaces in problem.terminals:
+    for name, surfaces in getattr(problem, "terminals", ()):
         lines, areas = _lines_and_areas(model, surfaces, "terminal")
         terminals.append((name, lines, areas))
         named.update(surfaces)

@@ -1798,9 +1798,14 @@ class MechanicalEigenmode:
     that is free at :math:`q = 0` has rigid-body motions at :math:`\omega = 0`:
     they are not returned.
 
-    A model whose materials carry a piezoelectric tensor couples the
-    potential to the displacement; that case is not available in this
-    version (`gfem.solve` raises `NotImplementedError`).
+    A model whose mechanical-domain materials carry a nonzero piezoelectric
+    tensor couples the potential to the displacement: the potential joins the
+    unknowns on the electromagnetic domain, as in `gfem.Piezoelectric`, the
+    lines and areas of ``ground`` (and any `gfem.PEC` line) hold it at zero,
+    and ``result.potential(mode)`` returns it, in V, scaled with the
+    displacement. At :math:`q = 0` an ungrounded section's constant potential
+    is fixed by pinning one DOF per connected component (the potential is
+    defined up to that constant).
 
     Example:
         Two modes of a strip near 2 GHz at :math:`q = 10^5` rad/m, the strip's
@@ -1841,8 +1846,8 @@ class MechanicalEigenmode:
             pass a fixed value.
 
     `gfem.solve` raises `NotImplementedError` on a 3D or slab mesh, with
-    ``linear_solver="petsc"``, under ``comm``, on a GPU ``device`` and on a
-    model with a piezoelectric tensor; `ValueError` for a ``clamped`` or
+    ``linear_solver="petsc"``, under ``comm`` and on a GPU ``device``;
+    `ValueError` for a ``clamped`` or
     ``ground`` name that does not fit the model (``ground`` on a model
     without a piezoelectric region included) and for a `gfem.Absorbing` line
     bordering the mechanical domain (absorb with ``damping_frame``);

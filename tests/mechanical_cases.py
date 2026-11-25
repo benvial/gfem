@@ -17,6 +17,7 @@ import itertools
 from pathlib import Path
 
 import numpy as np
+import piezo_cases as pc
 import thermal_cases as tc
 from scipy.optimize import brentq
 
@@ -148,3 +149,59 @@ def rayleigh_ratio() -> float:
     roots = np.roots([1, 0, -8, 0, 24 - 16 * k2, 0, -16 * (1 - k2)])
     real = [r.real for r in roots if abs(r.imag) < 1e-12 and 0 < r.real < 1]
     return float(max(real))
+
+
+# --- a piezoelectric plate (6mm crystal) --------------------------------------------
+
+
+def piezo_plate_mesh(path: Path, width: float, height: float, maxh: float):
+    """A plate's rectangle: lines ``left``, ``right``, ``bot``, ``top``."""
+    edges: list[tc.Namer] = [
+        (lambda p: abs(p[0]) < 1e-9, "left"),
+        (lambda p: abs(p[0] - width) < 1e-9, "right"),
+        (lambda p: abs(p[1]) < 1e-9, "bot"),
+        (lambda p: abs(p[1] - height) < 1e-9, "top"),
+    ]
+    nodes, tris, lines = tc._mesh2d([(0, 0, width, height, "pz", None)], maxh, edges)
+    path = Path(path)
+    tc._write_section(path, nodes, tris, lines)
+    return gfem.Mesh.from_gmsh(path, length_unit="um")
+
+
+def piezo_plate_model(mesh: gfem.Mesh, kind: str, *, quality=None) -> gfem.Model:
+    """The plate of crystal ``kind`` (``"TE"``: c axis along y, ``"TS"``: along z)."""
+    return pc.plate_model(mesh, kind, quality=quality)
+
+
+def stiffened_frequencies(ky: float, q: float) -> list[float]:
+    r"""Frequencies (Hz) of the plane waves :math:`k = (0, k_y, q)` of the TS crystal.
+
+    The two in-plane branches of the piezoelectrically stiffened Christoffel
+    equation :math:`\rho\omega^2 p = (B^T c B + \gamma\gamma^T/(k\cdot\epsilon k))
+    p`, :math:`B` the strain of :math:`p\,e^{-ik\cdot r}` (Voigt, engineering
+    shear) and :math:`\gamma = B^T e^T k`; the crystal axes are the lab's.
+    """
+    c, e, eps = pc.hexagonal("TS")
+    k = np.array([0.0, ky, q])
+    b = np.array(
+        [
+            [k[0], 0, 0],
+            [0, k[1], 0],
+            [0, 0, k[2]],
+            [0, k[2], k[1]],
+            [k[2], 0, k[0]],
+            [k[1], k[0], 0],
+        ]
+    )
+    d = pc.EPS0 * np.diag(eps)
+    gamma = b.T @ e.T @ k
+    gt = b.T @ c @ b + np.outer(gamma, gamma) / (k @ d @ k)
+    values = np.linalg.eigvalsh(gt) / pc.HEX["rho"]
+    # the in-plane (y, z) branches: the eigenvectors without an x component
+    vectors = np.linalg.eigh(gt)[1]
+    in_plane = np.abs(vectors[0]) < 1e-8
+    return [
+        float(np.sqrt(v)) / (2 * np.pi)
+        for v, ok in zip(values, in_plane, strict=True)
+        if ok
+    ]

@@ -39,15 +39,17 @@ import jax.numpy as jnp
 import ngsolve as ngs
 import numpy as np
 import scipy.sparse as sp
+import scipy.sparse.csgraph  # noqa: F401
 import scipy.sparse.linalg as spla
 
 from gfem._checks import is_traced
 from gfem._eigen.reach import clusters
 from gfem._engine.cache import Entry, discretization
-from gfem._engine.domain import em_region, h1_space
+from gfem._engine.domain import em_region, h1_space, region_domain
 from gfem._engine.piezoelectric import (
     _check_absorbing,
     _check_clamped,
+    _check_electrodes,
     _check_frame,
     _check_materials,
     _check_mechanical,
@@ -85,6 +87,12 @@ _GROUPS = {
     "k2": (("stiffness2", 1.0), ("loss2", 1j)),
     "m": (("mass", 1.0),),
 }
+#: What a piezoelectric section adds to each group (the potential's forms).
+_COUPLED = {
+    "k0": (("coupling", 1.0), ("dielectric", 1.0)),
+    "k1": (("coupling1", 1.0), ("dielectric1", 1.0)),
+    "k2": (("coupling2", 1.0), ("dielectric2", 1.0)),
+}
 
 
 class MechanicalEigenmodeRule:
@@ -121,8 +129,7 @@ class MechanicalEigenmodeRule:
         """Check that the problem fits the model (see `gfem.MechanicalEigenmode`).
 
         Raises:
-            NotImplementedError: ``linear_solver="petsc"``, or a model with a
-                piezoelectric tensor.
+            NotImplementedError: ``linear_solver="petsc"``.
             RegionNotFoundError: A name is not a region of the mesh.
             ValueError: The problem does not fit the model; the message gives
                 the remedy.
@@ -153,21 +160,21 @@ class MechanicalEigenmodeRule:
                 "piezoelectric tensor: drop ground=, or give the material its "
                 "piezoelectric_tensor."
             )
-        if self.coupled:
-            raise NotImplementedError(
-                "A MechanicalEigenmode solve of a model with a piezoelectric "
-                "tensor is not available in this version: leave the "
-                "piezoelectric_tensor out of the materials of the mechanical "
-                "domain, or solve the admittance with gfem.Piezoelectric."
-            )
+        #: The grounded lines and areas of the potential (coupled models).
+        self.electrodes = _check_electrodes(model, problem) if self.coupled else None
         mesh = model.mesh
         mechanical = model._domain_of("mechanical")  # noqa: SLF001
         #: The areas with elements in the mechanical domain, mesh order.
         self.mechanical_regions = tuple(
             r for r in mesh.volumes if mechanical.active[mesh.elements(r)].any()
         )
+        domain = model._domain  # noqa: SLF001
+        self.potential_regions = tuple(
+            r for r in mesh.volumes if domain.active[mesh.elements(r)].any()
+        )
         self._mesh = mesh
         self._mechanical_excluded = mechanical.excluded
+        self._em_excluded = domain.excluded
 
     def forward(
         self,
@@ -181,8 +188,8 @@ class MechanicalEigenmodeRule:
         Returns:
             ``{"omega": (n,) rad/s, "error": (n,), "group_velocity": (n,) m/s,
             "cluster": (n,), "displacement": (n, 3, n_dof) m, "potential":
-            (n, 0) V}``, the modes nearest first, and no entry (nothing is
-            differentiated yet).
+            (n, n_dof) V, empty without coupling}``, the modes nearest first,
+            and no entry (nothing is differentiated yet).
 
         Raises:
             EigenmodeConvergenceError: Fewer than ``n_modes`` modes meet
@@ -220,6 +227,22 @@ class MechanicalEigenmodeRule:
             )
             for i in range(omegas.shape[0])
         ]
+        potential = []
+        if self.coupled:
+            potential = [
+                Field(
+                    coefficients=outputs["potential"][i],
+                    mesh=self._mesh,
+                    quantity="V",
+                    unit="V",
+                    space="h1",
+                    order=order,
+                    support=self.potential_regions,
+                    omega=omegas[i],
+                    _excluded=self._em_excluded,
+                )
+                for i in range(omegas.shape[0])
+            ]
         return MechanicalEigenmodeResult(
             omega=jnp.asarray(outputs["omega"]),
             error=jnp.asarray(outputs["error"]),
@@ -227,7 +250,7 @@ class MechanicalEigenmodeRule:
             wavenumber=self.problem.wavenumber,
             cluster=jnp.asarray(outputs["cluster"]),
             displacement_fields=displacement,
-            potential_fields=(),
+            potential_fields=potential,
         )
 
     # --- the solve_vjp interface ---------------------------------------------------
@@ -248,7 +271,7 @@ class MechanicalEigenmodeRule:
             "group_velocity": jax.ShapeDtypeStruct((n,), jnp.float64),
             "cluster": jax.ShapeDtypeStruct((n,), jnp.int64),
             "displacement": jax.ShapeDtypeStruct((n, 3, system.nu), jnp.complex128),
-            "potential": jax.ShapeDtypeStruct((n, 0), jnp.complex128),
+            "potential": jax.ShapeDtypeStruct((n, system.nphi), jnp.complex128),
         }
 
     def role(self, kind: tuple) -> str:
@@ -339,10 +362,13 @@ class MechanicalSystem:
     r"""The assembled pencil and its eigensolver.
 
     Attributes:
-        space: The compound space ``[u_x, u_y, u_z]``.
+        space: The compound space ``[u_x, u_y, u_z]``, plus the potential
+            ``phi`` for a piezoelectric section.
         ndof: Its size.
         nu: The size of one displacement block.
-        free: Boolean mask of the free DOFs.
+        nphi: The size of the potential block (0 without coupling).
+        free: Boolean mask of the free DOFs (the grounded potential and the
+            gauge pin are not free).
         lossless: Whether :math:`\hat K` is Hermitian (no loss anywhere).
         matrix: The NGSolve matrix a factorization is written into.
     """
@@ -374,14 +400,28 @@ class MechanicalSystem:
             )
             for axis in "xyz"
         ]
+        self.coupled = rule.coupled
+        electrodes = rule.electrodes
+        self.vp = None
+        if electrodes is not None:
+            self.vp = h1_space(
+                model,
+                built,
+                order,
+                electrodes.lines,
+                physics="em",
+                complex_valued=True,
+            )
+            spaces.append(self.vp)
         with serial_spaces():
             self.space = ngs.FESpace(spaces)
         self.nu = spaces[0].ndof
+        self.nphi = self.vp.ndof if self.vp is not None else 0
         self.ndof = self.space.ndof
         self.free = free_mask(self.space.FreeDofs(), self.ndof)
-        self.free_bits = ngs.BitArray(self.free.tolist())
-        #: The free DOFs' indices; the vectors of the eigensolver live there.
-        self.index = np.flatnonzero(self.free)
+        if electrodes is not None:
+            self._ground_areas(model, electrodes.ground_areas)
+        self._fix(self.free)
         #: The wavenumber in the mesh's length unit.
         self.q = problem.wavenumber * built.scale
         self.lossless = False
@@ -390,6 +430,21 @@ class MechanicalSystem:
         if assemble:
             self._assemble(model, rule, mech, diel)
 
+    def _ground_areas(self, model: Model, names: tuple[str, ...]) -> None:
+        """Hold the potential at zero on the grounded areas."""
+        assert self.vp is not None  # noqa: S101
+        for name in names:
+            region = region_domain(model, self.built, name)
+            mask = free_mask(self.vp.GetDofs(region), self.nphi)
+            self.free[3 * self.nu :][mask] = False
+
+    def _fix(self, free: np.ndarray) -> None:
+        """Set the free DOFs, their bit array and their indices."""
+        self.free = free
+        self.free_bits = ngs.BitArray(free.tolist())
+        #: The free DOFs' indices; the vectors of the eigensolver live there.
+        self.index = np.flatnonzero(free)
+
     def release(self) -> None:
         """Free the factorization, if any."""
         if self._handle is not None:
@@ -397,6 +452,11 @@ class MechanicalSystem:
             self._handle = None
 
     # --- assembly ------------------------------------------------------------------
+
+    def _pieces(self, group: str) -> tuple[tuple[str, complex], ...]:
+        """The ``(piece, factor)`` pairs of ``group``, plus the potential's."""
+        extra = _COUPLED.get(group, ()) if self.coupled else ()
+        return (*_GROUPS[group], *extra)
 
     def _form(
         self, forms: dict[str, Any], names: tuple[str, ...], *, symmetric: bool
@@ -414,7 +474,7 @@ class MechanicalSystem:
         with ngs.TaskManager():
             k = ngs.BilinearForm(self.space, symmetric=symmetric)
             for g in names:
-                for piece, factor in _GROUPS[g]:
+                for piece, factor in self._pieces(g):
                     form, dx = forms[piece]
                     k += switches[g] * (factor * form(u, v)) * dx
             for g in names:
@@ -454,6 +514,8 @@ class MechanicalSystem:
             d = -1j * a["k1"][1] + 2 * q * a["k2"][1]
         self._k, self._m = stored, a["m"][0]
         self.matrix = form.mat.CreateMatrix()
+        if self.coupled and q == 0:
+            self._pin(k)
         i = self.index
         self.k = k[i][:, i].tocsr()
         self.mass = a["m"][1][i][:, i].tocsr()
@@ -461,6 +523,23 @@ class MechanicalSystem:
         self.dk = (self.built.scale * d)[i][:, i].tocsr()
         self.k_norm = float(spla.norm(self.k, 1))
         self.m_norm = float(spla.norm(self.mass, 1))
+
+    def _pin(self, k: sp.csr_array) -> None:
+        r"""Pin one potential DOF in each ungrounded connected component.
+
+        At :math:`q = 0` a constant potential is a null vector of
+        :math:`K_0` and of :math:`M`. The components are those of the graph of
+        the potential block of ``k``; one holding a fixed DOF is grounded.
+        """
+        start = 3 * self.nu
+        block = k[start:, start:]
+        count, label = sp.csgraph.connected_components(block, directed=False)
+        free = self.free.copy()
+        for c in range(count):
+            dofs = np.flatnonzero(label == c)
+            if free[start + dofs].all():
+                free[start + dofs[0]] = False
+        self._fix(free)
 
     # --- solves --------------------------------------------------------------------
 
@@ -591,7 +670,7 @@ class MechanicalSystem:
             "group_velocity": np.zeros(want),
             "cluster": labels,
             "displacement": np.zeros((want, 3, self.nu), complex),
-            "potential": np.zeros((want, 0), complex),
+            "potential": np.zeros((want, self.nphi), complex),
         }
         for i, (lam, x, error) in enumerate(found[:want]):
             omega = omega_all[i]
@@ -602,15 +681,19 @@ class MechanicalSystem:
             out["group_velocity"][i] = np.real(
                 (y @ (self.dk @ v)) / (2 * omega * (y @ (self.mass @ v)))
             )
-            out["displacement"][i] = self._embed(v).reshape(3, self.nu)
+            full = self._embed(v)
+            out["displacement"][i] = full[: 3 * self.nu].reshape(3, self.nu)
+            out["potential"][i] = full[3 * self.nu :]
         return out
 
     def _normalized(self, x: np.ndarray, omega: complex) -> np.ndarray:
         r"""``x`` scaled to :math:`\tfrac12 (\mathrm{Re}\,\omega)^2 x^H M x = 1`.
 
-        The largest coefficient is real and positive.
+        The largest displacement coefficient is real and positive; the
+        potential is scaled with it.
         """
         energy = np.real(np.vdot(x, self.mass @ x))
         x = x * np.sqrt(2 / (omega.real**2 * energy))
-        largest = x[np.argmax(np.abs(x))]
+        shown = np.flatnonzero(self.index < 3 * self.nu)
+        largest = x[shown[np.argmax(np.abs(x[shown]))]]
         return x * (np.conj(largest) / abs(largest))

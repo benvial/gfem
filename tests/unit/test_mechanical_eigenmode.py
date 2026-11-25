@@ -4,8 +4,10 @@ import dataclasses
 
 import mechanical_cases as mc
 import numpy as np
+import piezo_cases as pc
 import pytest
 import thermal_cases as tc
+from scipy.optimize import brentq
 
 import gfem
 
@@ -435,19 +437,6 @@ def test_an_absorbing_line_a_missing_property_and_a_coupled_model_raise(free_rec
     bare = gfem.Model(rect.mesh, materials={"film": gfem.Material(mass_density=1.0)})
     with pytest.raises(gfem.MissingMaterialPropertyError, match="stiffness"):
         gfem.solve(bare, gfem.MechanicalEigenmode(1e9))
-    coupled = gfem.Model(
-        rect.mesh,
-        materials={
-            "film": gfem.Material(
-                stiffness=gfem.isotropic_stiffness(mc.E, mc.NU),
-                mass_density=mc.RHO,
-                piezoelectric_tensor=np.ones((3, 6)),
-                eps_r=4.0,
-            )
-        },
-    )
-    with pytest.raises(NotImplementedError, match="piezoelectric"):
-        gfem.solve(coupled, gfem.MechanicalEigenmode(1e9))
 
 
 def test_too_few_converged_modes_raise_the_convergence_error(free_rectangle):
@@ -484,3 +473,143 @@ def test_a_gradient_through_the_frequency_refuses_by_name_and_an_unread_one_is_z
         return jnp.real(gfem.solve(other, problem).omega[0])
 
     assert float(jax.grad(conductivity)(1.0)) == 0.0
+
+
+# --- piezoelectric coupling ----------------------------------------------------------
+
+UM_M = 1e-6
+TE_THICKNESS = pc.PLATE_THICKNESS * UM_M
+
+
+@pytest.fixture(scope="module")
+def te_plate(tmp_path_factory):
+    mesh = mc.piezo_plate_mesh(
+        tmp_path_factory.mktemp("te") / "te.msh",
+        pc.PLATE_WIDTH,
+        pc.PLATE_THICKNESS,
+        0.25,
+    )
+    return mc.piezo_plate_model(mesh, "TE")
+
+
+def _te_solve(model, target, **problem):
+    options = gfem.SolverOptions(order=3)
+    return gfem.solve(
+        model,
+        gfem.MechanicalEigenmode(
+            target, clamped={"left": "x", "right": "x"}, **problem
+        ),
+        options=options,
+    )
+
+
+def test_an_open_plate_resonates_at_the_stiffened_half_wave(
+    te_plate,
+):
+    form = pc.plate_form("TE")
+    fa = float(np.real(form["v"])) / (2 * TE_THICKNESS)
+    result = _te_solve(te_plate, fa, n_modes=1)
+    # the closed form is exact for the 1D thickness problem: only the mesh errs
+    # (8e-7 here, 9e-9 at half the element size: order 3, h^6 for a frequency)
+    assert float(result.frequency[0]) == pytest.approx(fa, rel=3e-6)
+    assert result.potential_fields[0].coefficients.shape[0] > 0
+
+
+def test_a_shorted_plate_resonates_where_tan_x_over_x_is_one_over_k2(
+    te_plate,
+):
+    form = pc.plate_form("TE")
+    v, k2 = float(np.real(form["v"])), float(np.real(form["k2"]))
+    x = brentq(lambda x: np.tan(x) / x - 1 / k2, 0.1, np.pi / 2 - 1e-9)
+    exact = x * v / (np.pi * TE_THICKNESS)
+    result = _te_solve(te_plate, exact, ground=["bot", "top"])
+    assert float(result.frequency[0]) == pytest.approx(exact, rel=1e-6)
+    # shorted resonates below the open one, by the coupling
+    assert exact < v / (2 * TE_THICKNESS)
+
+
+def test_a_shorted_resonance_is_a_pole_of_the_admittance(te_plate):
+    form = pc.plate_form("TE")
+    fa = float(np.real(form["v"])) / (2 * TE_THICKNESS)
+    k2 = float(np.real(form["k2"]))
+    x = brentq(lambda x: np.tan(x) / x - 1 / k2, 0.1, np.pi / 2 - 1e-9)
+    result = _te_solve(te_plate, x / np.pi * 2 * fa, ground=["bot", "top"])
+    f0 = float(result.frequency[0])
+    problem = pc.plate_problem([0.99 * f0, f0, 1.01 * f0])
+    y = np.abs(
+        np.asarray(
+            gfem.solve(
+                te_plate, problem, options=gfem.SolverOptions(order=3)
+            ).admittance_per_length
+        )[:, 0, 0]
+    )
+    # near a pole |Y| ~ R / |f - f0|: at 1 % off, R / (0.01 f0); at f0 the
+    # eigenvalue's residual limits it (measured 3e6 times the 1 % value, with
+    # a backward error of 1e-25); a factor 1e5 leaves room for round-off
+    assert y[1] > 1e5 * y[0]
+    assert y[1] > 1e5 * y[2]
+
+
+def test_an_open_plate_at_q_zero_pins_its_potential_and_a_wavenumber_does_not(te_plate):
+    form = pc.plate_form("TE")
+    fa = float(np.real(form["v"])) / (2 * TE_THICKNESS)
+    pinned = _te_solve(te_plate, fa)
+    assert complex(pinned.potential_fields[0].coefficients[0]) == 0
+    moving = _te_solve(te_plate, fa, wavenumber=1e5)
+    assert complex(moving.potential_fields[0].coefficients[0]) != 0
+    # a wavenumber moves the frequency by O((q h)^2) = 1e-2 at most here
+    assert float(moving.frequency[0]) == pytest.approx(
+        float(pinned.frequency[0]), rel=1e-2
+    )
+
+
+@pytest.fixture(scope="module")
+def ts_strip(tmp_path_factory):
+    mesh = mc.piezo_plate_mesh(tmp_path_factory.mktemp("ts") / "ts.msh", 1.0, 1.0, 0.25)
+    return mc.piezo_plate_model(mesh, "TS")
+
+
+@pytest.mark.parametrize("q", [0.0, 2.0e6])
+def test_plane_waves_across_a_strip_follow_the_stiffened_christoffel_equation(
+    ts_strip, q
+):
+    ky = np.pi / (1.0 * UM_M)
+    exact = mc.stiffened_frequencies(ky, q)
+    assert len(exact) == 2
+    for f in exact:
+        result = gfem.solve(
+            ts_strip,
+            gfem.MechanicalEigenmode(
+                f,
+                clamped={"left": "x", "right": "x", "bot": "y", "top": "y"},
+                wavenumber=q,
+            ),
+            options=gfem.SolverOptions(order=3),
+        )
+        assert float(result.frequency[0]) == pytest.approx(f, rel=1e-6)
+
+
+def test_the_group_velocity_of_a_coupled_plate_matches_a_central_difference(te_plate):
+    form = pc.plate_form("TE")
+    target = 0.7 * float(np.real(form["v"])) / TE_THICKNESS
+    q, step = 3e5, 1e3
+    result = _te_solve(te_plate, target, wavenumber=q)
+    omega = [
+        float(_te_solve(te_plate, target, wavenumber=q + s).omega[0].real)
+        for s in (-step, step)
+    ]
+    # the central difference's truncation is O(step^2) of the third derivative
+    # of omega(q): about 1e-9 relative here (measured agreement 2e-8)
+    assert float(result.group_velocity[0]) == pytest.approx(
+        (omega[1] - omega[0]) / (2 * step), rel=1e-6
+    )
+
+
+def test_the_unbounded_potential_block_never_surfaces_as_a_mode(te_plate):
+    form = pc.plate_form("TE")
+    fa = float(np.real(form["v"])) / (2 * TE_THICKNESS)
+    result = _te_solve(te_plate, 2 * fa, n_modes=4)
+    frequencies = np.asarray(result.frequency)
+    assert np.all(np.isfinite(frequencies))
+    assert np.all(np.abs(frequencies - 2 * fa) < fa)
+    assert float(np.max(np.asarray(result.error))) < 1e-10
