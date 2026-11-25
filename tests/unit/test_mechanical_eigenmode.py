@@ -1,5 +1,7 @@
 """The mechanical eigenmodes of a 2D section: closed forms, identities, refusals."""
 
+import dataclasses
+
 import mechanical_cases as mc
 import numpy as np
 import pytest
@@ -454,3 +456,31 @@ def test_too_few_converged_modes_raise_the_convergence_error(free_rectangle):
         gfem.solve(
             free_rectangle, gfem.MechanicalEigenmode(1e9, n_modes=2), options=options
         )
+
+
+def test_a_gradient_through_the_frequency_refuses_by_name_and_an_unread_one_is_zero(
+    free_rectangle,
+):
+    import jax
+    import jax.numpy as jnp
+
+    mesh, materials = free_rectangle.mesh, free_rectangle.materials
+    problem = gfem.MechanicalEigenmode(1.0e9)
+
+    def stretched(s):
+        scale = jnp.ones(np.shape(mesh.nodes)[1]).at[0].set(s)
+        moved = gfem.Model(
+            mesh.with_nodes(jnp.asarray(mesh.nodes) * scale), materials=materials
+        )
+        return jnp.real(gfem.solve(moved, problem).omega[0])
+
+    with pytest.raises(gfem.NonDifferentiableError, match="MechanicalEigenmode output"):
+        jax.grad(stretched)(1.0)
+
+    def conductivity(sigma):
+        field = gfem.MaterialField.uniform("film", materials["film"])
+        field = dataclasses.replace(field, thermal_conductivity=sigma)
+        other = gfem.Model(mesh, materials={"film": field})
+        return jnp.real(gfem.solve(other, problem).omega[0])
+
+    assert float(jax.grad(conductivity)(1.0)) == 0.0

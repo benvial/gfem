@@ -199,27 +199,27 @@ class MechanicalEigenmodeRule:
     def result(self, outputs: dict[str, Any]) -> MechanicalEigenmodeResult:
         """The public result from the forward outputs."""
         order = self.options.order
-        displacement, potential = [], []
-        for i, omega in enumerate(np.asarray(outputs["omega"])):
-            displacement.append(
-                FieldMap(
-                    {
-                        axis: Field(
-                            coefficients=outputs["displacement"][i][a],
-                            mesh=self._mesh,
-                            quantity=f"u{axis}",
-                            unit="m",
-                            space="h1",
-                            order=order,
-                            support=self.mechanical_regions,
-                            omega=jnp.asarray(omega),
-                            _excluded=self._mechanical_excluded,
-                        )
-                        for a, axis in enumerate("xyz")
-                    },
-                    label="component",
-                )
+        omegas = jnp.asarray(outputs["omega"])
+        displacement = [
+            FieldMap(
+                {
+                    axis: Field(
+                        coefficients=outputs["displacement"][i][a],
+                        mesh=self._mesh,
+                        quantity=f"u{axis}",
+                        unit="m",
+                        space="h1",
+                        order=order,
+                        support=self.mechanical_regions,
+                        omega=omegas[i],
+                        _excluded=self._mechanical_excluded,
+                    )
+                    for a, axis in enumerate("xyz")
+                },
+                label="component",
             )
+            for i in range(omegas.shape[0])
+        ]
         return MechanicalEigenmodeResult(
             omega=jnp.asarray(outputs["omega"]),
             error=jnp.asarray(outputs["error"]),
@@ -227,7 +227,7 @@ class MechanicalEigenmodeRule:
             wavenumber=self.problem.wavenumber,
             cluster=jnp.asarray(outputs["cluster"]),
             displacement_fields=displacement,
-            potential_fields=potential,
+            potential_fields=(),
         )
 
     # --- the solve_vjp interface ---------------------------------------------------
