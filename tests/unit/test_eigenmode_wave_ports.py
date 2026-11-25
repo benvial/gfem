@@ -739,18 +739,24 @@ def test_the_warning_is_public_and_replayed_by_the_solve_cache():
 # --- a refusal of the port term at an iterate -----------------------------------
 
 
-@pytest.fixture
-def refuses_off_axis(monkeypatch):
-    """The port term refuses where Im k exceeds 5 % of Re k (a stand-in for a
-    complex frequency its port mode cannot be followed to)."""
+def refuse_off_axis(monkeypatch, share):
+    """The port term refuses where Im k exceeds ``share`` of Re k, but at the
+    search's seed shift (a stand-in for a complex frequency its port mode
+    cannot be followed to)."""
     real = PortTerm.at
 
     def at(self, k):
-        if complex(k).imag > 0.05 * complex(k).real:
-            raise PortTermRefusalError(self.label, complex(k), "forced")
+        z = complex(k)
+        if z.imag > share * z.real and abs(z.imag / z.real - 0.125) > 1e-9:
+            raise PortTermRefusalError(self.label, z, "forced")
         return real(self, k)
 
     monkeypatch.setattr(PortTerm, "at", at)
+
+
+@pytest.fixture
+def refuses_off_axis(monkeypatch):
+    refuse_off_axis(monkeypatch, 0.15)
 
 
 @pytest.mark.usefixtures("refuses_off_axis")
@@ -764,8 +770,10 @@ def test_a_guard_seed_the_port_term_refuses_is_dropped_silently(case_h):
     assert abs(ghz(result.omega[0]) - (7.30912 + 0.21415j)) <= 1e-3
 
 
-@pytest.mark.usefixtures("refuses_off_axis")
-def test_a_requested_seed_the_port_term_refuses_is_reported_on_a_lost_line(case_h):
+def test_a_requested_seed_the_port_term_refuses_is_reported_on_a_lost_line(
+    case_h, monkeypatch
+):
+    refuse_off_axis(monkeypatch, 0.0)
     problem = gfem.Eigenmode(target=7.3e9, n_modes=2)
     with pytest.raises(gfem.EigenmodeConvergenceError) as raised:
         gfem.solve(case_h, problem, options=ORDER_3)
@@ -830,3 +838,18 @@ def test_the_nearest_mode_does_not_depend_on_n_modes(case_a):
     assert abs(one.omega[0] - two.omega[0]) <= 1e-7 * abs(two.omega[0])
     f = ghz(one.omega)
     assert abs(f[0] - ROOT_A) <= 1e-3 * ROOT_A
+
+
+def test_a_seed_shift_the_port_term_refuses_raises_a_convergence_error(
+    case_h, monkeypatch
+):
+    real = PortTerm.at
+
+    def at(self, k):
+        if complex(k).imag > 0.1 * complex(k).real:
+            raise PortTermRefusalError(self.label, complex(k), "forced")
+        return real(self, k)
+
+    monkeypatch.setattr(PortTerm, "at", at)
+    with pytest.raises(gfem.EigenmodeConvergenceError, match="cannot follow"):
+        gfem.solve(case_h, gfem.Eigenmode(target=7.3e9, n_modes=1), options=ORDER_3)

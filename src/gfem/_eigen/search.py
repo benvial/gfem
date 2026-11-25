@@ -667,7 +667,12 @@ class ModeSearch:
         memo: list[_Outcome] = []
         for attempt in range(1, _COVER_ATTEMPTS + 1):
             if eop.shift != shift:
-                eop.reshift(shift, solves=MIN_SUBSPACE)
+                try:
+                    eop.reshift(shift, solves=MIN_SUBSPACE)
+                except PortTermRefusalError as refusal:
+                    raise EigenmodeConvergenceError(
+                        self._seed_shift_message(eop, refusal)
+                    ) from refusal
             dropped.clear()
             row.note(seed_solve=f"{attempt}/{_COVER_ATTEMPTS}")
             try:
@@ -709,6 +714,20 @@ class ModeSearch:
                     )
             nev *= 2
         return modes, failed, found, pool, ritz, bound
+
+    def _seed_shift_message(
+        self, op: EigenOperator, refusal: PortTermRefusalError
+    ) -> str:
+        """Why the solve raises when the port term cannot be set at the seed shift."""
+        c = const.c / op.scale / (2 * math.pi)
+        f = refusal.k * c
+        sign = "-" if f.imag < 0 else "+"
+        return (
+            f"Eigenmode's seed search near {hertz(self.target)} starts at the "
+            f"complex frequency {hertz(f.real)} {sign} i {hertz(abs(f.imag))}, "
+            f"where {refusal.label} cannot follow its port mode: move "
+            "Eigenmode.target away from the port mode's cutoff."
+        )
 
     def _uncovered_message(self, op: EigenOperator, h: float, attempts: int) -> str:
         """Why the solve raises when the strip is not covered after ``attempts``."""
