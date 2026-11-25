@@ -257,26 +257,10 @@ class ModeSearch:
     ) -> FoundModes:
         """`find`, its stages noted on the mode search's ``row``."""
         n_modes = self.n_modes
-        seed_tolerance = self.eigen_tolerance
-        # the companion problem also holds each mode's mirror root
-        # -conj(k), |k + sigma| from the shift (behind its mode, about
-        # 2 sigma away for a mode near the target), and pairs near
-        # k = 0 about sigma away; they take slots in front of wanted
-        # modes farther than that, so a damped linear seed asks for
-        # twice as many pairs. A nonpolynomial seed asks for one pair
-        # beyond n_modes, the guard's slot: behind its modes lies the
-        # linearization cluster, which costs shift solves to converge
-        # and holds no mode.
-        if eop.nonpolynomial:
-            nev = n_modes + 1
-            seed_tolerance = max(seed_tolerance, _SEED_TOLERANCE)
-        else:
-            nev = max(2 * n_modes, n_modes + 2)
-            nev *= 2 if eop.seed_damped else 1
         dropped: list[complex] = []
         # the roots dropped below a port mode's cutoff, over every attempt
         anti_bound: list[complex] = []
-        if self.below_cutoff is not None:
+        if self.covers:
             modes, failed, found, pool, ritz, bound = self._cover(
                 eop,
                 project,
@@ -287,6 +271,7 @@ class ModeSearch:
                 row=row,
             )
         else:
+            nev, seed_tolerance = self._seed_request(eop)
             modes, failed, found, pool, ritz, bound = self._attempts(
                 eop,
                 project,
@@ -295,7 +280,6 @@ class ModeSearch:
                 seed_tolerance,
                 guard=guard,
                 dropped=dropped,
-                anti_bound=anti_bound,
                 row=row,
             )
         if bound is not None and len(modes) < n_modes:
@@ -328,6 +312,38 @@ class ModeSearch:
         )
         return FoundModes(modes, found, gaps, reach, tuple(anti_bound))
 
+    @property
+    def covers(self) -> bool:
+        """Whether the search is the coverage search (a wave port model)."""
+        return self.below_cutoff is not None
+
+    def _seed_request(self, eop: EigenOperator) -> tuple[int, float]:
+        """The first seed solve's pair count and Arnoldi tolerance."""
+        seed_tolerance = self.eigen_tolerance
+        n_modes = self.n_modes
+        # the companion problem also holds each mode's mirror root
+        # -conj(k), |k + sigma| from the shift (behind its mode, about
+        # 2 sigma away for a mode near the target), and pairs near
+        # k = 0 about sigma away; they take slots in front of wanted
+        # modes farther than that, so a damped linear seed asks for
+        # twice as many pairs. A nonpolynomial seed asks for one pair
+        # beyond n_modes, the guard's slot: behind its modes lies the
+        # linearization cluster, which costs shift solves to converge
+        # and holds no mode.
+        if eop.nonpolynomial:
+            nev = n_modes + 1
+            seed_tolerance = max(seed_tolerance, _SEED_TOLERANCE)
+        else:
+            nev = max(2 * n_modes, n_modes + 2)
+            nev *= 2 if eop.seed_damped else 1
+        if eop.nonpolynomial:
+            nev = n_modes + 1
+            seed_tolerance = max(seed_tolerance, _SEED_TOLERANCE)
+        else:
+            nev = max(2 * n_modes, n_modes + 2)
+            nev *= 2 if eop.seed_damped else 1
+        return nev, seed_tolerance
+
     def _attempts(
         self,
         eop: EigenOperator,
@@ -338,7 +354,6 @@ class ModeSearch:
         *,
         guard: bool,
         dropped: list[complex],
-        anti_bound: list[complex],
         row: _progress.ProgressRow,
     ) -> tuple[
         list[Refined],
@@ -377,7 +392,6 @@ class ModeSearch:
                 sigma,
                 guard=guard,
                 dropped=dropped,
-                anti_bound=anti_bound,
                 row=row,
             )
             report.seed_solve(
@@ -406,7 +420,7 @@ class ModeSearch:
         is at least `gfem._eigen.reach.ISOLATED` (``cluster_rtol`` if
         larger). The guard mode is never
         polished. A polish that does not converge (or whose solve is not
-        accepted) is evidence of a neighbour the gap set missed, such as the
+        accepted, or whose port term is refused at an iterate) is evidence of a neighbour the gap set missed, such as the
         twin of a degenerate pair the seed solve never returned: the mode
         is kept as mode refinement left it and flagged, and its entry
         records it as not isolated. A
@@ -419,7 +433,11 @@ class ModeSearch:
             if isolated[i]:
                 try:
                     m = self.polish(eop, m, float(reach.gap[i]), index=i)  # noqa: PLW2901
-                except (EigenmodeConvergenceError, LinearSolverConvergenceError):
+                except (
+                    EigenmodeConvergenceError,
+                    LinearSolverConvergenceError,
+                    PortTermRefusalError,
+                ):
                     failed[i] = True
             out.append(m)
         return out, failed
@@ -433,7 +451,6 @@ class ModeSearch:
         *,
         guard: bool = False,
         dropped: list[complex],
-        anti_bound: list[complex],
         row: _progress.ProgressRow,
     ) -> tuple[list[Refined], list[Refined], Refined | None, np.ndarray, np.ndarray]:
         """Refine the seeds nearest ``sigma`` until ``n_modes`` distinct ones.
@@ -460,9 +477,7 @@ class ModeSearch:
         mode, or the nearest mode cut off when there is one. It is
         best-effort: none is found when no remaining seed converges to a
         mode. A seed or converged pair of a perfectly matched layer
-        (`_in_layer`) is dropped, its ``k`` recorded in ``dropped``; a
-        converged root below a wave port mode's cutoff (`_anti_bound`) is
-        dropped, its ``k`` recorded in ``anti_bound``. Each seed's
+        (`_in_layer`) is dropped, its ``k`` recorded in ``dropped``. Each seed's
         refinement is noted on the mode search's progress ``row``.
 
         Returns:
@@ -516,7 +531,6 @@ class ModeSearch:
                 and not self._longitudinal(op, twin)
                 and not _in_span(twin, accepted, window, layout=layout)
                 and not self._in_layer(twin.k, twin.x, dropped)
-                and not self._anti_bound(twin, anti_bound)
             ):
                 return twin
             return None
@@ -552,7 +566,6 @@ class ModeSearch:
                     )
                     or self._longitudinal(op, mode)
                     or (mode.converged and self._in_layer(mode.k, mode.x, dropped))
-                    or self._anti_bound(mode, anti_bound)
                 )
             ):
                 # a frozen seed rougher than TRUSTED, refined on a shift nearer
@@ -565,30 +578,22 @@ class ModeSearch:
                     and mode.k.real > _STATIC * sigma
                     and not self._longitudinal(op, mode)
                     and not self._in_layer(mode.k, mode.x, dropped)
-                    and not self._anti_bound(mode, anti_bound)
                 ):
                     kept = distinct(mode)
                     if kept is not None:
                         accepted.append(kept)
-                try:
-                    op.reshift(seed)
-                except PortTermRefusalError as refusal:
-                    mode = Refined(
-                        seed, vectors[:, j], math.inf, 0, False, None, refusal
-                    )
-                else:
-                    mode = self.refine(
-                        op,
-                        seed,
-                        vectors[:, j],
-                        tolerance=tolerance,
-                        max_iterations=steps,
-                    )
+                op.reshift(seed)
+                mode = self.refine(
+                    op,
+                    seed,
+                    vectors[:, j],
+                    tolerance=tolerance,
+                    max_iterations=steps,
+                )
             if (
                 mode.k.real <= _STATIC * sigma
                 or self._longitudinal(op, mode)
                 or (mode.converged and self._in_layer(mode.k, mode.x, dropped))
-                or self._anti_bound(mode, anti_bound)
             ):
                 continue
             if not mode.converged:
@@ -655,8 +660,9 @@ class ModeSearch:
         $|\mathrm{Re}\,k - \sigma|$ (`_select_cover`).
 
         Raises:
-            EigenmodeConvergenceError: ``n_modes`` modes were accepted but
-                the strip is not certified covered after the attempts.
+            EigenmodeConvergenceError: The strip is not certified covered
+                after the attempts, or a seed solve stopped at its restart
+                bound with ``n_modes`` modes accepted.
         """
         n_modes = self.n_modes
         h = sigma / (2 * _Q_MIN)
@@ -701,17 +707,27 @@ class ModeSearch:
                 wanted=n_modes,
                 bound=bound is not None,
             )
-            if bound is not None or (len(modes) < n_modes and len(k) < nev):
+            if bound is not None:
+                if len(modes) >= n_modes:
+                    raise EigenmodeConvergenceError(
+                        f"{self._seed_message(bound)}\nThe modes found are not "
+                        "certified to be the nearest ones: the strip of decay "
+                        "rates they lie in is not covered."
+                    )
                 break  # nothing wider to ask for: the count raises
+            if len(modes) < n_modes and len(k) < nev:
+                break  # the operator has no more pairs: the count raises
             if len(modes) == n_modes:
                 reach = max(abs(m.k.real - sigma) for m in modes)
                 need = _COVER_MARGIN * math.hypot(reach, h / 2)
                 if len(k) < nev or float(np.max(np.abs(k - shift), initial=0)) >= need:
                     break
-                if attempt == _COVER_ATTEMPTS:
-                    raise EigenmodeConvergenceError(
-                        self._uncovered_message(eop, h, attempt)
-                    )
+            if attempt == _COVER_ATTEMPTS:
+                if failed and len(modes) < n_modes:
+                    break  # the count's message names the seeds that failed
+                raise EigenmodeConvergenceError(
+                    self._uncovered_message(eop, h, attempt)
+                )
             nev *= 2
         return modes, failed, found, pool, ritz, bound
 

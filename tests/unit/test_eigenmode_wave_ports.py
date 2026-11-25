@@ -49,7 +49,10 @@ from wave_port_cases import (
 )
 
 import gfem
+from gfem._eigen import arpack
 from gfem._eigen import rule as eigen_rule
+from gfem._eigen.search import ModeSearch
+from gfem._eigen.seed import SeedBoundReached
 from gfem._eigen.operator import split
 from gfem._engine import cache
 from gfem._engine.driven import driven_operator, operator_terms
@@ -816,6 +819,33 @@ def test_a_refusal_in_a_reshift_leaves_the_operator_usable(hybrid, monkeypatch):
         eop.free_handle()
 
 
+def test_a_port_refusal_in_polishing_flags_the_mode_unpolished(case_a, monkeypatch):
+    # a polish step reshifts the port term at its Newton iterates: a refusal
+    # there leaves the refined mode, flagged, instead of raising
+    calls = []
+    found = []
+
+    def polish(eop, mode, gap, *, index):
+        calls.append(index)
+        raise PortTermRefusalError("p1", complex(mode.k), "forced")
+
+    real = ModeSearch.find
+
+    def find(self, *args, **kw):
+        out = real(dataclasses.replace(self, polish=polish), *args, **kw)
+        found.append(out)
+        return out
+
+    monkeypatch.setattr(ModeSearch, "find", find)
+    result = gfem.solve(
+        case_a, gfem.Eigenmode(target=11.67e9, n_modes=1), options=ORDER_3
+    )
+    assert calls == [0]
+    assert len(result.omega) == 1
+    assert abs(ghz(result.omega[0]) - ROOT_A) <= 1e-3 * abs(ROOT_A)
+    assert not found[0].reach.isolated[0]
+
+
 # --- the coverage search ---------------------------------------------------------
 
 
@@ -832,6 +862,42 @@ def test_a_strip_the_attempts_cannot_cover_raises_instead_of_returning(
         gfem.solve(case_a, gfem.Eigenmode(target=11.67e9, n_modes=1), options=ORDER_3)
     assert "after 1 attempts" in str(e.value)
     assert "lower n_modes or move target" in str(e.value)
+
+
+def test_too_few_modes_at_the_attempt_cap_is_an_uncovered_strip(case_a, monkeypatch):
+    # the one attempt returns its full request but one pair of it is no mode of
+    # the strip: nothing wider can be asked for, so the strip is not covered
+    # (not "found 1 of 2")
+    from gfem._eigen import search
+
+    real = ModeSearch._select_cover
+
+    def drop_one(self, *args, **kw):
+        modes, *rest = real(self, *args, **kw)
+        return modes[:-1], *rest
+
+    monkeypatch.setattr(ModeSearch, "_select_cover", drop_one)
+    monkeypatch.setattr(search, "_COVER_NEV", 2)
+    monkeypatch.setattr(search, "_COVER_ATTEMPTS", 1)
+    with pytest.raises(gfem.EigenmodeConvergenceError, match="could not cover"):
+        gfem.solve(case_a, gfem.Eigenmode(target=11.67e9, n_modes=2), options=ORDER_3)
+
+
+def test_a_seed_solve_at_its_restart_bound_never_returns_an_uncertified_result(
+    case_a, monkeypatch
+):
+    real = arpack.shift_invert
+
+    def bounded(op, project, nev, *, tol):
+        k, vectors = real(op, project, nev, tol=tol)
+        raise SeedBoundReached(k, vectors, restarts=5, applies=7)
+
+    monkeypatch.setattr(arpack, "shift_invert", bounded)
+    with pytest.raises(gfem.EigenmodeConvergenceError) as raised:
+        gfem.solve(case_a, gfem.Eigenmode(target=11.67e9, n_modes=1), options=ORDER_3)
+    text = str(raised.value)
+    assert "did not converge in 5 restarts" in text
+    assert "not certified" in text
 
 
 def test_the_nearest_mode_does_not_depend_on_n_modes(case_a):
@@ -908,3 +974,27 @@ def test_an_ambiguous_but_accurate_pair_is_refused_without_enriching(
     assert "port_mode_tolerance" not in text
     assert "GHz" in text
     assert "overlap" in text
+
+
+def test_a_pair_two_references_share_with_a_clear_margin_is_enriched_not_refused(
+    hybrid, monkeypatch
+):
+    # an infinite error from two references picking one pair says nothing
+    # about this reference's margin: enrichment can still separate them
+    term = hybrid[3][0].term
+    k = term._k[len(term._k) // 2] * (1 + 0.04j)
+    real = _Reduced.solve
+    calls = []
+
+    def solve(self, *args, **kw):
+        pairs = real(self, *args, **kw)
+        if calls:
+            return pairs
+        calls.append(1)
+        self.margins = [(0.99, 0.2) for _ in pairs]
+        return [(lam, y, math.inf) for lam, y, _ in pairs]
+
+    monkeypatch.setattr(_Reduced, "solve", solve)
+    version = term.version
+    term.at(k)
+    assert term.version != version
