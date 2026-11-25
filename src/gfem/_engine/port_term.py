@@ -60,6 +60,7 @@ from gfem._linalg.superlu import shift_invert_eigs
 from gfem._pml import Stretch
 from gfem._port_section import port_section
 from gfem._sweep.port_mode import (
+    _AMBIGUOUS,
     PortModeSweep,
     _overlaps,
     _Reduced,
@@ -386,8 +387,8 @@ class PortTerm:
         and the pair stays ambiguous), so enriching would only spend solves.
 
         Raises:
-            PortTermRefusalError: A bad pair is finite and passes the guard on
-                its own backward error.
+            PortTermRefusalError: A bad pair is finite, passes the guard on its
+                own backward error and overlaps two reduced modes almost equally.
         """
         theta = self.modes.pencil.theta(k)  # ty: ignore[invalid-argument-type]
         for i in bad:
@@ -397,6 +398,8 @@ class PortTerm:
             if self._reduced.backward_error(theta, lam, y) > floor[i]:
                 continue
             first, second = self._reduced.margins[i]
+            if second <= first - _AMBIGUOUS:
+                continue  # two references on one pair: enrichment may separate them
             f = k * scipy.constants.c / (2 * math.pi * self.modes.section.scale)
             raise PortTermRefusalError(
                 self.label,
