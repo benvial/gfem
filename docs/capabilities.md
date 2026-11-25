@@ -184,6 +184,13 @@ v0.1.
   electrodes), `PiezoelectricResult.network_parameters` (S-parameters and
   Touchstone for an aperture and a series resistance) and
   {py:obj}`gfem.strain` ({doc}`recipes/piezoelectric-admittance`).
+- **Mechanical eigenmodes**: {py:class}`gfem.MechanicalEigenmode` (the complex
+  frequencies, quality factors, displacements normalized to 1 J/m and group
+  velocities of the elastic modes of a 2D section nearest a target, at an
+  {term}`axial wavenumber`: Lamb, shear horizontal and Rayleigh waves, ribs;
+  any stiffness, mechanical loss through a quality factor and
+  {term}`damping frames <damping frame>`, clamped lines or components)
+  ({doc}`recipes/mechanical-modes`).
 
 ## Solvers
 
@@ -474,6 +481,10 @@ returning a wrong value:
   damping frames are not differentiable; node gradients come through a node map
   of your own (no 2D boundary morph). Details:
   {doc}`recipes/piezoelectric-admittance`.
+- **Mechanical eigenmodes**: 2D sections only; one process and the direct
+  solver; `gfem.Absorbing` on a solid's edge raises (use a damping frame); no
+  gradient goes through the solve in this version. Details:
+  {doc}`recipes/mechanical-modes`.
 - **Layer patterns**: width and spacing only (no minimum area), and a pre-check, not
   foundry sign-off; one flat GDS cell; layer grids only (no free-form 3D
   designs); length-scale constraints validated up to a rule of $1.25R$ and a

@@ -66,6 +66,12 @@ Periodic cells:
 
 Piezoelectric:
 
+- **Mechanical eigenmodes.** `gfem.MechanicalEigenmode` finds the elastic modes
+  of a 2D section nearest a target frequency at an axial wavenumber $q$, as
+  `gfem.MechanicalEigenmodeResult`: complex `omega`, `frequency`, the quality
+  factor `q`, the displacement of each mode normalized to 1 J/m and the
+  `group_velocity`. Mechanical loss and damping frames are those of
+  `gfem.Piezoelectric` ({doc}`../recipes/mechanical-modes`).
 - **Acousto-optic shift.** Materials take a `photoelastic_tensor`, and
   `gfem.acousto_optic_shift(model, acoustic, port=, frequency=)` gives the index
   change per volt of a wave port's mode at every kept frequency of a

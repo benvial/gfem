@@ -942,6 +942,38 @@ factor. The {doc}`recipes/piezoelectric-admittance` recipe and the
 {doc}`transducer tutorial <tutorials/transducer>` use these conventions; the
 {py:obj}`gfem.conventions` module, "Piezoelectric problems", states them.
 
+## Mechanical eigenmodes
+
+A {py:class}`gfem.MechanicalEigenmode` problem finds the source-free solutions
+of the same elasticity as a piezoelectric problem (and, when a material carries
+a piezoelectric tensor, with its potential coupled), on a 2D section, for fields
+of the form $u(x, y)\,e^{i\omega t - iqz}$: $q$ is the {term}`axial
+wavenumber` in rad/m, and $\partial_z \to -iq$ in the strain. A mode with
+$q > 0$ travels along $+z$ where its group velocity is positive. The stiffness
+and the loss are the piezoelectric problem's, $c\,(1 + i/Q_m)$ and a
+{py:class}`gfem.DampingFrame`'s, under $e^{+i\omega t}$, so a decaying mode has
+$\mathrm{Im}\,\omega > 0$ and
+
+$$
+Q = \frac{\mathrm{Re}\,\omega}{2\,\mathrm{Im}\,\omega}.
+$$
+
+**Normalization.** A mode's displacement carries
+$\tfrac12 (\mathrm{Re}\,\omega)^2 \int \rho\,|u|^2\,\mathrm{d}A = 1$ J per metre
+along $z$, with its largest coefficient real and positive. It is the
+time-averaged energy of a lossless mode, which splits equally between kinetic
+and strain energy.
+
+**Group velocity.** `group_velocity` is $\mathrm{Re}\,\mathrm{d}\omega/\mathrm{d}q$
+in m/s, the exact derivative of the discrete band. A section with a mirror
+symmetry along $z$ has $\omega(-q) = \omega(q)$ and the opposite group velocity.
+
+**Clamped components.** `clamped` fixes all three components on a line by its
+name, or only the components named by a string of `"xyz"` in the lab axes: a
+line of constant $x$ held with `"x"` keeps $u_x = 0$ and slides in $y$ and $z$.
+Every other line is traction-free. A section free at $q = 0$ has rigid-body
+motions at $\omega = 0$ that are not returned.
+
 ## Group index and dispersion
 
 A port mode's group index and dispersion are the frequency derivatives of

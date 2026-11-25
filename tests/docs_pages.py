@@ -60,6 +60,9 @@ MESHES = {
     MESH_URL.replace("data/line.msh", "transducer_section.py"): DOCS
     / "tutorials"
     / "transducer_section.py",
+    MESH_URL.replace("tutorials/data/line.msh", "recipes/plate_section.py"): DOCS
+    / "recipes"
+    / "plate_section.py",
     MESH_URL.replace("data/line.msh", "aom_section.py"): DOCS
     / "tutorials"
     / "aom_section.py",

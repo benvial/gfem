@@ -49,6 +49,7 @@ orphan: true
 - {doc}`electro-optic-phase`
 - {doc}`acousto-optic-shift`
 - {doc}`piezoelectric-admittance`
+- {doc}`mechanical-modes`
 - {doc}`thermal-step-response`
 - {doc}`shared-port-surface`
 - {doc}`measurements`
