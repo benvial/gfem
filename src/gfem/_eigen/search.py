@@ -32,7 +32,7 @@ from gfem._eigen.seed import MIN_SUBSPACE, SeedBoundReached
 from gfem._engine.port_term import PortTermRefusalError
 from gfem._linalg import report
 from gfem._linalg.layout import ONE_PROCESS, DofLayout
-from gfem._text import hertz
+from gfem._text import complex_hertz, hertz
 from gfem.errors import EigenmodeConvergenceError, LinearSolverConvergenceError
 
 __all__ = ["EigenSolver", "FoundModes", "ModeSearch"]
@@ -79,13 +79,13 @@ _CONTRACTION = 0.5
 #: Arnoldi runs, each asking for twice as many pairs as the last, before
 #: too few modes near the target is an error.
 _ATTEMPTS = 3
-#: A wave port model's coverage search: the lowest Q whose resonances it
-#: certifies it found (ports damp a mode by its own radiation, so a root of Q
-#: down to about 2 is a resonance of the device).
-_Q_MIN = 2.0
+#: A wave port model's coverage search: the Q floor, the lowest Q whose
+#: resonances it certifies it found (ports damp a mode by its own radiation,
+#: so a root of Q down to about 2 is a resonance of the device).
+_Q_FLOOR = 2.0
 #: The coverage certificate's radius margin: a frozen seed lies off its
 #: mode's root, and measured up to 0.29 of the strip's half height beyond the
-#: certificate's disc in the strip's far corners.
+#: certificate radius in the strip's far corners.
 _COVER_MARGIN = 1.3
 #: The coverage search's first seed solve asks for at least this many pairs
 #: (the subspace is at least 20 anyway).
@@ -443,7 +443,7 @@ class ModeSearch:
             out.append(m)
         return out, failed
 
-    def _select(  # noqa: PLR0915 - one selection loop over the seeds
+    def _select(
         self,
         op: EigenOperator,
         k: np.ndarray,
@@ -508,34 +508,6 @@ class ModeSearch:
         window = self._window()
         steps = self.max_refine_iterations
 
-        def distinct(mode: Refined) -> Refined | None:
-            # a converged pair in the span of the accepted modes is a duplicate
-            # unless its part outside the span is more than round-off: then it
-            # landed on a degenerate eigenspace whose twin the seed solve
-            # missed, and that part, refined, is the twin
-            if not _in_span(mode, accepted, window, layout=layout):
-                return mode
-            rest = _outside(mode, accepted, window, layout=layout)
-            if rest is None:
-                return None
-            twin = self.refine(
-                op,
-                mode.k,
-                rest,
-                tolerance=tolerance,
-                max_iterations=steps,
-                reshift=False,
-            )
-            if (
-                twin.converged
-                and twin.k.real > _STATIC * sigma
-                and not self._longitudinal(op, twin)
-                and not _in_span(twin, accepted, window, layout=layout)
-                and not self._in_layer(twin.k, twin.x, dropped)
-            ):
-                return twin
-            return None
-
         for n, j in enumerate(seeds, 1):
             full = len(accepted) >= n_modes
             if full and not guard:
@@ -565,8 +537,7 @@ class ModeSearch:
                         window=window,
                         layout=layout,
                     )
-                    or self._longitudinal(op, mode)
-                    or (mode.converged and self._in_layer(mode.k, mode.x, dropped))
+                    or self._spurious(op, mode, dropped)
                 )
             ):
                 # a frozen seed rougher than TRUSTED, refined on a shift nearer
@@ -577,10 +548,9 @@ class ModeSearch:
                 if (
                     mode.converged
                     and mode.k.real > _STATIC * sigma
-                    and not self._longitudinal(op, mode)
-                    and not self._in_layer(mode.k, mode.x, dropped)
+                    and not self._spurious(op, mode, dropped)
                 ):
-                    kept = distinct(mode)
+                    kept = self._distinct(op, mode, accepted, sigma, dropped=dropped)
                     if kept is not None:
                         accepted.append(kept)
                 op.reshift(seed)
@@ -591,17 +561,13 @@ class ModeSearch:
                     tolerance=tolerance,
                     max_iterations=steps,
                 )
-            if (
-                mode.k.real <= _STATIC * sigma
-                or self._longitudinal(op, mode)
-                or (mode.converged and self._in_layer(mode.k, mode.x, dropped))
-            ):
+            if mode.k.real <= _STATIC * sigma or self._spurious(op, mode, dropped):
                 continue
             if not mode.converged:
                 if not full:
                     failed.append(mode)
                 continue
-            mode = distinct(mode)
+            mode = self._distinct(op, mode, accepted, sigma, dropped=dropped)
             if mode is None:
                 continue
             if full:
@@ -647,18 +613,18 @@ class ModeSearch:
         port families the model does not request (trapped against the port,
         Q of hundreds) crowd the seed solve at the real target and push its
         seed out of the returned pairs. The seed solve is therefore shifted
-        into the middle of the strip $0 \le \mathrm{Im}\,k \le h$, $h =
-        \sigma / (2 Q_\text{min})$, to $\sigma_s = \sigma (1 + i / (4
-        Q_\text{min}))$ (the nonpolynomial port term is frozen there), and
+        into the middle of the strip :math:`0 \le \mathrm{Im}\,k \le h`, :math:`h =
+        \sigma / (2 Q_\text{floor})`, to :math:`\sigma_s = \sigma (1 + i / (4
+        Q_\text{floor}))` (the nonpolynomial port term is frozen there), and
         asks for ``max(n_modes + 1, 9)`` pairs, twice as many each attempt, at
         most `_COVER_ATTEMPTS` times, until the farthest returned Ritz value is
-        at least $m \sqrt{r^2 + (h/2)^2}$ from $\sigma_s$ ($m$ =
-        `_COVER_MARGIN`, $r$ the real distance from ``sigma`` of the
+        at least :math:`m \sqrt{r^2 + (h/2)^2}` from :math:`\sigma_s` (:math:`m` =
+        `_COVER_MARGIN`, :math:`r` the real distance from ``sigma`` of the
         ``n_modes``-th accepted mode): every seed of a root in the
-        rectangle $[\sigma - r, \sigma + r] \times [0, h]$ is then returned.
+        rectangle :math:`[\sigma - r, \sigma + r] \times [0, h]` is then returned.
         Failed seeds do not end the doubling (`_skipped` judges them at the
         end). Modes above the strip are dropped, the others ranked by
-        $|\mathrm{Re}\,k - \sigma|$ (`_select_cover`).
+        :math:`|\mathrm{Re}\,k - \sigma|` (`_select_cover`).
 
         Raises:
             EigenmodeConvergenceError: The strip is not certified covered
@@ -666,7 +632,7 @@ class ModeSearch:
                 bound with ``n_modes`` modes accepted.
         """
         n_modes = self.n_modes
-        h = sigma / (2 * _Q_MIN)
+        h = sigma / (2 * _Q_FLOOR)
         shift = complex(sigma, h / 2)
         nev = max(n_modes + 1, _COVER_NEV)
         seed_tolerance = max(self.eigen_tolerance, _SEED_TOLERANCE)
@@ -737,11 +703,9 @@ class ModeSearch:
     ) -> str:
         """Why the solve raises when the port term cannot be set at the seed shift."""
         c = const.c / op.scale / (2 * math.pi)
-        f = refusal.k * c
-        sign = "-" if f.imag < 0 else "+"
         return (
             f"Eigenmode's seed search near {hertz(self.target)} starts at the "
-            f"complex frequency {hertz(f.real)} {sign} i {hertz(abs(f.imag))}, "
+            f"complex frequency {complex_hertz(refusal.k * c)}, "
             f"where {refusal.label} cannot follow its port mode: move "
             "Eigenmode.target away from the port mode's cutoff."
         )
@@ -772,10 +736,10 @@ class ModeSearch:
         memo: list[_Outcome],
         row: _progress.ProgressRow,
     ) -> tuple[list[Refined], list[Refined], Refined | None, np.ndarray, np.ndarray]:
-        """`_select` of the coverage search: every seed of the disc, refined once.
+        """`_select` of the coverage search: the seeds within the certificate radius.
 
         Seeds are refined nearest the seed ``shift`` first; once ``n_modes``
-        are accepted, a seed beyond the certificate's disc (`_COVER_MARGIN`
+        are accepted, a seed beyond the certificate radius (`_COVER_MARGIN`
         times the hypotenuse of the ``n_modes``-th mode's distance from
         ``sigma`` and half the strip height ``h``) is not refined. A seed met
         in an earlier attempt (the same frozen Ritz value and vector, in
@@ -797,35 +761,8 @@ class ModeSearch:
         vectors = _orthonormal_multiples(k, vectors, layout=layout)
         accepted: list[Refined] = []
         failed: list[Refined] = []
-        window = self._window()
         steps = self.max_refine_iterations
         replayed: set[int] = set()
-
-        def distinct(mode: Refined) -> Refined | None:
-            if not _in_span(mode, accepted, window, layout=layout):
-                return mode
-            rest = _outside(mode, accepted, window, layout=layout)
-            if rest is None:
-                return None
-            twin = self.refine(
-                op,
-                mode.k,
-                rest,
-                tolerance=tolerance,
-                max_iterations=steps,
-                reshift=False,
-            )
-            if (
-                twin.converged
-                and twin.k.real > _STATIC * sigma
-                and not self._longitudinal(op, twin)
-                and not _in_span(twin, accepted, window, layout=layout)
-                and not self._in_layer(twin.k, twin.x, dropped)
-                and not self._anti_bound(twin, anti_bound)
-                and twin.k.imag <= h
-            ):
-                return twin
-            return None
 
         def refined(j: int) -> Refined:
             seed = complex(k[j])
@@ -836,13 +773,6 @@ class ModeSearch:
                     return Refined(
                         seed, vectors[:, j], math.inf, 0, False, None, refusal
                     )
-                return self.refine(
-                    op,
-                    seed,
-                    vectors[:, j],
-                    tolerance=tolerance,
-                    max_iterations=steps,
-                )
             return self.refine(
                 op,
                 seed,
@@ -854,7 +784,7 @@ class ModeSearch:
         for n, j in enumerate(seeds, 1):
             seed = complex(k[j])
             if len(accepted) >= n_modes:
-                # r only shrinks as modes are accepted: a seed beyond the disc
+                # r only shrinks as modes are accepted: a seed beyond the radius
                 # now stays beyond it
                 reach = sorted(abs(m.k.real - sigma) for m in accepted)[n_modes - 1]
                 if abs(seed - shift) > _COVER_MARGIN * math.hypot(reach, h / 2):
@@ -873,11 +803,8 @@ class ModeSearch:
                 memo.append(earlier)
             replayed.add(id(earlier))
             mode = earlier.mode
-            if (
-                mode.k.real <= _STATIC * sigma
-                or self._longitudinal(op, mode)
-                or (mode.converged and self._in_layer(mode.k, mode.x, dropped))
-                or self._anti_bound(mode, anti_bound)
+            if mode.k.real <= _STATIC * sigma or self._spurious(
+                op, mode, dropped, anti_bound
             ):
                 continue
             if not mode.converged:
@@ -885,7 +812,15 @@ class ModeSearch:
                 continue
             if mode.k.imag > h:
                 continue
-            kept = distinct(mode)
+            kept = self._distinct(
+                op,
+                mode,
+                accepted,
+                sigma,
+                dropped=dropped,
+                anti_bound=anti_bound,
+                ceiling=h,
+            )
             if kept is not None:
                 accepted.append(kept)
         accepted.sort(key=lambda m: abs(m.k.real - sigma))
@@ -899,6 +834,71 @@ class ModeSearch:
             np.array(pool, dtype=complex),
             np.array(ritz, dtype=complex),
         )
+
+    def _spurious(
+        self,
+        op: EigenOperator,
+        mode: Refined,
+        dropped: list[complex],
+        anti_bound: list[complex] | None = None,
+    ) -> bool:
+        """Whether ``mode`` is no resonance: longitudinal, in the layer or below cutoff.
+
+        The rejection of a refined pair that is no resonance: a longitudinal
+        mode of a law model (`_longitudinal`), a converged pair of a perfectly
+        matched layer (`_in_layer`, its ``k`` recorded in ``dropped``) and,
+        given the list ``anti_bound``, a converged root below a wave port mode's
+        cutoff (`_anti_bound`, its ``k`` recorded there).
+        """
+        return (
+            self._longitudinal(op, mode)
+            or (mode.converged and self._in_layer(mode.k, mode.x, dropped))
+            or (anti_bound is not None and self._anti_bound(mode, anti_bound))
+        )
+
+    def _distinct(
+        self,
+        op: EigenOperator,
+        mode: Refined,
+        accepted: list[Refined],
+        sigma: float,
+        *,
+        dropped: list[complex],
+        anti_bound: list[complex] | None = None,
+        ceiling: float | None = None,
+    ) -> Refined | None:
+        """``mode`` if it is not a duplicate of the ``accepted`` modes, or its twin.
+
+        A converged pair in the span of the accepted modes is a duplicate
+        unless its part outside the span is more than round-off: then it landed
+        on a degenerate eigenspace whose twin the seed solve missed, and that
+        part, refined, is the twin (``None`` if it does not converge to a mode
+        no accepted one spans, or has ``Im k`` above ``ceiling``).
+        """
+        layout = op.layout
+        window = self._window()
+        if not _in_span(mode, accepted, window, layout=layout):
+            return mode
+        rest = _outside(mode, accepted, window, layout=layout)
+        if rest is None:
+            return None
+        twin = self.refine(
+            op,
+            mode.k,
+            rest,
+            tolerance=self.eigen_tolerance,
+            max_iterations=self.max_refine_iterations,
+            reshift=False,
+        )
+        if (
+            twin.converged
+            and twin.k.real > _STATIC * sigma
+            and not self._spurious(op, twin, dropped, anti_bound)
+            and not _in_span(twin, accepted, window, layout=layout)
+            and (ceiling is None or twin.k.imag <= ceiling)
+        ):
+            return twin
+        return None
 
     def _longitudinal(self, op: EigenOperator, mode: Refined) -> bool:
         """Whether ``mode`` is a converged longitudinal mode of a law model.
@@ -1185,13 +1185,10 @@ def _unconverged_line(mode: Refined, c: float) -> str:
             f"  not converged: {hertz(mode.k.real * c)}, best backward "
             f"error {mode.error:.3g} after {mode.iterations} refinement steps"
         )
-    f = refusal.k * c
-    sign = "-" if f.imag < 0 else "+"
     return (
         f"  lost: {hertz(mode.k.real * c)}, an iterate at complex frequency "
-        f"{hertz(f.real)} {sign} i {hertz(abs(f.imag))} left the range where "
-        f"{refusal.label} "
-        "can follow its port mode"
+        f"{complex_hertz(refusal.k * c)} left the range where "
+        f"{refusal.label} can follow its port mode"
     )
 
 
