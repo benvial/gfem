@@ -69,7 +69,7 @@ from gfem._sweep.port_mode import (
     port_mode_sweep,
     propagating_modes,
 )
-from gfem._text import hertz
+from gfem._text import complex_hertz, hertz
 from gfem.errors import PortModeError
 from gfem.model import Model
 
@@ -323,9 +323,11 @@ class PortTerm:
         v = self._reduced.v
         n_t = getattr(modes, "n_t", None)
         if n_t is None:  # a line port's mass has no normal part
+            self._tangential = None
             self._mass_t, self._mass_n = self._reduced.mass, None
         else:
-            t = (np.asarray(modes.free) < n_t)[:, None]
+            self._tangential = np.asarray(modes.free) < n_t
+            t = self._tangential[:, None]
             self._mass_t = v.T @ (modes.mass @ (v * t))
             self._mass_n = v.T @ (modes.mass @ (v * ~t))
         self._reduction = modes.reduce(self._reduced.v)
@@ -405,7 +407,7 @@ class PortTerm:
                 self.label,
                 k,
                 f"{self.label}: two reduced modes overlap the port mode at "
-                f"the complex frequency {f / 1e9:.6g} GHz almost equally "
+                f"the complex frequency {complex_hertz(f)} almost equally "
                 f"(overlaps {first:.3f} and {second:.3f}), so it cannot be "
                 "followed there.",
             )
@@ -475,10 +477,9 @@ class PortTerm:
 
     def _weights(self, k: complex) -> np.ndarray:
         """The diagonal ``D`` of the tracking inner product ``D M D`` on free DOFs."""
-        n_t = getattr(self.modes, "n_t", None)
-        if n_t is None:
+        if self._tangential is None:
             return np.ones(len(self.modes.free))
-        return np.where(np.asarray(self.modes.free) < n_t, 1.0, abs(k))
+        return np.where(self._tangential, 1.0, abs(k))
 
     def _enrich(self, k: complex, pairs: list, bad: list[int]) -> None:
         """Exact solves at ``k`` for modes ``bad``, added to the basis."""

@@ -40,6 +40,14 @@ THRESHOLD = 0.5
 LOSS_FLOOR = 0.01
 
 
+def quality_factor(omega: complex) -> float:
+    r"""The quality factor :math:`|\omega| / (2 |\mathrm{Im}\,\omega|)`.
+
+    ``inf`` for a real frequency.
+    """
+    return abs(omega) / (2 * abs(omega.imag)) if omega.imag else math.inf
+
+
 def requested_power_shares(
     ports: Sequence[EigenPort],
     space,
@@ -66,7 +74,6 @@ def requested_power_shares(
     """
     share = np.full((len(ports), len(ks)), np.nan)
     loss = np.full((len(ports), len(ks)), np.nan)
-    mu0 = 4e-7 * math.pi
     per_k = const.c / scale
     for i, port in enumerate(ports):
         face = assemble(space, [(1.0, port.piece)])
@@ -78,13 +85,14 @@ def requested_power_shares(
                 value.c @ pair(term.vectors, xj)
             )
             omega = k * per_k
-            absorbed = float(np.vdot(xj, bx).imag) / (2 * omega.real * mu0 * scale)
+            absorbed = float(np.vdot(xj, bx).imag) / (
+                2 * omega.real * const.mu_0 * scale
+            )
             if not absorbed > 0:
                 continue
             requested = float(np.sum(term.outgoing_power(k, xj, pair)))
             share[i, j] = requested / absorbed
-            q = abs(omega) / (2 * abs(omega.imag)) if omega.imag else math.inf
-            loss[i, j] = q * absorbed / (omega.real * MODE_ENERGY)
+            loss[i, j] = quality_factor(omega) * absorbed / (omega.real * MODE_ENERGY)
     return share, loss
 
 

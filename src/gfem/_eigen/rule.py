@@ -108,7 +108,7 @@ from gfem._eigen.ratios import (
 from gfem._eigen.reach import FIELD_TOLERANCE, ModeReach, blocker
 from gfem._eigen.refine import Refined
 from gfem._eigen.search import FoundModes, ModeSearch
-from gfem._eigen.share import Unrequested, requested_power_shares
+from gfem._eigen.share import Unrequested, quality_factor, requested_power_shares
 from gfem._engine import dispersion, terms
 from gfem._engine.cache import Entry, discretization
 from gfem._engine.coefficients import anisotropic_regions
@@ -737,7 +737,7 @@ class EigenmodeRule:
         per_hz = const.c / scale / (2 * math.pi)
         for j, k in enumerate(ks):
             if k.imag < -_GAIN * abs(k):
-                q = abs(k) / (2 * abs(k.imag))
+                q = quality_factor(k)
                 _mpi.warn(
                     self.comm,
                     f"Eigenmode: mode {j} at {hertz(k.real * per_hz)} grows in "
@@ -782,13 +782,14 @@ class EigenmodeRule:
         scale: float,
     ) -> None:
         """Warn `UnrequestedPortModeWarning` once per surface and form."""
-        q = np.array([abs(k) / (2 * abs(k.imag)) if k.imag else math.inf for k in ks])
-        for i, port in enumerate(ports):
-            flagged = Unrequested(port, share[i], loss[i])
-            if not len(flagged.flagged):
+        q = np.array([quality_factor(k) for k in ks])
+        for i, (port, surface) in enumerate(
+            zip(ports, self.port_surfaces, strict=True)
+        ):
+            unrequested = Unrequested(port, share[i], loss[i])
+            if not len(unrequested.flagged):
                 continue
-            name = port.term.ports[0].surface
-            for message in flagged.messages(name, ks, scale, q):
+            for message in unrequested.messages(surface, ks, scale, q):
                 _mpi.warn(self.comm, message, UnrequestedPortModeWarning, stacklevel=4)
 
     def _warn_anti_bound(self, roots: Sequence[complex], scale: float) -> None:
@@ -1335,19 +1336,21 @@ class EigenmodeRule:
             "Wrap it in jax.lax.stop_gradient to use its value without its derivative."
         )
         if name not in _MODE_FIELD:
-            what = (
-                "a diagnostic of the found mode, no derivative"
-                if name == "share"
-                else "the band group velocity, read from the modes, which has no "
-                "derivative with respect to anything"
-                if name == "v_g"
-                else "the backward error of the solve, which has no derivative "
-                "with respect to anything"
-            )
             if name == "share":
                 head = (
                     "gfem cannot differentiate the eigenmode output "
                     "'requested_power_share'"
+                )
+                what = "a diagnostic of the found mode, no derivative"
+            elif name == "v_g":
+                what = (
+                    "the band group velocity, read from the modes, which has no "
+                    "derivative with respect to anything"
+                )
+            else:
+                what = (
+                    "the backward error of the solve, which has no derivative "
+                    "with respect to anything"
                 )
             return f"{head}: it is {what}. " + opt_out
         why = self._solve_refusal()

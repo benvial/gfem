@@ -1,6 +1,6 @@
 """Frequencies in messages and reprs, in the unit that fits them."""
 
-__all__ = ["hertz", "hertz_band"]
+__all__ = ["complex_hertz", "hertz", "hertz_band"]
 
 _UNITS = ((1e12, "THz"), (1e9, "GHz"), (1e6, "MHz"), (1e3, "kHz"))
 
@@ -17,6 +17,12 @@ def hertz(f: float, digits: int = 6) -> str:
     """``f`` (Hz) as ``"50 GHz"``, with ``digits`` significant digits."""
     scale, unit = _unit(f)
     return f"{f / scale:.{digits}g} {unit}"
+
+
+def complex_hertz(f: complex, digits: int = 6) -> str:
+    """A complex frequency ``f`` (Hz) as ``"7.3 GHz + i 200 MHz"``."""
+    sign = "-" if f.imag < 0 else "+"
+    return f"{hertz(f.real, digits)} {sign} i {hertz(abs(f.imag), digits)}"
 
 
 def hertz_band(lo: float, hi: float, digits: int = 6) -> str:
