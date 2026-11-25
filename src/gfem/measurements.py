@@ -1880,14 +1880,18 @@ def strain(displacement: Any, points: Any) -> jax.Array:
     r"""The engineering strain of a displacement at points.
 
     ``displacement`` is the kept displacement of a `gfem.Piezoelectric`
-    solve (``res.displacement(f, terminal)``), per volt on the terminal. A 2D
-    section has no variation along :math:`z`, so with :math:`u = (u_x, u_y,
-    u_z)` the strain in Voigt order (xx, yy, zz, yz, xz, xy), the shear
-    entries engineering ones (twice the tensor components), is
+    solve (``res.displacement(f, terminal)``), per volt on the terminal, or the
+    displacement of a mode of a `gfem.MechanicalEigenmode` solve
+    (``res.displacement(mode)``). A 2D section has no variation along
+    :math:`z`, or the field of a mode has :math:`e^{-iqz}` with the
+    map's ``wavenumber`` :math:`q` (0 for a piezoelectric solve), so with
+    :math:`u = (u_x, u_y, u_z)` the strain in Voigt order (xx, yy, zz, yz, xz,
+    xy), the shear entries engineering ones (twice the tensor components), is
 
     .. math::
-        S = \left(\partial_x u_x,\ \partial_y u_y,\ 0,\ \partial_y u_z,\
-        \partial_x u_z,\ \partial_y u_x + \partial_x u_y\right).
+        S = \left(\partial_x u_x,\ \partial_y u_y,\ -iq\,u_z,\
+        \partial_y u_z - iq\,u_y,\ \partial_x u_z - iq\,u_x,\
+        \partial_y u_x + \partial_x u_y\right).
 
     It is read in the lab frame, in the mechanical domain. The gradient of
     each component is exact for the solved field, and linear in its
@@ -1916,8 +1920,8 @@ def strain(displacement: Any, points: Any) -> jax.Array:
     keys = ("x", "y", "z")
     if not isinstance(displacement, FieldMap) or tuple(displacement) != keys:
         raise TypeError(
-            "strain reads the displacement of a piezoelectric solve: pass "
-            f"res.displacement(f), got {type(displacement).__name__}."
+            "strain reads the displacement of a piezoelectric or mechanical-mode "
+            f"solve: pass res.displacement(...), got {type(displacement).__name__}."
         )
     single = np.ndim(points) == 1
     grads = {k: _probe.gradient_at(displacement[k], points) for k in keys}
@@ -1933,6 +1937,17 @@ def strain(displacement: Any, points: Any) -> jax.Array:
         ],
         axis=-1,
     )
+    q = displacement.wavenumber
+    if q:
+        # the axial derivative of e^{-iqz} u is -iq u: zz, yz and xz
+        values = {
+            k: jnp.reshape(_probe.field_at(displacement[k], points), (-1,))
+            for k in keys
+        }
+        along = jnp.stack(
+            [zero, zero, values["z"], values["y"], values["x"], zero], axis=-1
+        )
+        out = out - 1j * q * along
     return out[0] if single else out
 
 

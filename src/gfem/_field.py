@@ -462,15 +462,28 @@ register_fields(ReducedFields, ("basis", "coordinates", "omega", "mesh"))
 
 
 class FieldMap(Mapping[str, Field]):
-    """A read-only mapping of labels to fields, in a fixed order (a pytree).
+    r"""A read-only mapping of labels to fields, in a fixed order (a pytree).
 
     For example a result's terminal potentials, by terminal name.
+
+    Attributes:
+        wavenumber: The axial wavenumber :math:`q` (rad/m) of a displacement
+            :math:`u(x, y)\,e^{-iqz}` of a 2D section, whose :math:`\partial_z`
+            is :math:`-iq` (`gfem.strain` adds it); 0 for a field that does not
+            vary along :math:`z`.
     """
 
-    def __init__(self, fields: Mapping[str, Field], *, label: str = "field") -> None:
+    def __init__(
+        self,
+        fields: Mapping[str, Field],
+        *,
+        label: str = "field",
+        wavenumber: float = 0.0,
+    ) -> None:
         """Map ``fields`` in their given order; ``label`` names a key in errors."""
         self._fields = dict(fields)
         self._label = label
+        self.wavenumber = wavenumber
 
     def __getitem__(self, key: str) -> Field:
         """The field ``key``.
@@ -495,18 +508,21 @@ class FieldMap(Mapping[str, Field]):
         return len(self._fields)
 
     def __repr__(self) -> str:
-        return f"FieldMap({self._fields!r})"
+        shown = f", wavenumber={self.wavenumber:g}" if self.wavenumber else ""
+        return f"FieldMap({self._fields!r}{shown})"
 
 
 def _flatten_map(m: FieldMap):
     keys = tuple(m)
     children = tuple((jax.tree_util.DictKey(k), m[k]) for k in keys)
-    return children, (keys, m._label)  # noqa: SLF001
+    return children, (keys, m._label, m.wavenumber)  # noqa: SLF001
 
 
 def _unflatten_map(aux, children) -> FieldMap:
-    keys, label = aux
-    return FieldMap(dict(zip(keys, children, strict=True)), label=label)
+    keys, label, wavenumber = aux
+    return FieldMap(
+        dict(zip(keys, children, strict=True)), label=label, wavenumber=wavenumber
+    )
 
 
 jax.tree_util.register_pytree_with_keys(FieldMap, _flatten_map, _unflatten_map)
