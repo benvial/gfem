@@ -1167,9 +1167,19 @@ exactly in the discrete problem. Each check runs on every change to gfem.
   \omega(q)$ for an isotropic section; a mode is normalized to 1 J/m with a real
   largest coefficient; the group velocity matches a central difference of the
   band.
+- **Piezoelectric plate.** The thickness-extensional plate of a 6mm crystal
+  matches the stiffened half-wave frequency with open faces and the root of
+  $\tan X / X = 1/k_t^2$ with grounded faces, to $10^{-9}$, and the grounded
+  plate's mode is a pole of the `gfem.Piezoelectric` admittance.
+- **Gradients.** The gradient of `omega` in the stiffness, density, quality
+  factor, piezoelectric tensor, permittivity and node coordinates matches
+  fourth-order central differences to $10^{-6}$, with and without an axial
+  wavenumber.
 
 Tests: [unit checks](https://github.com/benvial/gfem/blob/main/tests/unit/test_mechanical_eigenmode.py),
-[closed forms](https://github.com/benvial/gfem/blob/main/tests/verification/test_mechanical_eigenmode.py).
+[closed forms](https://github.com/benvial/gfem/blob/main/tests/verification/test_mechanical_eigenmode.py),
+[piezoelectric plate](https://github.com/benvial/gfem/blob/main/tests/verification/test_mechanical_eigenmode_piezo.py),
+[gradients](https://github.com/benvial/gfem/blob/main/tests/unit/test_mechanical_eigenmode_gradients.py).
 
 (verification-acousto-optic)=
 ## Acousto-optic shift

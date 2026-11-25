@@ -188,8 +188,10 @@ v0.1.
   frequencies, quality factors, displacements normalized to 1 J/m and group
   velocities of the elastic modes of a 2D section nearest a target, at an
   {term}`axial wavenumber`: Lamb, shear horizontal and Rayleigh waves, ribs;
-  any stiffness, mechanical loss through a quality factor and
-  {term}`damping frames <damping frame>`, clamped lines or components)
+  any stiffness, the piezoelectric coupling with grounded electrodes,
+  mechanical loss through a quality factor and
+  {term}`damping frames <damping frame>`, clamped lines or components;
+  `omega` differentiates in the material constants and node coordinates)
   ({doc}`recipes/mechanical-modes`).
 
 ## Solvers
