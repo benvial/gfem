@@ -1160,6 +1160,7 @@ class _Greedy:
         for i, fi in enumerate(f):
             self.k0[i], self.k_max[i], self.shift[i] = _wavenumbers(space.section, fi)
         self.reduced = _Reduced(space)
+        self.bent = getattr(space.section, "bend", None) is not None
         # a bent section's closed straight predictor, built on first use
         self._closed: PortModeSpace | None = None
         #: Each mode's pencil vectors in the reduced basis, set by `normalized`.
@@ -1250,7 +1251,7 @@ class _Greedy:
         solve then shifts at the lowest wanted mode's estimate.
         """
         space, mode = self.space, max(self.modes)
-        bent = getattr(space.section, "bend", None) is not None
+        bent = self.bent
         covers = None
         if bent and tracked is None:
             predicted = self._predicted(j)
@@ -1751,10 +1752,12 @@ class _Greedy:
         solves, and its eigenvalue and field are discarded.
         """
         self.fallback_solves += 1
-        # on a bent section the solve shifts at the mode's estimate at the row
-        tracked = np.full(len(self.modes), np.nan + 0j)
-        tracked[k] = self.lam[k, i]
-        cand = self._solve(i, tracked)
+        if self.bent:  # shift at the mode's estimate at the row
+            tracked = np.full(len(self.modes), np.nan + 0j)
+            tracked[k] = self.lam[k, i]
+            cand = self._solve(i, tracked)
+        else:
+            cand = self._solve(i)
         x_ref = self.reduced.lift(self.coords_at(i, k))
         p = int(np.argmax(_overlaps(self.space.mass, x_ref, cand.vecs)))
         return self._mode_derivative(i, cand, p, self._factor_of(i, cand))
@@ -1769,9 +1772,11 @@ class _Greedy:
                 so an ambiguous choice is an error.
         """
         self.exact_solves += 1
-        # the modes' eigenvalues at ``ref``, carried to ``j`` as :math:`\propto k_0^2`
-        tracked = self.lam[:, ref] * (self.k0[j] / self.k0[ref]) ** 2
-        cand = self._solve(j, tracked)
+        if self.bent:  # shift at the modes' eigenvalues at ``ref``, scaled as k0^2
+            tracked = self.lam[:, ref] * (self.k0[j] / self.k0[ref]) ** 2
+            cand = self._solve(j, tracked)
+        else:
+            cand = self._solve(j)
         if len(cand.lam) < len(self.modes):
             # too few candidates for distinct modes
             raise self._evanescent_error(j, self._lost(cand, ref, certain=certain))
