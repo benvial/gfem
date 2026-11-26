@@ -75,7 +75,7 @@ def test_the_filled_te10_follows_its_closed_form(filled):
     n_eff = float(mode.gamma.imag[0] / k0)
     reference = 1.5 * k0 * N2 / (A * B) * (N / n_eff) ** 2
     # the field's own mesh error: 7.0e-6 measured at order 2 (3.4e-8 at order 3)
-    assert kn.gamma_nl[0].real == pytest.approx(reference, rel=1e-5)
+    assert kn.gamma_nl[0].real == pytest.approx(reference, rel=1e-5, abs=0)
 
 
 def test_the_result_names_its_port_mode_and_frequencies(filled):
@@ -182,13 +182,13 @@ def test_gamma_differentiates_in_the_permittivity_and_the_two_coefficients(
     d_imag = jax.grad(imag, argnums=(0, 1, 2))(*args)
     # the traced vector gives the eager value: the same operations, up to the
     # solve's own round-off (1e-14), the gate 1e-12
-    assert float(value) == pytest.approx(g.real, rel=1e-12)
+    assert float(value) == pytest.approx(g.real, rel=1e-12, abs=0)
     # on a homogeneous fill the discrete cutoff is fixed, so
     # d ln(gamma) / d eps = 1 / eps - 1 / n_eff^2; the derivative of the
     # discrete problem is exact up to the adjoint solve's round-off (1e-10)
     slope = 1 / N**2 - 1 / n_eff**2
-    assert float(d_real[0]) == pytest.approx(g.real * slope, rel=1e-8)
-    assert float(d_imag[0]) == pytest.approx(g.imag * slope, rel=1e-8)
+    assert float(d_real[0]) == pytest.approx(g.real * slope, rel=1e-8, abs=0)
+    assert float(d_imag[0]) == pytest.approx(g.imag * slope, rel=1e-8, abs=0)
     # exact: gamma is linear in each coefficient
     assert float(d_real[1]) == pytest.approx(g.real / N2, rel=1e-12)
     assert float(d_imag[2]) == pytest.approx(g.imag / TPA, rel=1e-12)
@@ -343,7 +343,7 @@ def test_the_planar_columns_are_the_field_at_the_rule_points(filled, raised):
         got, expected, rtol=0, atol=1e-12 * np.abs(expected).max()
     )
     area = cols.measure.sum()
-    assert area == pytest.approx(A * B, rel=1e-12)
+    assert area == pytest.approx(A * B, rel=1e-12, abs=0)
 
 
 def test_the_integral_is_exact_at_the_rule_degree(filled, monkeypatch):
@@ -420,7 +420,7 @@ def test_the_line_columns_are_the_field_at_the_rule_points(slab, raised):
         got, expected, rtol=0, atol=1e-12 * np.abs(expected).max()
     )
     length = np.ptp(section.points) * section.scale
-    assert cols.measure.sum() == pytest.approx(length, rel=1e-12)
+    assert cols.measure.sum() == pytest.approx(length, rel=1e-12, abs=0)
 
 
 def test_an_ez_line_port_gives_its_slab_value_per_watt(slab):
@@ -646,7 +646,7 @@ def test_a_mode_twice_gives_every_entry_the_nonlinear_coefficient(filled):
     np.testing.assert_allclose(g, complex(kn.gamma_nl[0]), rtol=1e-13)
     # the cross-phase sum of the amplitude equation counts the other wave twice
     assert g[0, 0, 1, 1] + g[0, 1, 0, 1] == pytest.approx(
-        2 * complex(kn.gamma_nl[0]), rel=1e-13
+        2 * complex(kn.gamma_nl[0]), rel=1e-13, abs=0
     )
 
 
@@ -657,7 +657,7 @@ def test_a_single_row_gives_one_wave(filled):
     # the diagonal entry sums the same terms in another order: measured 3e-16,
     # the gate 1e-13 as for the doubled mode
     assert complex(tensor.gamma_nl[0, 0, 0, 0]) == pytest.approx(
-        complex(kn.gamma_nl[0]), rel=1e-13
+        complex(kn.gamma_nl[0]), rel=1e-13, abs=0
     )
 
 
@@ -695,7 +695,7 @@ def test_cross_phase_of_te10_by_te01_is_four_ninths_of_its_self_phase(cross_phas
     # the gate is 3.5 times the order-3 error
     assert ratio.real == pytest.approx(4 / 9 * n_m / n_n, rel=5e-5)
     # real fields in the gauge: the two orderings of the conjugated pair agree
-    assert g[m, n, n, m] == pytest.approx(g[m, m, n, n], rel=1e-14)
+    assert g[m, n, n, m] == pytest.approx(g[m, m, n, n], rel=1e-14, abs=0)
 
 
 def test_waves_of_different_ports_or_orders_are_refused(guide_mesh, filled):
@@ -926,7 +926,7 @@ def test_the_coupling_diagonal_is_the_coefficient_with_rho(uniform):
     fields = [(X + 2 * Y + 0.5j * Z) / 2]
     diagonal = uniform(fields, RHO, _random_axes(3), coupling=True)[0, 0, 0, 0]
     single = uniform(fields, RHO, _random_axes(3))[0]
-    assert diagonal == pytest.approx(single, rel=1e-13)
+    assert diagonal == pytest.approx(single, rel=1e-13, abs=0)
 
 
 @pytest.mark.parametrize(
@@ -974,7 +974,7 @@ def test_gamma_is_affine_in_rho_exactly(guide_mesh, filled):
     g1, g2, g3 = gamma(1.0), gamma(2.0), gamma(RHO)
     # the third is the affine combination of the first two: 1e-16 round-off
     # of a sum of a few terms, gate 1e-12
-    assert g3 == pytest.approx(g1 + (RHO - 1) * (g2 - g1), rel=1e-12)
+    assert g3 == pytest.approx(g1 + (RHO - 1) * (g2 - g1), rel=1e-12, abs=0)
 
 
 def test_an_ez_line_port_has_the_factor_of_the_z_axis(slab):
@@ -992,12 +992,12 @@ def test_an_ez_line_port_has_the_factor_of_the_z_axis(slab):
     # scaled by the same factor; round-off of the sum 1e-16, gate 1e-12
     factor = RHO + (1 - RHO) * _quartic_factor(axes, Z)
     assert abs(factor - 1) > 0.05  # the frame is not a cube axis along z
-    assert got.real == pytest.approx(factor * base.real, rel=1e-12)
+    assert got.real == pytest.approx(factor * base.real, rel=1e-12, abs=0)
 
 
 def test_a_field_along_a_cube_axis_sees_the_axis_value_for_every_rho(uniform):
     base = uniform([Y], None)[0]
-    assert uniform([Y], 1.7)[0].real == pytest.approx(base.real, rel=1e-13)
+    assert uniform([Y], 1.7)[0].real == pytest.approx(base.real, rel=1e-13, abs=0)
 
 
 # --- the refusals of the anisotropy -------------------------------------------------
@@ -1074,7 +1074,7 @@ def test_a_birefringent_filled_te10_follows_its_closed_form(guide_mesh, n_y):
     reference = 1.5 * k0 * LN_N2 / (A * B) * (n_y / n_eff) ** 2
     # the field's own mesh error: 7e-6 measured at order 2 on the isotropic guide
     # (the x component of the field adds a share of the same size); gate 1e-5
-    assert got.real == pytest.approx(reference, rel=1e-5)
+    assert got.real == pytest.approx(reference, rel=1e-5, abs=0)
     assert got.imag == 0.0
 
 
@@ -1136,7 +1136,7 @@ def test_the_index_matrix_diagonal_of_the_coupling_is_the_coefficient(uniform):
     matrix = _index_matrix((2.0, 2.2, 2.4), _random_axes(2))
     tensor = uniform(fields, None, coupling=True, index=matrix)[0, 0, 0, 0]
     single = uniform(fields, None, index=matrix)[0]
-    assert tensor == pytest.approx(single, rel=1e-13)
+    assert tensor == pytest.approx(single, rel=1e-13, abs=0)
 
 
 def test_the_index_matrix_coupling_has_the_symmetries_of_s(uniform):
@@ -1146,7 +1146,10 @@ def test_the_index_matrix_coupling_has_the_symmetries_of_s(uniform):
     fields = rng.normal(size=(3, 3)) + 1j * rng.normal(size=(3, 3))
     matrix = _index_matrix((2.0, 2.2, 2.4), _random_axes(6))
     g = uniform(fields, None, coupling=True, index=matrix)
-    np.testing.assert_allclose(g, np.swapaxes(g, 1, 2), rtol=1e-13, atol=1e-13)
+    # the entries are ~1e-22: a fixed atol would pass anything, so it scales
+    np.testing.assert_allclose(
+        g, np.swapaxes(g, 1, 2), rtol=1e-13, atol=1e-13 * np.abs(g).max()
+    )
 
 
 def test_a_law_beside_a_rho_is_refused_and_the_constant_route_works(guide_mesh):

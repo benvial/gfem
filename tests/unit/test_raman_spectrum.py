@@ -36,8 +36,8 @@ def test_lorentzian_peak_and_width_are_exact_grid_nodes():
     assert abs(s.shift[k] - f0) <= 1e-12 * f0
     assert abs(s.gain[k] - 2e-10) <= 1e-12 * 2e-10
     g = lambda f: float(s.gain_at(f, F_1550))  # noqa: E731
-    assert g(f0 - w / 2) == pytest.approx(1e-10, rel=1e-12)
-    assert g(f0 + w / 2) == pytest.approx(1e-10, rel=1e-12)
+    assert g(f0 - w / 2) == pytest.approx(1e-10, rel=1e-12, abs=0)
+    assert g(f0 + w / 2) == pytest.approx(1e-10, rel=1e-12, abs=0)
     # the half-maximum crossings of the interpolated curve are f0 -+ w/2
     fine = np.linspace(f0 - w, f0 + w, 400001)
     above = fine[np.asarray(s.gain_at(fine, F_1550)) >= 1e-10]
@@ -53,7 +53,7 @@ def test_lorentzian_tail_is_the_lorentzian_to_the_interpolation_error():
     # linear interpolation between nodes a step h = w/16 apart errs by at most
     # h^2/8 |g''|, and near the centre |g''|/g = 2/a^2 with a = w/2: a relative
     # (h/a)^2/4 = (1/8)^2/4 = 3.9e-3 (measured: 3.4e-3); 5e-3 is that bound
-    assert float(s.gain_at(f, F_1550)) == pytest.approx(exact, rel=5e-3)
+    assert float(s.gain_at(f, F_1550)) == pytest.approx(exact, rel=5e-3, abs=0)
 
 
 @pytest.mark.parametrize(
@@ -66,7 +66,7 @@ def test_lin_agrawal_peak_gain_at_the_quoted_wavelengths(frequency, expected):
     top = float(jnp.max(s.gain_at(s.shift, frequency)))
     # the quoted digits: 4 for 1.204e-13 (half a unit in the last place,
     # 4.2e-4 relative) and 3 for 6.18e-14 (8.1e-4)
-    assert top == pytest.approx(expected, rel=9e-4)
+    assert top == pytest.approx(expected, rel=9e-4, abs=0)
     assert s.shift[np.argmax(s.gain)] == pytest.approx(13.04e12, abs=1e10)
 
 
@@ -80,7 +80,7 @@ def test_lin_agrawal_shape_follows_the_response_model():
     peak = (2 * k0 * 2.6e-20 * 0.245 * (0.79 * h_a + 0.21 * h_b).imag).max()
     # 4000 samples at 10 GHz of a peak 5 THz wide: the maximum is found to
     # (1e10/5e12)^2 ~ 4e-6 relative; the quoted figure has 4 digits
-    assert peak == pytest.approx(1.204e-13, rel=5e-4)
+    assert peak == pytest.approx(1.204e-13, rel=5e-4, abs=0)
     s = gfem.RamanSpectrum.lin_agrawal(peak, F_795)
     assert s.symmetry == "isotropic"
     # the cross-polarized gain at the parallel peak is 4.58 % of it

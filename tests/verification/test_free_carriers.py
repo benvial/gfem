@@ -103,7 +103,7 @@ def test_the_slab_generation_matches_its_closed_form(slab_model, slab_modes):
     mode = slab_modes[4]
     fc = gfem.free_carriers(slab_model, mode, regions="core")
     assert fc.regions == ("core",)
-    assert fc.area == pytest.approx(CORE_THICKNESS, rel=1e-12)
+    assert fc.area == pytest.approx(CORE_THICKNESS, rel=1e-12, abs=0)
     assert float(fc.generation[0]) == pytest.approx(THETA_CORE, rel=1e-6)
 
 
@@ -143,5 +143,5 @@ def test_generation_times_photon_energy_and_area_is_the_kerr_loss(guide_model):
     fc = gfem.free_carriers(guide_model, mode)
     im = float(np.imag(gfem.kerr_nonlinearity(guide_model, mode).gamma_nl[0]))
     lhs = float(fc.generation[0]) * HBAR * 2 * np.pi * F_GUIDE * fc.area
-    assert lhs == pytest.approx(im, rel=1e-12)
-    assert im == pytest.approx(3.68303309923265e-8, rel=1e-6)
+    assert lhs == pytest.approx(im, rel=1e-12, abs=0)
+    assert im == pytest.approx(3.68303309923265e-8, rel=1e-6, abs=0)
