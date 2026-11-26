@@ -225,6 +225,9 @@ d ln G / d ln E = -1.00000
   `ValueError`.
 - The peak gain only: the Lorentzian has the full width at half maximum
   $2\,\mathrm{Im}\,\Omega$ (rad/s).
+- The photoelastic part reads the strain at one point per element: give the
+  mechanical mode's transverse wavelength several optical elements and refine
+  until the part settles.
 
 ```python
 cases = {
