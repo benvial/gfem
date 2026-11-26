@@ -28,8 +28,6 @@ largest derivative of its group, so that round-off on a zero is not a
 failure.
 """
 
-import dataclasses
-
 import finite_differences as fd
 import jax
 import jax.numpy as jnp
@@ -44,50 +42,13 @@ import gfem
 POINT = np.array([0.6e-6, 0.4e-6])
 
 
-def _fields(model):
-    """``model`` with every material a `gfem.MaterialField`."""
-    return {
-        region: gfem.MaterialField.uniform(region, material)
-        for region, material in model.materials.items()
-    }
-
-
-def _edited(model, regions, **values):
-    """``model`` with the leaves ``values`` of ``regions`` replaced."""
-    fields = _fields(model)
-    for region in regions:
-        fields[region] = dataclasses.replace(fields[region], **values)
-    return model.replace(materials=fields)
-
-
 def _check(objective, p0, directions, step, groups):
     """``jacobian . d`` equals the fourth-order difference of every output.
 
     ``groups`` maps a label to the output indices that share a derivative
     floor (see the module docstring).
     """
-    jacobian = np.asarray(fd._alone(jax.jacrev(objective), p0))
-    n = jacobian.shape[0]
-    for d in directions:
-        samples = np.array(
-            [
-                np.asarray(fd._alone(objective, p0 + k * step * d))
-                for k in (-2, -1, 1, 2)
-            ]
-        )
-        difference = (8 * (samples[2] - samples[1]) - (samples[3] - samples[0])) / (
-            12 * step
-        )
-        derivative = jacobian.reshape(n, -1) @ np.reshape(d, -1)
-        for label, indices in groups.items():
-            floor = 1e-3 * np.abs(derivative[list(indices)]).max()
-            for i in indices:
-                scale = max(abs(difference[i]), floor)
-                error = abs(derivative[i] - difference[i]) / scale
-                assert error < fd.RTOL, (
-                    f"{label}[{i}]: gradient {derivative[i]:.12e} vs difference "
-                    f"{difference[i]:.12e} (relative error {error:.2e})"
-                )
+    fd.assert_jacobian_matches_by_group(objective, p0, directions, step, groups)
 
 
 # --- an uncoupled rectangle -----------------------------------------------------------
@@ -104,12 +65,6 @@ def _intensity(result):
     r""":math:`|u(p)|^2` of mode 0 at `POINT`, in m^2."""
     u = result.displacement(0)
     return sum(jnp.abs(u[k].at(POINT)) ** 2 for k in "xyz")
-
-
-def _per_element(mesh, seed):
-    """A random unit direction of one value per element of ``film``."""
-    n = len(mesh.elements("film"))
-    return fd.unit_directions(np.random.default_rng(seed), (n,), 1)[0]
 
 
 #: A wavenumber of the rectangle's modes at q != 0, rad/m, and a quality factor.
@@ -136,46 +91,64 @@ def _readings(result):
 READINGS = {"|u|^2": [0], "S_xy": [1, 2]}
 
 
-def _symmetric(seed):
-    d = np.random.default_rng(seed).standard_normal((6, 6))
-    d = d + d.T
-    return d / np.linalg.norm(d)
-
-
 #: name -> (edit(model, p), direction(mesh), step): a unit of p is 1e10 Pa of the
 #: 1.2e11 Pa stiffness (8 %), 100 kg/m^3 of 2500 (4 %) or 5 of the quality factor
 #: 50 (10 %), and the per-element directions are ~0.13 per element: the steps of
 #: 1e-2 are relative changes of 1e-5 to 1e-3 of the leaf.
 LEAVES = {
     "stiffness": (
-        lambda m, p: _edited(m, ["film"], stiffness=C_BASE + 1e10 * p),
-        lambda _: _symmetric(5),
+        lambda m, p: mc.edited(m, ["film"], stiffness=C_BASE + 1e10 * p),
+        lambda _: mc.symmetric_direction(5),
         1e-2,
     ),
     "mass_density": (
-        lambda m, p: _edited(m, ["film"], mass_density=mc.RHO + 100.0 * p),
-        lambda mesh: _per_element(mesh, 3),
+        lambda m, p: mc.edited(m, ["film"], mass_density=mc.RHO + 100.0 * p),
+        lambda mesh: mc.per_element_direction(mesh, "film", 3),
         1e-2,
     ),
     "mechanical_quality_factor": (
-        lambda m, p: _edited(m, ["film"], mechanical_quality_factor=QUALITY + 5.0 * p),
-        lambda mesh: _per_element(mesh, 4),
+        lambda m, p: mc.edited(
+            m, ["film"], mechanical_quality_factor=QUALITY + 5.0 * p
+        ),
+        lambda mesh: mc.per_element_direction(mesh, "film", 4),
         1e-2,
     ),
 }
 
 
-@pytest.mark.parametrize("name", LEAVES)
-@pytest.mark.parametrize(
-    ("q", "quality"),
-    [(0.0, None), (0.0, QUALITY), (Q_RECT, None), (Q_RECT, QUALITY)],
-    ids=["q0-lossless", "q0-lossy", "q-lossless", "q-lossy"],
-)
+#: The grid of the rectangle's cases: (q, quality factor). Each finite difference
+#: takes 8-14 s on one thread (four samples and a jacrev of three backward
+#: passes), so the unit tier keeps one case per path of the adjoint (the
+#: lossy mode at q != 0, which runs every term, per leaf, and the lossless one
+#: at q = 0 for the stiffness) and the slow tier runs the rest of the grid.
+GRID = {
+    "q0-lossless": (0.0, None),
+    "q0-lossy": (0.0, QUALITY),
+    "q-lossless": (Q_RECT, None),
+    "q-lossy": (Q_RECT, QUALITY),
+}
+#: The (leaf, case) pairs of the unit tier.
+UNIT = {
+    ("stiffness", "q-lossy"),
+    ("stiffness", "q0-lossless"),
+    ("mass_density", "q-lossy"),
+    ("mechanical_quality_factor", "q-lossy"),
+}
+
+
+def _leaf_cases():
+    for name in LEAVES:
+        for case, (q, quality) in GRID.items():
+            if name == "mechanical_quality_factor" and quality is None:
+                continue  # a lossless section does not read the quality factor
+            marks = () if (name, case) in UNIT else (pytest.mark.slow,)
+            yield pytest.param(name, q, quality, id=f"{name}-{case}", marks=marks)
+
+
+@pytest.mark.parametrize(("name", "q", "quality"), list(_leaf_cases()))
 def test_a_reading_of_a_mode_field_matches_finite_differences(
     rectangle, name, q, quality
 ):
-    if name == "mechanical_quality_factor" and quality is None:
-        pytest.skip("a lossless section does not read the quality factor")
     edit, direction, step = LEAVES[name]
     model = mc.model(rectangle, quality=quality)
     problem = gfem.MechanicalEigenmode(1.2e9, wavenumber=q)
@@ -212,12 +185,16 @@ def _stretched(mesh, s, axis):
     return mesh.with_nodes(nodes * factor)
 
 
-@pytest.mark.parametrize("axis", [0, 1], ids=["x", "y"])
-@pytest.mark.parametrize(
-    ("q", "quality"),
-    [(0.0, None), (Q_RECT, QUALITY)],
-    ids=["q0-lossless", "q-lossy"],
-)
+def _stretch_cases():
+    # one case in the unit tier, the rest of the grid in the slow one
+    for axis, label in ((0, "x"), (1, "y")):
+        for case, (q, quality) in GRID.items():
+            unit = (label, case) == ("x", "q-lossy")
+            marks = () if unit else (pytest.mark.slow,)
+            yield pytest.param(axis, q, quality, id=f"{label}-{case}", marks=marks)
+
+
+@pytest.mark.parametrize(("axis", "q", "quality"), list(_stretch_cases()))
 def test_a_stretch_of_the_nodes_moves_a_reading_as_finite_differences(
     rectangle, axis, q, quality
 ):
@@ -253,13 +230,30 @@ def plate(tmp_path_factory):
 def _plate_edit(name, model, p):
     c, e, eps = pc.hexagonal("TE")
     if name == "piezoelectric_tensor":
-        return _edited(model, ["pz"], piezoelectric_tensor=e + 0.1 * p)
+        return mc.edited(model, ["pz"], piezoelectric_tensor=e + 0.1 * p)
     if name == "eps_r":
-        return _edited(model, ["pz"], eps_r=jnp.asarray(eps) + p)
-    return _edited(model, ["pz"], stiffness=c + 1e10 * p)
+        return mc.edited(model, ["pz"], eps_r=jnp.asarray(eps) + p)
+    if name == "mass_density":
+        rho = model.materials["pz"].mass_density
+        return mc.edited(model, ["pz"], mass_density=rho + 100.0 * p)
+    return mc.edited(model, ["pz"], stiffness=c + 1e10 * p)
 
 
-PLATE_SHAPES = {"piezoelectric_tensor": (3, 6), "eps_r": (3,), "stiffness": (6, 6)}
+PLATE_SHAPES = {
+    "piezoelectric_tensor": (3, 6),
+    "eps_r": (3,),
+    "stiffness": (6, 6),
+    "mass_density": None,
+}
+
+
+def _plate_cases():
+    # one case in the unit tier (the coupling tensor at q != 0), the rest slow
+    for name in PLATE_SHAPES:
+        for q in (0.0, Q_PLATE):
+            unit = (name, q) == ("piezoelectric_tensor", Q_PLATE)
+            marks = () if unit else (pytest.mark.slow,)
+            yield pytest.param(name, q, id=f"{name}-{q:g}", marks=marks)
 
 
 def _plate_readings(result):
@@ -283,18 +277,20 @@ def _plate_readings(result):
     )
 
 
-@pytest.mark.parametrize("name", PLATE_SHAPES)
-@pytest.mark.parametrize("q", [0.0, Q_PLATE])
+@pytest.mark.parametrize(("name", "q"), list(_plate_cases()))
 def test_a_reading_of_a_coupled_mode_matches_finite_differences(plate, name, q):
     # the open plate resonates near the stiffened half wave of its thickness; a
-    # unit of p is 0.1 C/m^2 of the piezoelectric tensor, 1 of eps_r or 1e10 Pa of
-    # the stiffness, so a step of 1e-2 is a relative change of 1e-4 to 1e-3
+    # unit of p is 0.1 C/m^2 of the piezoelectric tensor, 1 of eps_r, 1e10 Pa of
+    # the stiffness or 100 kg/m^3 of the density (per element), so a step of
+    # 1e-2 is a relative change of 1e-4 to 1e-3
     target = float(np.real(pc.plate_form("TE")["v"])) / (2 * pc.PLATE_THICKNESS * mc.UM)
     problem = gfem.MechanicalEigenmode(target, wavenumber=q, clamped=PLATE_CLAMPED)
-    shape = PLATE_SHAPES[name]
-    d = fd.unit_directions(np.random.default_rng(7), shape, 1)[0]
     if name == "stiffness":
-        d = _symmetric(7)
+        d = mc.symmetric_direction(7)
+    elif name == "mass_density":
+        d = mc.per_element_direction(plate.mesh, "pz", 7)
+    else:
+        d = fd.unit_directions(np.random.default_rng(7), PLATE_SHAPES[name], 1)[0]
 
     def objective(p):
         return _plate_readings(
@@ -303,7 +299,7 @@ def test_a_reading_of_a_coupled_mode_matches_finite_differences(plate, name, q):
 
     _check(
         objective,
-        jnp.zeros(shape),
+        jnp.zeros(d.shape),
         [d],
         1e-2,
         {"|u|^2": [0], "|V|^2": [1], "V conj(u_y)": [2, 3]},
@@ -318,11 +314,11 @@ def test_a_scalar_of_omega_and_the_field_matches_finite_differences(rectangle):
     # (every term of the adjoint); the step as in the stiffness case above
     model = mc.model(rectangle, quality=QUALITY)
     problem = gfem.MechanicalEigenmode(1.2e9, wavenumber=Q_RECT)
-    d = _symmetric(11)
+    d = mc.symmetric_direction(11)
 
     def objective(p):
         result = gfem.solve(
-            _edited(model, ["film"], stiffness=C_BASE + 1e10 * p), problem
+            mc.edited(model, ["film"], stiffness=C_BASE + 1e10 * p), problem
         )
         reading = _readings(result)
         omega = result.omega[0] / 7e9
@@ -355,7 +351,7 @@ def test_a_field_cotangent_costs_one_factorization_per_mode(rectangle, monkeypat
         return count[0]
 
     def solved(rho):
-        return gfem.solve(_edited(model, ["film"], mass_density=rho), problem)
+        return gfem.solve(mc.edited(model, ["film"], mass_density=rho), problem)
 
     def omega(rho):
         return jnp.real(solved(rho).omega).sum()
@@ -382,7 +378,7 @@ def test_a_field_of_a_degenerate_mode_refuses_by_name(tmp_path):
     problem = gfem.MechanicalEigenmode(mc.sh_standing(1, 0, 1.0, 1.0), n_modes=2)
 
     def objective(rho):
-        moved = _edited(model, ["film"], mass_density=rho)
+        moved = mc.edited(model, ["film"], mass_density=rho)
         u = gfem.solve(moved, problem, options=options).displacement(0)
         return jnp.abs(u["z"].at(np.array([0.3e-6, 0.2e-6]))) ** 2
 

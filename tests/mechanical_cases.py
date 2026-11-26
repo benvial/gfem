@@ -13,6 +13,7 @@ closed forms of an isotropic strip, with :math:`v_T = \sqrt{\mu/\rho}` and
 
 from __future__ import annotations
 
+import dataclasses
 import itertools
 from pathlib import Path
 
@@ -235,3 +236,37 @@ def stiffened_frequencies(ky: float, q: float) -> list[float]:
         for v, ok in zip(values, in_plane, strict=True)
         if ok
     ]
+
+
+# --- editing a model's material leaves (the gradient tests) --------------------------
+
+
+def material_fields(model: gfem.Model) -> dict:
+    """``model``'s materials, each a `gfem.MaterialField` (a uniform one if not)."""
+    return {
+        region: material
+        if isinstance(material, gfem.MaterialField)
+        else gfem.MaterialField.uniform(region, material)
+        for region, material in model.materials.items()
+    }
+
+
+def edited(model: gfem.Model, regions, **values) -> gfem.Model:
+    """``model`` with the leaves ``values`` of the materials of ``regions`` replaced."""
+    fields = material_fields(model)
+    for region in regions:
+        fields[region] = dataclasses.replace(fields[region], **values)
+    return model.replace(materials=fields)
+
+
+def symmetric_direction(seed: int) -> np.ndarray:
+    """A random unit symmetric 6 x 6 direction (a stiffness's)."""
+    d = np.random.default_rng(seed).standard_normal((6, 6))
+    d = d + d.T
+    return d / np.linalg.norm(d)
+
+
+def per_element_direction(mesh: gfem.Mesh, region: str, seed: int) -> np.ndarray:
+    """A random unit direction of one value per element of ``region``."""
+    d = np.random.default_rng(seed).standard_normal(len(mesh.elements(region)))
+    return d / np.linalg.norm(d)
