@@ -751,7 +751,9 @@ class PortMode:
         mode: Which propagating mode at the lowest frequency, in rank
             order: by decreasing effective index for lossless modes (1 = the
             most confined), with strongly attenuated modes ranked lower.
-            ``None``: the wave port's own ``mode``.
+            ``None``: the wave port's own ``mode``. On a bent port, mode
+            :math:`m` is the bent continuation of the closed straight
+            section's mode :math:`m`.
         polarization: On a 2D mesh, the field normal to the plane that the
             line port's mode carries: ``"Ez"`` (its field is
             `PortModeResult.e_field`) or ``"Hz"`` (`PortModeResult.h_field`).
