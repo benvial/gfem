@@ -9,8 +9,13 @@ it). The backward modes sit at :math:`q = 2\,\mathrm{Im}\,\gamma` of the optical
 port mode, near 30 GHz, where the film's modes are 1 % apart; modes 1 and 2
 have no neighbour inside the solver's clustering tolerance, so their gradients
 are not refused (their numbers: mode 1 is carried by the photoelastic part,
-mode 2 by the moving boundary with a photoelastic part of a tenth of its
+mode 2 by the moving boundary with a photoelastic part of about a fifth of its
 amplitude).
+
+The unit tier keeps the identities, the refusals, the forward scaling laws and
+the photoelastic-tensor gradient, which reuse the module's solves; the backward
+scaling laws and the finite differences through the mechanical solve (the
+quality factor, a stretch of the nodes) run in the slow tier.
 
 Gradients are read through the gains, which are :math:`|\cdot|^2` of the
 overlap: the phase gauge of a mode does not enter.
@@ -107,7 +112,8 @@ def test_the_forward_gain_is_the_couplings_g0_squared(optical, forward, gain_for
     # G_B = 4 Q_m |g~0|^2 / (hbar omega v_g^2 Re Omega) with v_g = c / n_g, from the
     # coupling's own g~0 = (omega / n_g) dn sqrt(hbar Re Omega / 4): both read the
     # same overlap path, each side is ~12 scalar flops (<= 3e-15 relative), so the
-    # gate 1e-13 holds 30x of margin
+    # gate 1e-13 holds 30x of margin; measured 4.2e-16 on the gain, 0 on the
+    # overlaps
     coupling = gfem.optomechanical_coupling(
         optical, forward, port="p", frequency=FREQUENCY
     )
@@ -136,7 +142,9 @@ def test_the_gains_are_the_overlap_squared_times_the_quality_and_frequency(
     which, request, forward, backward
 ):
     # Q_m omega |dn|^2 / c^2 from the stored overlap, omega and Omega: a few
-    # products in another order than the property's, gate 1e-14 (45 eps)
+    # products in another order than the property's, gate 1e-14 (45 eps),
+    # measured at most 2.1e-16; the overlap's total is the sum of its parts to
+    # one rounding (gate 1e-15, 4.5 eps; measured 0)
     gain = request.getfixturevalue(which)
     result = forward if which == "gain_forward" else backward
     o = gain.overlap
@@ -163,12 +171,15 @@ def test_the_direction_and_wavenumber_are_those_solved(
     assert gain_forward.overlap.direction == "forward"
     assert gain_forward.overlap.wavenumber == 0.0
     assert gain_backward.overlap.direction == "backward"
+    # the wavenumber is the result's, copied (measured 0; gate 1e-15, 4.5 eps)
     assert gain_backward.overlap.wavenumber == pytest.approx(q_pump, rel=1e-15)
 
 
 def test_the_total_is_not_the_sum_of_the_parts(gain_backward):
     # the amplitudes add with their signs: the total gain is the parts' gain
-    # plus twice the cross term, equal to the sum only when it vanishes
+    # plus twice the cross term, equal to the sum only when it vanishes; on mode
+    # 2 the cross term is 0.29 of the total gain (measured), far above both the
+    # 1e-3 floor and the 1e-3 tolerance below
     o = gain_backward.overlap
     cross = 2 * np.real(
         np.asarray(o.moving_boundary) * np.conj(np.asarray(o.photoelastic))
@@ -184,9 +195,10 @@ def test_the_total_is_not_the_sum_of_the_parts(gain_backward):
 def test_the_modes_are_selected_by_number(optical, backward, gain_backward):
     only = _gain(optical, backward, mechanical_modes=[MIXED, -4])
     assert only.modes == (MIXED, 0)
-    # the same solves and sums in another order of execution: gate 1e-10
+    # the same solves and the same sums per mode: measured 0; gate 1e-13 (450
+    # eps), for a threaded assembly that sums in another order
     np.testing.assert_allclose(
-        only.total, np.asarray(gain_backward.total)[[MIXED, 0]], rtol=1e-10, atol=0
+        only.total, np.asarray(gain_backward.total)[[MIXED, 0]], rtol=1e-13, atol=0
     )
 
 
@@ -317,7 +329,19 @@ def test_the_gain_refuses_jit_by_name(optical, meshes):
 # --- gradients -----------------------------------------------------------------------
 
 
-def test_the_modulus_and_density_scaling_laws_hold_under_grad(optical, meshes, q_pump):
+#: The cases of the scaling laws: (wavenumber, mechanical target, number of modes,
+#: mode read). The forward case is the cheaper one (an LDL^T factorization at
+#: q = 0, the left vector is the right one); the backward one runs in the slow tier.
+SCALING = {
+    "forward": pytest.param(False, id="forward"),
+    "backward": pytest.param(True, id="backward", marks=pytest.mark.slow),
+}
+
+
+@pytest.mark.parametrize("backward_pair", list(SCALING.values()))
+def test_the_modulus_and_density_scaling_laws_hold_under_grad(
+    optical, meshes, q_pump, backward_pair
+):
     # An isotropic single material, uniform Q, fixed q. The stiffness matrix of
     # the q-problem is K(q) = E K_hat(nu, q) at every power of q, so
     # Omega^2 is proportional to E/rho and Omega to E^(1/2) rho^(-1/2) (Q =
@@ -326,43 +350,46 @@ def test_the_modulus_and_density_scaling_laws_hold_under_grad(optical, meshes, q
     # 1/(rho Omega^2) = 1/E for the shape fixed: u ~ E^(-1/2), and rho cancels
     # (int rho |u|^2 = 2/Omega^2 is proportional to rho, which leaves u).
     # G_B is proportional to Q |dn|^2 with dn linear in u: dlnG/dlnE = -1 and
-    # dlnG/dlnrho = 0, exact laws; the residual of the gate is the eigenvector
-    # adjoint's error (worst agreement with finite differences 7e-8, 10x margin).
+    # dlnG/dlnrho = 0, exact laws, so the residual is the round-off of the solves
+    # and of their adjoint: measured 0 and 3e-17 forward, 3.3e-14 and 5.4e-14
+    # backward. The gate 1e-10 leaves 2000x for another platform's factorization.
     model = oc.film_model(meshes[0], quality=QUALITY)
+    wavenumber, target, n_modes, mode = (
+        (q_pump, TARGET_BACK, 4, STRONG) if backward_pair else (0.0, TARGET, 2, 0)
+    )
 
-    def gain(scale, mass, wavenumber):
+    def gain(scale, mass):
         result = gfem.solve(
             _edited(
                 model,
                 stiffness=scale * jnp.asarray(C_BASE),
                 mass_density=mass * oc.RHO_SI,
             ),
-            gfem.MechanicalEigenmode(
-                TARGET_BACK if wavenumber else TARGET,
-                n_modes=4 if wavenumber else 2,
-                wavenumber=wavenumber,
-            ),
+            gfem.MechanicalEigenmode(target, n_modes=n_modes, wavenumber=wavenumber),
         )
-        mode = STRONG if wavenumber else 0
         return _gain(optical, result, mechanical_modes=mode).total[0]
 
     one = jnp.asarray(1.0)
-    for wavenumber, rho_law in ((q_pump, 0.0), (0.0, None)):
-        value, (d_e, d_rho) = jax.value_and_grad(gain, argnums=(0, 1))(
-            one, one, wavenumber
-        )
-        assert float(d_e) / float(value) == pytest.approx(-1.0, abs=1e-6)
-        if rho_law is not None:
-            assert float(d_rho) / float(value) == pytest.approx(rho_law, abs=1e-6)
+    value, (d_e, d_rho) = jax.value_and_grad(gain, argnums=(0, 1))(one, one)
+    assert float(d_e) / float(value) == pytest.approx(-1.0, rel=0, abs=1e-10)
+    assert float(d_rho) / float(value) == pytest.approx(0.0, rel=0, abs=1e-10)
 
 
-#: The finite-difference step: a relative change of 1e-3 of the input. The
-#: fourth-order difference's truncation is about h^4 J^(5) / 30 ~ 1e-12 of the
-#: derivative (each order of derivative of a mode grows by the inverse of its
-#: relative gap to the next one, 1 %, so (100 h)^4 / 30 ~ 3e-6 at most; mode 2's
-#: neighbours sit 1 % away and the measured error is the gate's margin), its
-#: round-off the eigen-solve's noise 1e-12 relative over h, 1e-9; the gate is
-#: the shared 1e-6 of `finite_differences`.
+#: The finite-difference step of the quality factor and the stretch: a change of
+#: 1e-3 of the input. Measured on mode 2's quality-factor gradient (gains
+#: 1.7e-2, 7.8e-3 and 3.0e-2 1/(W m), relative slopes 5e-3, 1.1e-2 and 6.2e-2
+#: per unit of the input): the fourth-order differences at h = 4e-3, 2e-3, 1e-3,
+#: 5e-4 and 2.5e-4 agree to 3e-9 of the derivative, so the truncation, which
+#: falls as h^4, is under 3e-9 at 4e-3 and 1e-11 at 1e-3; the gains' noise
+#: between samples (residual of a polynomial fit on a grid of 1e-5) is
+#: delta = 2e-15 to 1.6e-13 of the value, a round-off 1.5 delta |J| / (h |J'|)
+#: of at most 2e-8 at h = 1e-3. The worst FD error is then 2e-8, 50x under
+#: the shared 1e-6 gate of `finite_differences`; the measured agreements are
+#: 3.4e-10, 1.6e-9 and 1.0e-9 (moving boundary, photoelastic, total). On the
+#: stretch, whose photoelastic gain passes near zero inside the samples, the
+#: agreements are 2.3e-9, 1.4e-7 and 1.6e-7; at h = 5e-4 they fall to 1.2e-8,
+#: 8.7e-9 and 9.9e-9, by 16 on the last two: truncation, the same on every
+#: platform, 6x under the gate.
 STEP = 1e-3
 
 
@@ -398,10 +425,19 @@ def _gains(gain):
     return jnp.stack([gain.moving_boundary[0], gain.photoelastic[0], gain.total[0]])
 
 
+#: The photoelastic step, relative to the norm of the tensor (see the test).
+P_STEP = 0.1
+
+
 def test_the_photoelastic_tensor_gradient_matches_finite_differences(meshes, backward):
-    # the photoelastic gain is |dn|^2 with dn affine in p, so the fourth-order
-    # difference has no truncation; the moving boundary reads no p
-    d = fd.unit_directions(np.random.default_rng(3), (6, 6), 1)
+    # dn is affine in p and the moving boundary reads no p, so each gain is a
+    # quadratic in p and the central difference (J(h) - J(-h)) / (2h) is its
+    # exact derivative at any h: no truncation, two samples. The round-off is
+    # delta |J| / (h |J'|), with the gains' noise delta ~ 1e-15 and |J| / |J'|
+    # about 2e-2 and 1e-1 along this direction: 2e-16 to 1e-15 at h = 0.1 (10 %
+    # of |P|); measured 1.0e-15 and 7e-16 (photoelastic, total). The gate 1e-12
+    # leaves 1000x. The moving boundary's derivative is exactly zero.
+    d = fd.unit_directions(np.random.default_rng(3), (6, 6), 1)[0]
     scale = np.linalg.norm(P)
 
     def objective(p):
@@ -413,15 +449,20 @@ def test_the_photoelastic_tensor_gradient_matches_finite_differences(meshes, bac
         )
         return _gains(_gain(model, backward, mechanical_modes=MIXED))
 
-    _checked(objective, jnp.zeros((6, 6)), d, outputs=(1, 2))
+    p0 = jnp.zeros((6, 6))
+    _, pullback = jax.vjp(objective, p0)
+    plus, minus = (
+        np.asarray(fd._alone(objective, p0 + sign * P_STEP * d)) for sign in (1, -1)
+    )
+    difference = (plus - minus) / (2 * P_STEP)
+    grads = [
+        float(jnp.sum(pullback(jnp.zeros(3).at[i].set(1.0))[0] * d)) for i in range(3)
+    ]
+    assert grads[0] == 0
+    np.testing.assert_allclose(grads[1:], difference[1:], rtol=1e-12, atol=0)
 
 
 @pytest.mark.slow
-@pytest.mark.xfail(
-    strict=True,
-    reason="measured 4.88e-6 against the 1e-6 gate on the first output (the "
-    "moving-boundary gain of mode 2); under numerical diagnosis",
-)
 def test_the_quality_factor_gradient_matches_finite_differences(
     optical, meshes, q_pump
 ):
