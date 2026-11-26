@@ -189,6 +189,42 @@ def _check_acoustic(acoustic: Any, terminal: str | None) -> tuple[str, np.ndarra
     return terminal, kept
 
 
+def _check_displacement(displacement: Any, owner: str) -> None:
+    """Raise unless ``displacement`` is a q = 0 `gfem.FieldMap` of x, y, z on a 2D mesh.
+
+    Raises:
+        TypeError: ``displacement`` is not a `gfem.FieldMap`.
+        ValueError: It lacks a component, is on a 3D mesh, or has an axial
+            wavenumber other than 0.
+    """
+    from gfem._field import FieldMap
+
+    if not isinstance(displacement, FieldMap):
+        raise TypeError(
+            f"{owner} takes a displacement gfem.FieldMap with the components "
+            f"'x', 'y', 'z' (a mechanical mode's, or a piezoelectric "
+            f"solve's), got {type(displacement).__name__}."
+        )
+    missing = [c for c in "xyz" if c not in displacement]
+    if missing:
+        raise ValueError(
+            f"{owner}: the displacement has the components "
+            f"{', '.join(repr(k) for k in displacement)}; it needs 'x', 'y' "
+            "and 'z'."
+        )
+    if any(displacement[c].mesh.dim != 2 for c in "xyz"):
+        raise ValueError(
+            f"{owner}: the displacement must live on a native 2D mesh, the "
+            "waveguide's cross-section."
+        )
+    if displacement.wavenumber != 0:
+        raise ValueError(
+            f"{owner}: the displacement has the axial wavenumber "
+            f"q = {displacement.wavenumber:g} rad/m; only q = 0 is read (a mode "
+            "with q != 0 averages to zero against an optical mode with itself)."
+        )
+
+
 def _offset(offset: Any) -> jax.Array:
     """The offset as a ``(2,)`` array of metres.
 
@@ -208,7 +244,13 @@ def _offset(offset: Any) -> jax.Array:
     return jnp.asarray(arr, dtype=jnp.float64)
 
 
-def _check_plane(mesh: Any, faces: np.ndarray, port: str) -> None:
+def _check_plane(
+    mesh: Any,
+    faces: np.ndarray,
+    port: str,
+    owner: str = _OWNER,
+    section: str = "acoustic",
+) -> None:
     """Raise unless the port's section lies in a plane :math:`z` = const.
 
     The acoustic result is invariant along z, and the shift reads it at the
@@ -219,12 +261,18 @@ def _check_plane(mesh: Any, faces: np.ndarray, port: str) -> None:
     extent = np.ptp(np.asarray(mesh.nodes, float), axis=0).max()
     if np.ptp(z) > 1e-9 * extent:
         raise ValueError(
-            f"{_OWNER}: wave port {port!r} is not in a plane z = const: the "
-            "acoustic section is invariant along z, so the guide must run along z."
+            f"{owner}: wave port {port!r} is not in a plane z = const: the "
+            f"{section} section is invariant along z, so the guide must run along z."
         )
 
 
-def _check_optical_fixed(model: Model) -> None:
+def _check_optical_fixed(
+    model: Model,
+    owner: str = _OWNER,
+    what: str = "the acousto-optic shift",
+    through: str = "the acoustic result, the photoelastic_tensor, the "
+    "electro_optic_tensor or the offset",
+) -> None:
     """Raise `NonDifferentiableError` for a traced input of the port mode problem.
 
     The mode is held constant; the refusal comes before the acoustic fields
@@ -235,12 +283,11 @@ def _check_optical_fixed(model: Model) -> None:
         for name in names:
             if is_traced(getattr(material, name, None)):
                 raise NonDifferentiableError(
-                    f"{_OWNER}: gfem cannot differentiate the acousto-optic shift "
+                    f"{owner}: gfem cannot differentiate {what} "
                     f"with respect to the optical model's {name}: the mode is held "
-                    "constant (first order in the acoustic fields). Wrap it in "
+                    "constant (first order in the displacement). Wrap it in "
                     "jax.lax.stop_gradient to use its value without its "
-                    "derivative. Differentiate through the acoustic result, the "
-                    "photoelastic_tensor, the electro_optic_tensor or the offset."
+                    f"derivative. Differentiate through {through}."
                 )
 
 
@@ -273,11 +320,24 @@ class _Crystal:
     has_r: np.ndarray
 
 
-def _crystal(model: Model, port: str, tets: np.ndarray) -> _Crystal:
+def _crystal(
+    model: Model,
+    port: str,
+    tets: np.ndarray,
+    owner: str = _OWNER,
+    *,
+    tensors: tuple[str, ...] = ("photoelastic_tensor", "electro_optic_tensor"),
+    require: bool = True,
+) -> _Crystal:
     """The section's elements with a photoelastic or electro-optic tensor.
 
+    ``tensors`` names the tensors that count (the photoelastic one alone for the
+    overlap of a displacement). Lossy regions raise whatever they carry. With no
+    element holding a counted tensor, ``require`` raises and its absence gives
+    an empty crystal.
+
     Raises:
-        ValueError: No element behind the section has either tensor.
+        ValueError: No element behind the section has a tensor.
         NotImplementedError: The section is lossy.
     """
     mesh = model.mesh
@@ -289,14 +349,20 @@ def _crystal(model: Model, port: str, tets: np.ndarray) -> _Crystal:
         loss = _lossy(material, pos)
         if loss is not None:
             raise NotImplementedError(
-                f"{_OWNER}: region {region!r} of wave port {port!r}'s section has "
+                f"{owner}: region {region!r} of wave port {port!r}'s section has "
                 f"{loss}. The first-order shift weighs Re(E E^H), which holds for "
                 "a lossless section only: give the section's regions a real eps_r "
                 "with no tan_delta or conductivity (an optical window or "
                 "EM-excluded electrodes keep the loss out of the section)."
             )
-        photoelastic = material.photoelastic_tensor is not None
-        electro_optic = material.electro_optic_tensor is not None
+        photoelastic = (
+            "photoelastic_tensor" in tensors
+            and material.photoelastic_tensor is not None
+        )
+        electro_optic = (
+            "electro_optic_tensor" in tensors
+            and material.electro_optic_tensor is not None
+        )
         if not (photoelastic or electro_optic):
             continue
         n = len(at)
@@ -307,6 +373,15 @@ def _crystal(model: Model, port: str, tets: np.ndarray) -> _Crystal:
         has_p.append(np.full(n, photoelastic))
         has_r.append(np.full(n, electro_optic))
     if not rows:
+        if not require:
+            return _Crystal(
+                np.zeros(0, int),
+                jnp.zeros((0, 3, 3)),
+                jnp.zeros((0, 6, 6)),
+                jnp.zeros((0, 6, 3)),
+                np.zeros(0, bool),
+                np.zeros(0, bool),
+            )
         names = ", ".join(repr(name) for name in regions)
         raise ValueError(
             f"{_OWNER}: no element of wave port {port!r}'s section has a "
@@ -376,22 +451,47 @@ def _mean_strain(
     moved: dict[int, Any],
 ) -> jax.Array:
     r"""The mean engineering strain over each of ``tets``, ``(n_f, n, 6)``, per volt."""
+    return jnp.stack(
+        [
+            _mean_strain_of(
+                acoustic.displacement(f, terminal),
+                mesh,
+                tets,
+                offset=offset,
+                owner=owner,
+                moved=moved,
+            )
+            for f in frequencies
+        ]
+    )
+
+
+def _mean_strain_of(
+    read: Any,
+    mesh: Any,
+    tets: np.ndarray,
+    *,
+    offset: jax.Array,
+    owner: str,
+    moved: dict[int, Any],
+) -> jax.Array:
+    r"""The mean engineering strain of a displacement over each of ``tets``, ``(n, 6)``.
+
+    ``read`` is a `gfem.FieldMap` of the components ``x``, ``y``, ``z`` on a 2D
+    mesh, read at the quadrature points of ``tets`` projected onto
+    :math:`(x, y)`.
+    """
     from gfem._field import FieldMap
     from gfem.measurements import strain
 
-    order = acoustic.displacement(frequencies[0], terminal)["x"].order
-    points, weights = _points(mesh, tets, order)
-    out = []
-    for f in frequencies:
-        read = acoustic.displacement(f, terminal)
-        displacement = FieldMap(
-            {k: _moved(v, offset, moved) for k, v in read.items()}, label="component"
-        )
-        s = _read("strain", owner, lambda d=displacement: strain(d, points))
-        out.append(
-            jnp.einsum("q,nqc->nc", weights, s.reshape(len(tets), len(weights), 6))
-        )
-    return jnp.stack(out)
+    points, weights = _points(mesh, tets, read["x"].order)
+    displacement = FieldMap(
+        {k: _moved(v, offset, moved) for k, v in read.items()},
+        label="component",
+        wavenumber=read.wavenumber,
+    )
+    s = _read("strain", owner, lambda: strain(displacement, points))
+    return jnp.einsum("q,nqc->nc", weights, s.reshape(len(tets), len(weights), 6))
 
 
 def _mean_field(

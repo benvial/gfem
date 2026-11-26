@@ -141,6 +141,10 @@ from gfem.model import (  # noqa: E402
     isotropic_stiffness,
 )
 from gfem.options import SolverOptions  # noqa: E402
+from gfem.optomechanics import (  # noqa: E402
+    OptomechanicalOverlap,
+    optomechanical_overlap,
+)
 from gfem.photon_pairs import (  # noqa: E402
     JointSpectrum,
     PhotonPairSource,
@@ -291,6 +295,7 @@ __all__ = [
     "NonPassiveDataWarning",
     "ObliqueAbsorberWarning",
     "OpticalForce",
+    "OptomechanicalOverlap",
     "PassivityEnforcementError",
     "Periodic",
     "PermittivityFit",
@@ -373,6 +378,7 @@ __all__ = [
     "materials",
     "multipoles",
     "optical_force",
+    "optomechanical_overlap",
     "power_flow",
     "purcell_factor",
     "quantum",
