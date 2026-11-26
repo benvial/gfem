@@ -1,4 +1,4 @@
-# Find the phase a voltage puts on a waveguide
+# Electro-optic phase shift
 
 Find how much a voltage on an electrode shifts the phase of light in a
 crystal waveguide: the change of the effective index per volt, the

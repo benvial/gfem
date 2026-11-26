@@ -1,4 +1,4 @@
-# Solve a periodic cell
+# Periodic cells
 
 Get the {term}`band diagram <band diagram>` of a structure that repeats along one,
 two or three directions with {py:func}`gfem.band_diagram` (the

@@ -1,4 +1,4 @@
-# Emit from a point dipole: emitted power, Purcell and beta factors
+# Point dipoles and Purcell factor
 
 A {term}`point dipole` ({py:obj}`gfem.ElectricDipole`,
 {py:obj}`gfem.MagneticDipole`) is a current at one point: a fluorescent

@@ -1,4 +1,4 @@
-# Optimize a design for fabrication: etch, blur and minimum features
+# Robust optimization
 
 A density design is fabricated with an etch bias: edges move outwards
 (under-etch, more material) or inwards (over-etch, less material).

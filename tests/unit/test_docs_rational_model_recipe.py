@@ -1,4 +1,4 @@
-r"""The "Export S as a SPICE or Verilog-A model" recipe runs and prints what it shows.
+r"""The "SPICE and Verilog-A export" recipe runs and prints what it shows.
 
 docs/recipes/rational-model.md runs nothing at docs build time. This runs its
 blocks in order, as a reader does, on the repository's own

@@ -1,4 +1,4 @@
-# Differentiate port modes and designs at a port
+# Port-mode gradients
 
 Tune a guide's cross-section for a target effective index or impedance, and
 optimize a device whose design reaches its wave ports: a taper's width at its
@@ -104,7 +104,7 @@ sum eps dn_eff/deps = 2.027680, n_g / 2 = 2.027680
 
 ## Size a line for 50 Ω
 
-The line of {doc}`../get-started` is two plates 1 mm apart and 6 mm wide,
+The line of the {doc}`get started page <../get-started>` is two plates 1 mm apart and 6 mm wide,
 between magnetic side walls `"side"`, with a wave port at each end. Which
 width gives 50 Ω? The width is a shape design that moves the port faces, so
 both ports are named in `sliding_ports`: their faces slide in their plane,

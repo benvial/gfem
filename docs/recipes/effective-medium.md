@@ -1,4 +1,4 @@
-# Effective medium of a periodic slab
+# Effective medium of a slab
 
 Replace a slab of a periodic cell, a layer of meta-atoms or a stack of
 patterned films, by a homogeneous slab and read its permittivity

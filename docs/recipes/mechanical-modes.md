@@ -1,4 +1,4 @@
-# Find the mechanical modes of a film or a rib
+# Mechanical modes
 
 Find the modes of vibration of a solid cross-section that propagate along its
 axis: the {term}`mechanical eigenmode` of a suspended film (its Lamb modes) or

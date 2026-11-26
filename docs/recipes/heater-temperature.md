@@ -1,4 +1,4 @@
-# Heat a device with a current and read its temperature
+# Heater temperature
 
 Find the temperature of a device heated by a current: the resistance of the
 heater, the power it dissipates, and how much each part of the device warms

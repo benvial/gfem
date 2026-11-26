@@ -1,4 +1,4 @@
-# Watch a solve run
+# Solver progress and logs
 
 See what gfem does while it solves: which solver each frequency got, whether
 a factorization was reused, how long each phase took, and how far a long
@@ -157,7 +157,7 @@ gfem.log.enable(rank0_only=False)
 ```
 
 gfem reads the rank from the launcher's environment, so `enable` works before
-anything imports mpi4py. {doc}`distributed-solve` covers the launch itself.
+anything imports mpi4py. The {doc}`distributed solve recipe <distributed-solve>` covers the launch itself.
 
 ## With your own handlers
 

@@ -1,4 +1,4 @@
-"""The "Differentiate a SAX circuit with gfem blocks" recipe runs and is right.
+"""The "SAX circuits with gfem blocks" recipe runs and is right.
 
 docs/recipes/sax-circuit.md runs nothing at docs build time. This runs its
 blocks in order, as a reader does, on the repository's own

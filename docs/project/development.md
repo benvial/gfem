@@ -15,12 +15,12 @@ Test tiers are pytest markers set by directory: `tests/unit`,
 `tests/mpi`. The `reference`, `benchmark`, `cuda` and `mpi` tiers are deselected by
 default; run them with `uv run pytest -m reference` (and so on). Reference tests read their
 data from `GFEM_REFERENCE_DIR` and skip when it is unset.
-{doc}`../verification` describes each verification case in physical terms and
+The {doc}`verification page <../verification>` describes each verification case in physical terms and
 links the test file that runs it.
 
 Tests marked `petsc` and `slepc` sit in the unit and verification tiers and
 skip unless the {term}`PETSc stack` is installed. To run them, add the
-wheelhouse that {doc}`../recipes/petsc-slepc` builds:
+wheelhouse that the {doc}`PETSc recipe <../recipes/petsc-slepc>` builds:
 
 ```bash
 uv sync

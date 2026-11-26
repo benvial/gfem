@@ -158,7 +158,7 @@ True
 - The sign of a wave port's row and column of S follows its
   {term}`polarity reference` (or its `voltage_path`), not the mesh.
 
-The recipe {doc}`recipes/sax-circuit` builds a photonic and an RF circuit from
+The {doc}`SAX circuit recipe <recipes/sax-circuit>` builds a photonic and an RF circuit from
 these blocks.
 
 ## Sign of loss
@@ -267,7 +267,7 @@ port; otherwise it is read from the port's mean voltage and differs slightly.
 
 Across a periodic pair of translation $\mathbf{a}$, a Bloch wave vector $\mathbf{k}$ sets
 `BLOCH_PHASE`: `E(r + a) = exp(-i k·a) E(r)`, so the phase of a Bloch wave
-travels along $+\mathbf{k}$. {doc}`recipes/periodic-cell` shows it on a cell, and
+travels along $+\mathbf{k}$. The {doc}`periodic cell recipe <recipes/periodic-cell>` shows it on a cell, and
 "Floquet ports" below gives the conventions of a cell lit by a plane wave.
 
 Wave vectors are Cartesian, in rad/m. The named points of a
@@ -856,7 +856,7 @@ $V_\pi L = \lambda / (2\,|\delta n_a - \delta n_b|)$ per volt on the fingers;
 per volt of an incident wave on a source impedance $Z_0$ it is that times
 $|(Z_L + Z_0)/(2Z)|$, with $Z = 1/(W Y')$ and $Z_L = Z + R_s$. Only the
 photoelastic and electro-optic terms are counted, not the moving boundaries or
-the crystal's rotation. {doc}`recipes/acousto-optic-shift` has the whole
+the crystal's rotation. The {doc}`acousto-optic recipe <recipes/acousto-optic-shift>` has the whole
 calculation.
 
 ## Optomechanical coupling
@@ -887,7 +887,7 @@ intramodal Brillouin gain of a guide is
 $G_\mathrm{B} = 4 Q_m \tilde g_0^2/(\hbar\omega\,v_g^2\,\mathrm{Re}\,\Omega)$
 with $v_g = c/n_g$ (Van Laer et al., Phys. Rev. A 93, 053828 (2016)). The
 rotation of the crystal by the displacement is not counted.
-{doc}`recipes/optomechanical-coupling` has the whole calculation.
+The {doc}`optomechanical recipe <recipes/optomechanical-coupling>` has the whole calculation.
 
 ## Piezoelectric problems
 
