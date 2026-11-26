@@ -117,6 +117,22 @@ class OptomechanicalOverlap:
             part: a complex scalar, or ``(n,)`` over a coupling's modes.
         photoelastic: :math:`\delta n_\mathrm{PE}`, the photoelastic part:
             a complex scalar, or ``(n,)`` over a coupling's modes.
+        wavenumber: The displacement's axial wavenumber :math:`q`, rad/m
+            (static, 0 for a forward overlap).
+        direction: ``"forward"`` (:math:`q \approx 0`) or ``"backward"``
+            (:math:`q \approx 2\beta` along the pump).
+
+    A backward pair's parts are the transition element between the pump and
+    its counter-propagating twin :math:`E_s = DE_p`,
+    :math:`D = \mathrm{diag}(1, 1, -1)`, not a change of :math:`n_\mathrm{eff}`:
+
+    .. math::
+
+        \delta n_{ps} = \frac{c\varepsilon_0}{4}\int E_p^H\,
+        \delta\varepsilon_q[u]\,E_s\,dA
+
+    with :math:`q = 2\beta\,(\hat n\cdot\hat z)` along the pump. At
+    :math:`D = I`, :math:`q = 0` it is :math:`\partial n_\mathrm{eff}/\partial\alpha`.
     """
 
     port: str
@@ -799,11 +815,34 @@ def optomechanical_overlap(
     nearby designs of a symmetric section: an objective reads the
     convention-free :math:`|\partial n_\mathrm{eff}/\partial\alpha|^2`.
 
+    The displacement's own axial wavenumber :math:`q` selects the pair, through
+    a window of :math:`\pm 2\tau\beta`, :math:`\tau = 10^{-2}`,
+    :math:`\beta = 2\pi f\,\mathrm{Re}\,n_\mathrm{eff}/c`: near
+    :math:`q = 0` the forward numbers above; near :math:`q = 2\beta s`
+    (:math:`s = \hat n\cdot\hat z` of the port) the backward pair overlap
+
+    .. math::
+
+        \delta n_{ps} = \sum_t B_t : \Delta\varepsilon_t
+        + \nabla_\mathrm{nodes} n_\mathrm{eff}\cdot\mathbf W
+        - 2\,\mathbf c\cdot\mathbf W,
+        \qquad B_t = \mathrm{sym}(D H_t),
+        \quad H_t = \frac{c\varepsilon_0}{4}\int_t E_p E_p^H\,dA
+
+    with :math:`\mathbf c` the node weights of
+    :math:`\tfrac{c\varepsilon_0}{4}\oint u_n\,\Delta\varepsilon_{zz}|E_z|^2\,dl`
+    (the normal field flips sign in the twin). A backward pair's parts are the
+    transition element between the pump and its counter-propagating twin, not a
+    change of :math:`n_\mathrm{eff}`. Any other :math:`q` raises. A backward
+    pair costs the same two port mode solves; a section with :math:`\mu_r \ne 1`
+    is refused.
+
     Args:
         model: The optical model: a 3D slab (`gfem.Mesh.from_gmsh_cross_section`)
             with a lossless section.
         displacement: A displacement ``FieldMap`` with the components
-            ``x``, ``y``, ``z`` (m) at :math:`q = 0`, on a native 2D mesh with
+            ``x``, ``y``, ``z`` (m) at :math:`q \approx 0` or :math:`q \approx
+            2\beta s`, on a native 2D mesh with
             the same global :math:`(x, y)` as the optical section (translate a
             mesh to align them).
         port: The wave port's name; its section lies in a plane
@@ -820,7 +859,8 @@ def optomechanical_overlap(
             a ``FieldMap``.
         ValueError: ``port`` is not a wave port of the model, a sequence of
             frequencies is given, ``displacement`` lacks a component, is not
-            on a 2D mesh or has an axial wavenumber other than 0, the port's
+            on a 2D mesh or has an axial wavenumber outside both phase-matching
+            windows (the message names the expected values), the port's
             section is not in a plane :math:`z = \mathrm{const}`, no node of
             the section is in the displacement's support and no element has a
             ``photoelastic_tensor``, an element with one lies outside the
@@ -828,9 +868,10 @@ def optomechanical_overlap(
             displacement moves a node of the section's outer edge across it
             (the message names the node).
         NotImplementedError: The model is on a 2D mesh (a 2D `gfem.PortMode` is
-            a line mode) or the section is lossy (a complex ``eps_r``, a
+            a line mode), the section is lossy (a complex ``eps_r``, a
             ``tan_delta`` or ``conductivity`` other than 0, or a permittivity
-            law).
+            law), or a backward pair meets a section element with
+            :math:`\mu_r \ne 1`.
         NonDifferentiableError: Under `jax.grad`, an input of the optical
             model other than the photoelastic tensors (its ``eps_r``,
             ``tan_delta``, ``mu_r``, ``conductivity`` or node coordinates):
