@@ -1,21 +1,17 @@
 # Far fields and directivity
 
 {py:func}`gfem.far_field` turns a solved field into its
-{term}`far-field amplitude`: the field far from every source, per direction,
-with the outgoing spherical factor removed. It works on any column of a
-driven solve, an excited port (an antenna), a {term}`point dipole` or an
-{term}`incident field` (a scatterer), and returns a {py:obj}`gfem.FarField`
-with the antenna quantities of IEEE 145 built on it: the {term}`radiation
-intensity`, the radiated power, the {term}`directivity`, gain and realized
-gain, the radiation efficiency, the circular components and the axial
-ratio, and a plane wave's bistatic radar cross section.
+{term}`far-field amplitude`, per direction. It works on any column of a driven
+solve: an excited port (an antenna), a {term}`point dipole` or an
+{term}`incident field` (a scatterer). The {py:obj}`gfem.FarField` it returns
+holds the {term}`radiation intensity`, the {term}`directivity`, gain, the
+circular components and a plane wave's bistatic radar cross section.
 
 ## Read the pattern of an antenna
 
 A strip dipole two thirds of a wavelength long, fed by a lumped port in its
-gap, in a box of air wrapped in a {term}`perfectly matched layer`, at a 1 µm
-wavelength. The model's background is the {term}`exterior medium` the field
-radiates into:
+gap, in air wrapped in a {term}`perfectly matched layer`, at 1 µm. The
+model's background is the {term}`exterior medium` the field radiates into:
 
 ```python
 import urllib.request
@@ -61,33 +57,25 @@ peak directivity 2.302
 peak realized gain 1.386
 ```
 
-- `theta` and `phi` are any arrays that broadcast together, in rad, with the
-  angles of an incident field's direction: $\theta$ from $+z$, $\phi$ from
-  $+x$. Every array of the result has the kept frequencies first, then their
-  broadcast shape.
+- `theta` and `phi` are broadcast arrays in rad, like an incident field's
+  angles.
 - `e_theta` and `e_phi` are $F_\theta$ and $F_\phi$ in V, with
-  $\mathbf{E} \approx \mathbf{F}\,e^{-ikr}/r$ far away and the phase
-  referred to the model origin (`gfem.conventions`, Far fields).
-- `intensity` is $U = |\mathbf{F}|^2/(2\eta)$ in W/sr, and `radiated_power`
-  the power flowing out of the side the far field is read on, from the
-  residual of the discrete equations, as {py:func}`gfem.power_flow` computes
-  it. The intensity integrated over the sphere agrees with it to the
-  discretization; it is a check, not how $P_\text{rad}$ is computed.
+  $\mathbf{E} \approx \mathbf{F}\,e^{-ikr}/r$ and the phase referred to the
+  origin (`gfem.conventions`, Far fields).
+- `intensity` is $U = |\mathbf{F}|^2/(2\eta)$ in W/sr; `radiated_power` is the
+  power out of the side, from the residual as {py:func}`gfem.power_flow`
+  computes it. The integral of $U$ agrees with it to the discretization.
 - `directivity` is $4\pi U / P_\text{rad}$, `gain` $4\pi U / P_\text{acc}$,
   `realized_gain` $4\pi U / P_\text{inc}$ and `radiation_efficiency`
-  $P_\text{rad}/P_\text{acc}$. A port is fed 1 W, so its realized gain is
-  $4\pi U$ and its accepted power $1 - |S_{11}|^2$. The lumped port's $S$
-  comes from its voltage and current: on this coarse mesh it meets the
-  radiated power to 3 %, so the efficiency of this lossless strip reads
-  0.97, not 1.
-- For a point dipole, the accepted and incident powers are both its
-  {term}`emitted power`: its gain equals its realized gain.
+  $P_\text{rad}/P_\text{acc}$. A port is fed 1 W; on this coarse mesh its $S$
+  meets the radiated power to 3 %, so the lossless strip reads 0.97.
+- For a point dipole, the accepted and incident powers are its
+  {term}`emitted power`.
 
 ## Circular polarization
 
-`e_right` and `e_left` are the components along right- and left-hand
-circular polarization, $(F_\theta \pm iF_\phi)/\sqrt{2}$ (IEEE handedness,
-as `"RCP"` and `"LCP"`), and `axial_ratio` is
+`e_right` and `e_left` are the components $(F_\theta \pm iF_\phi)/\sqrt{2}$
+along right- and left-hand circular polarization (IEEE), and `axial_ratio` is
 $(|F_R| + |F_L|)/\big||F_R| - |F_L|\big|$: 1 for circular, infinite for
 linear polarization. Two crossed dipoles in quadrature, $p(\hat x - i\hat y)$,
 radiate right-hand circular polarization along $+z$:
@@ -134,8 +122,7 @@ backscatter 0.9333 um^2
 
 The forward amplitude gives the extinction by the optical theorem,
 $\sigma_\text{ext} = -\tfrac{4\pi}{k}\operatorname{Im}\big(\hat{\mathbf{e}}^*
-\cdot\mathbf{F}(\hat{\mathbf{k}})\big)/E_0$ for a wave of amplitude $E_0$
-along $\hat{\mathbf{e}}$: a check of the extinction cross section.
+\cdot\mathbf{F}(\hat{\mathbf{k}})\big)/E_0$.
 
 ## Where the far field is read
 
@@ -150,99 +137,69 @@ $$
 $$
 
 the Stratton-Chu surface integral averaged across the layer. It needs no
-surface, and reads the field inside elements, where it is smooth: two to
-five times more accurate than a surface integral at orders 2 and 3.
+surface and is two to five times more accurate than a surface integral at
+orders 2 and 3.
 
-- By default (`side=None`) the side is every physical element with no
-  vertex on the perfectly matched layer or an absorbing face, so the layer
-  is the one touching the truncation, and no name is needed.
-- `side=` takes volume region names or a predicate on element centroids, as
-  for `power_flow`. The side must hold every source, port, sheet and
-  scatterer, one element clear of its outside layer.
-- The layer must be the exterior medium: one constant, isotropic, lossless
-  material, the model's background.
+- By default (`side=None`) the side is every physical element with no vertex on
+  the perfectly matched layer or an absorbing face.
+- `side=` takes volume region names or a predicate on centroids and must hold
+  every source, port and scatterer, one element clear of its outside layer.
+- The layer must be the exterior medium: constant, isotropic and lossless.
 
 ## Ground planes
 
 A flat PEC or PMC exterior face that the layer meets is a
 {term}`ground plane`: the model ends on it instead of a layer, and the far
-field is that of the sources and their mirror images, in the half-space
-above it (image theory). gfem finds it from the model's walls; directions
-below the plane raise. The same dipole $0.21\lambda$ above a PEC ground
-gives, at order 3, the pattern of the dipole and its image to 0.2 %.
+field is that of the sources and their images above it. The same dipole
+$0.21\lambda$ above a PEC ground gives, at order 3, the pattern of the dipole
+and its image to 0.2 %.
 
 ## Couple into a beam
 
 The same reaction with a beam as the test field gives the
-{term}`beam coupling`: {py:func}`gfem.beam_coupling` reads how much of a
-solved field goes into an incoming beam, such as a fiber's above a grating
-coupler. For a port column fed 1 W it is, by reciprocity, the wave the port
-would receive if the beam lit the device, so the fiber-to-port efficiency
-of every fiber position, angle, waist and polarization comes from one
-port-fed solve: `abs(gfem.beam_coupling(result, "wg", fiber, model=model)) ** 2`.
+{term}`beam coupling`: {py:func}`gfem.beam_coupling` reads how much of a solved
+field goes into an incoming beam, such as a fiber's above a grating coupler.
+For a port column fed 1 W it is, by reciprocity, the wave the port would
+receive if the beam lit the device, so every fiber position, angle and waist
+comes from one port-fed solve:
+`abs(gfem.beam_coupling(result, "wg", fiber, model=model)) ** 2`.
 
-- The beam is a `gfem.GaussianBeam`, or a `gfem.IncidentField` (a
-  z-invariant fiber on a slab, say), described travelling toward the
-  device. It is scaled to 1 W through the side, so neither its own power
-  nor a slab's thickness enters; the phase is the beam's.
-- By default the side's surface is the truncation face the beam brings most
-  power in through: the physical elements touching it are the layer. A
-  named side or a predicate works too, if its surface crosses the beam once
-  (a half-space; through a closed surface a beam brings no net power) and
-  stays an element away from the truncation under the beam. Perfectly
-  matched layer elements are dropped from the layer, so a plane through
-  the layer ends open there.
-- The layer must be the beam's medium, one constant, isotropic, lossless
-  material, and may end on absorbing faces or on PEC or PMC walls the beam
-  satisfies (a TE beam on a slab's walls); otherwise `beam_coupling` raises
-  a `ValueError`. A `GaussianBeam` seen with less than 0.999 W through the
-  side, or any beam of which more than a thousandth crosses the truncation
-  where the side's surface meets it, is clipped and warns.
-- On a grating slab the coupling equals the beam-lit port wave to 0.14 %,
-  and two planes in the cladding agree to $10^{-5}$.
-- It is differentiable through the field with respect to material fields
-  and the node coordinates. An `IncidentField` beam is interpolated on the
-  imported mesh: once a node of its layer moves, `beam_coupling` raises a
-  `ValueError`; read it on the default side, whose layer
-  `boundary_morph` holds, or give a `GaussianBeam`, which is read at the
-  moved nodes.
+- The beam is a `gfem.GaussianBeam` or a `gfem.IncidentField` travelling
+  toward the device, scaled to 1 W through the side.
+- The default side's surface is the truncation face the beam brings most power
+  in through; a named side must cross the beam once.
+- The layer must be the beam's medium, lossless; otherwise `beam_coupling`
+  raises a `ValueError`. A beam clipped by the truncation warns.
+- It is differentiable with respect to material fields and node coordinates;
+  an `IncidentField` beam raises once a node of its layer moves, so give a
+  `GaussianBeam`.
 
 ## Cost and accuracy
 
-- One far field costs one evaluation of the field and its curl at the
-  layer's quadrature points and one dense product per chunk of directions:
-  a second or two for a few hundred directions on 50 000 unknowns. Columns
-  and frequencies reuse nothing but the solve.
-- At order 3 with elements of $\lambda/4$ and half a wavelength of layer,
-  a Hertzian dipole's pattern is within 0.2-1 % of its closed form, its
-  directivity within 0.1 %. With a point source the error follows the
-  emitted power's; it is the field's discretization, not the transform's.
-- On a result of a {term}`distributed solve`, `far_field` is a collective
-  call: call it on every rank, and every rank gets the same far field
-  ({doc}`distributed-solve`).
+- At order 3 with elements of $\lambda/4$ and half a wavelength of layer, a
+  Hertzian dipole's pattern is within 0.2-1 % of its closed form, its
+  directivity within 0.1 %; a few hundred directions take a second or two.
+- On a {term}`distributed solve`, `far_field` is collective: call it on every
+  rank ({doc}`distributed-solve`).
 
 ## Gradients
 
 - `e_theta`, `e_phi`, `intensity`, `directivity`, `gain` and `rcs` are
-  differentiable with respect to material fields through the solved field;
-  a design inside the side costs one adjoint column.
+  differentiable with respect to material fields; a design inside the side
+  costs one adjoint column.
 - Every output is differentiable with respect to the node coordinates
-  ({py:func}`gfem.shape.boundary_morph`): the layer's test field is read at
-  the moved quadrature points, and the radiated power follows the moved
-  layer as `gfem.power_flow` does. `boundary_morph` holds the elements
-  touching the truncation, so the default side's layer stays as meshed.
-- Directions, the side and the frequency are fixed values.
+  ({py:func}`gfem.shape.boundary_morph`), which holds the default side's layer
+  as meshed.
+- Directions, side and frequency are fixed.
 
 ## Limits
 
-- **A radiating truncation**: a model with no perfectly matched layer and
-  no absorbing face, or with periodic pairs, raises a `ValueError`.
-- **One lossless exterior medium**: `far_field` needs `Model(background=)`;
-  its outside layer must be that material, with no design, no perfectly
-  matched layer element and no other material, or it raises a `ValueError`.
-  A layered or dielectric half-space, and a lossy background, raise a
-  `NotImplementedError`.
-- **Every source inside the side**: a dipole, port, sheet or scatterer in
-  the layer or outside the side raises a `ValueError`.
-- **Ground planes flat, PEC or PMC**: the layer may end on one flat PEC or
-  PMC wall only; directions below it raise a `ValueError`.
+- **A radiating truncation**: a model with no perfectly matched layer or
+  absorbing face, or with periodic pairs, raises a `ValueError`.
+- **One lossless exterior medium**: `far_field` needs `Model(background=)`
+  as its outside layer, or raises a `ValueError`; a layered half-space or a
+  lossy background raises a `NotImplementedError`.
+- **Every source inside the side**: a source in the layer or outside the side
+  raises a `ValueError`.
+- **Ground planes flat, PEC or PMC**: one flat wall only; directions below it
+  raise a `ValueError`.

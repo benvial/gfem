@@ -2,30 +2,16 @@
 
 Find how hard light pushes and twists a body: {py:obj}`gfem.optical_force`
 gives the time-averaged {term}`optical force` and torque on a body from a
-solved 3D electric field, in N and N m, whether the body floats in free space
-under a plane wave, sits in a cavity or waveguide, or is held on a metal wall.
-The force is differentiable, so a design can be pushed, pulled or trapped.
-
-The body is a set of elements: a volume region, several (their union), or a
-predicate on the element centroids, as for {py:obj}`gfem.power_flow`. The
-force is the derivative of the discrete time-averaged Lagrangian
-$L = \tfrac14\int(\varepsilon|E|^2 - |B|^2/\mu)\,dV$ of the solved field at
-fixed field coefficients, under a rigid motion of the body's nodes. It is the
-volume form of the Maxwell stress tensor on the {term}`stress shell`, the
-elements outside the body that touch it: there is no surface to place, and
-another shell would change the number by discretization error only. The
-result converges with the mesh to the physical force.
-
-Units are SI, phasors are peak values and follow $\exp(+i\omega t)$
+solved 3D electric field, in N and N m. The body is a volume region, several,
+or a predicate on element centroids, as for {py:obj}`gfem.power_flow`. Units are
+SI and phasors are peak values following $\exp(+i\omega t)$
 ({doc}`../conventions`).
 
 ## Force on a sphere
 
-The sphere of {doc}`cross-sections` and {doc}`incident-fields` here lossless
-($\varepsilon = 4$, radius 0.25 µm, $ka = \pi/2$), under a plane wave at 30°
-from +z with its electric field along y, solved at order 3. The sphere is a
-{py:obj}`gfem.MaterialField` so that the force can be differentiated in its
-permittivity below:
+The sphere of {doc}`cross-sections` here lossless ($\varepsilon = 4$), under a
+plane wave at 30° from +z with $E$ along y, at order 3. It is a
+{py:obj}`gfem.MaterialField`, so the force can be differentiated below:
 
 ```python
 import urllib.request
@@ -98,17 +84,22 @@ along the wave: Q_pr = 2.1555
 across it: [-0.00467899 -0.00401752  0.00270142]
 ```
 
-`pressure.force` is the force in N for the incident wave's own amplitude
-(1 V/m by default): a driven field is the peak phasor for 1 W incident at its
-port, or for the plane wave's `amplitude`, so the force scales with the
-incident power. Divided by $I\pi a^2/c$ it is the radiation-pressure
-efficiency $Q_\mathrm{pr} = Q_\mathrm{ext} - g\,Q_\mathrm{sca}$, with $g$ the
-asymmetry of the scattering. It points along the wave, as a lossless sphere
-that scatters mostly forward should push; across the wave the force is the
-mesh's asymmetry, 0.5 % of the push, since a sphere has none. Against the Mie
-series at the radius of the meshed volume ($Q_\mathrm{pr} = 2.1853$) the
-error is -1.4 %, a little over the cross sections' own on this mesh
+`pressure.force` is the force in N for the plane wave's `amplitude` (1 V/m by
+default); it scales with the incident power. Divided by $I\pi a^2/c$ it is the
+radiation-pressure efficiency $Q_\mathrm{pr} = Q_\mathrm{ext} - g\,Q_\mathrm{sca}$,
+with $g$ the scattering asymmetry. It points along the wave; across it the
+force is the mesh's asymmetry, 0.5 % of the push. Against the Mie series at the
+radius of the meshed volume ($Q_\mathrm{pr} = 2.1853$) the error is -1.4 %
 ({doc}`cross-sections`).
+
+## How the force is read
+
+The force is the derivative of the discrete time-averaged Lagrangian
+$L = \tfrac14\int(\varepsilon|E|^2 - |B|^2/\mu)\,dV$ at fixed field
+coefficients, under a rigid motion of the body's nodes. It is the volume form
+of the Maxwell stress tensor on the {term}`stress shell`, the elements outside
+the body that touch it: there is no surface to place, and another shell would
+change the number by discretization error only.
 
 ## Torque and its origin
 
@@ -128,17 +119,14 @@ True
 ```
 
 A sphere under a plane wave has no torque about its centre by symmetry; an
-off-centre or asymmetric body does, from the force's moment and from the
-rotation of the field's stress. The torque of a rigid rotation is about axes
-through the centroid, whatever the origin.
+off-centre or asymmetric body does.
 
 ## Eigenmodes at 1 J
 
 An eigenmode field is normalized to 1 J of stored energy, so its force on a
 body is $-(1\,\mathrm{J}/\omega)\,\mathrm{d}\omega/\mathrm{d}\xi$ with $\xi$
-the translation of the body: the force is the slope of the resonance
-frequency against position, which is the optical spring of a cavity. It
-scales linearly with the stored energy. A mode of a metal cavity pushes on the
+the translation of the body: the slope of the resonance frequency against
+position, the optical spring of a cavity. A mode of a metal cavity pushes on the
 wall of an excluded metal region, which may slide on the cavity's other walls:
 
 ```python
@@ -154,25 +142,21 @@ wall = gfem.optical_force(modes.e_field(0), "slab", model=cavity)
 print(wall.force)
 ```
 
-The slab spans the cavity's walls, so the components along them are NaN: the
-slab can only move along x, and `wall.force[0]` is the push on its face. At
-1 J the TE101 mode of a rectangular cavity of section $a \times b$ and length
-$d$ pushes on the end wall $x = a$ with $1\,\mathrm{J}/[a(1 + (a/d)^2)]$. A
-body that touches a wall it does not own gets NaN for the motions that
-would slide it along that wall, and the force held on the wall for the others.
+The slab spans the cavity's walls, so the components along them are NaN: it
+can only move along x, and `wall.force[0]` is the push on its face. At 1 J the
+TE101 mode of a rectangular cavity of section $a \times b$ and length $d$
+pushes on the end wall $x = a$ with $1\,\mathrm{J}/[a(1 + (a/d)^2)]$.
 
 ## Force between two waveguides
 
-Two silicon slab waveguides side by side pull on each other through the
-overlap of their evanescent fields. In the fundamental (bonding) TE
-supermode, the force on a slab per unit length is
-$F' = (P/c)\,\partial n_\mathrm{eff}/\partial q$ for the guided power $P$,
-with $q$ the displacement of the slab: gfem differentiates the effective
-index of a {py:obj}`gfem.PortMode` through a node map, so there is no field
-to integrate. {download}`slab_pair_section.py <slab_pair_section.py>` meshes
-the section: two slabs 220 nm wide and 3.48 in index, `gap` apart, in air,
-between perfectly conducting walls along the electric field (the slabs are
-as tall as the section):
+Two silicon slab waveguides side by side pull on each other. In the bonding TE
+supermode the force per unit length is
+$F' = (P/c)\,\partial n_\mathrm{eff}/\partial q$ for the guided power $P$ and
+the slab's displacement $q$: gfem differentiates the effective index of a
+{py:obj}`gfem.PortMode` through a node map, with no field to integrate.
+{download}`slab_pair_section.py <slab_pair_section.py>` meshes the section: two
+slabs 220 nm wide and 3.48 in index, `gap` apart, in air, between perfectly
+conducting walls along the electric field:
 
 ```python
 import jax
@@ -222,17 +206,16 @@ gap 100 nm: -4.760 pN/um per mW
 gap 300 nm: -0.591 pN/um per mW
 ```
 
-The sign is that of $q$, the slab's displacement away from the other one: the
-force is negative, an attraction, and it falls by a factor 8 as the gap
-triples. A closed form of two slabs (a transfer-matrix solution of the same
-structure) gives -4.760 and -0.5914 pN/µm per mW, within $10^{-5}$.
+The sign is that of $q$, the displacement away from the other slab: the force is
+negative, an attraction, and falls by a factor 8 as the gap triples. A
+transfer-matrix solution of two slabs gives -4.760 and -0.5914 pN/µm per mW,
+within $10^{-5}$.
 
 ## Gradient force
 
-The force and the torque are differentiable through the field and, for an
+The force and torque are differentiable through the field and, for an
 eigenmode, its frequency. The change of the push on the sphere with its
-permittivity, the same in every element, is `jax.grad` of one component of
-the force:
+permittivity is `jax.grad` of one component of the force:
 
 ```python
 def push(eps):
@@ -249,39 +232,30 @@ print(f"d F_z / d eps = {float(d_force) / unit:.3f} I pi a^2 / c")
 d F_z / d eps = 1.243 I pi a^2 / c
 ```
 
-The gradient agrees with a finite difference of the solves. It is exact for the solved field: the force is a function of the
-field coefficients, the node coordinates, the materials and, for an
-eigenmode, the frequency, and `jax.grad` carries the cotangent back through
-the solve. A design of the body's material (a {py:obj}`gfem.MaterialField`)
-gets its gradient; the node coordinates and the materials of the stress shell
-do not.
+The gradient agrees with a finite difference of the solves. A design of the
+body's material (a {py:obj}`gfem.MaterialField`) gets its gradient; the node
+coordinates and the materials of the stress shell do not.
 
 ## Limits
 
-- **A 3D electric field**: the field is the complex phasor of a
-  {py:obj}`gfem.Driven` or {py:obj}`gfem.Eigenmode` solve; a magnetic field,
-  a static field, a real field and a 2D model are refused by name.
-- **The field's own model**: `model=` must be the model the field was solved
-  with, on the same mesh.
-- **A body with a shell**: the body selects at least one element and has a
-  stress shell, so it is not the whole solve domain.
-- **One plain medium in the shell**: the stress shell is one homogeneous,
-  isotropic, lossless medium. The body itself may be anything.
-- **Nothing special beside the body**: a port, an absorbing surface, a
-  perfectly matched layer or a point dipole in or touching the shell, and a
-  body node on a periodic pair, are refused.
-- **Sheets on the body or off it**: a sheet (a {py:obj}`gfem.Conductor` or
-  {py:obj}`gfem.Impedance`) lies wholly on the body, or off it; one that
-  touches the body without lying on it is refused.
-- **Total fields only**: of an incident-field column the total field is read,
-  not its incident or scattered part.
+- **A 3D electric field**: the complex phasor of a {py:obj}`gfem.Driven` or
+  {py:obj}`gfem.Eigenmode` solve; a magnetic, static or real field and a 2D
+  model are refused.
+- **The field's own model**: `model=` is the model the field was solved with.
+- **A body with a shell**: the body selects an element and is not the whole
+  solve domain.
+- **One plain medium in the shell**: homogeneous, isotropic, lossless.
+- **Nothing special beside the body**: a port, absorbing surface, perfectly
+  matched layer or point dipole in or touching the shell, or a body node on a
+  periodic pair, is refused.
+- **Sheets on the body or off it**: a {py:obj}`gfem.Conductor` or
+  {py:obj}`gfem.Impedance` touching the body without lying on it is refused.
+- **Total fields only**: of an incident-field column the total field is read.
 - **One process, no refinement**: a field across MPI ranks and an objective
   classified for {py:obj}`gfem.refine_mesh` are refused.
-- **No gradient through the geometry or the shell**: the gradient is exact
-  through the field coefficients and, for an eigenmode, the real part of its
-  frequency; the node coordinates, a {py:obj}`gfem.MaterialField` in the stress
-  shell and the coefficients of an adaptive sweep raise
-  {py:obj}`gfem.NonDifferentiableError` by name. A `gfem.Material` leaf cannot
-  be traced: design the body with a {py:obj}`gfem.MaterialField`.
-- **Typed arguments**: the arguments are checked by type, and an unknown
-  region raises {py:obj}`gfem.RegionNotFoundError`.
+- **No gradient through the geometry or the shell**: node coordinates, a
+  {py:obj}`gfem.MaterialField` in the shell and the coefficients of an adaptive
+  sweep raise {py:obj}`gfem.NonDifferentiableError`; design the body with a
+  {py:obj}`gfem.MaterialField`, not a `gfem.Material`.
+- **Typed arguments**: an unknown region raises
+  {py:obj}`gfem.RegionNotFoundError`.
