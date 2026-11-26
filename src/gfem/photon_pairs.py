@@ -250,7 +250,7 @@ class PhotonPairSource:
         return 2 * np.pi * fp, 2 * np.pi * fs, 2 * np.pi * fi
 
     def _pair_coupling(self, ws: Any, wi: Any) -> Any:
-        r"""The coupling's frequency prefactor on the grid: :math:`g_{si}` or :math:`\Gamma_{si}`.
+        r"""The grid's coupling: :math:`g_{si}\overline{\kappa}` or :math:`\Gamma_{si}`.
 
         :math:`\kappa_{psi}` scales as :math:`\omega_p` and :math:`\gamma_{sppi}`
         as :math:`\omega_s`: each is divided by the frequency it was taken at, so
@@ -293,8 +293,8 @@ class PhotonPairSource:
                     "pump",
                     have,
                     (lo, hi),
-                    self.process,
-                    _pump_half_width(self.process, self.bands),
+                    process=self.process,
+                    half_width=_pump_half_width(self.process, self.bands),
                 )
             )
 
@@ -747,6 +747,7 @@ def _missing(
     arm: str,
     have: tuple[float, float],
     need: tuple[float, float],
+    *,
     process: str,
     half_width: float,
 ) -> str:
@@ -817,7 +818,7 @@ def _warn_resolution(jsa: jax.Array) -> None:
 
 
 def _warn_cw_resolution(density: jax.Array, inside: np.ndarray) -> None:
-    r"""The joint spectrum's two checks on :math:`\sqrt{n_s}`, in band, per batch entry."""
+    r"""The joint spectrum's checks on :math:`\sqrt{n_s}` in band, per batch entry."""
     if is_traced(density) or inside.sum() < 2:
         return
     a = np.sqrt(np.asarray(density)[..., inside])
@@ -866,6 +867,29 @@ def _row(result: PortModeResult, i: int) -> PortModeResult:
         if getattr(result, name) is not None
     }
     return dataclasses.replace(result, e_field=sliced, **parts)
+
+
+def _identical(owner: str, signal: Any, idler: Any, bands: Any) -> bool:
+    """Whether signal and idler are one photon species (equal spans of one mode).
+
+    Disjoint spans of one mode are frequency-separated, hence distinguishable;
+    a partial overlap has no sound count and is refused.
+    """
+    if signal is idler:
+        return True
+    if not (signal.port == idler.port and int(signal.mode) == int(idler.mode)):
+        return False
+    (s_lo, s_hi), (i_lo, i_hi) = bands[1], bands[2]
+    tol = _RANGE_TOL * max(s_hi - s_lo, i_hi - i_lo)
+    equal = abs(s_lo - i_lo) <= tol and abs(s_hi - i_hi) <= tol
+    if not equal and max(s_lo, i_lo) < min(s_hi, i_hi) - tol:
+        raise ValueError(
+            f"{owner}: the signal rows ({s_lo:.12g} to {s_hi:.12g} Hz) and the "
+            f"idler rows ({i_lo:.12g} to {i_hi:.12g} Hz) of one mode partly "
+            "overlap: split or merge the bands (equal spans are identical "
+            "photons, disjoint spans distinguishable)."
+        )
+    return equal
 
 
 def _build(
@@ -931,27 +955,11 @@ def _build(
                 "pump",
                 bands[0],
                 (f_pump, f_pump),
-                process,
-                _pump_half_width(process, bands),
+                process=process,
+                half_width=_pump_half_width(process, bands),
             )
         )
-    same_mode = signal.port == idler.port and int(signal.mode) == int(idler.mode)
-    identical = signal is idler
-    if same_mode and not identical:
-        # one mode family: equal spans are one photon species, disjoint spans
-        # are frequency-separated; anything between has no sound count
-        tol = _RANGE_TOL * max(b[1] - b[0] for b in bands[1:])
-        equal = all(abs(x - y) <= tol for x, y in zip(*bands[1:], strict=True))
-        overlap = max(bands[1][0], bands[2][0]) < min(bands[1][1], bands[2][1]) - tol
-        if overlap and not equal:
-            raise ValueError(
-                f"{owner}: the signal rows ({bands[1][0]:.12g} to "
-                f"{bands[1][1]:.12g} Hz) and the idler rows ({bands[2][0]:.12g} "
-                f"to {bands[2][1]:.12g} Hz) of one mode partly overlap: split or "
-                "merge the bands (equal spans are identical photons, disjoint "
-                "spans distinguishable)."
-            )
-        identical = equal
+    identical = _identical(owner, signal, idler, bands)
     near = [
         int(np.argmin(np.abs(f - c)))
         for f, c in zip(freqs, (f_pump, fs0, fi0), strict=True)
@@ -979,7 +987,11 @@ def _build(
         kerr_phase=kerr_phase,
         fit=tuple(fits),
         fit_residual=jnp.stack(residuals),
-        coupling_frequency=tuple(float(freqs[k][near[k]]) for k in range(3)),
+        coupling_frequency=(
+            float(freqs[0][near[0]]),
+            float(freqs[1][near[1]]),
+            float(freqs[2][near[2]]),
+        ),
     )
 
 
