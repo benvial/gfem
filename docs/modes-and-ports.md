@@ -146,7 +146,12 @@ is a resonance and is kept.
 
 The port's $\gamma$ at the complex eigenfrequency is not reported;
 {py:obj}`gfem.PortMode` gives it at real frequencies. Each wave port reports
-its {term}`coupling Q` in `EigenmodeResult.q_port`.
+its {term}`coupling Q` in `EigenmodeResult.q_port`: $Q_p = \mathrm{Re}\,\omega\,W / P_p$,
+with $W$ the mode's stored energy and $P_p$ the time-averaged power port $p$
+takes out (for a resistive lumped port the power its resistance draws, for a
+wave port the power its requested mode carries out through the face). With
+other losses, $1/Q \approx \sum_p 1/Q_p$ plus the material and wall losses,
+closer as Q grows.
 
 **Which resonances are found.** With a wave port, an `Eigenmode` solve returns
 the `n_modes` resonances with $\mathrm{Im}\,\omega \le \omega_t / 4$
