@@ -631,7 +631,7 @@ class PortModeField:
         )
         self._build: Callable[[], tuple] | None = None
         self._vector: jax.Array | None = None
-        self._locate: Callable[[], ModeSpace] | None = None
+        self._locate: Callable[..., ModeSpace] | None = None
         self._port = space.section.port.name
         # a space that does not name its field is a planar port's: E in V/m
         self.quantity = getattr(space, "quantity", "E")
@@ -641,7 +641,7 @@ class PortModeField:
     def _on_vector(
         cls,
         port: str,
-        locate: Callable[[], ModeSpace],
+        locate: Callable[..., ModeSpace],
         vector: jax.Array,
         *,
         quantity: str = "E",
@@ -651,8 +651,9 @@ class PortModeField:
 
         A port mode solve traced by JAX returns this vector (``(n_freq,
         n_dof)``, linear in the mode's normalized coordinates); ``locate()``
-        gives the port's discrete space, built from the geometry alone,
-        when a point is read, and raises when the node coordinates are traced.
+        gives the port's discrete space, built from the geometry alone (at the
+        values of traced node coordinates), and ``locate(point_read=True)``
+        raises when the node coordinates are traced.
         """
         field = object.__new__(cls)
         field._parts = None
@@ -774,7 +775,7 @@ class PortModeField:
     def _at_vector(self, points: Any) -> jax.Array:
         """`at` on the traced DOF vector: host-built columns times the vector."""
         assert self._locate is not None  # noqa: S101 - set with the vector
-        space: Any = self._locate()
+        space: Any = self._locate(point_read=True)
         section = space.section
         p = np.asarray(points, float)
         single = p.ndim == 1
