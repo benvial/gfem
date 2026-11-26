@@ -44,7 +44,11 @@ def _ramps():
     # the literal table from its source.
     tree = ast.parse((DOCS / "_ext" / "gfem_figures.py").read_text(encoding="utf-8"))
     for node in tree.body:
-        if isinstance(node, ast.Assign) and node.targets[0].id == "RAMPS":
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "RAMPS"
+        ):
             return ast.literal_eval(node.value)
     raise AssertionError("gfem_figures.RAMPS not found")
 
@@ -91,6 +95,88 @@ def corner(path):
     if colour in (2, 6):
         return tuple(first[:3])
     raise AssertionError(f"PNG colour type {colour} is not read")
+
+
+def palette(path):
+    """The PLTE entries of a palette PNG as RGB triples."""
+    chunks = list(_chunks(Path(path).read_bytes()))
+    assert struct.unpack(">B", chunks[0][1][9:10])[0] == 3, (
+        "a card still is a palette PNG"
+    )
+    body = next(body for kind, body in chunks if kind == b"PLTE")
+    return [tuple(body[i : i + 3]) for i in range(0, len(body), 3)]
+
+
+# An entry is a colour (not a grey: the ground, the bodies and the anti-aliased
+# edges between them) when its channels span more than 40 of 255. The palette's
+# greys are exact (span 0) and the quantiser moves a channel by a few units at
+# most, so 40 is far above a grey's span and below any mix of a stop with
+# enough ground to keep its hue.
+SATURATED = 40
+# An antialiased or dithered pixel between a stop and the grey ground is a
+# mix of two colours one of which has no hue, so it keeps the stop's hue; the
+# quantiser's rounding to 8 bits moves a hue by well under 1 deg at saturation
+# 40. The measured entries of the five committed stills sit within 15 deg of a
+# stop; 15 deg is also far below the 90 deg between the red and the blue stops.
+HUE_TOLERANCE = 15.0  # deg
+
+
+def hue(rgb):
+    """The hue in degrees of an RGB triple (0-255), from the standard hexcone."""
+    r, g, b = (float(c) for c in rgb)
+    top, bottom = max(r, g, b), min(r, g, b)
+    span = top - bottom
+    if top == r:
+        angle = ((g - b) / span) % 6
+    elif top == g:
+        angle = (b - r) / span + 2
+    else:
+        angle = (r - g) / span + 4
+    return 60.0 * angle
+
+
+def ramp_hues(name):
+    """The hues of the saturated stops of a ``RAMPS`` entry."""
+    stops = [tuple(int(h[i : i + 2], 16) for i in (1, 3, 5)) for h in RAMPS[name]]
+    return [hue(c) for c in stops if max(c) - min(c) > SATURATED]
+
+
+def off_ramp(entries, hues):
+    """The saturated palette entries farther than the tolerance from every hue."""
+    stray = []
+    for rgb in entries:
+        if max(rgb) - min(rgb) <= SATURATED:
+            continue
+        gaps = [min(abs(hue(rgb) - h), 360 - abs(hue(rgb) - h)) for h in hues]
+        if min(gaps) > HUE_TOLERANCE:
+            stray.append(rgb)
+    return stray
+
+
+def test_a_green_pixel_is_off_a_red_and_blue_ramp():
+    hues = ramp_hues("gfem_signed")
+    assert len(hues) == 2
+    assert off_ramp([(242, 242, 242), (181, 38, 47), (42, 120, 214)], hues) == []
+    # A mix of a stop and the ground keeps its hue; direct green does not.
+    assert off_ramp([(200, 150, 152)], hues) == []  # spans 50, hue 357 deg
+    assert off_ramp([(40, 200, 60)], hues) == [(40, 200, 60)]
+
+
+def test_the_hue_wraps_at_red():
+    assert off_ramp([(200, 40, 60)], [5.0]) == []  # 350 deg is 15 deg from 5 deg
+    assert off_ramp([(200, 40, 100)], [5.0]) != []  # 340 deg is 25 deg away
+
+
+def test_a_green_entry_in_the_png_palette_fails_whatever_the_sidecar_says(tmp_path):
+    path = tmp_path / "p.png"
+    path.write_bytes(_png([bytes([0, 1])], 2, 3, bytes([242, 242, 242, 40, 200, 60])))
+    assert off_ramp(palette(path), ramp_hues("gfem_magnitude")) == [(40, 200, 60)]
+
+
+def test_the_palette_reader_returns_the_plte_entries(tmp_path):
+    path = tmp_path / "p.png"
+    path.write_bytes(_png([bytes([0, 1])], 2, 3, bytes([1, 2, 3, 4, 5, 6])))
+    assert palette(path) == [(1, 2, 3), (4, 5, 6)]
 
 
 def _png(rows, width, colour, palette=None, *, depth=8, filter_byte=0):
@@ -166,6 +252,21 @@ def test_a_render_of_nothing_but_the_ground_is_an_error():
         stills.content_box(_scene(box=(0, 0, 0, 0)), (242, 242, 242))
 
 
+def _contains(outer, inner):
+    """Whether the box ``outer`` holds ``inner``, each edge on its own."""
+    left, top, right, bottom = outer
+    x0, y0, x1, y1 = inner
+    return left <= x0 and top <= y0 and right >= x1 and bottom >= y1
+
+
+def test_containment_compares_every_edge_not_the_corner_lexicographically():
+    # A tuple comparison would accept this crop: its left edge is outside the
+    # content, which settles (left, top) <= (x0, y0) whatever the top is.
+    assert not _contains((0, 20, 100, 80), (10, 10, 50, 50))
+    assert not _contains((0, 0, 100, 40), (10, 10, 50, 50))
+    assert _contains((0, 0, 100, 80), (10, 10, 50, 50))
+
+
 @pytest.mark.parametrize(
     "box",
     [(40, 30, 120, 90), (0, 0, 1000, 100), (10, 10, 20, 400), (5, 5, 6, 6)],
@@ -181,8 +282,7 @@ def test_the_crop_box_is_16_by_10_with_the_margin_and_contains_the_content(box):
     shrink = 1 - 2 * stills.MARGIN
     assert x1 - x0 <= shrink * width + 1
     assert y1 - y0 <= shrink * height + 1
-    assert (left, top) <= (x0, y0)
-    assert (right, bottom) >= (x1, y1)
+    assert _contains((left, top, right, bottom), box)
     assert (left + right) / 2 == pytest.approx((x0 + x1) / 2, abs=1)
     assert (top + bottom) / 2 == pytest.approx((y0 + y1) / 2, abs=1)
 
@@ -214,6 +314,8 @@ def test_the_anchor_index_hashes_the_source_the_kernel_sees(tmp_path):
 def _stems():
     files = {"light": set(), "dark": set(), "json": set()}
     for path in CARDS.glob("*"):
+        if path.name.startswith("."):  # .DS_Store and the like
+            continue
         if path.suffix == ".json":
             files["json"].add(path.stem)
         elif path.name.endswith(("-light.png", "-dark.png")):
@@ -248,6 +350,10 @@ def test_a_sidecar_draws_from_the_sites_palette(path):
         assert set(side["colormaps"]) <= {ramp}
         assert set(side["solids"]) <= {stills.BODIES[theme]}
         assert side["ground"] == scenes.THEMES[theme]["ground"]
+        # What the sidecar says is not what was drawn: read the pixels.
+        entries = palette(CARDS / f"{path.stem}-{theme}.png")
+        stray = off_ramp(entries, ramp_hues(ramp))
+        assert not stray, f"{path.stem}-{theme}.png has off-palette colours {stray}"
 
 
 @pytest.mark.parametrize("path", SIDECARS, ids=lambda p: p.stem)
@@ -310,6 +416,28 @@ def test_no_two_tutorials_tag_the_same_source():
     # The kernel recognises the card cell by the hash of its source alone.
     sources = [_anchors(p)[0]["source"] for p in TUTORIALS if _anchors(p)]
     assert len({"".join(s) for s in sources}) == len(sources)
+
+
+def test_no_tagged_source_is_also_the_source_of_another_code_cell():
+    # Not only between anchors: any code cell of any tutorial with the same
+    # text would run the card script of the tagged one.
+    tagged = {}
+    for path in TUTORIALS:
+        for cell in _anchors(path):
+            tagged["".join(cell["source"])] = path.name
+    for path in TUTORIALS:
+        cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
+        for cell in cells:
+            if cell["cell_type"] != "code":
+                continue
+            source = "".join(cell["source"])
+            if source in tagged and "card" not in cell.get("metadata", {}).get(
+                "tags", ()
+            ):
+                pytest.fail(
+                    f"{path.name}: an untagged cell repeats the card cell of "
+                    f"{tagged[source]}"
+                )
 
 
 def _section_stills():

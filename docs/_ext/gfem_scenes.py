@@ -103,10 +103,10 @@ def install(shell):
     cell = {"id": None, "rank": 0, "stem": None}
 
     def pre_run_cell(info):
-        raw = info.raw_cell.encode()
-        cell["id"] = hashlib.sha256(raw).hexdigest()[:12]
+        digest = hashlib.sha256(info.raw_cell.encode()).hexdigest()
+        cell["id"] = digest[:12]
         cell["rank"] = 0
-        cell["stem"] = anchors.get(hashlib.sha256(raw).hexdigest())
+        cell["stem"] = anchors.get(digest)
 
     def post_run_cell(result):
         stem, cell["stem"] = cell["stem"], None

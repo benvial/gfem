@@ -334,6 +334,15 @@ jobs:
         uv run --group docs --group site jupyter nbconvert --to notebook --execute
         --ExecutePreprocessor.timeout=1800 --output-dir "$RUNNER_TEMP"
         docs/tutorials/*.ipynb
+    - name: No card script failed
+      # The docs startup hook runs each tutorial's card script after its tagged
+      # cell and, on an error, only writes "gfem still <name> failed" to the
+      # cell's stderr, so the execution above stays green: fail on that text.
+      run: |
+        if grep -l "gfem still .* failed" "$RUNNER_TEMP"/*.ipynb; then
+          echo "a card script failed in the notebooks listed above" >&2
+          exit 1
+        fi
 
   lowest:
     # The floors pyproject.toml declares (JAX's, NumPy's...): the lock carries

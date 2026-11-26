@@ -198,7 +198,19 @@ def _classify(plotter):
         prop, mapper = actor.prop, actor.mapper
         dataset = mapper.dataset
         prop.show_edges = False
-        if mapper.scalar_visibility:  # a colour-mapped actor: the field
+        # Lines and wireframes first: a colour-mapped line set is still a
+        # line set, and the cards keep none.
+        if (
+            isinstance(dataset, pv.PolyData)
+            and dataset.n_lines > 0
+            and dataset.n_cells == dataset.n_lines
+        ) or prop.style == "wireframe":
+            actor.SetVisibility(False)
+            dropped.append("lines")
+        elif mapper.scalar_visibility:  # a colour-mapped actor: the field
+            # Direct colours (rgb=True) would bypass the lookup table, and the
+            # still would carry colours of no ramp: map the scalars.
+            mapper.SetColorModeToMapScalars()
             bounds = np.reshape(actor.GetBounds(), (3, 2))
             extent = np.ptp(bounds, axis=1)
             # A flat cut is drawn unlit, so that its colour is the value; a
@@ -212,13 +224,6 @@ def _classify(plotter):
             roles.append(
                 ("field", actor, {"range": mapper.scalar_range, "light": light})
             )
-        elif (
-            isinstance(dataset, pv.PolyData)
-            and dataset.n_lines > 0
-            and dataset.n_cells == dataset.n_lines
-        ) or prop.style == "wireframe":
-            actor.SetVisibility(False)
-            dropped.append("lines")
         elif prop.opacity < DROP_OPACITY:
             actor.SetVisibility(False)
             dropped.append(f"opacity {prop.opacity:.2f}")

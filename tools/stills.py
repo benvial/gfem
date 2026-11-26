@@ -38,9 +38,21 @@ def anchored() -> dict[str, int]:
 
 
 def standalone(anchors: dict[str, int]) -> list[str]:
-    """The scripts of ``docs/_stills`` that no tutorial anchors."""
+    """The scripts of ``docs/_stills`` that belong to no tutorial.
+
+    A script named after a tutorial without a ``card`` cell is not standalone
+    (it would be called with no namespace): `main` reports it.
+    """
+    tutorials = {path.stem for path in gfem_stills.TUTORIALS.glob("*.ipynb")}
     scripts = sorted(path.stem for path in gfem_stills.SCRIPTS.glob("*.py"))
-    return [stem for stem in scripts if stem not in anchors]
+    return [stem for stem in scripts if stem not in anchors and stem not in tutorials]
+
+
+def unanchored(anchors: dict[str, int]) -> list[str]:
+    """The tutorials that have a card script but no ``card`` cell."""
+    scripts = {path.stem for path in gfem_stills.SCRIPTS.glob("*.py")}
+    tutorials = {path.stem for path in gfem_stills.TUTORIALS.glob("*.ipynb")}
+    return sorted((scripts & tutorials) - set(anchors))
 
 
 def run_notebook(stem: str, index: int) -> None:
@@ -64,6 +76,9 @@ def main(names: list[str]) -> int:
     anchors = anchored()
     alone = standalone(anchors)
     known = [*anchors, *alone]
+    orphans = unanchored(anchors)
+    for stem in orphans:
+        print(f"tutorial {stem} has no card cell")
     unknown = [name for name in names if name not in known]
     if unknown:
         print(f"no such still: {', '.join(unknown)}; known: {', '.join(known)}")
@@ -78,10 +93,15 @@ def main(names: list[str]) -> int:
         sidecar = gfem_stills.CARDS / f"{stem}.json"
         before = sidecar.stat().st_mtime_ns if sidecar.exists() else 0
         tic = time.perf_counter()
-        if stem in anchors:
-            run_notebook(stem, anchors[stem])
-        else:
-            gfem_stills.run_card(stem, None)
+        try:
+            if stem in anchors:
+                run_notebook(stem, anchors[stem])
+            else:
+                gfem_stills.run_card(stem, None)
+        except Exception as exc:  # noqa: BLE001  one broken tutorial must not stop the rest
+            print(f"{stem}: FAILED, {type(exc).__name__}: {exc}")
+            failed.append(stem)
+            continue
         # A card script's error inside a kernel is only printed there: the
         # still is not saved if its sidecar is not new.
         fresh = sidecar.exists() and sidecar.stat().st_mtime_ns > before
@@ -89,7 +109,9 @@ def main(names: list[str]) -> int:
         print(f"{stem}: {'saved' if fresh else 'NOT saved'} in {seconds:.0f} s")
         if not fresh:
             failed.append(stem)
-    return 1 if failed else 0
+    if failed:
+        print(f"failed: {', '.join(failed)}")
+    return 1 if failed or (orphans and not names) else 0
 
 
 if __name__ == "__main__":
