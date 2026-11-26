@@ -203,6 +203,7 @@ nitpick_ignore = [
             "Direction",
             "Polarization",
             "gfem.problems.Polarization",
+            "gfem.problems.Bend",  # the result's bend field; documented as gfem.Bend
             "Extension",
             "InterfaceKind",
             "LinearSolver",
