@@ -218,10 +218,13 @@ def _check_acoustic(acoustic: Any, terminal: str | None) -> tuple[str, np.ndarra
     return terminal, kept
 
 
-def _check_displacement(displacement: Any, owner: str) -> None:
+def _check_displacement(
+    displacement: Any, owner: str, *, any_wavenumber: bool = False
+) -> None:
     """Raise unless ``displacement`` is a `gfem.FieldMap` of x, y, z on a 2D mesh.
 
-    At the axial wavenumber :math:`q = 0`.
+    At the axial wavenumber :math:`q = 0`, unless ``any_wavenumber``: a caller
+    that classifies :math:`q` itself (the optomechanical overlap) reads any.
 
     Raises:
         TypeError: ``displacement`` is not a `gfem.FieldMap`.
@@ -248,7 +251,7 @@ def _check_displacement(displacement: Any, owner: str) -> None:
             f"{owner}: the displacement must live on a native 2D mesh, the "
             "waveguide's cross-section."
         )
-    if displacement.wavenumber != 0:
+    if displacement.wavenumber != 0 and not any_wavenumber:
         raise ValueError(
             f"{owner}: the displacement has the axial wavenumber "
             f"q = {displacement.wavenumber:g} rad/m; only q = 0 is read (a mode "
