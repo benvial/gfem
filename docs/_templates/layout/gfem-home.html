@@ -8,9 +8,11 @@
       gfem_install       the install line and its note (one conf.py value)
       gfem_status        the version label, from gfem.__version__ (conf.py)
       gfem_python        the Python floor, from requires-python in pyproject.toml (conf.py)
+      gfem_sections      the nine physics sections and their cards (docs/_ext/gfem_sections.py)
       gfem_capabilities  the gradient matrix and its provenance (docs/_ext/gfem_capabilities.py)
     Status marks are gfem.css's .gfem-glyph inside a .gfem-verified / .gfem-zero / .gfem-raises parent. -#}
 {%- extends "layout.html" -%}
+{%- from "partials/gfem-cards.html" import card with context -%}
 {%- set front = gfem_front -%}
 {%- set caps = gfem_capabilities -%}
 
@@ -18,6 +20,7 @@
   {{ super() }}
   {% include "components/meta-opengraph.html" %}
   <link rel="stylesheet" href="{{ pathto('_static/gfem-home.css', 1) }}">
+  <link rel="stylesheet" href="{{ pathto('_static/gfem-cards.css', 1) }}">
 {%- endblock %}
 
 {%- block document -%}
@@ -56,6 +59,12 @@
       <figcaption id="grad-cap"><span>A 90° bend between two {{ front.width }} µm guides of {{ front.thickness }} nm silicon in oxide, optimized in 3D at {{ front.wavelength }} µm: each of the {{ front.steps }} iterations is one driven solve of {{ front.dof }} unknowns and its gradient. Grey: the silicon in the {{ front.square }} µm × {{ front.square }} µm design square, shaded by density; red: the surface where |E| is 0.35 of its peak in the input guide, with 1 W incident at p1, and |E| on the core mid-plane drawn on the floor of the box. The last iteration gives way to <code>final</code>, the design thresholded at 0.5.</span><span>Rendered from a rerun of the 3D bend</span></figcaption>
       {%- endif %}
     </figure>
+
+    <section class="s solve" id="solve" aria-labelledby="w-h">
+      <div class="claim"><h2 id="w-h">What you can solve</h2>
+        <p>Nine fields of physics, each with tutorials and recipes. The tag on a card names what its results differentiate, from the checked gradient matrix.</p></div>
+      <ul class="gfem-cards" role="list">{% for s in gfem_sections %}{{ card(s, 3) }}{% endfor %}</ul>
+    </section>
 
     <section class="s" id="tutorial" aria-labelledby="t-h">
       <div class="claim">

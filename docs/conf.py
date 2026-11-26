@@ -259,6 +259,10 @@ intersphinx_mapping = {
 extensions.append("gfem_capabilities")
 # Base URL the test paths are appended to (cells link to their test file).
 gfem_capabilities_source_url = f"{REPO_URL}/blob/main/"
+# The physics section pages and the front page's card grid, read from the site
+# tree; their gradient tags come from the claims above, so this extension is
+# registered after gfem_capabilities.
+extensions.append("gfem_sections")
 # --- end Capabilities ------------------------------------------------------------
 
 # --- Front page: layout/gfem-home.html (index.md: `layout: gfem-home`) -----------
