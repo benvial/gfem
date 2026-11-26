@@ -49,6 +49,26 @@ formula holds while the attenuation is small against the phase constant.
 The {py:obj}`gfem.conventions` module, "Kerr nonlinearity", gives the same
 formulas, and {doc}`recipes/waveguide-nonlinearity` the calculation.
 
+A microring of radius $R$ made of the straight guide takes the group index
+$n_g$ and $\beta_2$ of the straight section. A one-dimensional estimate of the
+bent guide with constant indices bounds that approximation (an estimate, not a
+result of gfem, which has no bent port mode):
+
+| Guide | $R$ | $\Delta n_g / n_g$ | $\beta_2$ straight → bent (ps²/m) |
+| --- | --- | --- | --- |
+| Si 500 × 220 nm | 10 µm | $+1.4 \times 10^{-3}$ | −0.118 → −0.104 |
+| Si 500 × 220 nm | 5 µm | $+5.4 \times 10^{-3}$ | −0.118 → −0.063 |
+| SiN 1.6 µm | 100 µm | $+4.5 \times 10^{-4}$ | −0.062 → −0.059 |
+| SiN 1.6 µm | 23 µm | $+8 \times 10^{-3}$ | −0.062 → −0.007 |
+
+The free spectral range $D_1$ of the straight guide is good to about
+$10^{-3}$; $D_2$ is good to 5 to 15 % for a nitride ring of 100 µm or a silicon
+ring of 10 µm and useless for a ring of 1 THz free spectral range. The bend
+also hybridizes modes, which a straight solve cannot see. The Kerr response
+here is the instantaneous electronic one with two-photon absorption: the
+delayed Raman response and the free carriers of two-photon absorption are not
+in it.
+
 The {term}`clearance` $c$ from the core to a side
 {term}`perfectly matched layer` perturbs $n_\text{eff}$ by about
 $10^{-2} e^{-2\gamma_t c}$, with $\gamma_t$ the mode's transverse decay rate,
@@ -122,6 +142,20 @@ The formulas hold while $\alpha \ll \beta$ and for a pump that is not
 depleted. The {py:obj}`gfem.conventions` module, "Second-order nonlinearity",
 gives the same formulas, and {doc}`recipes/second-harmonic-generation` the
 calculation.
+
+The tensor depends on the material. Lithium niobate (class 3m) has the four
+numbers $d_{33}$, $d_{31} = d_{15}$ and $d_{22}$; gallium arsenide
+($\bar 4 3 m$) the single $d_{14} = d_{25} = d_{36}$; aluminium and gallium
+nitride (6mm) $d_{15} = d_{24}$, $d_{31} = d_{32}$ and $d_{33}$; potassium
+titanyl phosphate (mm2) $d_{15}, d_{24}, d_{31}, d_{32}, d_{33}$. Miller's rule,
+$d(\omega_3; \omega_1, \omega_2) \propto \chi^{(1)}(\omega_1)
+\chi^{(1)}(\omega_2)\chi^{(1)}(\omega_3)$ with $\chi^{(1)} = n^2 - 1$ along
+the polarizations involved, scales a value measured at one wavelength to
+another, and is empirical. Quoted values differ between sources and
+wavelengths, so read the source of a value before relying on it. A square-wave
+poling at duty cycle $D$ keeps $|G_1|^2 = 4/\pi^2$ at $D = 1/2$, and the
+third order has $|G_3|^2 = 4/(9\pi^2)$ there, a ninth of the overlap at a
+period three times longer.
 
 ## Photon pairs
 
