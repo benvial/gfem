@@ -18,6 +18,14 @@ Optics:
   the spectral brightness and the joint spectrum, with its purity, of a
   waveguide pumped by a continuous wave or a pulse
   ({doc}`../recipes/photon-pair-sources`).
+- **Optomechanical coupling.** `gfem.optomechanical_coupling(model, modes, port=,
+  frequency=)` gives the vacuum coupling $\tilde g_0$ of the modes of a
+  `gfem.MechanicalEigenmode` solve to a wave port's mode, from one optical
+  solve, split into a moving-boundary and a photoelastic part, with
+  `g0(length)`; `gfem.optomechanical_overlap` gives the change of the effective
+  index per unit amplitude of any displacement. Both differentiate in the
+  mechanical solve's inputs and the `photoelastic_tensor`
+  ({doc}`../recipes/optomechanical-coupling`).
 
 Measurements:
 
@@ -76,8 +84,8 @@ Piezoelectric:
   factor `q`, the displacement of each mode normalized to 1 J/m and the
   `group_velocity`. Mechanical loss and damping frames are those of
   `gfem.Piezoelectric`; a piezoelectric material couples the potential, with
-  `ground` electrodes. `omega` differentiates in the material constants and the
-  node coordinates ({doc}`../recipes/mechanical-modes`).
+  `ground` electrodes. `omega` and the mode fields differentiate in the material
+  constants and the node coordinates ({doc}`../recipes/mechanical-modes`).
 - **Acousto-optic shift.** Materials take a `photoelastic_tensor`, and
   `gfem.acousto_optic_shift(model, acoustic, port=, frequency=)` gives the index
   change per volt of a wave port's mode at every kept frequency of a

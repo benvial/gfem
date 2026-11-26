@@ -91,6 +91,7 @@ recipes/electromagnetic-heating
 recipes/thermo-optic-phase
 recipes/electro-optic-phase
 recipes/acousto-optic-shift
+recipes/optomechanical-coupling
 recipes/piezoelectric-admittance
 recipes/mechanical-modes
 recipes/thermal-step-response

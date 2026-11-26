@@ -1538,6 +1538,18 @@ Acousto-optic shift
   per volt on one terminal, as a complex phasor at each acoustic frequency
   ({py:obj}`gfem.acousto_optic_shift`).
 
+Vacuum optomechanical coupling
+  $g_0$: the optical resonance shift per zero-point amplitude of a mechanical
+  mode, $-\partial\omega_c/\partial x\,x_\mathrm{zpf}$. For a waveguide section it
+  is reported per root length, $\tilde g_0 = g_0\sqrt{L}$, by
+  {py:obj}`gfem.optomechanical_coupling`.
+
+Optomechanical overlap
+  The first-order change of a port mode's $n_\mathrm{eff}$ per unit amplitude of
+  a displacement field at fixed frequency, split into a moving-boundary part
+  and a photoelastic part ({py:obj}`gfem.optomechanical_overlap`). The Brillouin
+  gain reuses it.
+
 Voltage-length product
   $V_\pi L = \lambda / (2\,|\partial n_\mathrm{eff}/\partial V|)$, the drive
   times the electrode length that turns the phase by $\pi$: per arm, or for a

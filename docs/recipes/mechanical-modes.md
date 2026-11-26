@@ -165,6 +165,8 @@ to the target, so the order differs between the two solves.
 
 ## Next
 
+- {doc}`optomechanical-coupling`: the coupling of these modes to the light of a
+  waveguide.
 - {doc}`piezoelectric-admittance`: the same solids driven by electrodes, per
   volt.
 - {doc}`../conventions`, "Mechanical eigenmodes": the sign of $q$, the
