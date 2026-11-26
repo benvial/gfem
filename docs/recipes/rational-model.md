@@ -1,27 +1,16 @@
 # SPICE and Verilog-A export
 
 Hand a solved device to a circuit simulator, for a transient or an AC
-analysis beside the rest of a circuit. A Touchstone file holds S only at the
-solved frequencies ({doc}`save-and-export`); a circuit simulator needs a
-model it can run at any frequency and in time. gfem fits S with a
-{term}`rational model`, poles shared by every element of S plus a constant,
-
-$$
-S(f) = D + \sum_n \frac{R_n}{2\pi i f - p_n},
-$$
-
-makes it passive, and writes it as a SPICE subcircuit or a Verilog-A module.
-The poles $p_n$ are in rad/s with $\mathrm{Re}\,p_n < 0$, and phases follow
-$e^{+i\omega t}$ ({doc}`../conventions`). The device is the line of
-{doc}`solve-a-device`: 10 mm of air line, 20 mm of $\varepsilon_r = 10$
-ceramic, 10 mm of air line.
+analysis beside the rest of a circuit. gfem fits S with a
+{term}`rational model`, makes it passive, and writes it as a SPICE subcircuit
+or a Verilog-A module, which runs at any frequency and in time, where a
+Touchstone file ({doc}`save-and-export`) holds S only where it was solved. The
+device is the line of {doc}`solve-a-device`.
 
 ## Fit a rational model
 
-Fit on a dense grid: the fit sees only the frequencies it is given. An
-adaptive sweep gives a dense grid for few solves ({doc}`frequency-sweep`).
-The grid below is the {term}`harmonic grid` of {doc}`time-responses`, so the
-same S also gives the time responses; any grid works for the fit.
+Fit on a dense grid ({doc}`frequency-sweep` gives one for few solves); here
+the {term}`harmonic grid` of {doc}`time-responses`.
 
 ```python
 import urllib.request
@@ -58,35 +47,31 @@ RationalModel(ports=['p1', 'p2'], n_poles=24, 0.05-20 GHz, error=0.000449, passi
 [62.78833333 62.78833333]
 ```
 
+- The model is poles shared by every element of S plus a constant,
+  $S(f) = D + \sum_n R_n / (2\pi i f - p_n)$, with $p_n$ in rad/s,
+  $\mathrm{Re}\,p_n < 0$, and phases $e^{+i\omega t}$
+  ({doc}`../conventions`).
 - The order rises 4 poles at a time until every element of S is fitted to
-  `tolerance` (an RMS error over the data, $10^{-3}$ by default), then the
-  poles that add less than a tenth of it are removed.
-- `rational.error` is that RMS error, the largest over the elements of S,
-  after passivity enforcement; `rational.fit_error` is the same before it.
-- `rational.poles` (rad/s), `rational.residues` and `rational.d` are the
-  model itself, `rational.frequency_range` the band it was fitted on.
-- The fit takes about a second here, on the host; it never solves again.
+  `tolerance` (an RMS error, $10^{-3}$ by default), then poles that add less
+  than a tenth of it are removed.
+- `rational.error` is the largest RMS error over the elements of S after
+  passivity enforcement; `rational.fit_error` is the same before it.
+- `rational.poles`, `rational.residues` and `rational.d` are the model,
+  `rational.frequency_range` its fitted band. The fit never solves again.
 
 ## The reference impedance
 
 The model holds one real reference impedance per port, constant over
-frequency, fixed at the fit: power waves on it are what the netlist's ports
-see. It is chosen at the fit:
+frequency and fixed at the fit: the netlist's ports see power waves on it.
 
 - Lumped ports have a real, constant reference, their resistance: the fit
   keeps it, as above.
-- When a port's reference is complex or changes with frequency, as the
-  $Z_{PV}$ of a wave port with a `voltage_path` does on a lossy or
-  dispersive line, the fit raises `ValueError` and asks for `z0=`:
-  `s.fit_rational(z0=50.0)` fits S renormalized to 50 Ω first. One value
-  per port, in port order, also works.
+- A complex or frequency-dependent reference (the $Z_{PV}$ of a wave port on a
+  lossy or dispersive line) raises `ValueError` asking for `z0=`:
+  `s.fit_rational(z0=50.0)` renormalizes S to 50 Ω first.
 - A network without reference impedances (wave ports without a
-  `voltage_path`, S on unit modal power) needs `z0=` too, as a nominal label
-  only: S is fitted unchanged, `rational.nominal_reference` is `True`, and the
-  netlists say so in a comment.
-
-The model's reference cannot be changed afterwards: to export on another
-reference, fit again with `z0=`.
+  `voltage_path`) needs `z0=` as a nominal label only: S is fitted unchanged
+  and `rational.nominal_reference` is `True`.
 
 ## Write the netlist
 
@@ -102,16 +87,13 @@ print(next(line for line in open("line.va") if line.startswith("module")).strip(
 module line(p1, p1_ref, p2, p2_ref);
 ```
 
-- Each port is a pair of pins, `<port>` and `<port>_ref`, in port order.
-  Tie each `*_ref` pin to the port's return, `0` for ground. Pin names are
-  the port names in lower case, with characters outside `a-z`, `0-9` and `_`
-  replaced by `_`; two ports that end up with one name, or a pin named
-  `gnd`, raise `ValueError`: rename the port.
-- The subcircuit or module is named after the file, or `name=`.
-- Comment lines at the top give the port names, the reference impedances,
-  the fitted range, `error`, the gfem version and the time convention.
-- A model that is not passive is refused: its netlist could make a transient
-  simulation diverge.
+- Each port is a pair of pins, `<port>` and `<port>_ref`, in port order; tie
+  each `*_ref` pin to the port's return. Pin names are the port names in lower
+  case, with characters outside `a-z`, `0-9` and `_` replaced by `_`; two
+  ports with one name, or a pin named `gnd`, raise `ValueError`: rename the
+  port.
+- The subcircuit or module is named after the file, or `name=`. A model that
+  is not passive is refused: its netlist could make a transient diverge.
 
 A deck that sends a 50 ps edge into port 1 of the subcircuit, both ports
 ending on 62.79 Ω, in ngspice:
@@ -143,23 +125,18 @@ pre_osdi line.osdi
 nline in 0 out 0 line_va
 ```
 
-The SPICE file uses only resistors, capacitors, 0 V sources and linear
-controlled sources (`R`, `C`, `V`, `G`, `F`), with plain exponent numbers.
-The Verilog-A module integrates each pole's states with explicit `ddt`
-statements, with no Laplace filters, arrays or parameters. Both are checked
-in ngspice and VACASK, and written in this small common subset so that other
-SPICE and Verilog-A simulators read them too.
+The SPICE file uses only `R`, `C`, `V`, `G` and `F` elements; the Verilog-A
+module integrates each pole's states with explicit `ddt` statements. Both are
+checked in ngspice and VACASK, in a small common subset other simulators read.
 
 ## The step a transient must reproduce
 
-`rational.step_response(time)` is the model's exact step response, from its
-poles and residues:
+`rational.step_response(time)` is the model's exact step response,
 $D + \sum_n \frac{R_n}{p_n}\left(e^{p_n t} - 1\right)$ for $t \ge 0$. A
-transient simulation of the netlist, driven by a step of incident wave,
-gives the same curve. The windowed step of the data ({doc}`time-responses`)
-is band-limited, so the two differ while the edges pass. Once the ceramic's
-echoes have died down, after about 3 ns, they agree to within the fit's
-error:
+transient simulation of the netlist, driven by a step of incident wave, gives
+the same curve. The windowed step of the data ({doc}`time-responses`) is
+band-limited, so the two differ while the edges pass; after about 3 ns, once
+the ceramic's echoes have died down, they agree to within the fit's error:
 
 ```python
 step = s.step_response()  # from S, band-limited
@@ -175,74 +152,51 @@ True
 
 ## Long lines
 
-A line $W$ phase wraps long at the top of the band needs many poles: about
-2.3 per wrap on a matched line, about 4.4 when reflections bounce on it,
-since the round trip doubles the delay. The default `max_poles`, 100,
-reaches about 40 wraps on a matched line, 22 on a mismatched one. Beyond
-that the fit warns with {py:obj}`gfem.RationalFitNotConvergedWarning` and
-returns its most accurate model. Then:
+A line $W$ phase wraps long at the top of the band needs about 2.3 poles per
+wrap when matched, 4.4 when reflections bounce on it. The default `max_poles`,
+100, reaches about 40 wraps matched, 22 mismatched; beyond that the fit warns
+with {py:obj}`gfem.RationalFitNotConvergedWarning` and returns its most
+accurate model. Then:
 
-- remove a known delay first: move a wave port's reference plane along the
-  line with `result.with_offsets(...)` ({py:obj}`gfem.DrivenResult.with_offsets`);
-- fit a narrower band;
-- raise `max_poles=`, up to the number of frequencies minus one.
-
-The sweep must resolve the line too: an adaptive sweep of a line $W$ wraps
-long needs about $W + 10$ samples, so raise
-`gfem.SolverOptions(adaptive_max_samples=...)` above 10 wraps.
+- remove a known delay first, with `result.with_offsets(...)`
+  ({py:obj}`gfem.DrivenResult.with_offsets`) moving a wave port's reference plane;
+- fit a narrower band, or raise `max_poles=` (up to the frequencies minus one).
 
 ## Passivity
 
-A passive device returns at most the power sent into it: the largest
-singular value of S is at most 1 at every frequency. A fit can break that
-between or beyond the data frequencies, in a {term}`passivity violation`,
-and a non-passive model can make a transient simulation grow without
-bound. By default the fit finds every violation and removes it, changing
-the residues by the least it can. `rational.passivity_violations` lists the
-intervals the fit had before (Hz), and `rational.passive` tests the model as
-it is.
+A passive device has the largest singular value of S at most 1 at every
+frequency. A fit can break that, in a {term}`passivity violation`; by default
+it removes every one, changing the residues by the least it can, and
+`rational.passivity_violations` lists the intervals it had before (Hz).
 
-When removing the violations changes S by more than `tolerance`, the fit
-warns with {py:obj}`gfem.NonPassiveDataWarning`: the data themselves are not
-passive on this reference. Usual causes:
-
-- a reference plane moved past the end of a lossy line;
-- a nominal reference on a lossy mode;
-- a mesh too coarse for the losses.
-
-`s.fit_rational(enforce_passivity=False)` fits only, to look at the
-violations; a model that is not passive cannot be exported. Violations that remain after
-enforcement raise {py:obj}`gfem.PassivityEnforcementError`, naming them.
+- When removing them changes S by more than `tolerance`, the fit warns with
+  {py:obj}`gfem.NonPassiveDataWarning`: the data are not passive on this
+  reference (a plane moved past a lossy line, a nominal reference on a lossy
+  mode, a coarse mesh).
+- `s.fit_rational(enforce_passivity=False)` fits only, to look at the
+  violations; such a model cannot be exported. Violations that remain raise
+  {py:obj}`gfem.PassivityEnforcementError`.
 
 ## From a stored run
 
 A {term}`result bundle` holds S, so a netlist of a stored run is
-`gfem.load_result("result").s.fit_rational().to_spice("line.sp")`. The fit
-is deterministic and takes seconds, so gfem does not store models: keep a
-model as its netlists, or as S on a grid of your choice,
-`rational.network(f).to_touchstone("line_fit.s2p")`.
+`gfem.load_result("result").s.fit_rational().to_spice("line.sp")`. gfem does
+not store models; keep their netlists.
 
 ## Under `jax.grad`
 
-The fit is not differentiable: it relocates poles iteratively and picks
-its order in steps. Under `jax.grad`, `jax.jit` or `jax.vmap` it raises
-{py:obj}`gfem.NonDifferentiableError`. Fit outside the transformation, or,
-under `jax.grad`, wrap S in `jax.lax.stop_gradient` first: the model is then
-a constant. To optimize a time-domain quantity, use
-the time responses, which differentiate ({doc}`time-responses`).
+The fit is not differentiable: under `jax.grad`, `jax.jit` or `jax.vmap` it
+raises {py:obj}`gfem.NonDifferentiableError`. Fit outside the transformation,
+or wrap S in `jax.lax.stop_gradient` first. To optimize a time-domain
+quantity, use the time responses ({doc}`time-responses`).
 
 ## Check your results
 
-- **The model against S.** `rational.network(s.frequency)` gives the
-  model's S at the data frequencies. Compare it with `s.values`, element by
-  element: `rational.error` is the RMS of that difference.
-- **Passive.** `rational.passive` is `True` for every model the fit returns
-  with `enforce_passivity=True`.
-- **The netlist against the model.** An AC analysis of the subcircuit,
-  driven by a unit incident wave at one port, gives the model's S at every
-  frequency: $S_{ij} = V_i / \sqrt{Z_{0,i}} - \delta_{ij}$ with a source of
-  $2\sqrt{Z_{0,j}}$ behind $Z_{0,j}$. A transient gives
-  `rational.step_response`.
+- **The model against S.** `rational.network(s.frequency)` against `s.values`
+  differs by `rational.error` (RMS); `rational.passive` is `True`.
+- **The netlist against the model.** An AC analysis of the subcircuit gives
+  $S_{ij} = V_i / \sqrt{Z_{0,i}} - \delta_{ij}$ for a source of $2\sqrt{Z_{0,j}}$
+  behind $Z_{0,j}$; a transient gives `rational.step_response`.
 
 How gfem itself is checked: {doc}`../verification`.
 
@@ -250,17 +204,11 @@ How gfem itself is checked: {doc}`../verification`.
 
 - No term proportional to frequency: S tends to $D$ above the band.
 - One constant real reference impedance per port.
-- The passivity test's cost grows as $(2NP)^3$ for $N$ poles and $P$ ports:
-  seconds at 100 poles and 2 ports, more with many ports.
-- `rational.network` refuses frequencies above the fitted range: a rational
-  model is never extrapolated above its data. It accepts 0 Hz: the DC limit
-  $D - \sum_n R_n / p_n$.
-- All $P^2$ elements of S are fitted; a reciprocal device's model is as
-  symmetric as its data.
+- The passivity test's cost grows as $(2NP)^3$ for $N$ poles and $P$ ports.
+- `rational.network` refuses frequencies above the fitted range; it accepts
+  0 Hz, the limit $D - \sum_n R_n / p_n$.
 
 ## Next
 
-- {doc}`time-responses`: TDR, TDT and the impedance profile of the same S.
-- {doc}`save-and-export`: S as a Touchstone file, and result bundles.
-- {py:obj}`gfem.RationalModel` and {py:obj}`gfem.NetworkParameters.fit_rational`
-  in the API reference.
+- {doc}`time-responses` and {doc}`save-and-export`;
+  {py:obj}`gfem.RationalModel`, {py:obj}`gfem.NetworkParameters.fit_rational`.

@@ -2,18 +2,16 @@
 
 Get a qubit's anharmonicity and its dispersive shift on a resonator from an
 eigenmode solve, and differentiate them with respect to materials, sheet fill,
-shape and the junction's inductance. The solve treats the Josephson junction as
-a linear inductor. {py:obj}`gfem.quantum.dressed_modes` then puts the
-junction's cosine back on the solved modes and returns the
-{term}`dressed modes <Dressed mode>`.
+shape and the junction's inductance. The solve treats the junction as a linear
+inductor; {py:obj}`gfem.quantum.dressed_modes` puts its cosine back on the
+solved modes and returns the {term}`dressed modes <Dressed mode>`.
 
 ## From a solve to the dispersive shift
 
 The mesh `transmon.msh` holds two pads on a silicon chip inside a conducting
 box, joined by a junction on the surface `"junction"`. The junction is a
-{py:obj}`gfem.LumpedPort` with only an inductance: on an eigenmode solve it
-excites nothing, and its {term}`participation ratio` is the junction
-participation of each mode.
+{py:obj}`gfem.LumpedPort` with only an inductance: it excites nothing, and its
+{term}`participation ratio` is the junction participation of each mode.
 
 ```python
 import jax
@@ -56,44 +54,24 @@ n = len(mesh.elements("chip"))
 value, grad = jax.value_and_grad(dispersive_shift)(jnp.full(n, 11.7))
 ```
 
-- The shift depends on the design through the mode frequencies and through
-  the junction participations, which are properties of the mode fields.
-  `jax.grad` follows both. The participations' part costs one extra linear
-  solve per mode the objective reads, on the factorization the eigensolve
-  already made.
-- Modes come nearest `target` first. Over an optimization two modes can swap
-  places; follow one mode by its field as in {doc}`eigenmode-gradient`.
-- The tutorial {doc}`../tutorials/transmon` differentiates the dispersive
-  shift with respect to the pad gap, and splits the gradient into its
-  frequency and mode-field parts.
+- `jax.grad` follows the mode frequencies and the junction participations, at
+  one extra linear solve per mode the objective reads.
+- Modes come nearest `target` first; follow one mode by its field as in
+  {doc}`eigenmode-gradient`.
+- The tutorial {doc}`../tutorials/transmon` differentiates the shift with
+  respect to the pad gap.
 
 ## What you get
 
-{py:obj}`gfem.quantum.DressedModes` holds, in the input mode order, signed
-angular frequencies in rad/s; divide by $2\pi$ for Hz:
-
-`omega`
-: The dressed transition frequency of each mode.
-
-`lamb_shift`
-: The {term}`Lamb shift`: `omega` minus the solved mode's `Re(omega)`.
-
-`anharmonicity`
-: The {term}`anharmonicity`: the second transition frequency minus the
-  first, negative for a transmon.
-
-`dispersive_shift`
-: The {term}`dispersive shift`, `(n, n)` and symmetric: the full shift of
-  mode `n`'s frequency per photon in mode `m`, not half of it. Its diagonal is
-  `anharmonicity`.
-
-`overlap`
-: The smallest overlap of a level used with the Fock state it is labelled
-  by, in (1/2, 1]. Close to 1, the labels are clear.
-
-These signs and the full shift are gfem's convention: other sources write
-the shift as positive or as half of it. The conversions are in
-{py:obj}`gfem.conventions`, under "Quantum metrics".
+{py:obj}`gfem.quantum.DressedModes` holds, in the input mode order and in
+rad/s (divide by $2\pi$ for Hz): `omega`, the dressed transition frequency;
+`lamb_shift`, the {term}`Lamb shift`; `anharmonicity`, the second transition
+frequency minus the first, negative for a transmon; `dispersive_shift`, the
+{term}`dispersive shift`, `(n, n)` and symmetric, the full shift of mode `n`
+per photon in mode `m` (its diagonal is `anharmonicity`); and `overlap`, close
+to 1 when the Fock labels are clear. Other sources write the shift as positive
+or as half of it: the conversions are in {py:obj}`gfem.conventions`, under
+"Quantum metrics".
 
 The step after the solve needs no mesh. On two typed modes, a qubit and a
 resonator:
@@ -141,41 +119,35 @@ d_gap, d_lj = jax.grad(dispersive_shift, argnums=(0, 1))(0.0, 7.5e-9)
 ```
 
 gfem cannot detect two different values passed to the port and to
-`dressed_modes`: the result is then a different circuit, and the gradient
-misses the solve's share. Pass one variable to both.
+`dressed_modes`: the gradient then misses the solve's share. Pass one
+variable to both.
 
 ## Options
 
-- `levels` (12 by default) is the number of Fock levels per mode, one for
-  all modes or one per mode, each at least 3. Their product over the modes
-  is at most `gfem.quantum.MAX_DIMENSION`; select fewer modes or lower
-  levels if it is not. Raise `levels` until the outputs stop changing.
-- `method="first_order"` returns the closed perturbative forms. Use it only
-  to compare with published first-order numbers: at ordinary detunings its
-  dispersive shift is off by a factor of 1.5 to 1.9.
-- Select modes by slicing: pass `modes.omega[:2]` and the matching
-  participations. A mode you leave out adds no Lamb shift and no dispersive
-  shift.
+- `levels` (12) is the number of Fock levels per mode, one for all or one per
+  mode, each at least 3, with a product at most `gfem.quantum.MAX_DIMENSION`.
+  Raise it until the outputs stop changing.
+- `method="first_order"` returns the closed perturbative forms, for comparison
+  with published first-order numbers only: its dispersive shift is off by a
+  factor of 1.5 to 1.9 at ordinary detunings.
+- Select modes by slicing, `modes.omega[:2]` and the matching participations;
+  a mode left out adds no Lamb or dispersive shift.
 
 ## When it refuses
 
 - A level whose overlap with its Fock state is 1/2 or less raises
-  {py:obj}`gfem.ModeLabelError`: two modes have hybridized. Move them apart in
-  the design, or leave the hybridized mode out.
+  {py:obj}`gfem.ModeLabelError`: two modes have hybridized. Move them apart,
+  or leave one out.
 - A mode with a zero junction participation raises `ValueError`; leave it
   out.
 - Inside `jax.jit`, `jax.grad` or `jax.vmap` both arrive as
-  `jax.errors.JaxRuntimeError`, with gfem's message (see
-  {ref}`gradient-errors`).
+  `jax.errors.JaxRuntimeError`, with gfem's message ({ref}`gradient-errors`).
 - A second derivative of the dressed modes raises
-  {py:obj}`gfem.NonDifferentiableError`. Compute an inner gradient outside the
-  differentiated function, or use `method="first_order"`, which
+  {py:obj}`gfem.NonDifferentiableError`; use `method="first_order"`, which
   differentiates to any order.
-- `overlap` is read for its value, not differentiated. A reverse-mode
-  gradient through it (`jax.grad`, `jax.vjp`) raises
-  `gfem.NonDifferentiableError`. In forward mode (`jax.jvp`, `jax.jacfwd`)
-  its tangent is NaN. Wrap it in `jax.lax.stop_gradient` to use it in a
-  differentiated function.
+- `overlap` is read for its value: reverse mode through it raises
+  `gfem.NonDifferentiableError`, forward mode gives a NaN tangent. Wrap it in
+  `jax.lax.stop_gradient`.
 
 (quantum-sheet-participation)=
 ## Kinetic inductance of a film: sheet participation
@@ -192,57 +164,41 @@ p_film = modes.sheet_participation["film"]  # (n_modes,), in [0, 1]
 ```
 
 - For a lossless mode it is the film's kinetic inductance fraction,
-  `-2 d ln(omega) / d ln(L_s)`. A small change of `L_s` therefore moves the
-  frequency by `d omega / omega = -(p / 2) d L_s / L_s`.
+  `-2 d ln(omega) / d ln(L_s)`, so `d omega / omega = -(p / 2) d L_s / L_s`.
 - It differentiates like the junction participation, also with respect to
-  `L_s` and the fill of a {py:obj}`gfem.SheetField`.
+  `L_s` and a {py:obj}`gfem.SheetField` fill.
 - A heavily inductive sheet carries its own sheet-plasmon modes, which can
   lie near `target`: ask for a few more modes and pick yours by its field.
-- At the edge of a patterned film the sheet current is concentrated within a
-  distance `L_s / mu0` of the edge (0.8 µm for 1 pH per square, 0.08 µm for
-  0.1 pH per square). The participation converges once the mesh cells at the
-  film edge are about that small. On a 10 µm strip between walls it was
-  within about 1 % at twice that size. A coarser edge overestimates it, by
-  3 % at four times `L_s / mu0` and 15 % at thirty times. Refine the mesh
-  towards film edges rather than everywhere; a uniform sheet or wall needs no
-  such care.
+- At the edge of a patterned film the sheet current sits within `L_s / mu0`
+  of the edge (0.8 µm for 1 pH per square). The participation converges once
+  the cells at the edge are about that small (within about 1 % at twice that
+  size); a coarser edge overestimates it, by 3 % at four times and 15 % at
+  thirty times. Refine towards film edges; a uniform sheet needs no care.
 
 ## Check your results
 
-- Solve again with `L_J` changed by 1 %: the junction participation of each
-  mode is close to `-2 d ln(omega) / d ln(L_J)` from the two solves. The
-  identity is exact when the field is uniform across the port.
-- The same check on `L_s` holds for `sheet_participation` on any mesh, so it
-  does not check the mesh at a film edge.
+- Solve again with `L_J` changed by 1 %: each junction participation is close
+  to `-2 d ln(omega) / d ln(L_J)` from the two solves (exact for a field
+  uniform across the port). The same check on `L_s` does not check the mesh at
+  a film edge.
 - Raise `levels` by a few: the outputs should not move.
-- Compare the gradient with a central difference of your objective along a
-  random direction, at the default `eigen_tolerance`.
+- Compare the gradient with a central difference along a random direction.
 
 How gfem itself is checked: {doc}`../verification`.
 
-## Validity
-
-- The model is the junction's cosine on the solved linear modes, with no
-  charge dispersion. It holds in the transmon regime, with `E_J` much larger
-  than the charging energy; use a charge-basis model outside it.
-- It uses `Re(omega)` only, so it holds for modes with `Q` much larger
-  than 1. Read their loss separately ({doc}`loss-budget`).
-- Modes you do not solve or do not pass contribute nothing. Solve enough
-  modes around the ones you read, and check that adding one more does not move
-  them.
-- The solve's qubit frequency is that of the linearized circuit. The dressed
-  one is lower by about the anharmonicity: quote `dressed.omega` as the qubit
-  frequency.
-
 ## Limits
 
-- One junction. `dressed_modes` takes one junction's participations; a 2-D
-  `participation` raises `ValueError`.
+- **Transmon regime.** The junction's cosine on the solved linear modes has no
+  charge dispersion: `E_J` must be much larger than the charging energy, and
+  `Q` much larger than 1, since only `Re(omega)` is used ({doc}`loss-budget`).
+  Quote `dressed.omega`, not the linearized circuit's frequency.
+- Modes you do not solve or pass contribute nothing: check that adding one
+  more does not move them.
+- One junction: a 2-D `participation` raises `ValueError`.
 - `Eigenmode.target` is not a gradient input; keep it constant inside the
   differentiated function.
-- The gradient of a participation needs an isolated mode, the direct solver
-  on the CPU and one process; with `eigen_tolerance` above 1e-10 it raises.
-  The conditions are in {doc}`eigenmode-gradient`.
+- The gradient of a participation has the conditions of
+  {doc}`eigenmode-gradient`.
 
 ## Next
 
