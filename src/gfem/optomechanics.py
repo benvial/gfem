@@ -217,17 +217,16 @@ def _setup(
     what: str,
     *,
     through: str,
-    displacement: FieldMap | None = None,
+    displacement: Any,
 ) -> _Setup:
     """Check the optical model and read its section (no solve).
 
     Raises what `optomechanical_overlap` documents for the model, the port,
-    the frequency, and ``displacement`` when one is given.
+    the frequency and ``displacement``.
     """
     refuse_entry(getattr(model, "mesh", None), owner)
     _check_model(model, owner)
-    if displacement is not None:
-        _check_displacement(displacement, owner)
+    _check_displacement(displacement, owner)
     f = _frequency(frequency, owner)
     faces, tets = _section(model, _wave_port(model, port))
     crystal = _crystal(
