@@ -189,20 +189,24 @@ def columns(space: Any, raised: int = 0) -> Columns:
         order = np.empty(n_el, int)
         order[np.asarray(space.element_segment)] = np.arange(n_el)
         dofs, weights, measure = dofs[order], weights[order], measure[order]
-    if planar:
-        # the tangential and the normal component read disjoint slots of the
-        # element: keep each its own, without the zeros of the other
-        on_t = (weights[:, :, :2] != 0).any(axis=(0, 1, 2))
-        on_n = (weights[:, :, 2] != 0).any(axis=(0, 1))
-        cols = Columns(
-            jnp.asarray(dofs[:, on_t]),
-            jnp.asarray(weights[:, :, :2][..., on_t]),
-            jnp.asarray(dofs[:, on_n]),
-            jnp.asarray(weights[:, :, 2][..., on_n]),
-            measure,
-            points,
-        )
-    else:
-        cols = Columns(jnp.asarray(dofs), jnp.asarray(weights), None, None, measure)
+    # the columns outlive the call that builds them (they are cached on the
+    # space), so they must be concrete arrays even when that call runs under a
+    # jax transformation, or a later trace would read the first one's tracers
+    with jax.ensure_compile_time_eval():
+        if planar:
+            # the tangential and the normal component read disjoint slots of
+            # the element: keep each its own, without the zeros of the other
+            on_t = (weights[:, :, :2] != 0).any(axis=(0, 1, 2))
+            on_n = (weights[:, :, 2] != 0).any(axis=(0, 1))
+            cols = Columns(
+                jnp.asarray(dofs[:, on_t]),
+                jnp.asarray(weights[:, :, :2][..., on_t]),
+                jnp.asarray(dofs[:, on_n]),
+                jnp.asarray(weights[:, :, 2][..., on_n]),
+                measure,
+                points,
+            )
+        else:
+            cols = Columns(jnp.asarray(dofs), jnp.asarray(weights), None, None, measure)
     cache[raised] = cols
     return cache[raised]
