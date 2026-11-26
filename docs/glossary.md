@@ -19,22 +19,20 @@ Eigenmode problem
 Port mode
   A wave travelling along a guide, found by a {term}`port mode problem`: the
   frequency is given and the propagation constant $\gamma = \alpha + i\beta$
-  is found. $\alpha > 0$ when the cross-section is lossy or the mode is a
-  {term}`leaky mode`. Not a {term}`resonant mode`. See {doc}`modes-and-ports`.
+  is found. $\alpha > 0$ when the section is lossy or the mode is a
+  {term}`leaky mode`; not a {term}`resonant mode`. See {doc}`modes-and-ports`.
 
 Bound mode
-  A {term}`port mode` whose field decays away from the guide: below the light
-  line of every cladding, $\beta > k_0 n$. Lossless, it has $\alpha = 0$. The
-  guided mode of a silicon strip waveguide is bound although the structure is
-  open. See {doc}`modes-and-ports`.
+  A {term}`port mode` whose field decays away from the guide, below the light
+  line of every cladding ($\beta > k_0 n$). Lossless, it has $\alpha = 0$, as
+  the guided mode of a silicon strip waveguide does. See
+  {doc}`modes-and-ports`.
 
 Leaky mode
-  A mode that radiates out of its guide as it travels: a strip waveguide over
-  a thin buried oxide, a bend. As a {term}`port mode` it has $\alpha > 0$ with
-  lossless materials, and its field grows away from the guide, so the section
-  needs an absorbing edge or a {term}`perfectly matched layer`. At a fixed
-  wave number the same wave is a resonant mode with
-  $\mathrm{Im}\,\omega \approx v_g \alpha$. See {doc}`modes-and-ports`.
+  A mode that radiates out of its guide as it travels, as in a bend. As a
+  {term}`port mode` it has $\alpha > 0$ with lossless materials and a field
+  that grows away from the guide, so the section needs an absorbing edge or a
+  {term}`perfectly matched layer`. See {doc}`modes-and-ports`.
 
 Third-order dispersion
   $\beta_3 = \mathrm{d}^3\beta/\mathrm{d}\omega^3$ of a {term}`port mode`, in
@@ -51,49 +49,38 @@ Quasi-normal mode
   A {term}`resonant mode` of an open structure, one that loses power through a
   {term}`perfectly matched layer`, an absorbing boundary, a resistive
   {term}`lumped port` or a {term}`wave port`: complex $\omega$, and a field
-  that grows away from the structure. Short form QNM. A cavity coupled to a
-  guide has quasi-normal modes; the guide's own {term}`bound mode` is not one. See {doc}`recipes/solve-a-device`.
+  that grows away from the structure. Short form QNM. See
+  {doc}`recipes/solve-a-device`.
 
 Coupling Q
   The Q a {term}`resonant mode` would have if one port were its only loss:
-  $\mathrm{Re}\,\omega$ times the mode's stored energy over the
-  time-averaged power the port takes out. For a resistive {term}`lumped port`
-  that power is the one its resistance draws; for a {term}`wave port`, the
-  one its requested mode carries out through the face. With other losses,
-  $1/Q$ is close to the sum of the ports' $1/Q_\mathrm{coupling}$ plus the
-  material and wall losses, closer as Q grows. Reported in
-  `EigenmodeResult.q_port`. See {doc}`modes-and-ports`.
+  $\mathrm{Re}\,\omega$ times the mode's stored energy over the time-averaged
+  power the port takes out. Reported in `EigenmodeResult.q_port`. See
+  {doc}`modes-and-ports`.
 
 Outgoing branch
   The propagation constant of a {term}`port mode` continued from real
-  frequencies above cutoff to the complex frequency of a resonant mode: the
-  wave leaving the model through the port. At a decaying mode
-  $\mathrm{Re}\,\gamma < 0$, so the field grows along the guide away from
-  the model, as a {term}`quasi-normal mode`'s does. Below cutoff it also has
-  real roots that are not resonances (anti-bound roots), which an
-  eigenmode solve drops with a warning. See {doc}`recipes/solve-a-device`.
+  frequencies to the complex frequency of a resonant mode: the wave leaving
+  the model through the port. At a decaying mode $\mathrm{Re}\,\gamma < 0$, so
+  the field grows along the guide, as a {term}`quasi-normal mode`'s does. See
+  {doc}`recipes/solve-a-device`.
 
 Requested power share
-  For an eigenmode solve with {term}`wave port`s, the part of the power a
-  port surface absorbs from a mode that the surface's requested modes carry
-  out, $\eta_s = \sum_p P_p / P_s$, with $P_p$ the power port $p$'s
-  requested mode carries and $P_s$ the surface's total. Near 1 for a mode of
-  a requested family; the rest of $1 - \eta_s$ leaves through a field no port
-  requested, which the port absorbs only partly. Reported in
+  For an eigenmode solve with {term}`wave port`s, the part $\eta_s = \sum_p
+  P_p / P_s$ of the power a port surface absorbs that its requested modes
+  carry out. Near 1 for a mode of a requested family; reported in
   `EigenmodeResult.requested_power_share`. See {doc}`modes-and-ports`.
 
 Trapped mode
   A {term}`resonant mode` held inside the model, against a {term}`wave port`,
   by a port mode family that propagates in the model but is cut off at the
-  port. Its loss is the port's absorption of the evanescent tail, so its Q is
-  a lower bound on the device's and grows as the port moves away. Its
-  {term}`requested power share` is near 0. See {doc}`modes-and-ports`.
+  port. Its Q is a lower bound on the device's, and its {term}`requested power
+  share` is near 0. See {doc}`modes-and-ports`.
 
 Unrequested port mode
-  A mode of a port's guide that no {term}`wave port` on the surface requests.
-  The port absorbs it only partly, reflecting the rest, so a resonance it
-  carries has a Q that is the port's, not the device's. Request the mode on
-  the surface to read where its power goes. See {doc}`modes-and-ports`.
+  A mode of a port's guide that no {term}`wave port` on the surface requests,
+  so the port absorbs it only partly. A resonance it carries has a Q that is
+  the port's, not the device's. See {doc}`modes-and-ports`.
 
 Model
   Everything physical about a device independent of problem type: the mesh, a
@@ -131,12 +118,10 @@ Element order
 
 Tree-cotree gauge
   A change of basis for a driven solve's unknowns that writes the gradients
-  $\nabla \phi$, on which the curl-curl term vanishes, as node potentials along
-  a spanning tree of the mesh and one floating potential per conductor, so
-  that a direct solve keeps its digits below the low-frequency floor
-  ($k_0 h_\mathrm{min} < 10^{-6}$). On by default for a direct solve on the
-  CPU in one process (`SolverOptions.gauge`); the wave ports' mode problem is
-  not gauged. See {doc}`recipes/solve-a-device`.
+  $\nabla \phi$ as node potentials along a spanning tree, so a direct
+  solve keeps its digits at low frequency ($k_0 h_\mathrm{min} < 10^{-6}$).
+  On by default for a one-process CPU direct solve
+  (`SolverOptions.gauge`). See {doc}`recipes/solve-a-device`.
 
 Field
   A solution quantity (electric field, potential) on the model's mesh, carried
@@ -156,19 +141,16 @@ Power waves
   {term}`pseudo-waves`. See {doc}`conventions`.
 
 Pseudo-waves
-  The waves gfem's S relates (Marks and Williams):
-  $a = \sqrt{\mathrm{Re}\, z} / (2|z|)\,(V + zI)$ and
-  $b = \sqrt{\mathrm{Re}\, z} / (2|z|)\,(V - zI)$ for a
-  {term}`reference impedance` $z$. On a real $z$ they are the
-  {term}`power waves`; on a line's complex characteristic impedance the line
-  is matched to its own mode. See {doc}`recipes/solve-a-device`.
+  The waves gfem's S relates (Marks and Williams), built from a port's voltage
+  and current and its {term}`reference impedance`. On a real reference they
+  are the {term}`power waves`; on a line's complex characteristic impedance
+  the line is matched to its own mode. See {doc}`recipes/solve-a-device`.
 
 Reference impedance
   The impedance per {term}`port` that S-parameters are normalized to: the port
-  resistance for a lumped port, the power-voltage impedance for a wave port with
-  a voltage path, and for a {term}`Floquet port` the wave impedance of its
-  order in the medium behind the face ($\eta / \cos\theta$ for TE, $\eta \cos\theta$ for TM; none
-  where the order does not propagate). See {doc}`conventions`.
+  resistance for a lumped port, the power-voltage impedance for a wave port
+  with a voltage path, and for a {term}`Floquet port` the wave impedance of
+  its order in the medium behind the face. See {doc}`conventions`.
 
 Loss tangent
   The ratio $\tan\delta$ of the imaginary to the real part of a {term}`material`'s
@@ -192,19 +174,15 @@ Port mode problem
 
 Group index
   $n_g = c\,\mathrm{d}\beta/\mathrm{d}\omega$ of a {term}`port mode`: a
-  pulse's envelope travels along the guide at $c/n_g$. It holds the
-  dispersion of the materials and of the guide's shape; on a lossless
-  section it is $c$ times the stored energy over the power, with the
-  {term}`energy permittivity` in law regions. Complex on a lossy or leaky
-  section, written $n_g' - in_g''$ like the effective index, with
-  $n_g' = c\,\mathrm{d}\beta/\mathrm{d}\omega$. See {doc}`recipes/waveguide-dispersion`.
+  pulse's envelope travels along the guide at $c/n_g$. It holds the dispersion
+  of the materials and of the guide's shape, and is complex on a lossy or
+  leaky section. See {doc}`recipes/waveguide-dispersion`.
 
 Group-velocity dispersion
   $\beta_2 = \mathrm{d}^2\beta/\mathrm{d}\omega^2$ of a {term}`port mode`, in
-  s²/m: how the delay per length changes with frequency. Normal where
-  $\beta_2 > 0$, anomalous where $\beta_2 < 0$. Complex on a lossy or leaky
-  section, with real part $\mathrm{d}^2\beta/\mathrm{d}\omega^2$. Short form
-  GVD. See {doc}`recipes/waveguide-dispersion`.
+  s²/m: how the delay per length changes with frequency, normal where $\beta_2
+  > 0$ and anomalous where $\beta_2 < 0$. Short form GVD. See
+  {doc}`recipes/waveguide-dispersion`.
 
 Dispersion parameter
   $D = -(2\pi c/\lambda^2)\,\beta_2$, with $\lambda$ the vacuum wavelength,
@@ -223,9 +201,10 @@ TM-like mode
 
 Polarity reference
   A point on a {term}`wave port` and a direction along which the port mode's
-  electric field (on a line port, the field normal to the plane) is real and
-  positive at every frequency (`WavePort(polarity=...)`). It fixes the sign of
-  the port's row and column of S without defining a voltage or an impedance. See {doc}`recipes/sax-circuit`.
+  electric field is real and positive at every frequency
+  (`WavePort(polarity=...)`). It fixes the sign of the port's row and column
+  of S without defining a voltage or an impedance. See
+  {doc}`recipes/sax-circuit`.
 
 Shared port surface
   An exterior surface that carries several wave ports, each requesting a
@@ -264,11 +243,10 @@ Internal lumped load
   a load, and its value remains a design setting. See {doc}`recipes/sax-circuit`.
 
 Beam coupling
-  The amplitude, in √W, that a driven field sends into an incoming beam (a
-  fiber's), with the beam scaled to 1 W through the side it is read on
-  (`gfem.beam_coupling`); by reciprocity, for a port's field, the
-  {term}`port wave` the port receives when that beam lights the device. Its
-  squared modulus is the coupled power on a real reference. See {doc}`tutorials/grating`.
+  The amplitude, in √W, that a driven field sends into an incoming beam scaled
+  to 1 W (`gfem.beam_coupling`); for a port's field, the {term}`port wave` the
+  port receives when that beam lights the device. Its squared modulus is the
+  coupled power on a real reference. See {doc}`tutorials/grating`.
 ```
 
 ## Nonlinear and quantum optics
@@ -300,10 +278,9 @@ Normalized efficiency
 Clearance
   The distance from a guide's core to the edge of its section: a side
   {term}`perfectly matched layer`, or the section's outer wall. It sets how
-  much the edge perturbs the guided mode: about
-  $10^{-2} e^{-2\gamma_t c}$ in $n_\text{eff}$ at a layer, with $\gamma_t$ the
-  mode's transverse decay rate and $c$ the clearance, and far more in the
-  {term}`group-velocity dispersion`. See {doc}`recipes/waveguide-nonlinearity`.
+  much the edge perturbs the guided mode, far more in the
+  {term}`group-velocity dispersion` than in $n_\text{eff}$. See
+  {doc}`recipes/waveguide-nonlinearity`.
 ```
 
 ## Electro-optics
@@ -312,27 +289,23 @@ Clearance
 :sorted:
 
 Static permittivity
-  The zero-frequency value of a {term}`permittivity law`: $\varepsilon_\infty$ plus the
-  strengths of its Lorentz, Debye and Djordjevic-Sarkar terms. A Drude term
-  has none, because a Drude metal conducts at zero frequency. The
-  electrostatic problem reads it. For an electro-optic crystal it
-  differs from the optical `eps_r` and goes in a separate electrostatic model. See {doc}`recipes/electro-optic-phase`.
+  The zero-frequency value of a {term}`permittivity law`: $\varepsilon_\infty$
+  plus the strengths of its Lorentz, Debye and Djordjevic-Sarkar terms, which
+  the electrostatic problem reads. A Drude term has none, because a Drude
+  metal conducts at zero frequency. See {doc}`recipes/electro-optic-phase`.
 
 Optical window
   A model of the optical neighbourhood of one waveguide core, on which a
   thermo-optic or {term}`electro-optic shift`, or a route phase, solves the
-  mode: the static (thermal or electrostatic) model with the other regions
-  excluded from electromagnetic solves, or a mesh of its own in the same
-  coordinates. For an electro-optic shift it reaches the electrodes' inner
-  edges. See {doc}`tutorials/modulator`.
+  mode. For an electro-optic shift it reaches the electrodes' inner edges. See
+  {doc}`tutorials/modulator`.
 
 Electro-optic tensor
-  The tensor $r$ of a crystal's linear (Pockels) electro-optic effect,
-  $\Delta(1/n^2)_{ij} = \sum_k r_{ijk} E_k$, given contracted as a 6 × 3 array
-  $r_{Ik}$ in m/V (`electro_optic_tensor`): rows $xx, yy, zz, yz, xz, xy$,
-  columns $x, y, z$, in the frame of the material's right-handed `axes`. A
-  static field $E_\mathrm{s}$ changes the permittivity by
-  $\Delta\varepsilon_r = -\varepsilon_r (r \cdot E_\mathrm{s}) \varepsilon_r$. See {doc}`tutorials/modulator`.
+  The tensor $r$ of a crystal's linear (Pockels) electro-optic effect, given
+  as a 6 × 3 array in m/V (`electro_optic_tensor`) in the frame of the
+  material's right-handed `axes`. A static field $E_\mathrm{s}$ changes the
+  permittivity by $\Delta\varepsilon_r = -\varepsilon_r (r \cdot E_\mathrm{s})
+  \varepsilon_r$. See {doc}`tutorials/modulator`.
 
 Electro-optic shift
   The change of a guided mode's effective index, and of its phase per length,
@@ -360,10 +333,8 @@ Electro-optic overlap factor
 Electrode clearance
   The lateral distance from a waveguide's edge to the nearest electrode's
   inner edge, $(g - w)/2$ for a ridge of width $w$ centred in a gap $g$. Its
-  lower bound comes from the mode's decay outside the ridge,
-  $\ln(1/\delta) / (2\kappa)$ with $\kappa = k_0 \sqrt{n_\mathrm{eff}^2 -
-  n_\mathrm{slab}^2}$, so that the mode's intensity at the metal is $\delta$
-  of its value at the ridge's edge. See {doc}`tutorials/modulator`.
+  lower bound comes from the mode's decay outside the ridge. See
+  {doc}`tutorials/modulator`.
 ```
 
 ## Heat and thermo-optics
@@ -543,12 +514,11 @@ Node map
   surface and lets the rest follow, a node map says where every node goes. See {doc}`recipes/piezoelectric-gradient`.
 
 Photoelastic tensor
-  The tensor $p$ of a crystal's photoelastic effect, contracted as a 6 × 6
-  array $p_{IJ}$ (`photoelastic_tensor`, dimensionless, at constant electric
-  field): rows and columns $xx, yy, zz, yz, xz, xy$ in the frame of the
-  material's right-handed `axes`, with the {term}`engineering strain`, so that
-  $\Delta(\varepsilon_r^{-1})_I = p_{IJ} S_J$. It belongs to the optical
-  crystal, not to one with a stiffness. See {doc}`tutorials/acousto-optic`.
+  The tensor $p$ of a crystal's photoelastic effect, a dimensionless 6 × 6
+  array at constant electric field (`photoelastic_tensor`), with the
+  {term}`engineering strain`: $\Delta(\varepsilon_r^{-1})_I = p_{IJ} S_J$. It
+  belongs to the optical crystal, not to one with a stiffness. See
+  {doc}`tutorials/acousto-optic`.
 
 Acousto-optic shift
   The change of a guided mode's effective index caused by an acoustic wave,
@@ -571,16 +541,16 @@ Optomechanical overlap
 
 Stiffness
   A solid's elastic stiffness at constant electric field, $c^E$: a symmetric
-  positive-definite 6 × 6 matrix in Pa in {term}`Voigt order <engineering strain>`
-  (`stiffness`), in the frame of the material's `axes`. The piezoelectric
-  stiffening is added by the solve. {py:obj}`gfem.isotropic_stiffness` builds an
-  isotropic solid's from its Young's modulus and Poisson's ratio. See {doc}`recipes/piezoelectric-admittance`.
+  positive-definite 6 × 6 matrix in Pa in {term}`Voigt order <engineering
+  strain>` (`stiffness`). {py:obj}`gfem.isotropic_stiffness` builds an
+  isotropic solid's from its Young's modulus and Poisson's ratio. See
+  {doc}`recipes/piezoelectric-admittance`.
 
 Piezoelectric tensor
   The stress constants $e$ of a crystal, a 3 × 6 matrix in C/m²
-  (`piezoelectric_tensor`): rows the field components, columns in Voigt order,
-  in the frame of the material's `axes`. The stress and the electric
-  displacement are $T = c^E S - e^\mathsf{T} E$ and $D = e S + \varepsilon^S E$. See {doc}`recipes/piezoelectric-admittance`.
+  (`piezoelectric_tensor`), with columns in Voigt order. Stress and
+  displacement are $T = c^E S - e^\mathsf{T} E$ and $D = e S + \varepsilon^S
+  E$. See {doc}`recipes/piezoelectric-admittance`.
 
 Clamped permittivity
   The permittivity at constant strain, $\varepsilon^S$: in gfem the `eps_r` of a
@@ -599,10 +569,10 @@ Mechanical domain
 
 Mechanical eigenmode
   A source-free solution of linear elasticity on a 2D section, varying as
-  $e^{-iqz}$ along the section's normal: a complex angular frequency whose
-  imaginary part is the decay from mechanical loss and damping frames, and a
-  displacement normalized to 1 J/m ({py:class}`gfem.MechanicalEigenmode`). A
-  material with a piezoelectric tensor couples the potential to it. See {doc}`recipes/mechanical-modes`.
+  $e^{-iqz}$ along its normal: a complex angular frequency and a displacement
+  normalized to 1 J/m ({py:class}`gfem.MechanicalEigenmode`). A material with
+  a piezoelectric tensor couples the potential to it. See
+  {doc}`recipes/mechanical-modes`.
 
 Axial wavenumber
   The real propagation constant $q$ in rad/m along $z$ of a
@@ -628,11 +598,9 @@ Clamped surface
 
 Damping frame
   An absorbing edge region where the stiffness becomes
-  $c (1 + i(1/Q_m + \eta r^2))$, with $r$ the normalised depth into the region
-  and $\eta$ its {term}`loss factor <Loss factor (of a damping frame)>`
-  ({py:obj}`gfem.DampingFrame`). It absorbs the acoustic waves that leave a
-  piezoelectric section, as a {term}`perfectly matched layer` does the
-  electromagnetic ones. See {doc}`tutorials/transducer`.
+  $c (1 + i(1/Q_m + \eta r^2))$, with $r$ the normalised depth and $\eta$ its {term}`loss factor <Loss factor (of a damping frame)>`
+  ({py:obj}`gfem.DampingFrame`). It absorbs the sound that leaves a
+  piezoelectric section, as a {term}`perfectly matched layer` does light. See {doc}`tutorials/transducer`.
 
 Loss factor (of a damping frame)
   The loss $\eta$ that a {term}`damping frame` adds to the stiffness at its outer
@@ -683,9 +651,8 @@ Synchronous frequency
 Power flow
   The net time-averaged power crossing the boundary between a chosen set of
   elements and the rest of the solve domain, positive when it leaves the set.
-  Measured by `gfem.power_flow` from the residual of the discrete equations, so
-  exact for the solved field. Poynting flux is kept for the pointwise integral
-  of $\tfrac{1}{2}\mathrm{Re}(\mathbf{E} \times \mathbf{H}^*)$. See {doc}`recipes/cross-sections`.
+  Measured by `gfem.power_flow` from the residual of the discrete equations,
+  so exact for the solved field. See {doc}`recipes/cross-sections`.
 
 Incident field
   The field a {term}`source` would have in the {term}`background stack` alone,
@@ -738,10 +705,9 @@ Cross sections
 
 Optical force
   The time-averaged force and torque of a solved electric field on a body
-  (`gfem.optical_force`): the derivative of the discrete time-averaged
-  Lagrangian under a rigid motion of the body's nodes, the volume form of the
-  Maxwell stress tensor on its {term}`stress shell`. A driven field gives it
-  per incident power, an eigenmode at 1 J of stored energy. See {doc}`recipes/optical-force`.
+  (`gfem.optical_force`): the volume form of the Maxwell stress tensor on its
+  {term}`stress shell`. A driven field gives it per incident power, an
+  eigenmode at 1 J of stored energy. See {doc}`recipes/optical-force`.
 
 Stress shell
   The solve-domain elements outside a body that share a vertex with it, where
@@ -898,12 +864,10 @@ Kerker condition
 :sorted:
 
 Slab model
-  A {term}`model` one element thick between PEC plates, whose field is normal to
-  the plates and uniform through the thickness, so it solves the
-  {term}`Ez polarization` of a {term}`2D model`'s problem on a 3D mesh (between
-  natural faces (PMC) it solves the Hz polarization instead); the
-  cross-check of 2D models, and the way to pose what they refuse (oblique
-  incidence, periodic cells, lumped ports, sheets). See {doc}`tutorials/photonic-crystal`.
+  A {term}`model` one element thick between PEC plates, whose field is normal
+  to the plates, so it solves the {term}`Ez polarization` of a {term}`2D
+  model`'s problem on a 3D mesh. It cross-checks 2D models and poses what they
+  refuse, such as oblique incidence. See {doc}`tutorials/photonic-crystal`.
 
 Floquet port
   A {term}`port` on a {term}`Floquet surface` that is one
@@ -918,11 +882,11 @@ Floquet surface
   diffraction order at any angle. See {doc}`recipes/floquet-ports`.
 
 Diffraction order
-  One of the plane waves a periodic cell sends into the medium behind a face:
-  order $(m, n)$ has the in-plane wave vector $\boldsymbol{\kappa} = \mathbf{k}_t + m \mathbf{b}_1 + n \mathbf{b}_2$, with $\mathbf{b}_1$, $\mathbf{b}_2$
-  the reciprocal vectors of the face's two pairs and $\mathbf{k}_t$ the
-  {term}`Bloch wave vector`. It propagates when $|\boldsymbol{\kappa}|$ is below the medium's
-  wavenumber, and decays away from the face otherwise. See {doc}`recipes/floquet-ports`.
+  One of the plane waves a periodic cell sends into the medium behind a face,
+  labelled $(m, n)$ by the reciprocal vectors of the face's two pairs. It
+  propagates when its in-plane wave vector is shorter than the medium's
+  wavenumber, and decays away from the face otherwise. See
+  {doc}`recipes/floquet-ports`.
 
 Diffraction efficiency
   The fraction of the incident power per cell that leaves in one
@@ -938,7 +902,7 @@ Jones matrix
   The $2\times2$ block of a cell's S between one outgoing and one incoming
   {term}`diffraction order`, with rows and columns in (TM, TE). Its entries
   are power-wave ratios, so $|J_{ij}|^2$ is a {term}`diffraction efficiency`.
-  At normal incidence it is the usual Jones matrix in the cell's own axes. See {doc}`recipes/diffraction-efficiency`.
+  See {doc}`recipes/diffraction-efficiency`.
 
 Absorptance
   The fraction of the incident power a cell dissipates: one minus the
@@ -1006,20 +970,20 @@ Wave vector path
   (`gfem.wave_vector_path`). See {doc}`tutorials/photonic-crystal`.
 
 Band
-  The $n$-th lowest resonant frequency (by $\mathrm{Re}\,\omega$) of a periodic cell as
-  a function of the {term}`Bloch wave vector`, counting the bands that reach
-  zero frequency at Γ. It is continuous in $\mathbf{k}$, with a kink where two bands
-  cross. Bands are numbered from 0. See {doc}`tutorials/photonic-crystal`.
+  The $n$-th lowest resonant frequency (by $\mathrm{Re}\,\omega$) of a
+  periodic cell as a function of the {term}`Bloch wave vector`, numbered from
+  0. It is continuous in $\mathbf{k}$, with a kink where two bands cross. See
+  {doc}`tutorials/photonic-crystal`.
 
 Static band
   A {term}`band` whose frequency goes to zero at Γ, where the cell's static
   fields stand in for it. A band diagram reports it at zero frequency there. See {doc}`tutorials/photonic-crystal`.
 
 Band connection
-  The link from a {term}`band` at one wave vector of a {term}`wave vector path`
-  to the band at the previous wave vector that holds the same mode, found by
-  field overlap. Through a crossing it joins band $n$ to band $n+1$; inside a
-  degenerate or near-degenerate group it falls back to frequency order. See {doc}`recipes/periodic-cell`.
+  The link from a {term}`band` at one wave vector of a {term}`wave vector
+  path` to the band at the previous wave vector that holds the same mode,
+  found by field overlap. Inside a degenerate or near-degenerate group it
+  falls back to frequency order. See {doc}`recipes/periodic-cell`.
 
 Band diagram
   The {term}`bands <band>` of a periodic cell along a {term}`wave vector path`
@@ -1048,11 +1012,10 @@ Lost band
   solve missed a mode. See {doc}`tutorials/photonic-crystal`.
 
 Bloch reciprocity
-  $S(\mathbf{k})^\mathsf{T} = S(-\mathbf{k})$: a Bloch cell's S matrix is not symmetric, but swapping two
-  ports is the same as reversing the {term}`Bloch wave vector`. With
-  {term}`Floquet ports <Floquet port>` the orders relabel and take a sign:
-  $S_{p\leftarrow q}(\mathbf{k}) = \sigma_p \sigma_q S_{-q\leftarrow -p}(-\mathbf{k})$, with $-p$ the port of the opposite order
-  and $\sigma = -1$ for an order with a nonzero in-plane wave vector, $+1$ otherwise. See {doc}`recipes/periodic-cell`.
+  $S(\mathbf{k})^\mathsf{T} = S(-\mathbf{k})$: a Bloch cell's S matrix is not
+  symmetric, but swapping two ports is the same as reversing the {term}`Bloch
+  wave vector`. With {term}`Floquet ports <Floquet port>` the orders relabel
+  and take a sign. See {doc}`recipes/periodic-cell`.
 
 Material field
   A spatially varying assignment of material properties (permittivity,
@@ -1107,12 +1070,11 @@ Shape optimization
   material regions keep sharp interfaces. See {doc}`tutorials/shape`.
 
 Rational model
-  S over a band written as a constant matrix plus pole-residue terms,
-  $S(f) = D + \sum_n R_n/(2\pi i f - p_n)$, whose poles every element of S
-  shares, on one real reference impedance per port
-  ({py:obj}`gfem.RationalModel`). Fitted to S by vector fitting, made
-  passive by default, and written as a SPICE subcircuit or a Verilog-A
-  module. See {doc}`recipes/rational-model`.
+  S over a band written as a constant matrix plus pole-residue terms, $S(f) =
+  D + \sum_n R_n/(2\pi i f - p_n)$, on one real reference impedance per port
+  ({py:obj}`gfem.RationalModel`). Fitted by vector fitting, it is passive by
+  default and written as a SPICE subcircuit or a Verilog-A module. See
+  {doc}`recipes/rational-model`.
 
 Passivity violation
   A frequency interval where the largest singular value of a
@@ -1126,10 +1088,10 @@ Harmonic grid
 
 Time response
   The impulse or step response of S, from its windowed inverse Fourier
-  transform: on a {term}`harmonic grid` (low pass), or over an evenly spaced
-  band as a magnitude (band pass). The reflected step at a port is its TDR,
-  the transmitted step its TDT ({py:obj}`gfem.TimeResponse`). Not a
-  {term}`trace`, which is a thermal solve's record over time. See {doc}`recipes/time-responses`.
+  transform on a {term}`harmonic grid` (low pass) or over an evenly spaced
+  band (band pass). The reflected step at a port is its TDR, the transmitted
+  step its TDT ({py:obj}`gfem.TimeResponse`). See
+  {doc}`recipes/time-responses`.
 
 Impedance profile
   $Z(t) = Z_0 (1 + \rho(t))/(1 - \rho(t))$, read from the reflected step
@@ -1190,16 +1152,14 @@ Boundary morph
 
 Unresolved band
   The frequencies at which a region with a {term}`permittivity law` carries a
-  wavelength shorter than two of its longest element edges,
-  $k_0\, \mathrm{Re} \sqrt{\varepsilon(f)}\, h_\mathrm{max} > \pi$. An eigenmode target or mode there raises
-  `ValueError`: near a Lorentz resonance the modes crowd so densely that which
-  ones are nearest depends on the mesh. See {doc}`recipes/fit-measured-data`.
+  wavelength shorter than two of its longest element edges, $k_0\, \mathrm{Re}
+  \sqrt{\varepsilon(f)}\, h_\mathrm{max} > \pi$. An eigenmode target or mode
+  there raises `ValueError`. See {doc}`recipes/fit-measured-data`.
 
 Modal overlap
   The number of a lossy region's cavity modes within one linewidth of a
-  frequency, about $8\pi (V / \lambda_m^3) |\mathrm{Im}\,\varepsilon| / \mathrm{Re}\,\varepsilon$, with $V$ the region's volume and
-  $\lambda_m$ the wavelength in it. Above about 10 the modes nearest a target cannot
-  be told apart, and an {term}`eigenmode problem` there may stop with
+  frequency. Above about 10 the modes nearest a target cannot be told apart,
+  and an {term}`eigenmode problem` there may stop with
   `gfem.EigenmodeConvergenceError`. See {doc}`recipes/dispersive-materials`.
 
 Region
@@ -1209,17 +1169,14 @@ Region
 Excluded region
   A volume {term}`region` present in the mesh but removed from the
   electromagnetic solve domain, its bounding surfaces acting as boundaries;
-  typically a meshed conductor. Named either by region name or, when the mesh
-  tags the conductor with the surrounding dielectric's name (gsim), by
-  `gfem.enclosed_by(*surfaces)`, which selects every volume entity whose whole
-  boundary lies on those surfaces. See {doc}`recipes/prepare-a-mesh`.
+  typically a meshed conductor. Named by region name or by
+  `gfem.enclosed_by(*surfaces)`. See {doc}`recipes/prepare-a-mesh`.
 
 Absorbing boundary
   A boundary condition on a truncating surface that approximates an open,
   non-reflecting exterior, of first or second order. It reflects a wave that
-  meets it obliquely; on a periodic cell a driven solve warns
-  (`gfem.ObliqueAbsorberWarning`) when that reflection reaches 1 %. A
-  {term}`perfectly matched layer` absorbs at any angle. See {doc}`recipes/perfectly-matched-layer`.
+  meets it obliquely, which a {term}`perfectly matched layer` does not. See
+  {doc}`recipes/perfectly-matched-layer`.
 
 Transverse-anisotropic
   An {term}`anisotropic material` with one of its {term}`principal axes`
@@ -1241,9 +1198,8 @@ Air box
 Perfectly matched layer
   A meshed shell of volume regions around the {term}`air box` that absorbs
   outgoing waves at any angle (`gfem.PML`); short form PML. Each layer region
-  keeps the material it continues, which solves that ignore the layer
-  (electrostatic, DC conduction, thermal) see. The fields inside it are not
-  physical. See {doc}`recipes/perfectly-matched-layer`.
+  keeps the material it continues, and the fields inside it are not physical.
+  See {doc}`recipes/perfectly-matched-layer`.
 
 Target reflection
   The reflection $R_0$ a {term}`perfectly matched layer` is designed for, at
@@ -1337,9 +1293,8 @@ Permittivity fit
 
 Extinction coefficient
   The imaginary part $k \ge 0$ of a tabulated refractive index $n + ik$. It
-  measures absorption and does not depend on the time convention; under
-  $e^{+i\omega t}$ the permittivity is $\varepsilon = (n - ik)^2$. Not the
-  extinction cross section, which is a power. See {doc}`recipes/fit-measured-data`.
+  measures absorption, does not depend on the time convention, and is not the
+  extinction cross section. See {doc}`recipes/fit-measured-data`.
 
 Fitted range
   The frequencies over which a {term}`permittivity law`'s parameters were
@@ -1405,21 +1360,16 @@ Field estimator
 Flux recovery
   Projecting the solved electric flux (`eps E`, or `eps grad V` in
   electrostatics) and the curl of `E` onto smoother fields, one polynomial
-  degree below the solve's order. On the solve domain's natural surfaces,
-  the recovered flux's normal component and the recovered curl's
-  tangential component are held at zero. In electrostatics these are every
-  exterior surface not held at a potential, ports and impedance surfaces
-  included; in wave problems, the PMC surfaces and the exterior surfaces
-  given no condition. The difference between the solved and the recovered
-  fields, weighted by the field's energy, is the field's estimated error. See {doc}`recipes/mesh-refinement`.
+  degree below the solve's order. The difference between the solved and the
+  recovered fields, weighted by the field's energy, is the field's estimated
+  error. See {doc}`recipes/mesh-refinement`.
 
 Quantity estimator
   The {term}`error estimator` of one quantity: a capacitance entry, an S
-  entry, one mode's `omega` or Q, the mean `omega` of a degenerate cluster,
-  or an {term}`objective` of the result (`gfem.QuantityEstimator`). It
-  weights each tetrahedron's field error by its effect on that quantity,
-  using fields already solved, except for an S entry or objective whose
-  dual is not a solved field, which takes one {term}`adjoint dual` each. See {doc}`recipes/mesh-refinement`.
+  entry, one mode's `omega` or Q, or an {term}`objective` of the result
+  (`gfem.QuantityEstimator`). It weights each tetrahedron's field error by its
+  effect on that quantity, taking one {term}`adjoint dual` where no solved
+  field stands in. See {doc}`recipes/mesh-refinement`.
 
 Estimate kind
   What an {term}`error estimate` is of: the field, an entry, Q, a
@@ -1438,29 +1388,16 @@ Lossless rewrite
   estimate tighter (`ErrorEstimate.kind` names it). See {doc}`recipes/mesh-refinement`.
 
 Adjoint dual
-  The field solved with a port's S read-out, or an objective's
-  measurement, as the source instead of the excitation, at the same order.
-  The {term}`quantity estimator` weights field errors with it when no
-  solved field can stand in: an S entry whose read port is not excited, or
-  is a wave port with a hybrid mode in a lossy cross-section, and an
-  objective of a field measurement, of electrostatic energy or a potential
-  mean, or of a participation. Otherwise the dual is a port's own field,
-  scaled, and needs no solve. See {doc}`recipes/mesh-refinement`.
+  The field solved with a port's S read-out, or an objective's measurement, as
+  the source instead of the excitation, at the same order. The {term}`quantity
+  estimator` weights field errors with it when no solved field can stand in.
+  See {doc}`recipes/mesh-refinement`.
 
 Error estimate
-  The number an {term}`error estimator` gives for a result, compared with
-  the tolerance of {term}`mesh refinement`. It has no sign or phase and is
-  an estimate, not a bound. For a {term}`quantity estimator` it is relative
-  to a capacitance entry, `omega`, a cluster's mean `omega` or Q; absolute
-  for an S entry; and in the objective's units for an objective. gfem
-  never adds it to the quantity. On gfem's verification cases, against
-  errors on the mesh's own facets, the field estimator's estimate was
-  between {gfem-effectivity}`field low` and {gfem-effectivity}`field high`
-  times the true error (orders 2 and 3) and the quantity estimator's on
-  entries between {gfem-effectivity}`quantity low` and
-  {gfem-effectivity}`quantity high` times (order 2); each other
-  {term}`estimate kind` has its own range ({doc}`verification`). Neither
-  sees the faceting of curved surfaces. See {doc}`recipes/mesh-refinement`.
+  The number an {term}`error estimator` gives for a result, compared with the
+  tolerance of {term}`mesh refinement`. It has no sign or phase and is an
+  estimate, not a bound; each {term}`estimate kind` has its own effectivity
+  range ({doc}`verification`). See {doc}`recipes/mesh-refinement`.
 
 Scattered field
   The {term}`total field` minus the {term}`incident field`; it is outgoing at
@@ -1576,10 +1513,11 @@ Port mode sweep
   {term}`shared port surface` share one sweep. See {doc}`recipes/watch-a-solve`.
 
 P-multigrid
-  The preconditioner of `linear_solver="pmg_gmres"`. It solves the
+  The preconditioner of `linear_solver="pmg_gmres"`: it solves the
   {term}`direct set` exactly and smooths the remaining higher-order unknowns
   patch by patch around each mesh vertex, under GMRES. Its iteration count
-  barely grows with a model's size in wavelengths. See {doc}`recipes/large-driven-model`.
+  barely grows with a model's size in wavelengths. See
+  {doc}`recipes/large-driven-model`.
 
 Direct set
   The unknowns the {term}`p-multigrid` solves exactly: the lowest-order
@@ -1589,11 +1527,10 @@ Direct set
   the direct solver's. See {doc}`recipes/large-driven-model`.
 
 Poor cell
-  A tetrahedron whose longest edge exceeds ten times its shortest altitude,
-  $L_\mathrm{max} > 10\, h_\mathrm{min}$ with $h_\mathrm{min} = 3V / S_\mathrm{max}$
-  ($V$ its volume, $S_\mathrm{max}$ its largest face area), as in a thin film
-  meshed one cell across. The {term}`p-multigrid` puts its unknowns on the
-  {term}`direct set`, because layers of such cells stall its smoothing. See {doc}`recipes/large-driven-model`.
+  A tetrahedron whose longest edge exceeds ten times its shortest altitude, as
+  in a thin film meshed one cell across. The {term}`p-multigrid` puts its
+  unknowns on the {term}`direct set`, because layers of such cells stall its
+  smoothing. See {doc}`recipes/large-driven-model`.
 
 Eigen solver
   The iteration that finds an eigenmode problem's modes near the target,
@@ -1693,12 +1630,10 @@ Partial bundle
   a complete result. See {doc}`recipes/save-and-export`.
 
 Solve cache
-  A directory named by `cache=` on `gfem.solve` and `Job.run` (`--cache` on
-  `python -m gfem run`) that keeps finished results, filed under the mesh,
-  materials, problem and solver options they were solved for, so that the
-  same call again reads its result back instead of solving. Off unless a call
-  names one; delete the directory to clear it. What gfem keeps in memory
-  between solves is not part of it, and `gfem.release_memory` leaves it alone. See {doc}`recipes/save-and-export`.
+  A directory named by `cache=` on `gfem.solve` and `Job.run` that keeps
+  finished results, so that the same call again reads its result back instead
+  of solving. Off unless a call names one; `gfem.release_memory` leaves it
+  alone. See {doc}`recipes/save-and-export`.
 
 Dissipated power
   The time-averaged electromagnetic power turned into heat inside the model:
