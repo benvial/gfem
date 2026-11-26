@@ -118,7 +118,7 @@ in 2D.
 
 | Feature | Calls | 3D only | Gradient | Page |
 |---|---|---|---|---|
-| Layer patterns to GDS | {py:obj}`gfem.design.LayerPattern`, {py:obj}`gfem.design.write_gds` | n/a | No; the fabrication model is inside the gradient | {doc}`recipes/fabricable-layout` |
+| Layer patterns to GDS | {py:obj}`gfem.design.LayerPattern`, {py:obj}`gfem.design.write_gds` | n/a | No; call it on the final design | {doc}`recipes/fabricable-layout` |
 | Tolerance report | {py:obj}`gfem.tolerance_report` | No | n/a | {doc}`recipes/tolerance-report` |
 
 #### Results and files
