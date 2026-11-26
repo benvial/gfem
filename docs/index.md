@@ -12,118 +12,90 @@ this file holds the page title and the site tree. -->
 :caption: Get started
 
 get-started
+recipes/solve-a-device
 ```
 
 ```{toctree}
 :hidden:
-:caption: Tutorials
+:caption: Integrated photonics
 
-tutorials/topology
-tutorials/sheet
-tutorials/shape
-tutorials/transmon
 tutorials/bend
 tutorials/bend3d
 tutorials/metal-bend
-tutorials/metagrating
-tutorials/photonic-crystal
-tutorials/metalens
-tutorials/nanosphere
-tutorials/meta-atom
 tutorials/grating
-tutorials/heater
-tutorials/heater3d
-tutorials/modulator
-tutorials/transducer
-tutorials/acousto-optic
-```
-
-```{toctree}
-:hidden:
-:caption: Gradients
-
-recipes/s-parameter-gradient
-recipes/sax-circuit
-recipes/capacitance-gradient
-recipes/eigenmode-gradient
-recipes/quantum-metrics
-recipes/shape-gradient
-recipes/port-mode-gradient
-recipes/adaptive-sweep-gradient
-recipes/thermal-gradient
-recipes/electro-optic-gradient
-recipes/piezoelectric-gradient
-```
-
-```{toctree}
-:hidden:
-:caption: Designs
-
-recipes/sheet-design
-recipes/robust-optimization
-recipes/tolerance-report
-recipes/fabricable-layout
-recipes/remesh-and-restart
-```
-
-```{toctree}
-:hidden:
-:caption: Solving
-
-recipes/solve-a-device
-recipes/watch-a-solve
-recipes/prepare-a-mesh
-recipes/2d-models
-recipes/save-and-export
-recipes/mesh-refinement
-recipes/anisotropic-materials
-recipes/dispersive-materials
 recipes/waveguide-dispersion
+recipes/port-mode-gradient
+recipes/shared-port-surface
+recipes/sax-circuit
+```
+
+```{toctree}
+:hidden:
+:caption: Nonlinear and quantum optics
+
 recipes/waveguide-nonlinearity
 recipes/second-harmonic-generation
 recipes/photon-pair-sources
-recipes/fit-measured-data
-recipes/periodic-cell
-recipes/floquet-ports
-recipes/perfectly-matched-layer
-recipes/heater-temperature
-recipes/electromagnetic-heating
-recipes/thermo-optic-phase
-recipes/electro-optic-phase
-recipes/acousto-optic-shift
-recipes/optomechanical-coupling
-recipes/piezoelectric-admittance
-recipes/mechanical-modes
-recipes/thermal-step-response
-recipes/shared-port-surface
-recipes/measurements
-recipes/loss-budget
-recipes/large-driven-model
-recipes/gpu-direct-solver
-recipes/petsc-slepc
-recipes/distributed-solve
-recipes/frequency-sweep
-recipes/time-responses
-recipes/rational-model
-recipes/gsim
 ```
 
 ```{toctree}
 :hidden:
-:caption: Free space
+:caption: Electro-optics
 
+tutorials/modulator
+recipes/electro-optic-phase
+recipes/electro-optic-gradient
+```
+
+```{toctree}
+:hidden:
+:caption: Heat and thermo-optics
+
+tutorials/heater
+tutorials/heater3d
+recipes/heater-temperature
+recipes/thermo-optic-phase
+recipes/thermal-gradient
+recipes/thermal-step-response
+recipes/electromagnetic-heating
+```
+
+```{toctree}
+:hidden:
+:caption: Mechanics and acoustics
+
+tutorials/transducer
+tutorials/acousto-optic
+recipes/mechanical-modes
+recipes/piezoelectric-admittance
+recipes/piezoelectric-gradient
+recipes/acousto-optic-shift
+recipes/optomechanical-coupling
+```
+
+```{toctree}
+:hidden:
+:caption: Free-space scattering
+
+tutorials/nanosphere
+tutorials/meta-atom
 recipes/incident-fields
 recipes/cross-sections
-recipes/optical-force
-recipes/point-dipoles
 recipes/far-field
 recipes/multipoles
+recipes/point-dipoles
+recipes/optical-force
 ```
 
 ```{toctree}
 :hidden:
 :caption: Periodic surfaces
 
+tutorials/metagrating
+tutorials/photonic-crystal
+tutorials/metalens
+recipes/periodic-cell
+recipes/floquet-ports
 recipes/diffraction-efficiency
 recipes/effective-medium
 recipes/emissivity
@@ -132,21 +104,97 @@ recipes/metasurface-from-cells
 
 ```{toctree}
 :hidden:
-:caption: Capabilities
+:caption: RF and microwave
 
-capabilities
-project/scaling
-project/benchmarks
-verification
+tutorials/topology
+tutorials/sheet
+tutorials/shape
+recipes/s-parameter-gradient
+recipes/capacitance-gradient
+recipes/sheet-design
+recipes/time-responses
+recipes/rational-model
 ```
 
 ```{toctree}
 :hidden:
-:caption: API
+:caption: Resonators and qubits
 
-api/index
+tutorials/transmon
+recipes/eigenmode-gradient
+recipes/quantum-metrics
+recipes/loss-budget
+```
+
+```{toctree}
+:hidden:
+:caption: Meshes, materials and boundaries
+
+recipes/prepare-a-mesh
+recipes/2d-models
+recipes/mesh-refinement
+recipes/perfectly-matched-layer
+recipes/anisotropic-materials
+recipes/dispersive-materials
+recipes/fit-measured-data
+```
+
+```{toctree}
+:hidden:
+:caption: Design workflow
+
+recipes/shape-gradient
+recipes/robust-optimization
+recipes/tolerance-report
+recipes/remesh-and-restart
+recipes/fabricable-layout
+```
+
+```{toctree}
+:hidden:
+:caption: Solvers and scale-out
+
+recipes/watch-a-solve
+recipes/frequency-sweep
+recipes/adaptive-sweep-gradient
+recipes/large-driven-model
+recipes/gpu-direct-solver
+recipes/petsc-slepc
+recipes/distributed-solve
+```
+
+```{toctree}
+:hidden:
+:caption: Results and files
+
+recipes/measurements
+recipes/save-and-export
+recipes/gsim
+```
+
+```{toctree}
+:hidden:
+:caption: Theory
+
 conventions
 modes-and-ports
+```
+
+```{toctree}
+:hidden:
+:caption: Capabilities
+
+capabilities
+verification
+project/scaling
+project/benchmarks
+```
+
+```{toctree}
+:hidden:
+:caption: Reference
+
+api/index
 glossary
 ```
 
@@ -154,7 +202,7 @@ glossary
 :hidden:
 :caption: Project
 
-project/licence
 project/release-notes
+project/licence
 project/development
 ```

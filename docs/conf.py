@@ -107,8 +107,8 @@ html_theme_options = {
     "dark_logo": "_static/logo/gfem-lockup-dark.svg",
     "nav_links": [
         {"title": "Get started", "url": "get-started"},
-        {"title": "Tutorials", "url": "tutorials/topology"},
-        {"title": "Recipes", "url": "recipes/index"},
+        {"title": "Tutorials", "url": "tutorials/bend"},
+        {"title": "Theory", "url": "conventions"},
         {"title": "Capabilities", "url": "capabilities"},
         {"title": "API", "url": "api/index"},
     ],
@@ -405,7 +405,7 @@ html_context["gfem_code_line"] = _code_line(DOCS.parent / "tools" / "bend3d_run.
 html_context["gfem_install"] = gfem_install
 html_context["gfem_status"] = gfem_status  # the footer and the front page
 html_context["gfem_python"] = gfem_python
-# The front-page header: Get started, Tutorials, Capabilities (no Recipes, no API).
+# The front-page header: Get started, Tutorials, Capabilities (no Theory, no API).
 html_context["gfem_nav_home"] = [
     link
     for link in html_theme_options["nav_links"]

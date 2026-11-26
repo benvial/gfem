@@ -16,9 +16,7 @@ import docs_pages as dp
 import pytest
 
 PAGES = dp.user_pages()
-RECIPES = sorted(
-    page.stem for page in (dp.DOCS / "recipes").glob("*.md") if page.stem != "index"
-)
+RECIPES = sorted(page.stem for page in (dp.DOCS / "recipes").glob("*.md"))
 
 
 def _id(page):
@@ -138,7 +136,7 @@ def test_the_pages_are_found():
 
 @pytest.mark.parametrize("page", PAGES, ids=_id)
 def test_the_page_code_matches_gfem(page):
-    problems = dp.static_problems(page.read_text(encoding="utf-8"))
+    problems = dp.static_problems(dp.page_text(page))
     assert not problems, "\n".join([f"{_id(page)}:", *problems])
 
 
@@ -150,33 +148,19 @@ def test_every_recipe_is_in_the_site_tree():
     assert sorted(set(RECIPES) - {e.removeprefix("recipes/") for e in tree}) == []
 
 
-def test_the_recipes_page_lists_every_recipe():
-    page = (dp.DOCS / "recipes" / "index.md").read_text(encoding="utf-8")
-    assert sorted(set(RECIPES) - dp.doc_links(page)) == []
-
-
-def test_the_recipes_page_follows_the_site_tree():
-    """Same groups, same order as the sidebar: the page is its copy."""
-    index = (dp.DOCS / "index.md").read_text(encoding="utf-8")
-    page = (dp.DOCS / "recipes" / "index.md").read_text(encoding="utf-8")
-    for heading in re.findall(r"^## (.+)$", page, re.MULTILINE):
-        listed = re.findall(r"\{doc\}`([^`]+)`", dp.section(page, heading))
-        tree = dp.toctree_entries(index, caption=heading)
-        assert [f"recipes/{name}" for name in listed] == tree, heading
-
-
 def test_the_modes_and_ports_page_is_in_the_site_tree():
     tree = dp.toctree_entries((dp.DOCS / "index.md").read_text(encoding="utf-8"))
     assert "modes-and-ports" in tree
 
 
-def test_get_started_links_every_tutorial():
-    index = (dp.DOCS / "index.md").read_text(encoding="utf-8")
-    tutorials = dp.toctree_entries(index, caption="Tutorials")
-    assert tutorials
+def test_get_started_next_steps_pick_pages_of_the_site_tree():
+    """Next steps is a short pick; the site tree, not the page, lists every page."""
+    tree = set(dp.toctree_entries((dp.DOCS / "index.md").read_text(encoding="utf-8")))
     page = (dp.DOCS / "get-started.md").read_text(encoding="utf-8")
     links = dp.doc_links(dp.section(page, "Next steps"))
-    assert sorted(set(tutorials) - links) == []
+    assert links
+    assert sorted(links - tree) == []
+    assert len(links) <= 8
 
 
 # -- The user glossary --------------------------------------------------------
@@ -379,7 +363,7 @@ def test_a_user_term_is_defined_and_linked_from_a_page(term):
     assert re.search(rf"^{re.escape(term)}\n  \S", glossary, re.MULTILINE), term
     targets = set()
     for page in PAGES:
-        for role in re.findall(r"\{term\}`([^`]+)`", page.read_text(encoding="utf-8")):
+        for role in re.findall(r"\{term\}`([^`]+)`", dp.page_text(page)):
             explicit = re.search(r"<([^>]+)>\s*$", role)
             # a role wrapped across lines names the term with single spaces
             target = explicit[1] if explicit else role
