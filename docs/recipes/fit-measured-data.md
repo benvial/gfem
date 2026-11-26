@@ -2,36 +2,26 @@
 
 Turn a measured table of refractive index $n$ and
 {term}`extinction coefficient` $k$ into a {term}`permittivity law` that a
-frequency sweep can read, and see how far the law is from the table. Here
-the table is a gold film measured from the near ultraviolet to the infrared,
-and the law goes into a model's electrodes. {py:obj}`gfem.fit_permittivity`
-fits a sum of a Drude term and Lorentz terms with every strength and damping
-held at 0 or above, so the law is passive at every real frequency. It holds
-over the table's frequencies, its {term}`fitted range`; outside them it stays
-passive, but nothing says how close it is to the material.
-
-For a material from a published source, take it from {py:mod}`gfem.materials`
-instead ({doc}`dispersive-materials`).
+frequency sweep can read, and see how far the law is from the table.
+{py:obj}`gfem.fit_permittivity` fits a Drude term and Lorentz terms with every
+strength and damping at 0 or above, so the law is passive. It holds over the
+table's frequencies, its {term}`fitted range`. For a published material, take
+it from {py:mod}`gfem.materials` ({doc}`dispersive-materials`).
 
 ## The table and its convention
 
-- **Frequencies in Hz.** A wavelength table converts with $f = c / \lambda$.
-  The rows may come in any order.
-- **$n$ and $k$ as tabulated.** $k \ge 0$ for an absorbing medium, under
-  either time convention, so a table goes in as it is printed. gfem works
-  under $e^{+i\omega t}$, where the index is $n - ik$: the law matches
-  $\varepsilon = (n - ik)^2$, so $\mathrm{Im}\,\varepsilon = -2nk$
-  ({py:obj}`gfem.conventions`).
-- **A permittivity table.** Pass it as `eps=` in gfem's convention, with
-  $\mathrm{Im}\,\varepsilon \le 0$ for loss. A table written under
-  $e^{-i\omega t}$ as $\varepsilon_1 + i\varepsilon_2$ is its complex
-  conjugate: pass `eps=np.conj(eps)`.
-- **Nothing is clipped.** Gain rows ($k < 0$, or
-  $\mathrm{Im}\,\varepsilon > 0$), a negative $n$, a repeated frequency and
-  NaN raise `ValueError` before the fit, and the message names the remedy.
-  A $k$ column of the wrong sign throughout is passed as `k=-k`. A few
-  slightly negative rows that are rounding of $k = 0$ are passed as
-  `k=np.clip(k, 0, None)`. Repeated rows are averaged or dropped.
+- **Frequencies in Hz**, in any row order; a wavelength table converts with
+  $f = c / \lambda$.
+- **$n$ and $k$ as printed**, $k \ge 0$ under either time convention. gfem
+  works under $e^{+i\omega t}$: the law matches $\varepsilon = (n - ik)^2$, so
+  $\mathrm{Im}\,\varepsilon = -2nk$ ({py:obj}`gfem.conventions`).
+- **A permittivity table** goes in as `eps=` with $\mathrm{Im}\,\varepsilon \le 0$
+  for loss; one written under $e^{-i\omega t}$ is the conjugate: pass
+  `eps=np.conj(eps)`.
+- **Nothing is clipped.** Gain rows, a negative $n$, a repeated frequency and
+  NaN raise `ValueError` naming the remedy: `k=-k` for a wrong sign
+  throughout, `k=np.clip(k, 0, None)` for rounding of $k = 0$, averaged or
+  dropped repeats.
 
 ## Fit gold over the visible and near infrared
 
@@ -64,13 +54,11 @@ gold = gfem.Material(eps_r=fit.law, name="gold (McPeak 2015)")
 PermittivityFit(Drude + 4 Lorentz; max relative error eps 0.87 %, n 18 %, k 0.37 %; 1.76e+14-7.49e+14 Hz)
 ```
 
-The result is a {term}`permittivity fit`: `fit.law` is a
-{py:obj}`gfem.PermittivityLaw`, and `eps_error`, `n_error` and `k_error` are
-its largest relative errors in $\varepsilon$, $n$ and $k$ over the table.
-`drude=True` lets the law conduct at zero frequency, as a metal does; it
-allows a Drude term, it does not force one. Lorentz terms are added one at a
-time until the error in $\varepsilon$ is within `tolerance` (1 % by default).
-The fit takes a few seconds here.
+`fit.law` is a {py:obj}`gfem.PermittivityLaw` and `eps_error`, `n_error` and
+`k_error` are its largest relative errors over the table (a
+{term}`permittivity fit`). `drude=True` allows a Drude term for a metal; it
+does not force one. Lorentz terms are added until the error in $\varepsilon$
+is within `tolerance` (1 % by default).
 
 ## Give the law to a model
 
@@ -94,22 +82,17 @@ model = gfem.Model(
 problem = gfem.Driven(frequency=c / np.linspace(1.6e-6, 1.5e-6, 21))
 ```
 
-Keep the gold off the port faces and away from the absorbing boundary: a
-metal in a port's cross-section raises ({doc}`dispersive-materials`).
+Keep the gold off the port faces and the absorbing boundary
+({doc}`dispersive-materials`).
 
 ## How good the fit is
 
-The three errors answer different questions:
-
-- **$\varepsilon$** is what a solve reads. 0.87 % is within the default
-  tolerance.
+- **$\varepsilon$** is what a solve reads; 0.87 % is within the tolerance.
 - **$k$** checks the loss where the material absorbs.
-- **$n$**, for a metal, is the error of its absorption: $n$ is small where
-  $k$ is large, and $\mathrm{Im}\,\varepsilon = -2nk$. Near gold's index
-  minimum, about 0.7 µm, a small error in $\varepsilon$ is a large one in
-  $n$: about twenty times the $\varepsilon$ error here, and more terms do not
-  reduce it. It is reported, never warned. Check it against the table where
-  it is worst:
+- **$n$**, for a metal, is the error of its absorption: $n$ is small where $k$
+  is large. Near gold's index minimum, about 0.7 µm, a small error in
+  $\varepsilon$ is a large one in $n$ (about twenty times here) and more terms
+  do not reduce it. It is reported, never warned. Check it where it is worst:
 
 ```python
 index = np.sqrt(np.asarray(fit.law(frequency)))  # n - ik
@@ -128,39 +111,28 @@ at 0.70 µm: k 4.305, law 4.302
 ```
 
 There the law's $\mathrm{Im}\,\varepsilon$ is about 18 % larger than the
-table's, so a device whose loss comes from the gold near 0.7 µm loses about
-that much more in the model. Fit a narrower range around the
-wavelengths you solve at when that matters.
+table's, so a device whose loss comes from the gold near 0.7 µm loses that much
+more. Fit a narrower range around the wavelengths you solve at when it matters.
 
-When the fit stops above its tolerance it still returns its best law and
-warns `gfem.PermittivityFitWarning`, naming the remedies:
+A fit that stops above its tolerance returns its best law and warns
+`gfem.PermittivityFitWarning`:
 
-- **More terms.** Raise `max_lorentz_terms`. The cap keeps the free
-  parameters at most half the number of points, so a sparse table stops at
-  fewer terms.
-- **A metal.** Pass `drude=True` when the table has
-  $\mathrm{Re}\,\varepsilon < 0$.
-- **A narrower range.** Fit only the rows you will solve at.
-- **A looser tolerance.** When the table's own scatter is larger than the
-  tolerance, no law follows it closer: set `tolerance` to the scatter.
+- **More terms**: raise `max_lorentz_terms` (capped so free parameters stay at
+  most half the points).
+- **A metal**: pass `drude=True` when $\mathrm{Re}\,\varepsilon < 0$.
+- **A narrower range**: fit only the rows you solve at.
+- **A looser tolerance**: set `tolerance` to the table's own scatter.
 
-Two cases do not need the loss:
-
-- **A transparent table.** Leave out `k`. The law is then lossless, with no
-  resonance inside the table, and a tighter `tolerance` costs little.
-- **An absorption edge.** A sum of damped terms has loss at every
-  frequency, so a table that runs from absorbing to transparent gets loss
-  below the edge. The fit warns on $k$. Fit only where the material absorbs,
-  or the transparent part alone without `k`.
+A transparent table (leave out `k`) gives a lossless law. At an absorption
+edge a sum of damped terms has loss below the edge and the fit warns on $k$:
+fit only where the material absorbs.
 
 ## Outside the fitted range
 
-`fit.law.frequency_range` holds the table's lowest and highest frequency, in
-Hz. A driven sweep, an eigenmode target or mode, a port mode or an
-electrostatic solve that reads the law outside it warns
-`gfem.FittedRangeWarning` once per solve, naming the region and how far
-outside. The solve still runs. Once you have checked the law there, against
-other data or a published model, clear the range:
+`fit.law.frequency_range` holds the table's lowest and highest frequency. A
+solve that reads the law outside it warns `gfem.FittedRangeWarning` once,
+naming the region, and runs on. Once you have checked the law there against
+other data, clear the range:
 
 ```python
 import dataclasses
@@ -168,33 +140,24 @@ import dataclasses
 checked = dataclasses.replace(fit.law, frequency_range=None)
 ```
 
-A law with `frequency_range=None` never warns, as a law written by hand.
+A law with `frequency_range=None` never warns, as one written by hand.
 
 ## Limits
 
-- **Drude and Lorentz terms only.** For a circuit board's datasheet value
-  use
+- **Drude and Lorentz terms only.** For a board's datasheet value use
   {py:obj}`PermittivityLaw.djordjevic_sarkar <gfem.PermittivityLaw.djordjevic_sarkar>`.
-- **Isotropic.** A law is one value for every direction. For a crystal, give
-  constant principal values at one frequency.
-- **Not differentiable.** The fit chooses a term count and starting
-  resonances, so it has no derivative, and an input traced by `jax.grad` or
-  `jax.jit` raises `gfem.NonDifferentiableError`. Fit outside the
-  transformation; the law's own numbers then differentiate.
-- **Seconds to a minute.** The time grows with the points and the terms;
-  `max_lorentz_terms` bounds it. The same table gives the same law to the
-  last bit on one machine, in any row order; on another machine it may
-  differ in its last digits.
+- **Isotropic.** For a crystal, give constant principal values at one frequency.
+- **Not differentiable.** An input traced by `jax.grad` or `jax.jit` raises
+  `gfem.NonDifferentiableError`: fit outside the transformation, then the law's
+  numbers differentiate.
+- **Seconds to a minute**, growing with points and terms; the same table gives
+  the same law on one machine, in any row order.
 - **Resonances in the range.** A fitted metal law holds one to four damped
-  Lorentz resonances inside or near its fitted range. Each one among a
-  sweep's frequencies costs the adaptive sweep two solves. Each also raises
-  the law's index near it, and the eigenmode {term}`unresolved band` reads
-  that index: a coarse mesh in the metal may refuse a target near a
-  resonance.
+  Lorentz resonances; each in a sweep costs the adaptive sweep two solves, and
+  the eigenmode {term}`unresolved band` may refuse a target near one on a
+  coarse mesh.
 - **No narrow lines.** Every Lorentz damping is at least twice the median
-  spacing of the table's frequencies, so noise does not turn into narrow
-  resonances. A real absorption line narrower than that is smoothed: sample
-  it more finely.
+  spacing of the table's frequencies: sample a narrower line more finely.
 
 ## Next
 
