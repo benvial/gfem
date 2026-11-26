@@ -273,6 +273,26 @@ measured $V_\pi L$ ({doc}`tutorials/acousto-optic`).
 | Gradients of mode fields and of the coupling | Fourth-order central differences | {gfem-test}`tests/unit/test_optomechanics.py` | Every change |
 | Suspended silicon wire at 1.552 µm, Brillouin gain and frequency | Qiu et al., Opt. Express 21, 31402 (2013); Rakich et al., Phys. Rev. X 2, 011008 (2012) | {gfem-test}`tests/verification/test_optomechanical_wire.py` | Every change |
 
+(verification-brillouin)=
+## Brillouin gain
+
+{py:obj}`gfem.brillouin_gain`, forward and backward, the peak gain
+$G_B = Q_m\omega|\delta n_{ps}|^2/c^2$ of a mechanical mode on a guided mode
+({doc}`recipes/brillouin-gain`).
+
+| Case | Compared with | Test | Runs |
+|---|---|---|---|
+| TM slab film dilation, phase matched at $q = 2k_0 n_\mathrm{exact}$: moving boundary, photoelastic diagonal and shear parts | Closed form; error of each part falls at least 2.5-fold (5-fold for the moving boundary and diagonal part) per halved edge; shear part $O(h^2)$ | {gfem-test}`tests/unit/test_brillouin_overlap.py` | Every change |
+| TE slab, $E_z = 0$ | Its forward closed form | {gfem-test}`tests/unit/test_brillouin_overlap.py` | Every change |
+| Forward gain, gains of the overlap parts, real part of the pair weights, wavenumber outside the phase-matching window | $4Q_m\lvert\tilde g_0\rvert^2/(\hbar\omega v_g^2\,\mathrm{Re}\,\Omega)$ of the coupling to $10^{-13}$; $Q_m\omega\lvert\delta n\rvert^2/c^2$; forward weights; raises at both edges | {gfem-test}`tests/unit/test_brillouin.py` | Every change |
+| Isotropic single material | $\mathrm{d}\ln G_B/\mathrm{d}\ln E = -1$ and $\mathrm{d}\ln G_B/\mathrm{d}\ln\rho = 0$ to $10^{-10}$ | {gfem-test}`tests/unit/test_brillouin.py` | Every change |
+| Gradients in the photoelastic tensor, quality factor and mechanical nodes | Two-sample central difference, exact for the quadratic tensor ($10^{-12}$); fourth-order central differences of relative step $10^{-3}$ to $10^{-6}$ | {gfem-test}`tests/unit/test_brillouin.py` | Every change |
+| Suspended silicon wire, 315 by 283.5 nm at 1.552 µm, backward modes E1 to E4 at $q = 2\beta$: frequencies, and the photoelastic, moving-boundary and total gains of E1, E2, E4 | Qiu et al., Opt. Express 21, 31402 (2013), Fig. 3(b); frequencies within 2 %, parts 10 %, totals 15 %; the moving boundary of E2 stays 7 % under the published bar on every mesh | {gfem-test}`tests/verification/test_brillouin_wire.py` | Every change |
+
+Observation, not a check: the moving boundary of E2 is 7 % under the published
+bar on every mesh and for either wavenumber. The figure read explains 3 % of
+it; the rest is not attributed.
+
 ## Free space
 
 Incident fields, dipoles and what is measured from them, at element order 3
@@ -529,70 +549,6 @@ across platforms.
 | Bar or slot just under and over the rule | Constraint breaks and holds | {gfem-test}`tests/unit/test_length_scale.py` | Every change |
 | 2D bend from arc, area fractions, $\beta = 32$ projection; three printed designs | Same pattern on finer pixels; finite difference | {gfem-test}`tests/verification/test_layer_patterns.py` | Every change |
 | Toy design with and without constraints | Narrowest width and spacing against the rule | {gfem-test}`tests/verification/test_layer_patterns.py` | Every change |
-
-(verification-brillouin)=
-## Brillouin gain
-
-The peak gain of a mechanical mode on a guided mode, forward or backward
-({py:obj}`gfem.brillouin_gain`), $G_B = Q_m\omega|\delta n_{ps}|^2/c^2$, the
-peak gain of the Lorentzian line of Van Laer et al., Phys. Rev. A 93, 053828
-(2016), is checked against a closed form, against identities, against finite
-differences and against a published device:
-
-- **Closed form.** A film dilation of a TM slab, phase matched at
-  $q = 2k_0 n_\mathrm{exact}$, has a backward pair overlap with three terms:
-  the moving boundary with its $|E_z|^2$ correction, the photoelastic diagonal
-  part ($p_{11}$, $p_{12}$) and the photoelastic shear part ($p_{44}$, with the
-  strain $-iq(y-y_c)$ of the dilation). The moving boundary matches the closed
-  form to the gate of each mesh, and the error of every part falls at least
-  2.5-fold (5-fold for the moving boundary and the diagonal part) when the edge
-  halves. The shear part
-  converges at the rate of the element-mean strain, $O(h^2)$. The TE slab,
-  whose $E_z$ vanishes, equals its forward closed form.
-- **Identities.** The forward gain is $4Q_m|\tilde g_0|^2/(\hbar\omega
-  v_g^2\,\mathrm{Re}\,\Omega)$ of the coupling to $10^{-13}$; the gains are
-  $Q_m\omega|\delta n|^2/c^2$ of the overlap parts; the real part of the
-  complex pair weights is the forward weights; a wavenumber outside the
-  phase-matching window raises with the expected value, at both edges.
-- **Scaling laws.** For an isotropic single material,
-  $\mathrm{d}\ln G_B/\mathrm{d}\ln E = -1$ and
-  $\mathrm{d}\ln G_B/\mathrm{d}\ln\rho = 0$, to $10^{-10}$.
-- **Gradients.** The gradient in the photoelastic tensor matches a two-sample
-  central difference, exact because the gain is quadratic in the tensor (to
-  $10^{-12}$). The gradients in the quality factor and in a stretch of the
-  mechanical nodes match fourth-order central differences of relative step
-  $10^{-3}$ to $10^{-6}$.
-- **A published device.** The backward gain of the suspended silicon wire of 315
-  by 283.5 nm at 1.552 µm (Qiu et al., Opt. Express 21, 31402 (2013), Fig.
-  3(b)), with the phonon at $q = 2\beta$ of gfem's own mode, for the modes E1,
-  E2, E3 and E4 (even under both mirrors, found by symmetry and ordered by
-  frequency). Frequencies agree with the published 13.99, 15.54 and 22.70 GHz
-  within 2 % (measured -0.7 %, -0.8 %, -0.7 %: the reading offset of the
-  figure's axis and gfem's $\beta$, 0.46 % below the published one). The
-  published values are reads of a figure, $\pm 30$ 1/(W m) a bar, and the text's
-  totals. On the test mesh (wire edge 20 nm, air 150 nm, mechanical 10 nm, order
-  3; a mesh 1.4 times finer moves every gated part and total by at most 1.7 %),
-  the photoelastic and moving-boundary gains and the totals, 1/(W m), against
-  Qiu's bars are:
-
-  | mode | photoelastic (published) | moving boundary (published) | total (published) |
-  |---|---|---|---|
-  | E1 | 538 (530) | 2757 (2750) | 859 (890) |
-  | E2 | 3583 (3530) | 868 (930) | 924 (860) |
-  | E4 | 1797 (1850) | 29 (below 50) | 1366 (1400) |
-
-  The parts are gated at 10 % and the totals at 15 % (a part amplitude error
-  $\epsilon$ becomes $2\epsilon(a+b)/(a-b)$ on a destructive total, 5.1 $\epsilon$
-  for E1 and 6.2 $\epsilon$ for E2); the moving boundary of E4 stays below a
-  tenth of its photoelastic part, and the two amplitudes have opposite signs
-  in E1, E2 and E4 (destructive), as published. The moving boundary of E2 is
-  7 % under the published bar on every mesh and for either wavenumber (Qiu's
-  $1.5\pi/a$ included); the figure read explains 3 % of it, and the rest is not
-  attributed.
-
-Tests: [overlap](https://github.com/benvial/gfem/blob/main/tests/unit/test_brillouin_overlap.py),
-[gain](https://github.com/benvial/gfem/blob/main/tests/unit/test_brillouin.py),
-[published wire](https://github.com/benvial/gfem/blob/main/tests/verification/test_brillouin_wire.py).
 
 (verification-mesh-refinement)=
 ## Mesh refinement error estimates
