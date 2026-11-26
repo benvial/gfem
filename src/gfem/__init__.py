@@ -173,6 +173,7 @@ from gfem.problems import (  # noqa: E402
     SteadyThermal,
     TransientThermal,
 )
+from gfem.raman import RamanGain, raman_gain  # noqa: E402
 from gfem.refinement import (  # noqa: E402
     ErrorEstimate,
     FieldEstimator,
@@ -319,6 +320,7 @@ __all__ = [
     "PortModeResult",
     "PortModeTrackingWarning",
     "QuantityEstimator",
+    "RamanGain",
     "RamanSpectrum",
     "RationalFitNotConvergedWarning",
     "RationalModel",
@@ -392,6 +394,7 @@ __all__ = [
     "power_flow",
     "purcell_factor",
     "quantum",
+    "raman_gain",
     "refine_mesh",
     "region_mean",
     "release_memory",
