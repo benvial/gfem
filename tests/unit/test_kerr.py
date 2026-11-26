@@ -511,7 +511,7 @@ def test_a_result_without_a_field_or_a_non_result_is_a_type_error(filled):
         gfem.kerr_nonlinearity(mode, mode)  # ty: ignore[invalid-argument-type]
 
 
-def test_traced_node_coordinates_raise_by_name(guide_mesh, filled):
+def test_traced_node_coordinates_differentiate_the_filled_guide(guide_mesh, filled):
     model, _, _ = filled
     nodes = np.array(guide_mesh.imported_nodes)
 
@@ -521,10 +521,28 @@ def test_traced_node_coordinates_raise_by_name(guide_mesh, filled):
         )
         moved = model.replace(mesh=mesh)
         mode = mode_of(moved, [F])
+        return jnp.real(gfem.kerr_nonlinearity(moved, mode).gamma_nl[0]), mode.n_eff[0]
+
+    # the whole mesh grows as s, the section as s: d ln(gamma)/ds = -2 - 2 (N^2 -
+    # n_eff^2) / n_eff^2 of the discrete modes. The gradient is the explicit and
+    # the field part, which cancel to O(1) of their size: round-off a few 1e-16
+    # of each, gate 1e-12 (6.6e-16 measured on the same closed form)
+    grad = float(jax.grad(lambda s: objective(s)[0])(1.0))
+    value, n_eff = (float(np.real(x)) for x in objective(1.0))
+    closed = -2 - 2 * (N**2 - n_eff**2) / n_eff**2
+    assert grad / value == pytest.approx(closed, rel=1e-12)
+
+
+def test_a_line_port_has_no_node_derivative(slab):
+    model, mode = slab
+    nodes = jnp.asarray(model.mesh.nodes)
+
+    def objective(n):
+        moved = model.replace(mesh=model.mesh.with_nodes(n))
         return jnp.real(gfem.kerr_nonlinearity(moved, mode).gamma_nl[0])
 
     with pytest.raises(NonDifferentiableError, match="kerr_nonlinearity"):
-        jax.grad(objective)(1.0)
+        jax.grad(objective)(nodes)
 
 
 # --- repr and pytree ---------------------------------------------------------------
@@ -818,7 +836,7 @@ def uniform(monkeypatch, filled):
             else jnp.asarray(index)[None, None] * jnp.ones((n, 1, 1, 1)),
         )
         waves = _Uniform(fields, kerr_materials)
-        monkeypatch.setattr(kerr, "_waves", lambda *_: waves)
+        monkeypatch.setattr(kerr, "_waves", lambda *_, **__: waves)
         if coupling:
             return np.asarray(gfem.kerr_coupling(model, mode).gamma_nl)
         return np.asarray(gfem.kerr_nonlinearity(model, mode).gamma_nl)
