@@ -66,8 +66,8 @@ from gfem._materials import (
     PixelGeometry,
 )
 from gfem._optical_shift import _Sampling
-from gfem._pml import PML
-from gfem._port_section import PortSection
+from gfem._pml import PML, Layers, Side, Stretch
+from gfem._port_section import PortSection, SectionBend
 from gfem._pytree import register_fields
 from gfem._raman_spectrum import RamanSpectrum
 from gfem._sheet import SheetField
@@ -1140,12 +1140,18 @@ _codec.register(
 _codec.register(
     ElectrostaticResult, to_args=_unset_omitted(ElectrostaticResult, _thickness=None)
 )
+# a bend only when set, so a straight section is written as before
 _codec.register(
     PortSection,
+    to_args=_unset_omitted(PortSection, bend=None),
     from_args=_port_section_from_args,
     # "sigma": the scalar conductivity of sections saved by 0.1.0
     names=[f.name for f in dataclasses.fields(PortSection) if f.init] + ["sigma"],
 )
+# a section's perfectly matched layer and bend, written with it (a result's
+# mode field holds its section)
+for _cls in (Side, Layers, Stretch, SectionBend):
+    _codec.register(_cls)
 _codec.register(Piezoelectric, to_args=_piezoelectric_args)
 _codec.register(DampingFrame)
 _codec.register(PiezoelectricResult)
@@ -1182,7 +1188,7 @@ _codec.register(
     PortModeField,
     to_args=_port_mode_field_args,
     from_args=_port_mode_field_from_args,
-    names=("section", "order", "basis", "coords", "polarization"),
+    names=("section", "order", "basis", "coords", "polarization", "bend"),
 )
 _codec.register(LineSection)
 _codec.register(Job, from_args=_job_from_args, names=("model", "problem", "options"))

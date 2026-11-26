@@ -1046,8 +1046,9 @@ class PortModeResult:
     def __repr__(self) -> str:
         n_f = np.shape(self.frequency)[-1]
         head = f"PortModeResult(port {self.port!r}, mode {self.mode}, {n_f} frequencies"
+        bent = ""
         if self.bend is not None and not is_traced(self.bend.radius):
-            head += f", bend radius {float(self.bend.radius):.6g} m"
+            bent = f", bend radius {float(self.bend.radius):.6g} m"
         try:
             f = np.asarray(self.frequency)
             n = np.asarray(self.n_eff)
@@ -1056,7 +1057,9 @@ class PortModeResult:
             solved = np.asarray(self.solved).reshape(-1, n_f).any(axis=0)
             n_g = None if self.n_g is None else np.asarray(self.n_g)
         except (TypeError, jax.errors.TracerArrayConversionError):
-            return head + ")"
+            return head + bent + ")"
+        # the comma separates the bend from the band that follows
+        head += bent + ("," if bent else "")
         span = hertz_band(f.min(), f.max(), 4)
         zs = (
             "no voltage_path"

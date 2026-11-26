@@ -655,7 +655,13 @@ def port_section_key(
     if stretch is not None:
         add(stretch.key)
     if bend is not None:
-        add(bend)
+        # exact: the repr rounds the radius to 6 digits and hides a traced one
+        if is_traced(bend.radius):
+            raise TypeError(
+                "port_section_key: a traced bend radius has no key; build the "
+                "section uncached."
+            )
+        add("bend", float(bend.radius).hex(), bend.outward, tuple(bend.at))
     # a sheet field's repr is not its values: its fill enters below
     add(
         tuple(
