@@ -1,0 +1,38 @@
+{
+ "still": "acousto-optic",
+ "kind": "signed",
+ "size": [
+  1280,
+  800
+ ],
+ "camera": {
+  "azimuth_deg": -60.0,
+  "elevation_deg": 30.0,
+  "view_angle_deg": 20.0,
+  "up": [
+   0,
+   0,
+   1
+  ]
+ },
+ "light": {
+  "ground": "#f2f2f2",
+  "colormaps": [
+   "gfem_signed"
+  ],
+  "solids": [
+   "#c4c4c4"
+  ],
+  "dropped": []
+ },
+ "dark": {
+  "ground": "#1b1b1b",
+  "colormaps": [
+   "gfem_signed_dark"
+  ],
+  "solids": [
+   "#6b6b6b"
+  ],
+  "dropped": []
+ }
+}
