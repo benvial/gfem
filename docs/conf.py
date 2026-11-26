@@ -45,7 +45,7 @@ exclude_patterns = [
     # never published, though a local checkout may keep them under docs/
     "adr",
     "agents",
-    # snippets that docs/project/scaling.md includes, not pages
+    # raw tables the scaling page links, not pages
     "project/_scaling",
 ]
 
