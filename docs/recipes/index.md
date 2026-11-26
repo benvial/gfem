@@ -39,6 +39,7 @@ orphan: true
 - {doc}`waveguide-dispersion`
 - {doc}`waveguide-nonlinearity`
 - {doc}`second-harmonic-generation`
+- {doc}`photon-pair-sources`
 - {doc}`fit-measured-data`
 - {doc}`periodic-cell`
 - {doc}`floquet-ports`

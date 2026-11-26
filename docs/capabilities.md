@@ -169,6 +169,10 @@ v0.1.
   tensor between the waves of a port, for sum- and difference-frequency
   generation), from a material's `second_order_nonlinear_tensor`
   ({doc}`recipes/second-harmonic-generation`).
+- **Photon pairs**: {py:obj}`gfem.spdc` and {py:obj}`gfem.sfwm` (spontaneous
+  down-conversion and four-wave mixing of port modes: pair rate, spectral
+  brightness, joint spectrum of a pulse, heralded purity, differentiable)
+  ({doc}`recipes/photon-pair-sources`).
 - **Broadband models and time responses**:
   `NetworkParameters.fit_rational` (a passive {term}`rational model` of S,
   written as a SPICE subcircuit or a Verilog-A module) and

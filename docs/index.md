@@ -81,6 +81,7 @@ recipes/dispersive-materials
 recipes/waveguide-dispersion
 recipes/waveguide-nonlinearity
 recipes/second-harmonic-generation
+recipes/photon-pair-sources
 recipes/fit-measured-data
 recipes/periodic-cell
 recipes/floquet-ports

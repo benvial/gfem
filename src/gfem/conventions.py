@@ -712,6 +712,65 @@ conserves the photon flux when :math:`d` is symmetric in its three indices
 (Kleinman symmetry). The formulas hold while :math:`\alpha \ll \beta` and for
 an undepleted pump.
 
+Photon pairs
+------------
+A pair source is described in the low-gain regime. With the quantization step
+:math:`\tilde A(\omega) \to \sqrt{\hbar\omega/2\pi}\,b(\omega)`,
+:math:`[b(\omega), b^\dagger(\omega')] = \delta(\omega - \omega')`, the classical
+coupled-mode equations of ``three_wave_coupling`` and ``kerr_coupling`` are the
+operators' and a spectral density :math:`n(\omega)` is in pairs per second and
+hertz, also the occupation of a mode. For down-conversion of a pump
+:math:`\tilde A_p` (the :math:`e^{-i\omega t}` convention, :math:`\omega = 2\pi f`)
+into a signal and an idler, :math:`\omega_p = \omega_s + \omega_i`,
+
+.. math::
+
+    F(\omega_s, \omega_i) = g_{si}\, G_m\, \tilde A_p(\omega_s + \omega_i)\, L\,
+    e^{i\delta L/2}\, \mathrm{sinc}\frac{\delta L}{2}, \qquad
+    g_{si} = \frac{2\sqrt{\omega_s\omega_i}}{\omega_p}\,\overline{\kappa_{psi}},
+
+with :math:`\Delta\beta = \beta_p - \beta_s - \beta_i`, :math:`\delta = \Delta\beta
+- \mathrm{sign}(\Delta\beta_0)\, 2\pi m/\Lambda` and :math:`|G_m| = 2|\sin(\pi m
+D)|/(\pi m)` when poled (unpoled: :math:`G = 1`, :math:`\delta = \Delta\beta`); it
+needs a :math:`d` with Kleinman symmetry. For four-wave mixing of a degenerate
+pump, :math:`2\omega_p = \omega_s + \omega_i`,
+
+.. math::
+
+    F = \Gamma_{si}\, [\tilde A_p \ast \tilde A_p](\omega_s + \omega_i)\, L\,
+    e^{i\delta L/2}\, \mathrm{sinc}\frac{\delta L}{2}, \qquad
+    \Gamma_{si} = \tfrac12\Big(\sqrt{\tfrac{\omega_i}{\omega_s}}\, \gamma_{sppi}
+    + \sqrt{\tfrac{\omega_s}{\omega_i}}\, \gamma_{ipps}\Big),
+
+:math:`\Delta\beta = 2\beta_p - \beta_s - \beta_i` (:math:`\beta_p` at
+:math:`(\omega_s + \omega_i)/2`); the symmetrized :math:`\Gamma_{si}` is what the
+commutators need, since the stored tensor takes :math:`n^2` at the output wave.
+A continuous pump of power :math:`P` gives the density of signal photons
+
+.. math::
+
+    n_s = g_{si}^2 |G_m|^2 P L^2\, \mathrm{sinc}^2\frac{\delta L}{2}
+    \quad\Big(|\Gamma_{si}|^2 P^2 L^2\, \mathrm{sinc}^2\frac{\delta L}{2}\Big),
+    \qquad R = \int n_s\, \mathrm{d}f_s,
+
+with the Kerr shift :math:`2\,\mathrm{Re}(\gamma_{pppp} - \gamma_{sspp} -
+\gamma_{iipp})P` added to :math:`\Delta\beta` for four-wave mixing; at
+degeneracy in one mode family :math:`g_{si}^2 = \eta_\mathrm{norm}`, the
+stimulated conversion of a seed of one photon per second and hertz. A pulse of
+energy :math:`U = 2\pi\int|\tilde A_p|^2 \mathrm{d}\omega` gives :math:`N =
+\iint|F|^2` pairs, and ``JointSpectrum.jsa`` is :math:`f = 2\pi F` in 1/Hz, so
+:math:`\sum|f|^2\,\delta f_s\,\delta f_i` counts them. When one mode family
+carries both photons the count and the rate are halved (a pair is two photons
+of one field; the coupling is not). The bands are the grid and act as ideal
+filters. Under loss :math:`\alpha = \mathrm{Re}\,\gamma` of each arm the
+phase-matching factor is the coherent :math:`\int_0^L e^{-\alpha_p z -
+(\alpha_s + \alpha_i)(L - z) + i\delta z}\, \mathrm{d}z` (:math:`2\alpha_p` for
+four-wave mixing): coincidences only. The heralded purity is
+:math:`\sum_k\lambda_k^2` over the Schmidt weights, computed as
+:math:`\mathrm{Tr}[(MM^\dagger)^2]/\mathrm{Tr}[MM^\dagger]^2` with :math:`M`
+the amplitude on the grid, and the Schmidt number is its inverse. The formulas
+hold for a pump that is not depleted and :math:`\alpha \ll \beta`.
+
 Incident fields
 ---------------
 A `gfem.PlaneWave` or `gfem.GaussianBeam` travels along

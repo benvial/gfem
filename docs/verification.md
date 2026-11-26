@@ -301,6 +301,54 @@ Tests: [unit checks](https://github.com/benvial/gfem/blob/main/tests/unit/test_t
 [closed forms, orders and gradients](https://github.com/benvial/gfem/blob/main/tests/verification/test_three_wave.py),
 [recipe](https://github.com/benvial/gfem/blob/main/tests/unit/test_docs_second_harmonic_recipe.py).
 
+## Photon pairs
+
+The pair rate and spectral density of a continuous pump, the joint spectrum of
+a pulse and its purity are checked against closed forms, against identities
+and against a finite difference:
+
+- **Closed forms.** With a linear mismatch, the rate of a nondegenerate pair is
+  $4\omega_s\omega_i|G_m\kappa_{psi}|^2P\,Lc/(\omega_p^2|n_{g,s} - n_{g,i}|)$
+  from $\int\mathrm{sinc}^2 = \pi$; at degeneracy in one mode family, with a
+  mismatch $\Delta\beta_0 - \beta_2\Omega^2$ at $\Delta\beta_0 = 0$,
+  $\int\mathrm{sinc}^2(x^2)\,\mathrm{d}x = 4\sqrt\pi/3$ gives a rate that
+  grows as $L^{3/2}$. The TE10 mode of a filled rectangular guide, whose
+  overlaps and dispersion are closed forms, gives the rate of
+  down-conversion and of four-wave mixing as numbers fixed by the guide,
+  matched under refinement of the element order.
+- **The classical figure of merit.** The density of pairs at degeneracy and
+  perfect matching is $|G|^2\eta_\mathrm{norm}PL^2$ with the
+  $\eta_\mathrm{norm}$ of `second_harmonic`: no free factor, since the
+  spontaneous emission is the stimulated one with a seed of one photon per
+  second and hertz. The pairs of a pulse are $(R/P)\,U$ for a linear mismatch.
+- **Purity.** A Gaussian pump with a Gaussian-approximated matching has the
+  purity $\sqrt{1 - A_{12}^2/(A_{11}A_{22})}$ and a separable amplitude at
+  $\sigma = \sqrt{2/\gamma}$, with $\gamma = 0.193$ the Gaussian approximation
+  of the sinc; the trace formula equals the singular value decomposition to
+  rounding, complex amplitudes included.
+- **Counting.** The same amplitude counted as two distinguishable photons gives
+  twice the pairs of one mode family, and the lossy coincidence law is the
+  second-harmonic law with the attenuations of the pair.
+- **Gradients.** The rate, the pairs per pulse and the purity differentiate
+  with respect to the length, the power, the pulse, the poling and the section's
+  permittivity, matching a central finite difference with the step and the
+  tolerance derived from the round-off and the truncation of the difference.
+- **Refusals and warnings.** A line port, an arm with fewer than four rows, a
+  pump band that misses the sums, a fit that leaves 0.1 rad over the guide,
+  a poling argument of four-wave mixing and a grid of fewer than three points
+  each raise the error that names them; a density above 0.1 pairs per mode, a
+  grid too coarse for the lobes and a band that cuts the amplitude each warn.
+
+Not checked: a measured pair rate or brightness. The recipe
+{doc}`recipes/photon-pair-sources` prints those of a thin-film lithium niobate
+ridge and a silicon wire beside the published numbers they follow, which
+scatter by factors of 4 to 20 around the ideal formulas, as observations.
+
+Tests: [unit checks](https://github.com/benvial/gfem/blob/main/tests/unit/test_photon_pairs.py),
+[the maths](https://github.com/benvial/gfem/blob/main/tests/unit/test_photon_pairs_math.py),
+[closed forms, orders and gradients](https://github.com/benvial/gfem/blob/main/tests/verification/test_photon_pairs.py),
+[recipe](https://github.com/benvial/gfem/blob/main/tests/unit/test_docs_photon_pair_recipe.py).
+
 ## Eigenmodes with wave ports
 
 Each case solves an eigenmode problem with wave ports and compares it with an

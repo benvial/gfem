@@ -49,6 +49,7 @@ from gfem.errors import (  # noqa: E402
     EigenmodeConvergenceError,
     FittedRangeWarning,
     FloquetOrderCapWarning,
+    HighGainWarning,
     LayerClearanceWarning,
     LinearSolverConvergenceError,
     LostBandWarning,
@@ -78,6 +79,7 @@ from gfem.errors import (  # noqa: E402
     UnanchoredBandWindowWarning,
     UnrequestedOrderWarning,
     UnrequestedPortModeWarning,
+    UnresolvedJointSpectrumWarning,
     UnsampledPixelsWarning,
     UnsettledTraceWarning,
 )
@@ -139,6 +141,12 @@ from gfem.model import (  # noqa: E402
     isotropic_stiffness,
 )
 from gfem.options import SolverOptions  # noqa: E402
+from gfem.photon_pairs import (  # noqa: E402
+    JointSpectrum,
+    PhotonPairSource,
+    sfwm,
+    spdc,
+)
 from gfem.problems import (  # noqa: E402
     DampingFrame,
     DCConduction,
@@ -249,10 +257,12 @@ __all__ = [
     "GaussianBeam",
     "HeatFlux",
     "HeatSource",
+    "HighGainWarning",
     "Impedance",
     "IncidentField",
     "InterfaceParticipation",
     "Job",
+    "JointSpectrum",
     "KerrCoupling",
     "KerrNonlinearity",
     "LayerClearanceWarning",
@@ -286,6 +296,7 @@ __all__ = [
     "PermittivityFit",
     "PermittivityFitWarning",
     "PermittivityLaw",
+    "PhotonPairSource",
     "Piezoelectric",
     "PiezoelectricResult",
     "PlaneWave",
@@ -325,6 +336,7 @@ __all__ = [
     "UnanchoredBandWindowWarning",
     "UnrequestedOrderWarning",
     "UnrequestedPortModeWarning",
+    "UnresolvedJointSpectrumWarning",
     "UnsampledPixelsWarning",
     "UnsettledTraceWarning",
     "WavePort",
@@ -370,8 +382,10 @@ __all__ = [
     "rise_time",
     "route_phase",
     "second_harmonic",
+    "sfwm",
     "shape",
     "solve",
+    "spdc",
     "strain",
     "thermo_optic_shift",
     "three_wave_coupling",

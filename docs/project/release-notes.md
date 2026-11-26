@@ -14,6 +14,10 @@ Optics:
   the undepleted efficiency of a poled guide, and `gfem.three_wave_coupling`
   the tensor between the waves of a port
   ({doc}`../recipes/second-harmonic-generation`).
+- **Photon-pair sources.** `gfem.spdc` and `gfem.sfwm` give the pair rate,
+  the spectral brightness and the joint spectrum, with its purity, of a
+  waveguide pumped by a continuous wave or a pulse
+  ({doc}`../recipes/photon-pair-sources`).
 
 Measurements:
 
