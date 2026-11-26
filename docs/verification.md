@@ -271,7 +271,7 @@ measured $V_\pi L$ ({doc}`tutorials/acousto-optic`).
 | Dilation of the whole section; linearity; moving boundary against node-map gradient; cladding-only displacement | $n_g - n_\mathrm{eff}$; identities | {gfem-test}`tests/unit/test_optomechanics.py` | Every change |
 | Elliptic rod meshed separately for the mechanics | Same mesh cut from the optical one; gap falls with the square of the edge | {gfem-test}`tests/unit/test_optomechanical_coupling.py` | Every change |
 | Gradients of mode fields and of the coupling | Fourth-order central differences | {gfem-test}`tests/unit/test_optomechanics.py` | Every change |
-| Suspended silicon wire at 1.552 µm, Brillouin gain and frequency | Qiu et al., Opt. Express 21, 22544 (2013); Rakich et al., Phys. Rev. X 2, 011008 (2012) | {gfem-test}`tests/verification/test_optomechanical_wire.py` | Every change |
+| Suspended silicon wire at 1.552 µm, Brillouin gain and frequency | Qiu et al., Opt. Express 21, 31402 (2013); Rakich et al., Phys. Rev. X 2, 011008 (2012) | {gfem-test}`tests/verification/test_optomechanical_wire.py` | Every change |
 
 ## Free space
 

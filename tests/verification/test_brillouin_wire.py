@@ -45,6 +45,9 @@ FREQUENCY_GATE = 0.02
 #: is at most 3 % (forward test); their root sum of squares is 6.7 %.
 #: Measured (photoelastic / moving boundary, 1/(W m)): E1 579 (+9.3 %) / 2765
 #: (+0.5 %); E2 3592 (+1.8 %) / 863 (-7.2 %); E4 1814 (-1.9 %) / 29.
+#: A mesh twice as fine moves E1's photoelastic part to 538 (+1.5 %: mesh error)
+#: and leaves E2's moving boundary at 868 (-6.6 %: figure read, +-30, and
+#: unattributed rest); Qiu's own q moves no part by more than 4.1 %.
 PART_GATE = 0.10
 #: Gate on the totals, 15 %: the total is the square of the sum of the part
 #: amplitudes, so an error e of a part amplitude becomes 2 e (a + b) / (a - b),
