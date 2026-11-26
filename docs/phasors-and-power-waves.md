@@ -67,7 +67,9 @@ every field.
 ## S-parameters and power
 
 S relates {term}`pseudo-waves` (`WAVES`), normalized to each port's
-{term}`reference impedance`. On a real reference they are the
+{term}`reference impedance` $z$:
+$a = \sqrt{\mathrm{Re}\, z} / (2|z|)\,(V + zI)$ and
+$b = \sqrt{\mathrm{Re}\, z} / (2|z|)\,(V - zI)$ (Marks and Williams). On a real reference they are the
 {term}`power waves`: $|a|^2$ is the power a wave carries, in W. A wave port
 with a `voltage_path` on a lossy line has a complex reference, its mode's
 $Z_{PV}$, and the line is then matched to its own mode: $S_{11} = 0$.
@@ -197,6 +199,11 @@ $\varepsilon = (n - ik)^2$ and $\mathrm{Im}\,\varepsilon = -2nk$.
 permittivity table written under $e^{-i\omega t}$ as
 $\varepsilon_1 + i\varepsilon_2$ goes in as its complex conjugate
 ({doc}`recipes/fit-measured-data`).
+
+A lossy region's {term}`modal overlap` is about
+$8\pi\,(V / \lambda_m^3)\,|\mathrm{Im}\,\varepsilon| / \mathrm{Re}\,\varepsilon$, with $V$ the region's volume
+and $\lambda_m$ the wavelength in it
+({doc}`recipes/dispersive-materials`).
 
 ## Eigenmode fields
 
