@@ -248,7 +248,7 @@ How gfem itself is checked: {doc}`../verification`.
 - **One thickness per side**: a side's regions end on one plane.
 - **Constant backgrounds**: a plain `Material`; no law, `MaterialField` or
   tilted axes.
-- **No absorber or sheet on the layer.**
+- **No absorber or sheet on the layer**: no `Absorbing`, `Impedance` or `Conductor` in it.
 - **Ports clear of the layer**: no lumped port or Floquet surface touches it;
   a wave port may not lie along a stretch axis or obliquely.
 - **No stretch along a periodic axis**: the layer spans the period.
