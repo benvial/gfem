@@ -1,6 +1,6 @@
-# Remesh and restart
+# Remeshing a shape design
 
-A shape design in gfem moves the nodes of one imported mesh; it never changes
+Remesh a shape design at its current geometry and restart the optimization from it. A shape design in gfem moves the nodes of one imported mesh; it never changes
 the mesh's topology. {py:obj}`gfem.shape.boundary_morph` builds a fixed linear map from
 normal displacements of a surface's nodes to a moved mesh, solved once on the
 imported mesh. Small and moderate moves keep the mesh valid, but a long

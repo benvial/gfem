@@ -1,4 +1,4 @@
-# How gfem is checked
+# Verification
 
 Each claim on {doc}`capabilities` and in the recipes is backed by a test that
 solves a case with a known answer. The answer is a closed form, an identity

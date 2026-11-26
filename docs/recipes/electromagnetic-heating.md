@@ -1,4 +1,4 @@
-# Heat a device with its electromagnetic loss
+# Electromagnetic heating
 
 Find how much of the power sent into a device turns into heat, where it
 lands, and how warm the device gets: the loss of each region and metal

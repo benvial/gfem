@@ -505,8 +505,8 @@ Eigen solver
   and differentiates the modes the same way for both.
 
 PETSc stack
-  Complex PETSc and SLEPc with their Python bindings, built as
-  {doc}`recipes/petsc-slepc` describes: what `linear_solver="petsc"` and
+  Complex PETSc and SLEPc with their Python bindings, built as the
+  {doc}`PETSc recipe <recipes/petsc-slepc>` describes: what `linear_solver="petsc"` and
   `eigen_solver="slepc"` need. It comes in two builds, the
   {term}`no-MPI PETSc stack` and the {term}`MPI PETSc stack`.
 

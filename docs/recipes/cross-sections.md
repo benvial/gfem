@@ -1,4 +1,4 @@
-# Measure cross sections
+# Cross sections
 
 {py:obj}`gfem.cross_sections` gives the extinction, absorption and
 scattering {term}`cross sections` of the {term}`scatterer` under an

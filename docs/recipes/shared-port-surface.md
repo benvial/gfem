@@ -1,4 +1,4 @@
-# Request several modes on one port surface
+# Multimode ports
 
 Get one S-matrix with a row and a column for each guided mode at each end of
 a polarization rotator, a mode converter or a taper.

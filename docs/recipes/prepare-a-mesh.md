@@ -1,4 +1,4 @@
-# Prepare a mesh for gfem
+# Mesh preparation
 
 Build the mesh of your own device and solve on it. gfem builds no geometry: it
 reads a [gmsh](https://gmsh.info) `.msh` file of straight-sided tetrahedra

@@ -1,4 +1,4 @@
-# Efficiencies, power balance and polarization of a periodic cell
+# Diffraction efficiencies
 
 Light a periodic cell with a plane wave through one of its faces and read where
 the power goes: the {term}`diffraction efficiency` of each order and

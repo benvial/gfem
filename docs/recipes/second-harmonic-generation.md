@@ -1,4 +1,4 @@
-# Find the second-harmonic efficiency of a waveguide
+# Second-harmonic generation
 
 Find how efficiently a guided mode doubles its frequency in a crystal with a
 second-order nonlinearity: the normalized efficiency, the phase mismatch, the

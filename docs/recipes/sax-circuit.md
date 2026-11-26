@@ -1,4 +1,4 @@
-# Differentiate a SAX circuit with gfem blocks
+# SAX circuits with gfem blocks
 
 Put a finite-element solve inside a circuit of analytic models, and take
 `jax.grad` of the circuit with respect to the solve's design and to the
