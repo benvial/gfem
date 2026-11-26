@@ -94,10 +94,10 @@ and its Kerr coefficient ({doc}`recipes/waveguide-bends`).
 | Bent port mode on two ranks | One process | {gfem-test}`tests/mpi/test_wave_ports.py` | Twice a week |
 | Recipe's printed values | Its source | {gfem-test}`tests/unit/test_docs_waveguide_bends_recipe.py` | Before release |
 
-Observations, not checks: the page's silicon strip loses a few hundredths of a
-dB per 90° only below 2 µm radius, where published bend data for the same
-guide also hold the junctions and the roughness. Not checked: a fabricated
-bend's measured loss.
+Observations, not checks: {doc}`recipes/waveguide-bends` gives a silicon
+strip's loss per 90° of 0.07 dB at a radius of 1 µm; published data for such
+bends include their junctions, which the bend loss does not. Not checked: a
+fabricated bend's measured loss.
 
 ## SAX circuits
 
