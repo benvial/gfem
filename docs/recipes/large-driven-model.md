@@ -1,4 +1,4 @@
-# Solve a driven model too large for the direct solver
+# Large driven models
 
 A photonic device several wavelengths across, a guide inside a
 {term}`perfectly matched layer`, or a circuit on a fine mesh can need more

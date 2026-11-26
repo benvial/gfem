@@ -1,4 +1,4 @@
-# API
+# API reference
 
 Every public name is documented once, on the page of the module that owns it.
 `import gfem` re-exports the names you need, so `gfem.Model` and

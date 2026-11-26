@@ -1,4 +1,4 @@
-# From a cell response to a metasurface
+# Metasurface from cell responses
 
 A metasurface is a large array of small cells whose shape changes slowly across
 the aperture: a lens, a beam deflector, a reflectarray. Solving it whole is out

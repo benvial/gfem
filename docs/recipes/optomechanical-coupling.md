@@ -1,4 +1,4 @@
-# Find how strongly sound in a wire couples to the light it guides
+# Optomechanical coupling
 
 Find the vacuum optomechanical coupling $g_0$ of the mechanical modes of a
 suspended silicon wire to the guided optical mode of the same wire: the

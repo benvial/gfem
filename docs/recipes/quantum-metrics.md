@@ -1,4 +1,4 @@
-# Superconducting-circuit metrics and their gradients
+# Qubit metrics and gradients
 
 Get a qubit's anharmonicity and its dispersive shift on a resonator from an
 eigenmode solve, and differentiate them with respect to materials, sheet fill,

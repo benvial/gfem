@@ -1,4 +1,4 @@
-# Sweep many frequencies
+# Frequency sweeps
 
 Get S and the fields of a driven model over a broadband grid without paying
 one full solve per frequency at a time. A {py:obj}`gfem.Driven` sweep is
@@ -9,8 +9,8 @@ frequencies at once on a many-core machine.
 
 ## S at 300 frequencies from a few solves
 
-`model` is any driven model with two ports `p1` and `p2`, for example the one
-{doc}`gsim` builds. Ask for the adaptive sweep with `sweep="adaptive"`:
+`model` is any driven model with two ports `p1` and `p2`, for example the one the
+{doc}`gsim recipe <gsim>` builds. Ask for the adaptive sweep with `sweep="adaptive"`:
 
 ```python
 import numpy as np

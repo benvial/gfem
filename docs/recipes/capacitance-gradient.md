@@ -1,4 +1,4 @@
-# Differentiate a capacitance
+# Capacitance gradients
 
 Get the derivative of a capacitance with respect to the permittivity of every
 element, without writing an adjoint. `jax.grad` of any objective built from

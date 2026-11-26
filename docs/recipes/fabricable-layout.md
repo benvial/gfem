@@ -1,4 +1,4 @@
-# Export a design's layer pattern to GDS
+# GDS export of a design
 
 An optimized layer-grid design is a pixel image. A foundry takes polygons: the
 {term}`layer pattern` where the layer is solid, kept above its

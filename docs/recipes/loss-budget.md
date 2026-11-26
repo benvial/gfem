@@ -1,4 +1,4 @@
-# Budget a mode's loss and its T1 limits
+# Loss budget and T1 limits
 
 Add up the loss channels of a resonator mode or a qubit's linear mode into
 one 1/Q, read the T1 limit each channel sets, and differentiate the total. A

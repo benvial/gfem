@@ -1,4 +1,4 @@
-# Decompose scattering into multipoles
+# Multipole decomposition
 
 {py:obj}`gfem.multipoles` reads the field a {term}`scatterer` radiates under an
 {term}`incident field` as a sum of electric and magnetic multipoles about an

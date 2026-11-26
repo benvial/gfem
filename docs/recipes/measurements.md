@@ -1,4 +1,4 @@
-# Measure fields after the solve
+# Field measurements
 
 Get a resonator's surface-loss Q, field values at points or their mean over
 a region, a line's characteristic impedance, the power through a surface or
