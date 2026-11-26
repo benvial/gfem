@@ -10,7 +10,7 @@ returns $\tilde g_0$ for every mode, split into the moving-boundary and the
 photoelastic part; for a guide of length $L$, $g_0 = \tilde g_0/\sqrt{L}$.
 
 The wire is the published one (Rakich et al., Phys. Rev. X 2, 011008 (2012); Qiu
-et al., Opt. Express 21, 22544 (2013)): 315 nm by 283.5 nm, light at 1.552 µm,
+et al., Opt. Express 21, 31402 (2013)): 315 nm by 283.5 nm, light at 1.552 µm,
 meshed twice by {download}`wire_section.py <wire_section.py>`.
 
 ## Assumptions
@@ -279,7 +279,7 @@ d ln g0 / d ln E = -0.25000
 ## Limits
 
 - Forward intramodal couplings at $q = 0$ only: a mechanical mode or displacement
-  with $q \ne 0$ raises `ValueError`.
+  with $q \ne 0$ raises `ValueError`; the backward gain is {doc}`brillouin-gain`.
 - A 3D slab model and a lossless section only: a 2D optical model or a lossy
   section (a complex `eps_r`, a `tan_delta` or a `conductivity`) raises
   `NotImplementedError`.
@@ -324,4 +324,5 @@ mode: IndexError
 - {doc}`mechanical-modes`: the vibrations of a section.
 - {doc}`acousto-optic-shift`: the photoelastic shift of a driven wave.
 - {doc}`optical-force`: the force of the light on the wire, the reciprocal of the coupling.
+- {doc}`brillouin-gain`: the forward and backward gain of every mode.
 - {doc}`waveguide-dispersion`: the group index $n_g$ that sets the scale.

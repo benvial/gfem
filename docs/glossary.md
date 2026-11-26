@@ -539,6 +539,11 @@ Optomechanical overlap
   and a photoelastic part ({py:obj}`gfem.optomechanical_overlap`). The Brillouin
   gain reuses it. See {doc}`recipes/optomechanical-coupling`.
 
+Brillouin gain
+  The peak power gain, in 1/(W m), that one mechanical mode of a waveguide gives a
+  Stokes wave per watt of pump, forward ($q = 0$) or backward ($q = 2\beta$)
+  ({py:obj}`gfem.brillouin_gain`). See {doc}`recipes/brillouin-gain`.
+
 Stiffness
   A solid's elastic stiffness at constant electric field, $c^E$: a symmetric
   positive-definite 6 × 6 matrix in Pa in {term}`Voigt order <engineering

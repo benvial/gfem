@@ -61,6 +61,7 @@ feature also runs in 2D.
 |---|---|---|---|---|
 | Acousto-optic shift | {py:obj}`gfem.acousto_optic_shift` | No | Partial: not the optical model | {doc}`recipes/acousto-optic-shift` |
 | Optomechanical $g_0$ | {py:obj}`gfem.optomechanical_coupling`, {py:obj}`gfem.optomechanical_overlap` | No | Partial: optical mode held | {doc}`recipes/optomechanical-coupling` |
+| Brillouin gain | {py:obj}`gfem.brillouin_gain` | No | Partial: optical mode held | {doc}`recipes/brillouin-gain` |
 
 ### Free-space scattering
 

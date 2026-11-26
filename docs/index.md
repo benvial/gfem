@@ -71,6 +71,7 @@ recipes/piezoelectric-admittance
 recipes/piezoelectric-gradient
 recipes/acousto-optic-shift
 recipes/optomechanical-coupling
+recipes/brillouin-gain
 ```
 
 ```{toctree}
