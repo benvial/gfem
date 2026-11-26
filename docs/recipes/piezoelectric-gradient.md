@@ -4,30 +4,16 @@ Find how the radiation conductance of a transducer depends on what sets it:
 the stiffness, piezoelectric tensor, permittivity, density and quality factor
 of its materials, the pitch and the thickness of its fingers, and the strain
 it puts at a point. One `jax.grad` through {py:obj}`gfem.solve` gives each
-exactly, for one adjoint solve of the {py:class}`gfem.Piezoelectric`
-problem, with no remesh. Material values go in a {py:obj}`gfem.MaterialField`.
-Geometry goes through a {term}`node map` of your own, a JAX function of your design
-parameters that returns the mesh's node coordinates, which
-{py:meth}`gfem.Mesh.with_nodes` puts on the mesh.
+exactly, with no remesh. Geometry goes through a {term}`node map` of your own,
+put on the mesh by {py:meth}`gfem.Mesh.with_nodes`.
 
-The device is the section of {doc}`piezoelectric-admittance` and of the
-{doc}`transducer tutorial <../tutorials/transducer>`: aluminium fingers on a
-film of x-cut lithium niobate over oxide and a silicon handle, built by the
-tutorial's {download}`transducer_section.py <../tutorials/transducer_section.py>`
-with two fingers on each side of its ribs' span and coarse edges, so a gradient
-takes seconds. The page uses one frequency, 0.86 GHz, and the radiation
-conductance $\mathrm{Re}\,Y'$ there.
+The device is the {doc}`piezoelectric-admittance` section, coarse, at 0.86 GHz.
 
 ## The conductance as a function of its inputs
 
-The materials of the page's model are those of the {doc}`admittance recipe
-<piezoelectric-admittance>`; only the film and the fingers' metal are differentiable
-here. {py:meth}`gfem.MaterialField.uniform` turns the film's constant material
-into a field whose leaves `jax.grad` reaches: its stiffness, piezoelectric tensor,
-principal permittivities on the crystal's `axes`, density and quality factor.
-The fingers' stiffness comes from their Young's modulus and Poisson's ratio
-through {py:obj}`gfem.isotropic_stiffness`, which is written in `jax.numpy`, so
-the gradient reaches those two numbers by the chain rule.
+{py:meth}`gfem.MaterialField.uniform` turns the film's material into a field
+whose leaves `jax.grad` reaches; the fingers' stiffness comes from their Young's
+modulus and Poisson's ratio.
 
 ```python
 import urllib.request
@@ -125,10 +111,9 @@ print(f"Re Y' = {float(value):.4f} S/m")
 Re Y' = 0.1407 S/m
 ```
 
-`grads` has the film's shape, one gradient per leaf, and one number each for the
-metal's modulus and ratio. The change of $\mathrm{Re}\,Y'$ for a 1 % change of each
-input, $x\,\partial \mathrm{Re}\,Y'/\partial x$ divided by 100 and by the value, is
-the share of the conductance that input carries:
+`grads` has the film's shape, one gradient per leaf. The elasticity
+$x\,\partial \mathrm{Re}\,Y'/\partial x$ over the value is the share of the
+conductance each input carries:
 
 ```python
 film_grad, d_young, d_poisson = grads
@@ -158,12 +143,9 @@ finger modulus: +0.013
 finger Poisson ratio: -0.001
 ```
 
-A scale of a tensor is one direction in its space; the gradient has an entry for
-every one, so it also says which entries matter: `film_grad.piezoelectric_tensor`
-is a 3 × 6 array in the crystal's frame, in the order of the constants it came from.
-
-Each gradient is checked against a central difference at a relative step small
-against the curvature (see the last section). Here the density, one number:
+`film_grad.piezoelectric_tensor` is a 3 × 6 array in the crystal's frame: an
+entry for every constant. Check one against a central difference (see the last
+section), here the density:
 
 ```python
 import dataclasses
@@ -190,12 +172,9 @@ d Re Y'/d rho: gradient 2.931159e-05, difference 2.931159e-05
 
 ## The pitch, through a node map
 
-A mesh made for one pitch serves a nearby one when its nodes move: no remesh,
-and the gradient reaches the pitch through the nodes. A node map is a JAX
-function of the mesh's coordinates and your design parameters. This one scales
-everything between the lateral frames about the left frame's inner edge, which
-carries the fingers with it, and translates the right frame rigidly. The
-frames keep their width, so the damping stays what it was, and
+A mesh made for one pitch serves a nearby one when its nodes move. This node
+map scales everything between the lateral frames about the left frame's inner
+edge and translates the right frame rigidly, so the damping stays what it was;
 `section.interior` is the span between them.
 
 ```python
@@ -224,12 +203,10 @@ print(f"d Re Y'/d sigma: gradient {float(dg):.5f} S/m, difference {float(fd):.5f
 d Re Y'/d sigma: gradient 0.15039 S/m, difference 0.15039 S/m
 ```
 
-{py:meth}`gfem.Mesh.with_nodes` takes the coordinates in metres with the shape of
-`mesh.nodes`, and returns a mesh with the same elements and regions. The damping
-frames' graded loss follows their material, so a frame that moves rigidly keeps its
-absorption; a map that stretches a frame changes it. A map that inverts or flattens
-an element raises {py:obj}`gfem.MeshQualityError` when its coordinates are concrete,
-and when `jax.grad` traces it, at the solve:
+{py:meth}`gfem.Mesh.with_nodes` takes coordinates in metres shaped like
+`mesh.nodes`. A frame that moves rigidly keeps its absorption; a map that
+stretches it changes it. A map that inverts or flattens an element raises
+{py:obj}`gfem.MeshQualityError`, at the solve when `jax.grad` traces it:
 
 ```python
 try:
@@ -242,9 +219,8 @@ except gfem.MeshQualityError as error:
 MeshQualityError
 ```
 
-A thickness map is the same idea in $y$: on meshed fingers, scale the nodes between
-the film's surface and the fingers' top, and let everything above follow. The
-difference is taken at $\pm 1$ % of the thickness:
+A thickness map is the same in $y$: scale the nodes between the film's surface
+and the fingers' top, and let everything above follow:
 
 ```python
 t_finger = 50e-9  # the fingers' thickness, m
@@ -274,12 +250,10 @@ d Re Y'/d tau: gradient 0.01598 S/m, difference 0.01598 S/m
 
 ## A reading of the field at a point
 
-{py:meth}`gfem.Field.at` and {py:func}`gfem.strain` read the kept fields at points,
-and they differentiate: each reading costs one more adjoint solve per frequency.
-Through the nodes, a reading is Eulerian. The point stays where you put it, and the
-field moves under it: the derivative is that of the field at a fixed place, not at
-a material point that rides with the mesh. To follow a feature (a rib's centre, say)
-as the pitch changes, move the point with the same node map.
+{py:meth}`gfem.Field.at` and {py:func}`gfem.strain` differentiate: each reading
+costs one more adjoint solve per frequency. Through the nodes a reading is
+Eulerian: the point stays where you put it. To follow a feature as the pitch
+changes, move the point with the same node map.
 
 ```python
 point = jnp.array([[section.interior[0] + 4.4e-6, -0.09e-6]])  # in the film
@@ -301,9 +275,9 @@ print(f"|S_xz| = {float(s):.4e} per V, d/d sigma = {float(ds):.4e}")
 
 ## What raises
 
-- The frequencies, the terminals, the clamped lines and the damping frame, with
-  its loss factor: they are fixed values of the problem, and a traced one raises
-  {py:obj}`gfem.NonDifferentiableError` when the problem is built.
+- The frequencies, terminals, clamped lines and the damping frame with its loss
+  factor are fixed: a traced one raises {py:obj}`gfem.NonDifferentiableError`
+  when the problem is built.
 - The parameters of a permittivity law, for the same reason.
 - Node coordinates on any other 2D problem: only the piezoelectric problem
   reads them in 2D.
@@ -312,12 +286,12 @@ print(f"|S_xz| = {float(s):.4e} per V, d/d sigma = {float(ds):.4e}")
 
 ## The step of a check
 
-A central difference has a truncation error that falls as the square of its step. A
-relative step of $10^{-3}$ is right for a short section like this page's. Near a sharp
-resonance (a longer transducer, or one between reflectors) $\partial Y'/\partial\sigma$ is
-about a hundred times $\lvert Y'\rvert$, and the step needs to be about ten times
-smaller; shrink it, or use fourth-order differences, until the difference stops
-changing. The adjoint gradient does not depend on a step at all.
+A central difference has a truncation error that falls as the square of its
+step; a relative step of $10^{-3}$ suits a short section like this page's. Near a
+sharp resonance $\partial Y'/\partial\sigma$ is about a hundred times
+$\lvert Y'\rvert$ and the step needs to be about ten times smaller: shrink it,
+or use fourth-order differences, until the difference stops changing. The
+adjoint gradient has no step.
 
 ## Next
 
