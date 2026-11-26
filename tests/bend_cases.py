@@ -68,10 +68,11 @@ SLAB_NU = {
     (8, "Hy"): 57.61370811017967 - 0.00140098463565j,
 }
 #: ($R$ = 5 um, polarization) -> ($n_g$, $\beta_2$ in ps^2/m), wall column, from a
-#: 5-point difference of the root in k0 at 30 digits.
+#: 5-point difference of the root in k0 at 50 digits (steps 1e-5 and 1e-6 agree to
+#: 20 digits).
 SLAB_DISPERSION = {
-    "Ey": (2.036182759171 + 0.002636507265j, 0.29331478 - 0.06907944j),
-    "Hy": (2.048175251604 + 0.012985834292j, 0.65045147 - 0.32121204j),
+    "Ey": (2.036182759171 + 0.002636507265j, 0.2933147844724933 - 0.0690794434315021j),
+    "Hy": (2.048175251604 + 0.012985834292j, 0.6504514734134101 - 0.3212120447985576j),
 }
 #: ($R$ in um, polarization) -> exact $\mathrm{d}\gamma/\mathrm{d}R$ in 1/um^2
 #: (open slab, implicit-function derivative of the root).

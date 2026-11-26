@@ -109,8 +109,8 @@ def test_leaky_slab_dispersion(workdir, pol):
     got_ng = complex(np.asarray(r.n_g)[0])
     got_b2 = complex(np.asarray(r.beta_2)[0]) * 1e24  # ps^2/m
     # n_g: measured at p = 5 4.4e-13 (Ey), 1.1e-12 (Hy), literals to 12 digits.
-    # beta_2: the literals carry 8 decimals (rounding error <= 5e-9 per part, 7.1e-9
-    # in modulus), which is above the 2.6e-10 the solver differs from the 30-digit
-    # root, so the gate is that rounding plus the solver's error, absolute, in ps^2/m
+    # beta_2: measured at p = 5 5.1e-11 (Ey) relative to the 16-digit literal; the
+    # gate is twice the ladder's worst p = 5 error of 2.6e-10, rounded up, far above
+    # the literal's 1e-16 rounding.
     assert abs(got_ng / ng - 1) <= 3e-12
-    assert abs(got_b2 - b2) <= 1e-8
+    assert abs(got_b2 / b2 - 1) <= 6e-10
