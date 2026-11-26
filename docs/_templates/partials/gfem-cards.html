@@ -1,0 +1,29 @@
+{#- The physics card, one macro for the landing grid and the section pages. Import with context
+    so `pathto` resolves per page: {% from "partials/gfem-cards.html" import card, recipes with context %}.
+    `item` is a section (landing) or a card (section page): doc, name, still and optionally line and tag.
+    `level` is the heading level of the name. The whole card is one link; the still is decorative. -#}
+{%- macro card(item, level=3) -%}
+<li class="gfem-card">
+  <a href="{{ pathto(item.doc) }}">
+    <span class="gfem-card-still">
+      <img class="light-only" src="{{ pathto('_static/cards/' ~ item.still ~ '-light.png', 1) }}" alt="" width="1280" height="800" loading="lazy" decoding="async">
+      <img class="dark-only" src="{{ pathto('_static/cards/' ~ item.still ~ '-dark.png', 1) }}" alt="" width="1280" height="800" loading="lazy" decoding="async">
+    </span>
+    <h{{ level }} class="gfem-card-name">{{ item.name|e }}</h{{ level }}>
+    {%- if item.line %}
+    <p class="gfem-card-line">{{ item.line|e }}</p>
+    {%- endif %}
+    {%- if item.tag %}
+    <p class="gfem-card-tag"><span>{{ item.tag.split(': ', 1)[0]|e }}</span> {{ item.tag.split(': ', 1)[1]|e }}</p>
+    {%- endif %}
+  </a>
+</li>
+{%- endmacro -%}
+
+{%- macro recipes(items) -%}
+<ul class="gfem-recipe-list" role="list">
+  {%- for item in items %}
+  <li><a href="{{ pathto(item.doc) }}">{{ item.name|e }}</a></li>
+  {%- endfor %}
+</ul>
+{%- endmacro -%}

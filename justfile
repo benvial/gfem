@@ -24,6 +24,10 @@ notebooks *names:
     # A rerun overwrites its 3D scenes in place (gfem_scenes.py); drop those no notebook shows any more.
     {{ docs_env }} python tools/prune_scenes.py
 
+# Save the card stills of the physics sections (docs/_static/cards): all of them, or only those named (`just stills bend3d nanosphere waveguide-nonlinearity`). Runs each tutorial in memory up to its `card` cell: no notebook, output or scene changes.
+stills *names:
+    JAX_PLATFORMS=cpu {{ docs_env }} python tools/stills.py {{ names }}
+
 # Rebuild the transmon tutorial's meshes, docs/tutorials/data/transmon{,_coarse}.msh (tools/transmon_mesh.py, gmsh pinned; a new mesh means re-measuring the tutorial's values).
 transmon-mesh:
     uv run --with gmsh==4.15.2 --no-project python tools/transmon_mesh.py docs/tutorials/data

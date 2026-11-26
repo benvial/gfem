@@ -1,0 +1,24 @@
+{#- gfem custom layout: a physics section page, selected by `layout: gfem-section` in its front matter.
+    The page itself holds the H1 and the physics line; the section's tutorial cards and recipe list come
+    from the site tree (docs/_ext/gfem_sections.py). -#}
+{%- extends "layout/default.html" -%}
+{%- from "partials/gfem-cards.html" import card, recipes with context -%}
+
+{%- block extrahead %}
+  {{ super() }}
+  <link rel="stylesheet" href="{{ pathto('_static/gfem-cards.css', 1) }}">
+{%- endblock %}
+
+{%- block content %}
+  {{ body }}
+  {%- set section = (gfem_sections | selectattr("doc", "equalto", pagename) | list | first) %}
+  {%- if section %}
+  <ul class="gfem-cards wide" role="list">
+    {%- for item in section.cards %}{{ card(item, 2) }}{% endfor %}
+  </ul>
+  {%- if section.recipes %}
+  <h2>Recipes</h2>
+  {{ recipes(section.recipes) }}
+  {%- endif %}
+  {%- endif %}
+{%- endblock %}
