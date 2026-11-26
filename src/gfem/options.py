@@ -345,6 +345,14 @@ class SolverOptions:
             ``linear_solver="petsc"`` does not read it: MUMPS's BLAS follows
             ``OPENBLAS_NUM_THREADS``, which frequency workers set to their
             share.
+            Across MPI ranks ``None`` takes ``NGS_NUM_THREADS`` if set, else
+            shares each physical core of the rank's CPU mask with the other
+            ranks of the node holding it; every rank then uses the smallest
+            count over all ranks, so one narrow mask slows the job
+            (``mpirun -n 2`` binds each rank to one core: add
+            ``--bind-to none`` or pass ``threads``). The count is read at the
+            first solve on a communicator, and gfem sets the BLAS threads
+            itself without reading ``OMP_NUM_THREADS``.
         adaptive_tolerance: Error target of the adaptive frequency sweep;
             at least 10x ``tolerance``.
         adaptive_max_samples: Most frequencies the adaptive sweep solves.
@@ -384,6 +392,12 @@ class SolverOptions:
             meshes and spaces of the last four discretizations, JAX's own
             caches and memory the allocator has not returned are outside it.
             `gfem.release_memory` drops everything kept.
+            Across MPI ranks the default compares the memory held by a node's
+            ranks with half of the smallest node's memory; BDDC's coarse
+            factorizations kept between solves count against it (with
+            ``retain_memory=0`` each solve sets them up anew), and only what
+            the solving communicator holds is evicted, so solves on a second
+            communicator (rank copies) can keep memory past it.
         adjoint_tolerance: Relative residual of adjoint solves, in the norm
             ``tolerance`` names for each backend; ``None`` is ``tolerance``.
         eigen_tolerance: Backward error accepted for an eigenmode (the

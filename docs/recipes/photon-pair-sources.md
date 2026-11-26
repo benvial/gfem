@@ -1,36 +1,18 @@
 # Photon-pair sources
 
 Find how many pairs of photons a waveguide emits when it is pumped, in which
-frequencies, and how pure each photon is once its partner is detected. Two
-processes make pairs: spontaneous parametric down-conversion (SPDC) in a
-guide with a second-order nonlinearity, where a pump photon splits in two, and
-spontaneous four-wave mixing (SFWM) in a guide with a third-order one, where
-two pump photons turn into a pair. `gfem.spdc` and `gfem.sfwm` read three
-{py:obj}`gfem.PortModeResult` (the pump, the signal and the idler), and the
-model's materials: they need no solve beyond the modes' own. They return a
-{py:obj}`gfem.PhotonPairSource`, whose methods give the pair rate and the
-spectral brightness of a continuous pump, and the
-{term}`joint spectral amplitude` of a pulse with its pairs per pulse and its
-{term}`heralded purity`.
+frequencies, and how pure each photon is once its partner is detected.
+`gfem.spdc` (down-conversion, second order) and `gfem.sfwm` (four-wave mixing,
+third order) return a {py:obj}`gfem.PhotonPairSource`.
 
-The first guide is a periodically poled x-cut thin-film lithium niobate ridge,
-after Zhao et al., Phys. Rev. Lett. 124, 163603 (2020): a 300 nm film etched
-50 nm deep into a ridge 1.24 µm wide, on 1.8 µm of oxide, poled over 5 mm
-with a first-order period of 2.8 µm, the quasi-TE mode at 785 nm splitting
-into two quasi-TE photons near 1570 nm through $d_{33}$. The film, the etch,
-the width and the poling length are the paper's; the sidewalls are vertical
-here (the paper's are 75°), the crystal is the undoped one of the
-second-harmonic recipe ({doc}`second-harmonic-generation`) and the poling
-is ideal, so the numbers below are those of this guide, not of the paper's
-device. The second is the silicon strip of {doc}`waveguide-nonlinearity`.
-Units are SI ({doc}`../conventions`, "Photon pairs"): rates in pairs/s, a
-spectral density in pairs/(s Hz), a joint spectral amplitude in 1/Hz.
+The guides are a poled lithium niobate ridge after Zhao et al., Phys. Rev.
+Lett. 124, 163603 (2020), and the silicon strip of {doc}`waveguide-nonlinearity`.
+Units are SI ({doc}`../conventions`).
 
 ## The crystal and the ridge
 
-The nonlinear tensor, the oxide and the ridge are those of
-{doc}`second-harmonic-generation`, with the paper's width, film and etch, and
-its $d_{33}$ of 27 pm/V (the two other numbers are that page's):
+The tensor, oxide and ridge are those of {doc}`second-harmonic-generation`,
+with the paper's geometry and $d_{33}$ = 27 pm/V:
 
 ```python
 import dataclasses
@@ -98,17 +80,10 @@ def guide(frequency):
     )
 ```
 
-The materials are made at the frequency of each wave, so the signal and the
-pump each have a model of the same mesh. Only the permittivity differs between
-them; the model passed to `gfem.spdc` supplies the tensor.
-
 ## The modes of the pump and of the pair
 
-The pair is degenerate near 1570 nm. Which mode of the pump at 785 nm couples
-to the quasi-TE fundamental at 1570 nm is read from the overlap: rank the
-pump's modes and compute each one's second-harmonic efficiency with the signal
-mode, as the second-harmonic page does. That efficiency is also the classical
-figure of merit of the pair source (see "Check your results"):
+The pair is degenerate near 1570 nm. Rank the pump's modes at 785 nm by their
+second-harmonic efficiency with the signal mode:
 
 ```python
 f0 = c / 1.57e-6  # Hz, the band's centre
@@ -130,13 +105,7 @@ pump mode 1: n_eff 1.9815, eta_norm 1.06e+04 %/(W cm^2)
 pump mode 2: n_eff 1.9529, eta_norm 0.000147 %/(W cm^2)
 ```
 
-The fundamental is the coupled one. The dispersion of each arm enters the
-joint spectrum, so each is solved on a band, not at one frequency: nine
-frequencies over $\pm 14$ THz around the centre (about $\pm 120$ nm) for the
-signal, and nine over twice that around $2f_0$ for the pump, which must cover
-the sums of the signal and idler frequencies. Between the frequencies a
-sweep solves exactly, a port mode comes from a reduced model
-({doc}`port-mode-gradient`):
+The fundamental couples. Each arm is solved on a band, for the dispersion:
 
 ```python
 half = 14e12  # Hz
@@ -156,12 +125,8 @@ PortModeResult(port 'wg', mode 1, 9 frequencies 177-205 THz (5 exact solves), n_
 PortModeResult(port 'wg', mode 1, 9 frequencies 353.9-409.9 THz (5 exact solves), n_eff 1.9602-1.9999, n_g 2.2502-2.2514, no voltage_path)
 ```
 
-- Each arm's rows are fitted by a polynomial of at most degree 4 in the
-  frequency, and the fit is evaluated, never extrapolated, inside the rows'
-  span. Four rows is the least; more rows over a narrower band follow the
-  dispersion better.
-- The three results must be of one port and one mode each. For degenerate
-  photons in one mode family, the same result is the signal and the idler.
+- Each arm's rows are fitted by a polynomial of degree at most 4; for
+  degenerate photons one result is signal and idler.
 
 ## The source
 
@@ -177,23 +142,15 @@ PhotonPairSource(spdc, port 'wg', modes 1 -> 1 + 1, identical, pump 353.9-409.9 
 first-order poling period 2.7840 um (Zhao et al.: 2.8 um)
 ```
 
-- `signal is idler` means identical photons: one mode family carries both, and
-  every figure counts a pair once.
-- The coupling $\kappa$ is one overlap of the pump, signal and idler at the
-  centres of the bands, taken from `gfem.three_wave_coupling`; the
-  dispersion of the guide over the bands comes from the fits. The bands are the
-  grid of every figure, with `points` samples each, and act as ideal filters:
-  every figure counts the pairs inside them.
-- `poling_period` is $2\pi/|\Delta\beta_0|$ at the bands' centres. It sets the
-  first order; a period of order $m$ is $m$ times it. The poling is an
-  argument of the figures, not of the source, so a design sweep costs no
-  overlap.
+- `signal is idler` means identical photons, counted once. The bands are the
+  grid of every figure and act as ideal filters.
+- `poling_period` is the first order; the poling is an argument of the
+  figures, so a design sweep costs no overlap.
 
 ## The rate and the spectral brightness of a continuous pump
 
 A pump of 1 mW in the 5 mm guide, poled at that period. The brightness is the
-density of signal photons in pairs/(s Hz) on the signal grid, the idler being
-fixed by energy conservation; the rate is its integral, in the band:
+density of signal photons in pairs/(s Hz); the rate is its integral:
 
 ```python
 length, power = 5e-3, 1e-3  # m, W
@@ -213,10 +170,9 @@ peak density 0.01075 pairs/(s Hz)
 brightness 1.075e+07 pairs/s/GHz/mW = 1.307e+09 pairs/s/nm/mW
 ```
 
-The density is also the mean number of pairs per spectral-temporal mode, so
-it is the low-gain check: above 0.1 the first-order result is off by more than
-3 % and `gfem.HighGainWarning` says so. A longer guide narrows the matched
-band, and a poling period that is off detunes it:
+The density is also the mean number of pairs per mode: above 0.1
+`gfem.HighGainWarning` says the result is off by more than 3 %. A longer guide
+narrows the matched band, a period that is off detunes it:
 
 ```python
 for mm in (3.5, 7.0, 14.0):
@@ -236,33 +192,15 @@ period +0.0 %: rate 1.000 of the matched rate
 period +0.1 %: rate 0.561 of the matched rate
 ```
 
-- The two photons are in one mode family and at the same frequency, so the
-  matching is quadratic in the detuning,
-  $\Delta\beta(\Omega) = \Delta\beta_0 - \beta_2\Omega^2$, and the rate grows
-  as $L^{3/2}$ at $\Delta\beta_0 = 0$ and not as $L$ (a nondegenerate pair,
-  with different group velocities, grows as $L$): doubling the length
-  multiplies the rate by $2^{3/2} = 2.83$ while the band is wider than the
-  matching.
-- A period 0.1 % off detunes the matching by $\delta L/2$ of several radians
-  over 5 mm, and the two signs are not alike. With $\beta_2 > 0$ the
-  mismatch $\Delta\beta_0 - 2\pi/\Lambda - \beta_2\Omega^2$ crosses zero
-  for a period longer than the matched one, at two frequencies $\pm\Omega$,
-  and the rate stays near half; for a shorter period it never does, and the
-  rate collapses.
-- The rate is linear in the power at this gain; the spectral brightness per
-  milliwatt is what a measurement quotes.
+- The matching is quadratic in the detuning, so the rate grows as $L^{3/2}$ at
+  $\Delta\beta_0 = 0$ (2.83 for a doubled length). A period 0.1 % off detunes
+  it by several radians: longer keeps half the rate, shorter collapses it.
 
 ## The joint spectrum of a pulse
 
-A Gaussian pump pulse of energy $U$ and intensity FWHM $T$ makes the pairs of
-a joint spectral amplitude $f(f_s, f_i)$, the pump's envelope times the
-phase-matching function, scaled so that $\sum|f|^2\,\delta f_s\,\delta f_i$ is
-the number of pairs per pulse. This guide's matching is long and narrow in
-the sum of the frequencies, because the pump and the signal differ in group
-velocity (the pump's $n_g$ is 2.25, the signal's 2.11), and broad in their
-difference, so a joint spectrum needs a grid fine in the sum: 601 points over
-28 THz is 0.047 THz, against a matching whose first zeros lie 0.4 THz from its
-peak. In a 5 mm guide a low-gain pulse is a femtojoule, not a picojoule:
+A Gaussian pulse of energy $U$ and FWHM $T$ makes a joint spectral amplitude
+$f(f_s, f_i)$, with $\sum|f|^2\,\delta f_s\,\delta f_i$ pairs per pulse; the
+grid must be fine in the frequency sum. A low-gain pulse is a femtojoule:
 
 ```python
 pulse = {"pulse_energy": 1e-15, "pulse_duration": 1e-12}  # J, s
@@ -284,19 +222,11 @@ pairs per pulse 0.0324
 pairs per second at 100 MHz: 3.24e+06
 ```
 
-- The pulse's energy is not the power: 1 fJ at 100 MHz is 100 nW. The pairs
-  per pulse of down-conversion grow as $U$, and its mean rate as the mean
-  power.
-- The photons are as wide as the matching allows, a sizable part of the band,
-  against a pump whose bandwidth is 0.44 THz: the pair is strongly correlated
-  in frequency, so its photons are far from pure. A narrower band is a filter
-  that raises the purity at the cost of the pairs.
+- The photons are as wide as the matching allows, strongly correlated and far
+  from pure; a narrower band is a filter that trades pairs for purity.
 
-The heralded purity of one photon of a pair is $\sum_k\lambda_k^2$ over the
-Schmidt weights $\lambda_k$ of the joint spectrum, its Schmidt number
-$K = 1/\sum_k\lambda_k^2$ the number of modes a photon is spread over. It
-changes with the pulse. A finer grid than the 601 points above keeps a long
-pulse, whose spectrum is narrow, resolved (1001 points is 0.028 THz):
+The heralded purity is $\sum_k\lambda_k^2$ over the Schmidt weights, the Schmidt
+number $K$ its inverse:
 
 ```python
 fine = gfem.spdc(signal_model, pump, signal, signal, points=1001)
@@ -319,22 +249,12 @@ T (ps)   pairs/pulse   purity   Schmidt number
   3.0       0.03915   0.0218    45.95
 ```
 
-- The purity is low, a Schmidt number of 30 to 45, and has a maximum near
-  1 ps. There the pump's bandwidth, 0.44 THz, is of the order of the width of the
-  matching in the sum of the frequencies, about 0.4 THz (set by the
-  pump-signal group-velocity mismatch). A longer pulse is narrower than the
-  matching: the joint spectrum is a thinner line along the difference of the
-  frequencies, with more Schmidt modes, and the purity falls. A shorter one
-  is wider than the matching, which then sets the sum alone.
-- The purity is computed without a singular value decomposition, from
-  $\mathrm{Tr}[(MM^\dagger)^2]/\mathrm{Tr}[MM^\dagger]^2$ with $M$ the amplitude
-  on the uniform grid, so its gradient is finite where Schmidt weights are
-  equal.
+- The purity is low ($K$ of 30 to 45) with a maximum near 1 ps, where the
+  pump's bandwidth matches the matching's width in the sum.
 
 ## Plot the joint spectrum
 
-The amplitude, its two grids and the pairs it counts are the attributes of
-`gfem.JointSpectrum`: the signal frequency down, the idler across.
+The signal frequency runs down, the idler across, in `gfem.JointSpectrum`:
 
 ```python
 import matplotlib
@@ -355,14 +275,11 @@ fig.colorbar(image, label="$|f|^2$ (1/Hz$^2$)")
 fig.savefig("joint_spectrum.png", dpi=150)
 ```
 
-The pairs lie along the line of constant sum of the frequencies, with the
-pump's width across it, and run to the band's edges along it, where the
-matching's sinc lobes fall.
-
 ## The gradient of the purity
 
-The purity and the rate differentiate in every argument of the methods and, through the
-fits and the overlaps, in the section's materials and in the rows' $\gamma$:
+The purity and the rate differentiate in every argument and, through the fits
+and overlaps, in the materials and the rows' $\gamma$, not the node
+coordinates ({doc}`port-mode-gradient`):
 
 ```python
 def purity(duration):
@@ -385,20 +302,10 @@ d purity / d duration -0.0076168 per ps
 central difference    -0.0076168 per ps
 ```
 
-The same call differentiates in the pulse's energy, the guide's length, the
-poling period and the duty cycle, and `jax.grad` of a function that builds the
-source from a `gfem.solve` gives the sensitivity to the materials and, through the
-modes' propagation constants and fields, to the section's permittivity
-({doc}`port-mode-gradient`, {doc}`eigenmode-gradient`). The node coordinates
-are not differentiated: a change of width is a remesh and a finite difference.
-
 ## Four-wave mixing in a silicon wire
 
-The silicon strip of {doc}`waveguide-nonlinearity`, 500 × 220 nm in oxide,
-pumped at 1.55 µm, makes pairs through $\gamma_\mathrm{NL}$: the signal above
-the pump and the idler below it, with $2f_p = f_s + f_i$. The bands
-leave a guard of 1 THz around the pump, where a real filter must cut it, and
-run to 13 THz from it:
+The strip, pumped at 1.55 µm, makes pairs through $\gamma_\mathrm{NL}$ with
+$2f_p = f_s + f_i$ and a 1 THz guard around the pump:
 
 ```python
 silicon = gfem.Material(
@@ -438,12 +345,8 @@ print(wire_source)
 PhotonPairSource(sfwm, port 'wg', modes 1 -> 1 + 1, pump 186.41-200.41 THz, signal 194.41-206.41 THz, idler 180.41-192.41 THz, |coupling| 188.6 1/(W m))
 ```
 
-The pump is the degenerate pump of the process and its band need only cover
-the half-sums of the signal and idler frequencies. The two coupling
-entries are $\gamma_{sppi}$ and $\gamma_{ipps}$ of `gfem.kerr_coupling`, and the
-source uses their symmetrized mean for the pair, since the stored tensor
-takes $n^2$ at the output wave and the two differ by the dispersion of
-the index.
+The source uses the symmetrized mean of $\gamma_{sppi}$ and $\gamma_{ipps}$ of
+`gfem.kerr_coupling`:
 
 ```python
 length_w, power_w = 1e-2, 1e-3  # m, W
@@ -466,21 +369,10 @@ brightness 4.111e+05 pairs/s/nm/mW^2
 rate at 10 mW over 1 mW: 100.88 (quadratic: 100)
 ```
 
-- A pair is born from two pump photons, so the density and the rate go as the
-  square of the power, and a pump above about 0.17 W puts more than 0.1 pair in
-  a mode: `gfem.HighGainWarning` fires there. The continuous-wave figures include the
-  Kerr shift of the pump and the cross-phase of the signal and the idler by it
-  in the mismatch.
-- Two-photon absorption of the pump is in the complex coupling and not in a
-  loss of the pump along the guide, and neither Raman scattering nor free
-  carriers are modelled. At a few milliwatts in a short guide they are small;
-  they are not in a long, strongly pumped one.
-- The density is largest next to the guard, close to the pump, where $\Delta\beta$ is
-  smallest, and falls off over a few terahertz: this guide's dispersion is
-  anomalous, so the Kerr shift of a strong pump moves the matching away from
-  the pump, to larger detunings.
+- The rate goes as the square of the power, and above about 0.17 W
+  `gfem.HighGainWarning` fires; the Kerr shift of the pump is included.
 
-A pulse gives a joint spectrum as well, here cut by the guard band, on purpose:
+A pulse gives a joint spectrum as well, here cut by the guard band:
 
 ```python
 with warnings.catch_warnings():
@@ -498,16 +390,9 @@ JointSpectrum(401 x 401 grid, 0.0241 pairs/pulse, purity 0.5201, Schmidt number 
 
 ## A ring: an estimate
 
-A ring of this guide makes pairs when the pump, the signal and the idler sit on
-resonances. gfem does not solve a ring (it has no bent mode), but the
-straight guide's coupling, group index and loss give an estimate with the
-coupled-mode theory of a ring with a bus, to be read as one. Take a ring of
-radius 10 µm, a loaded quality factor $Q = 10^5$ for the pump, the signal and
-the idler, critically coupled (so the coupler's decay rate $\kappa_\mathrm{ex}$
-is half the loaded rate $\kappa$), and a pump of 0.1 mW in the bus. The
-pair coupling $\Gamma_{si}$ is the one the source uses, the free spectral
-range is $v_g/L_\mathrm{ring}$, and the rates are the energy decay rates in
-rad/s:
+gfem has no bent mode: the straight guide's coupling and group index give a
+coupled-mode estimate for a ring of radius 10 µm, loaded $Q = 10^5$ for all
+three waves, critically coupled, pumped by 0.1 mW:
 
 ```python
 omega_s, omega_i = 2 * np.pi * signal_band.mean(), 2 * np.pi * idler_band.mean()
@@ -544,33 +429,19 @@ pairs into the bus 2.432e+06 /s, occupation 0.0008 per mode
 Q doubled: factor 8.00 (Q cubed: 8)
 ```
 
-- The rate goes as $Q^3/L_\mathrm{ring}^2$ at a fixed power: a better
-  quality factor concentrates more power and a narrower resonance, and a
-  smaller ring has a larger free spectral range and a larger circulating power per
-  round trip.
-- What is an estimate: the group index of the straight guide (good to a few
-  $10^{-3}$) and the assumption that the signal and the idler are on
-  resonances (the dispersion of the ring detunes them by $D_2$ and the
-  resonances' width must contain that), the pump on resonance with no thermal
-  or Kerr shift, and every $\kappa$, which is the coupler's and the
-  ring's loss and yours to give: gfem solves neither. The circulating power
-  of the example, tens of milliwatts, makes two-photon absorption and free
-  carriers matter in a silicon ring, and they are not in the estimate.
-- A pulsed ring has a joint spectrum made of Lorentzian resonances: it is not
-  in this page.
+- The rate goes as $Q^3/L_\mathrm{ring}^2$; every $\kappa$ is yours to give,
+  and two-photon absorption and free carriers are not in it.
 
 ## Compared with published sources
 
-Published on-chip brightnesses scatter by factors of 4 to 20 around the ideal
-formulas, from the poling quality, the loss and coupling calibration and the
-filters, so none of these is a check of the numbers above, only an
-observation beside them:
+Published brightnesses scatter by factors of 4 to 20 around the ideal formulas:
+these are observations, not checks.
 
-| Source | Device | Published | gfem, this page |
-| --- | --- | --- | --- |
-| Zhao et al., Phys. Rev. Lett. 124, 163603 (2020) | x-cut TFLN ridge, 5 mm, type 0, 785 to 1570 nm | $4.6\times10^5$ pairs/s/GHz/mW, poling period 2.8 µm | brightness and period printed below, with the paper's geometry and an ideal poling |
-| Javid et al., Phys. Rev. Lett. 127, 183601 (2021) | dispersion-engineered x-cut TFLN, 5 mm, type 0 | 13 GHz/mW total | the rate of this page's guide, whose geometry is not that one |
-| Shi et al., Light Sci. Appl. 13, 282 (2024), table | silicon and nitride wires, 8 to 11 mm, SFWM | $1.9\times10^4$ to $1.9\times10^5$ Hz/nm/mW$^2$ | the silicon wire's brightness at 1 cm |
+| Source | Published | gfem |
+| --- | --- | --- |
+| Zhao et al. 2020 | $4.6\times10^5$ pairs/s/GHz/mW, period 2.8 µm | below |
+| Javid et al., Phys. Rev. Lett. 127, 183601 (2021) | 13 GHz/mW total | the rate, other geometry |
+| Shi et al., Light Sci. Appl. 13, 282 (2024) | $1.9\times10^4$ to $1.9\times10^5$ Hz/nm/mW$^2$ | silicon wire, 1 cm |
 
 ```python
 print(
@@ -588,26 +459,14 @@ TFLN: total 40.6 GHz/mW in the bands (Javid: 13)
 Si: gfem 4.11e+05 Hz/nm/mW^2, ratio 2.2 to 21.6
 ```
 
-- The poling period agrees with the paper's 2.8 µm within a percent: the
-  period is a property of the modes' indices, which the solve gives. The
-  brightness is 23 times the measurement. An ideal poling of the full film
-  depth, no loss and a filter at the peak are in the figure; the paper's poling
-  depth is 245 nm of the 300 nm film, its duty cycle is $55.2 \pm 3.0$ %, and
-  the calibration of its collection and its filters enter its number. The gap
-  is at the upper end of the scatter of published numbers; it is not a
-  measure of gfem's accuracy.
-- The silicon wire's brightness is 2 to 20 times the published range, the
-  same kind of gap: a lossless guide, an ideal coupling and a filter at the
-  guard are in the ideal figure, and the measured guides are not. The
-  paper's silicon and nitride guides are not this wire, and its table was
-  read in the main text only.
+- The period agrees within a percent; the brightness is 23 times the
+  measurement, which has partial poling depth, a duty cycle of $55.2 \pm 3.0$ %
+  and losses. The silicon wire is 2 to 20 times the range.
 
 ## Check your results
 
-- **The grid.** The bands are the grid, so a figure that depends on its
-  resolution converges with `points`. The rate is a trapezoidal sum, and the
-  joint spectrum's lobes need about eleven points: `gfem.UnresolvedJointSpectrumWarning`
-  says when they have fewer, or when the bands cut the amplitude:
+- **The grid.** A figure converges with `points`
+  (`gfem.UnresolvedJointSpectrumWarning` warns below eleven points per lobe):
 
   ```python
   for points in (301, 601, 1201):
@@ -621,9 +480,8 @@ Si: gfem 4.11e+05 Hz/nm/mW^2, ratio 2.2 to 21.6
   1201 points: rate 4.05987e+10
   ```
 
-- **The fit.** A fit that leaves a residual phase above 0.1 rad over the
-  guide's length raises. The residual per arm, times the length, is what the
-  check reads, in radians, for the pump, the signal and the idler:
+- **The fit.** A residual phase above 0.1 rad raises; the residual in radians
+  for pump, signal and idler:
 
   ```python
   print(np.asarray(source.fit_residual) * length)
@@ -633,9 +491,7 @@ Si: gfem 4.11e+05 Hz/nm/mW^2, ratio 2.2 to 21.6
   [3.72633599e-04 3.68914427e-05 3.68914427e-05]
   ```
 
-- **The overlap over the band.** The coupling is taken at the bands' centres
-  and held over them. Recompute it with the signal at the top of the band and
-  the idler at the bottom, with the pump between, and read the difference:
+- **The overlap over the band.** Recompute the coupling at the band's edges:
 
   ```python
   options_edge = gfem.SolverOptions(order=3)
@@ -656,13 +512,9 @@ Si: gfem 4.11e+05 Hz/nm/mW^2, ratio 2.2 to 21.6
   |kappa| at the band edges against the centre: -0.83 %
   ```
 
-  A few tenths of a percent: the variation of the overlap over a band of
-  10 % in frequency is below the other uncertainties.
-- **The port mode tolerance.** The default `port_mode_tolerance` of $10^{-6}$ is
-  the backward error of each mode between the exact solves. What matters for
-  a pair source is the phase $\Delta\beta L$ it makes, which should be far
-  below 0.1 rad. Re-solve the bands at a tolerance $10^3$ looser and compare
-  the propagation constants of the same rows:
+  A few tenths of a percent, below the other uncertainties.
+- **The port mode tolerance.** $\Delta\beta L$ must stay far below 0.1 rad
+  with the bands re-solved $10^3$ looser:
 
   ```python
   loose = gfem.SolverOptions(order=3, port_mode_tolerance=1e-3)
@@ -682,16 +534,10 @@ Si: gfem 4.11e+05 Hz/nm/mW^2, ratio 2.2 to 21.6
   pump: beta changes by 0.0035 1/m, 1.7e-05 rad
   ```
 
-  Even $10^{-3}$ leaves the phase at the $10^{-5}$ rad level, four orders of
-  magnitude below the limit, and the default is $10^3$ tighter: against a solve at $10^{-12}$ its propagation
-  constants differ by $10^{-8}$ 1/m, the round-off of the eigenproblem. The
-  recipe keeps the default: a tolerance of $10^{-9}$ costs exact solves and
-  gains nothing here.
-- **The classical figure of merit.** At degeneracy and perfect matching, the
-  density of pairs at the band's centre is the second-harmonic efficiency
-  of the same overlap, $|G_1|^2\eta_\mathrm{norm}PL^2$ with $|G_1|^2 =
-  4/\pi^2$ for a duty cycle of one half: spontaneous emission is stimulated emission
-  with a seed of one photon per second and hertz.
+  It moves at the $10^{-5}$ rad level; the default is $10^3$ tighter.
+- **The classical figure of merit.** At degeneracy and perfect matching the
+  density at the centre is $|G_1|^2\eta_\mathrm{norm}PL^2$, the
+  second-harmonic efficiency of the same overlap:
 
   ```python
   centre = float(brightness[len(brightness) // 2])
@@ -703,48 +549,21 @@ Si: gfem 4.11e+05 Hz/nm/mW^2, ratio 2.2 to 21.6
   density at the centre 0.0107483, classical 0.0107483
   ```
 
-- **Closed forms.** The pair rate, the density and the purity are checked
-  against the integrals of a sinc and against Gaussian formulas, and the
-  rate against a quadrature on the filled guide, in {doc}`../verification`,
-  "Photon pairs".
+- **Closed forms.** The rate, density and purity are checked in
+  {doc}`../verification`.
 
 ## Limits
 
-- The low-gain regime: at most a pair per mode. Above it the pair number is a
-  sinh, not a square, and the state is squeezed, which this page does not
-  give; `gfem.HighGainWarning` marks the limit.
-- Coincidences only. A loss of the arms is in the pair amplitude (the
-  coherent sum over where the pair is born), but singles, heralding
-  efficiency, the mixedness loss makes and a detector's are not.
-- The pump is a continuous wave or a transform-limited Gaussian pulse, with
-  no chirp, no other shape and no second pump. The pulsed four-wave mixing
-  amplitude omits the self- and cross-phase modulation, valid while
-  $\mathrm{Re}\,\gamma_\mathrm{NL}P_\mathrm{peak}L \ll 1$.
-- The coupling is one overlap at the bands' centres and a polynomial fit of
-  the dispersion, valid over a band of a few percent of the carrier; the
-  check above shows the overlap's change. A band whose dispersion is not
-  smooth, or that crosses a mode crossing, needs a narrower band.
-- A line port (a 2D model) is refused: a pair rate of a slab is per
-  transverse wavenumber, not a figure of a guide. The Hz polarization and a
-  layered density carrying the nonlinearity are refused as in
-  {doc}`second-harmonic-generation`.
-- The second-order pair coupling rests on a $d$ with Kleinman symmetry, not
-  checked. The poling is analytic: a square wave of one period over the
-  guide, full depth.
-- Not modelled: Raman scattering, free carriers, two-photon absorption
-  beyond the complex coupling, the thermal and photorefractive effects, and
-  a pump that is depleted.
-- The ring is an estimate and no solve of a ring.
-- Under `jax.grad` the figures differentiate with respect to the section's
-  materials and the rows' $\gamma$, not the node coordinates.
+- **Low gain.** At most a pair per mode; beyond it the state is squeezed
+  (`gfem.HighGainWarning`). Coincidences only: singles and heralding efficiency
+  are not given.
+- **Pump and band.** A continuous wave or transform-limited Gaussian pulse; one
+  overlap and a polynomial fit, valid over a few percent of the carrier.
+- **Not modelled.** Line ports, the Hz polarization, Raman, free carriers,
+  thermal effects and a depleted pump.
 
 ## Next
 
-- {doc}`second-harmonic-generation`: the classical efficiency of the same
-  overlap, and the tensor of lithium niobate.
-- {doc}`waveguide-nonlinearity`: the Kerr coefficient and the couplings of the
-  silicon strip.
-- {doc}`waveguide-dispersion`: the group index and the dispersion of a mode.
-- {doc}`../conventions`: the formulas and the normalization.
-- {py:obj}`gfem.spdc`, {py:obj}`gfem.sfwm`, {py:obj}`gfem.PhotonPairSource`,
-  {py:obj}`gfem.JointSpectrum`.
+{doc}`second-harmonic-generation`, {doc}`waveguide-nonlinearity`,
+{doc}`waveguide-dispersion`, {doc}`../conventions`,
+{py:obj}`gfem.spdc`, {py:obj}`gfem.sfwm`.

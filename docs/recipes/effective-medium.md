@@ -1,23 +1,18 @@
 # Effective medium of a slab
 
-Replace a slab of a periodic cell, a layer of meta-atoms or a stack of
-patterned films, by a homogeneous slab and read its permittivity
-$\varepsilon$ and permeability $\mu$. The retrieval is the Nicolson-Ross-Weir
-inversion of the reflection and transmission of the slab at normal incidence,
-read from the specular {py:obj}`gfem.FloquetPort`s of two faces
-({doc}`floquet-ports`), so it needs one solve per frequency band and no new
-physics. The helper is {py:func}`gfem.diffraction.effective_medium`; the
-cell is built as in {doc}`diffraction-efficiency`.
+Replace a slab of a periodic cell, a layer of meta-atoms or a stack of patterned
+films, by a homogeneous slab and read its permittivity $\varepsilon$ and
+permeability $\mu$. The helper {py:func}`gfem.diffraction.effective_medium`
+inverts (Nicolson-Ross-Weir) the normal-incidence reflection and transmission
+read from the specular {py:obj}`gfem.FloquetPort` ports of two faces
+({doc}`floquet-ports`): one solve per frequency band.
 
 ## Put the reference planes on the slab
 
-The retrieval treats what lies between the two reference planes as the slab,
-of thickness $d$. A Floquet port's plane is its face moved by `offset` along
-the inward normal, so give both faces the offset that lands the plane on the
-slab surface. The cell below has a layer of rods, thickness
-$d = 0.2\ \mu\mathrm{m}$, centered between faces `"top"` and `"bottom"`
-that are a distance `gap` away from it, meshed with the volumes `"rod"` and
-`"air"`:
+What lies between the two reference planes is the slab, of thickness $d$. Give
+both faces the `offset` that lands each port's plane on the slab surface. A
+layer of rods, $d = 0.2\ \mu\mathrm{m}$, a distance `gap` from faces `"top"`
+and `"bottom"` (built as in {doc}`diffraction-efficiency`):
 
 ```python
 import numpy as np
@@ -48,8 +43,8 @@ options = gfem.SolverOptions(order=2, linear_solver="direct")
 res = gfem.solve(cell, gfem.Driven(band, excite=lit), options=options)
 ```
 
-Light the specular order of the incident face in both polarizations; the
-columns of the other face are optional (see Limits).
+Light the specular order of the incident face in both polarizations; the other
+face's columns are optional.
 
 ## Retrieve
 
@@ -63,61 +58,50 @@ em.thickness, em.frequency  # the slab thickness in m, the frequencies in Hz
 
 The slab is read as a diagonal tensor in the lattice frame
 $(\hat{\mathbf{e}}_1, \hat{\mathbf{e}}_2)$. The wave with $\mathbf{E}$ along
-$\hat{\mathbf{e}}_1$ (TM at normal incidence) has the refractive index $n_0$
-and the relative impedance $z_0$, and gives $\varepsilon_{11} = n_0/z_0$ and
-$\mu_{22} = n_0 z_0$; the wave along $\hat{\mathbf{e}}_2$ gives
-$\varepsilon_{22} = n_1/z_1$ and $\mu_{11} = n_1 z_1$. Time dependence is
-$e^{+i\omega t}$, so a passive slab has $\operatorname{Im} n \le 0$
+$\hat{\mathbf{e}}_1$ has the refractive index $n_0$ and relative impedance
+$z_0$, and gives $\varepsilon_{11} = n_0/z_0$ and $\mu_{22} = n_0 z_0$; the
+wave along $\hat{\mathbf{e}}_2$ gives $\varepsilon_{22} = n_1/z_1$ and
+$\mu_{11} = n_1 z_1$. A passive slab has $\operatorname{Im} n \le 0$
 ({py:obj}`gfem.conventions`).
 
 ## Choose the branch
 
-A transmission only fixes the phase $n k_0 d$ modulo $2\pi$, so the retrieval
-needs the sheet:
+A transmission only fixes the phase $n k_0 d$ modulo $2\pi$:
 $n = \left(2\pi m - \arg T + i\ln|T|\right)/(k_0 d)$ with $m$ = `branch`, the
-integer sheet at the lowest frequency, and $T = e^{-i n k_0 d}$ the
-transmission through the slab alone.
+integer sheet at the lowest frequency, and $T = e^{-i n k_0 d}$ the transmission
+through the slab alone.
 
 - `branch=0` is right when $\operatorname{Re}(n)\,k_0 d < \pi$ at the lowest
-  frequency, a slab thinner than half a wavelength in its own medium. The rod
-  layer above, with $n \le 2$ (an upper estimate: the rods do not fill the
-  cell), has $n k_0 d \le 2.0\ \mathrm{rad}$ at the lowest frequency of the
-  band ($\lambda = 1.25\ \mu\mathrm{m}$) and at most $3\ \mathrm{rad}$
-  across it, below $\pi$, so it sits on branch 0. A slab of the same material
-  $0.3\ \mu\mathrm{m}$ thick at a wavelength of $1\ \mu\mathrm{m}$ has
-  $n k_0 d \approx 3.8\ \mathrm{rad} > \pi$ and needs `branch=1`.
-- `branch` takes one int for both columns, or a pair `(m_0, m_1)`, one per
-  polarization column, when the two waves are on different sheets (an
-  anisotropic slab). `em.branch` is always the pair.
-- Along a band the phase of $T$ is unwrapped, starting from its principal
-  value at the lowest frequency, so one `branch` serves the whole sweep. The
-  frequencies must increase strictly, and the grid fine enough that the phase
-  moves less than $\pi$ between neighbours.
-- When two branches both look reasonable, solve a thinner slab or a lower
-  frequency: for $k_0 d \to 0$ the right branch is 0 and its result is
-  smooth. A $\varepsilon(f)$ with jumps, or an $\operatorname{Im}\varepsilon$
-  that changes sign in a passive material, points to the wrong branch.
+  frequency. The rod layer above has $n k_0 d \le 3\ \mathrm{rad}$ across its
+  band, so it sits on branch 0; the same material $0.3\ \mu\mathrm{m}$ thick at
+  $1\ \mu\mathrm{m}$ has $n k_0 d \approx 3.8\ \mathrm{rad}$ and needs
+  `branch=1`.
+- `branch` takes one int, or a pair `(m_0, m_1)` when the two polarizations are
+  on different sheets; `em.branch` is always the pair.
+- The phase of $T$ is unwrapped along the band from the lowest frequency, so one
+  `branch` serves the sweep. Frequencies must increase strictly, with the phase
+  moving less than $\pi$ between neighbours.
+- If two branches look reasonable, solve a thinner slab or a lower frequency
+  (the right branch tends to 0). An $\varepsilon(f)$ with jumps, or a sign-changing
+  $\operatorname{Im}\varepsilon$ in a passive material, points to the wrong
+  branch.
 
 ## When the numbers mean something
 
-- **Validity.** The values describe the slab only while
-  $|n| k_0 a \ll 1$, $a$ the period along the propagation. Near the Bragg
-  condition, or where the cell diffracts, the retrieved
-  $\varepsilon$ and $\mu$ are not material constants, only the parameters
-  that reproduce $S_{11}$ and $S_{21}$.
-- **Half-wave thickness.** At $n k_0 d = m\pi$ ($m \ge 1$) a slab of low loss
-  reflects nothing and transmits with unit modulus whatever its impedance, so
-  $z$ is undetermined ($S_{11} \to 0$, $S_{21} \to \pm 1$) and
-  $\varepsilon$, $\mu$ and their derivatives lose all accuracy near such
-  frequencies. Keep a band clear of them, or use a thinner slab.
-- **Check with the background.** Retrieving an empty slab gives back the
-  permittivity and permeability of the medium behind the faces.
+- **Validity.** The values describe the slab only while $|n| k_0 a \ll 1$, $a$
+  the period; near the Bragg condition or where the cell diffracts they are only
+  the parameters that reproduce $S_{11}$ and $S_{21}$.
+- **Half-wave thickness.** At $n k_0 d = m\pi$ a low-loss slab reflects nothing
+  whatever its impedance, so $\varepsilon$ and $\mu$ lose all accuracy: keep the
+  band clear, or use a thinner slab.
+- **Check with the background.** Retrieving an empty slab gives back the medium
+  behind the faces.
 
 ## Differentiate
 
 Every step is `jax.numpy`, so a loss on the retrieved permittivity
-differentiates toward the cell's parameters, here the rod permittivity,
-toward a target $\varepsilon_\mathrm{target}$:
+differentiates toward the cell's parameters, here the rod permittivity toward a
+target $\varepsilon_\mathrm{target}$:
 
 ```python
 import jax
@@ -136,33 +120,25 @@ def loss(eps_rod):
 grad = jax.grad(loss)(4.0)
 ```
 
-`branch` is an integer sheet and is not differentiated
-(`NonDifferentiableError` if traced); the unwrapping adds constants of
-$2\pi$, which have no gradient.
+`branch` is an integer and is not differentiated (`NonDifferentiableError` if
+traced).
 
 ## Limits
 
-- **Normal incidence.** The retrieval refuses an angle sweep and a wave vector
-  with a tangential part (`ValueError`).
-- **Same medium on both faces.** Faces with different media behind them
-  raise `NotImplementedError`.
-- **Principal axes along the lattice.** The tensor is diagonal in
-  $(\hat{\mathbf{e}}_1, \hat{\mathbf{e}}_2)$. A cross-polarized reflection or
+- **Normal incidence.** An angle sweep or a wave vector with a tangential part
+  raises `ValueError`.
+- **Same medium on both faces**, or `NotImplementedError`.
+- **Principal axes along the lattice.** A cross-polarized reflection or
   transmission above 1 % of the co-polarized total
-  $\sqrt{|r_{ii}|^2 + |t_{ii}|^2}$ of the same incident column warns: align
-  the lattice with the axes of the structure. The total, not the block's own
-  co-polarized entry, so a matched slab with a vanishing co-polarized
-  reflection does not warn on round-off.
-- **Symmetric cell.** The inversion assumes the same reflection from both
-  sides. When the columns of the other face are excited too, a difference of
-  more than 1 % warns that the cell is asymmetric or bianisotropic, and the
-  result describes only the wave from the first face.
-- **Planes.** The two faces must be antiparallel and the planes must not meet
-  or cross (`ValueError`), and both polarizations of order $(0, 0)$ need a
-  port on both faces.
-- **`jax.jit`.** Put the solve inside the jitted function: the retrieval
-  checks normal incidence on the result's wave vector, which a result passed
-  as an argument traces (an error).
+  $\sqrt{|r_{ii}|^2 + |t_{ii}|^2}$ warns: align the lattice with the axes.
+- **Symmetric cell.** The inversion assumes the same reflection from both sides;
+  when the other face's columns are excited, a difference above 1 % warns that
+  the cell is asymmetric or bianisotropic.
+- **Planes.** The faces must be antiparallel and the planes must not meet or
+  cross (`ValueError`); both polarizations of order $(0, 0)$ need a port on both
+  faces.
+- **`jax.jit`.** Put the solve inside the jitted function: a result passed as an
+  argument traces its wave vector.
 
 ## Next
 

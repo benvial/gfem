@@ -255,7 +255,11 @@ arm a 3.330 V cm, push-pull 1.663 V cm
 
 Solve each arm's mode on an optical window that reaches the electrodes'
 inner edges, as here: the shift weighs the mode's tail, where the static
-field is strongest. The {py:obj}`gfem.conventions` module, "Electro-optic
+field is strongest. The {term}`electrode clearance` has a lower bound
+$\ln(1/\delta) / (2\kappa)$, with
+$\kappa = k_0 \sqrt{n_\mathrm{eff}^2 - n_\mathrm{slab}^2}$, so that the
+mode's intensity at the metal is $\delta$ of its value at the ridge's edge.
+The {py:obj}`gfem.conventions` module, "Electro-optic
 shift", gives the formulas, and {doc}`recipes/electro-optic-phase` the
 whole calculation.
 
