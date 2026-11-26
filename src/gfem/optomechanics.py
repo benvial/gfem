@@ -29,7 +29,7 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.constants
 
-from gfem._checks import is_traced
+from gfem._checks import is_staging, is_traced
 from gfem._dim2 import refuse_entry
 from gfem._optical_shift import (
     _check_model,
@@ -40,6 +40,7 @@ from gfem._optical_shift import (
 )
 from gfem._pytree import register_fields
 from gfem.acousto_optic import (
+    _Caller,
     _check_displacement,
     _check_optical_fixed,
     _check_plane,
@@ -53,7 +54,8 @@ from gfem.errors import NonDifferentiableError
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from gfem._field import FieldMap
+    from gfem._field import Field, FieldMap
+    from gfem.acousto_optic import _Crystal
     from gfem.model import Model
     from gfem.results import MechanicalEigenmodeResult
 
@@ -64,8 +66,20 @@ __all__ = [
     "optomechanical_overlap",
 ]
 
-_OWNER = "optomechanical_overlap"
-_COUPLING = "optomechanical_coupling"
+_OVERLAP = _Caller(
+    "optomechanical_overlap",
+    "the optomechanical overlap",
+    "the displacement",
+    "the displacement or the photoelastic_tensor",
+    "mechanical",
+)
+_COUPLING = _Caller(
+    "optomechanical_coupling",
+    "the optomechanical coupling",
+    "the displacement",
+    "the mechanical model or the photoelastic_tensor",
+    "mechanical",
+)
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -78,7 +92,15 @@ class OptomechanicalOverlap:
     (the displacement is in metres, the index per unit amplitude of that
     field). The phase of the displacement carries into the values: complex for
     a complex displacement (a lossy or a driven mode), real to round-off for a
-    real one.
+    real one. A mechanical mode's sign follows its phase convention: an
+    optimizer reads :math:`|\partial n_\mathrm{eff}/\partial\alpha|^2`.
+
+    `optomechanical_overlap` gives one displacement's overlap, with the parts
+    complex scalars. The ``overlap`` of an `OptomechanicalCoupling` holds those
+    of its ``n`` mechanical modes at once: ``moving_boundary`` and
+    ``photoelastic`` (so ``total``) are then arrays ``(n,)`` in the order of
+    its ``modes``, and ``n_eff`` and ``n_g`` stay scalars (one optical mode
+    serves them all).
 
     Attributes:
         port: The wave port's name.
@@ -88,9 +110,9 @@ class OptomechanicalOverlap:
             lossless), a constant.
         n_g: The mode's group index (real), a constant.
         moving_boundary: :math:`\delta n_\mathrm{MB}`, the moving-boundary
-            part, complex scalar.
-        photoelastic: :math:`\delta n_\mathrm{PE}`, the photoelastic part,
-            complex scalar.
+            part: a complex scalar, or ``(n,)`` over a coupling's modes.
+        photoelastic: :math:`\delta n_\mathrm{PE}`, the photoelastic part:
+            a complex scalar, or ``(n,)`` over a coupling's modes.
     """
 
     port: str
@@ -159,42 +181,191 @@ def _node_gradient(
     import gfem
     from gfem.problems import PortMode
 
-    kept: dict[str, Any] = {}
+    found: list[int] = []
 
-    def n_eff(nodes: jax.Array) -> tuple[jax.Array, jax.Array]:
+    def n_eff(nodes: jax.Array) -> tuple[jax.Array, tuple[jax.Array, jax.Array]]:
         moved = model.replace(mesh=model.mesh.with_nodes(nodes))
         out = gfem.solve(moved, PortMode(port, frequency, mode=mode))
-        kept["mode"] = out.mode
-        n_g = jnp.asarray(out.n_g)  # a PortMode solve always carries it
-        kept["n_g"] = jax.lax.stop_gradient(jnp.real(n_g[0]))
-        value = out.n_eff[0]
-        return jnp.real(value), jax.lax.stop_gradient(jnp.real(value))
+        found.append(out.mode)  # a Python int, not traced
+        n_g = jnp.real(jnp.asarray(out.n_g)[0])  # a PortMode solve always carries it
+        value = jnp.real(out.n_eff[0])
+        return value, (jax.lax.stop_gradient(value), jax.lax.stop_gradient(n_g))
 
-    grad, n = jax.grad(n_eff, has_aux=True)(jnp.asarray(model.mesh.nodes))
-    return np.asarray(grad), n, kept["n_g"], kept["mode"]
+    grad, (n, n_g) = jax.grad(n_eff, has_aux=True)(jnp.asarray(model.mesh.nodes))
+    return np.asarray(grad), n, n_g, found[0]
 
 
-def _supported_nodes(
-    displacement: FieldMap, nodes: np.ndarray
-) -> tuple[np.ndarray, np.ndarray]:
-    """The rows of ``nodes`` (``(n, 3)``, m) in the displacement's support.
+def _host_nodes(mesh: Any) -> np.ndarray:
+    """The node coordinates of ``mesh`` as numbers (m).
 
-    Returns the boolean mask over ``nodes`` and the points ``(m, 2)`` of the
-    covered ones, the :math:`(x, y)` the in-plane displacement is read at.
+    The support is a place, not a design variable: its tests read the value of
+    node coordinates a node map traces.
     """
+    nodes = mesh.nodes
+    if is_traced(nodes):
+        nodes = jax.lax.stop_gradient(nodes)
+    return np.asarray(nodes, float)
+
+
+def _covered(displacement: FieldMap, xy: np.ndarray) -> np.ndarray:
+    """Which points ``xy`` (``(n, 2)``, m) both in-plane components are defined at."""
     from gfem import _probe
 
-    xy = nodes[:, :2]
     mask = np.ones(len(xy), bool)
     for c in "xy":
         field = displacement[c]
-        # the support is a place, not a design variable: its test reads the
-        # value of node coordinates a node map traces
         mesh = field.mesh
-        if is_traced(mesh.nodes):
-            mesh = mesh.with_nodes(jax.lax.stop_gradient(mesh.nodes))
+        if is_traced(mesh.nodes):  # the place a node map traces, as numbers
+            mesh = mesh.with_nodes(_host_nodes(mesh))
         mask &= _probe.engine().covered(mesh, _probe.layout(field), xy)
-    return mask, xy[mask]
+    return mask
+
+
+def _support_boundary(field: Field) -> tuple[np.ndarray, np.ndarray]:
+    """The edges of the boundary of ``field``'s support on its 2D mesh.
+
+    Returns the end points ``(k, 2, 2)`` (m) of each edge and the centroid
+    ``(k, 2)`` of the support triangle that owns it.
+    """
+    from gfem import _probe
+
+    nodes = _host_nodes(field.mesh)[:, :2]
+    inside = _probe.engine().in_support(field.mesh, _probe.layout(field))
+    tris = np.asarray(field.mesh.volume_elements)[inside]
+    edges = np.concatenate([tris[:, [0, 1]], tris[:, [1, 2]], tris[:, [2, 0]]])
+    owner = np.tile(np.arange(len(tris)), 3)
+    _, first, count = np.unique(
+        np.sort(edges, axis=1), axis=0, return_index=True, return_counts=True
+    )
+    once = first[count == 1]
+    return nodes[edges[once]], nodes[tris[owner[once]]].mean(axis=1)
+
+
+#: Where a node off the support reads the displacement: this share of the way
+#: from the nearest point of the boundary to the centroid of the triangle that
+#: owns it, so the point lies inside that triangle (its barycentric coordinates
+#: are at least this over 3, far above the locator's 1e-9) and moves the value
+#: read by this share of the triangle's variation, far below the sagitta the
+#: node stands off by.
+_INWARD = 1e-6
+
+
+def _nearest_on_boundary(
+    points: np.ndarray, edges: np.ndarray, centroids: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    r"""The read point of each of ``points`` near the boundary ``edges``.
+
+    A point within a quarter of an edge's length :math:`h` of that edge reads
+    at the edge's nearest point, moved `_INWARD`. Why a quarter: a chord of
+    length :math:`h` of a boundary curve with radius of curvature :math:`R`
+    lies inside the curve by at most its sagitta,
+    :math:`R - \sqrt{R^2 - h^2/4} \le h/4` for :math:`R \ge 5h/8`
+    (:math:`\approx h^2/(8R)` when :math:`R \gg h`). So a node of the curve
+    that another mesh's vertices miss is that close to one of its edges
+    wherever the mesh resolves the curve with edges shorter than 1.6
+    :math:`R`, while a node a few edges away, which the support does not reach,
+    is not taken. Returns a mask over ``points`` and the read points ``(m,
+    2)`` of the points it keeps.
+    """
+    from scipy.spatial import KDTree
+
+    keep = np.zeros(len(points), bool)
+    read = np.zeros((len(points), 2))
+    if not len(edges):
+        return keep, read[keep]
+    a, b = edges[:, 0], edges[:, 1]
+    length = np.linalg.norm(b - a, axis=1)
+    # an edge within a quarter of its length of a point has its midpoint within
+    # three quarters of it
+    near = KDTree((a + b) / 2).query_ball_point(points, 0.75 * length.max())
+    for i, (p, candidates) in enumerate(zip(points, near, strict=True)):
+        if not candidates:
+            continue
+        k = np.asarray(candidates)
+        ab = b[k] - a[k]
+        t = np.clip(np.einsum("ij,ij->i", p - a[k], ab) / length[k] ** 2, 0.0, 1.0)
+        foot = a[k] + t[:, None] * ab
+        gap = np.linalg.norm(p - foot, axis=1)
+        ok = np.flatnonzero(gap <= length[k] / 4)
+        if not len(ok):
+            continue
+        j = ok[np.argmin(gap[ok])]
+        keep[i] = True
+        read[i] = foot[j] + _INWARD * (centroids[k[j]] - foot[j])
+    return keep, read[keep]
+
+
+def _sampled_nodes(
+    displacement: FieldMap, xy: np.ndarray, interface: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """The section nodes ``xy`` (``(n, 2)``, m) the displacement moves.
+
+    A node in the support reads the displacement where it stands. A node on
+    an interface of the optical section (``interface``) that lies just off the
+    support, where a curved boundary meshed twice puts it, reads it at the
+    nearest point of the support's boundary (`_nearest_on_boundary`). Every
+    other node stays. Returns the mask over ``xy`` and the read points ``(m,
+    2)`` of the moved nodes, in their order.
+    """
+    inside = _covered(displacement, xy)
+    read = xy.copy()
+    off = np.flatnonzero(interface & ~inside)
+    if len(off):
+        edges, centroids = _support_boundary(displacement["x"])
+        near, points = _nearest_on_boundary(xy[off], edges, centroids)
+        held = _covered(displacement, points)
+        near[np.flatnonzero(near)[~held]] = False
+        inside[off[near]] = True
+        read[off[near]] = points[held]
+    return inside, read[inside]
+
+
+class _Section(NamedTuple):
+    """The port's section as the moving boundary reads it.
+
+    ``nodes`` are the section's mesh nodes; ``interface`` marks those shared
+    by triangles of two volume regions; ``walls`` are the edges (pairs of
+    positions in ``nodes``) of the loop around the whole section, the optical
+    domain's truncation, and ``normals`` their unit normals in :math:`(x, y)`.
+    """
+
+    nodes: np.ndarray
+    interface: np.ndarray
+    walls: np.ndarray
+    normals: np.ndarray
+
+
+def _section_nodes(model: Model, faces: np.ndarray, tets: np.ndarray) -> _Section:
+    """The nodes, interfaces and outer walls of the section ``faces``."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    mesh = model.mesh
+    tri = np.asarray(mesh.triangles)[faces]
+    nodes = np.unique(tri)
+    local = np.searchsorted(nodes, tri)
+    tags = np.repeat(np.asarray(mesh.tetrahedron_tags)[tets], 3)
+    pairs = np.unique(np.stack([local.ravel(), tags], axis=1), axis=0)
+    interface = np.bincount(pairs[:, 0], minlength=len(nodes)) > 1
+    edges = np.sort(
+        np.concatenate([local[:, [0, 1]], local[:, [1, 2]], local[:, [2, 0]]]), axis=1
+    )
+    unique, count = np.unique(edges, axis=0, return_counts=True)
+    rim = unique[count == 1]
+    # the loop around the whole section holds its leftmost node; the other loops
+    # of the rim are holes (an excluded electrode), whose edges are surfaces
+    xy = _host_nodes(mesh)[nodes, :2]
+    graph = coo_matrix(
+        (np.ones(len(rim)), (rim[:, 0], rim[:, 1])), shape=(len(nodes),) * 2
+    )
+    _, label = connected_components(graph, directed=False)
+    on_rim = np.unique(rim)
+    leftmost = on_rim[np.argmin(xy[on_rim, 0])]
+    walls = rim[label[rim[:, 0]] == label[leftmost]]
+    tangent = xy[walls[:, 1]] - xy[walls[:, 0]]
+    normals = np.stack([tangent[:, 1], -tangent[:, 0]], axis=1)
+    normals /= np.linalg.norm(normals, axis=1, keepdims=True)
+    return _Section(nodes, interface, walls, normals)
 
 
 class _Setup(NamedTuple):
@@ -203,65 +374,68 @@ class _Setup(NamedTuple):
     frequency: float
     faces: np.ndarray
     tets: np.ndarray
-    crystal: Any
-    section: np.ndarray
-    nodes: np.ndarray
-    ip: np.ndarray
+    crystal: _Crystal
+    section: _Section
+    photoelastic_rows: np.ndarray
+    nodes_xy: np.ndarray
+
+
+def _refuse_jit(caller: _Caller) -> None:
+    """Raise `NonDifferentiableError` inside `jax.jit` (or another staging trace)."""
+    if is_staging():
+        raise NonDifferentiableError(
+            f"{caller.owner} cannot run inside jax.jit: it reads the optical "
+            "mode's node gradient and the displacement's mesh as numbers. Call it "
+            "outside jax.jit (jax.grad works through it) and jit the rest."
+        )
 
 
 def _setup(
-    model: Model,
-    port: str,
-    frequency: float,
-    owner: str,
-    what: str,
-    *,
-    through: str,
-    displacement: Any,
+    model: Model, port: str, frequency: float, caller: _Caller, displacement: Any
 ) -> _Setup:
     """Check the optical model and read its section (no solve).
 
     Raises what `optomechanical_overlap` documents for the model, the port,
     the frequency and ``displacement``.
     """
-    refuse_entry(getattr(model, "mesh", None), owner)
-    _check_model(model, owner)
-    _check_displacement(displacement, owner)
-    f = _frequency(frequency, owner)
+    _refuse_jit(caller)
+    refuse_entry(getattr(model, "mesh", None), caller.owner)
+    _check_model(model, caller.owner)
+    _check_displacement(displacement, caller.owner)
+    f = _frequency(frequency, caller.owner)
     faces, tets = _section(model, _wave_port(model, port))
-    crystal = _crystal(
-        model, port, tets, owner, tensors=("photoelastic_tensor",), require=False
-    )
-    _check_optical_fixed(model, owner, what, through)
+    crystal = _crystal(model, port, tets, caller, electro_optic=False, require=False)
+    _check_optical_fixed(model, caller)
     if is_traced(model.mesh.nodes):
         raise NonDifferentiableError(
-            f"{owner}: gfem cannot differentiate {what} "
+            f"{caller.owner}: gfem cannot differentiate {caller.what} "
             "with respect to the optical model's node coordinates: the mode and "
             "the points the displacement is read at are held constant. Wrap them "
             "in jax.lax.stop_gradient to use their value without their "
             "derivative."
         )
-    _check_plane(model.mesh, faces, port, owner, "mechanical")
-    section = np.unique(np.asarray(model.mesh.triangles)[faces])
+    _check_plane(model.mesh, faces, port, caller)
     return _Setup(
         f,
         faces,
         tets,
         crystal,
-        section,
-        np.asarray(model.mesh.nodes, float),
+        _section_nodes(model, faces, tets),
         np.flatnonzero(crystal.has_p),
+        np.asarray(model.mesh.nodes, float)[:, :2],
     )
 
 
 def _check_support(
-    setup: _Setup, displacement: FieldMap, owner: str, port: str
+    setup: _Setup, displacement: FieldMap, caller: _Caller, port: str
 ) -> tuple[np.ndarray, np.ndarray]:
-    """The section's nodes in the displacement's support; raise if nothing couples."""
-    inside, points = _supported_nodes(displacement, setup.nodes[setup.section])
-    if not len(setup.ip) and not inside.any():
+    """The section's moved nodes and their read points; raise if nothing couples."""
+    section = setup.section
+    xy = setup.nodes_xy[section.nodes]
+    inside, points = _sampled_nodes(displacement, xy, section.interface)
+    if not len(setup.photoelastic_rows) and not inside.any():
         raise ValueError(
-            f"{owner}: no element of wave port {port!r}'s section has a "
+            f"{caller.owner}: no element of wave port {port!r}'s section has a "
             "photoelastic_tensor and no node of the section lies in the "
             "displacement's support, so the overlap is zero. Set a "
             "photoelastic_tensor on the optical material, or align the "
@@ -277,15 +451,20 @@ class _Solved(NamedTuple):
     n_eff: jax.Array
     n_g: jax.Array
     mode: int
-    weights: Any
+    weights: jax.Array
 
 
 def _solve_optical(model: Model, setup: _Setup, port: str, mode: int | None) -> _Solved:
-    """The one optical solve set: the mode, its node gradient and its weights."""
+    """The optical work, done once for every displacement.
+
+    Two port mode solves: one with its backward pass for the node gradient,
+    and, with a photoelastic element, one of the weights rule for its tensor
+    weights.
+    """
     optical = _optical_only(model)
     grad, n_eff, n_g, found = _node_gradient(optical, port, setup.frequency, mode)
-    weights = None
-    if len(setup.ip):
+    weights = jnp.zeros((0, 3, 3))  # no photoelastic element reads them
+    if len(setup.photoelastic_rows):
         _, _, weights, _ = _mode_weights(
             optical,
             port,
@@ -298,6 +477,46 @@ def _solve_optical(model: Model, setup: _Setup, port: str, mode: int | None) -> 
     return _Solved(grad, n_eff, n_g, found, weights)
 
 
+#: A wall node moves across its wall when the normal part of its displacement
+#: exceeds this share of the largest displacement of the section. A motion along
+#: a straight wall reads a normal part of exactly zero, or round-off of it
+#: (1e-16 relative); a wall that moves with the structure, the case to refuse,
+#: moves by a share of order one.
+_ACROSS = 1e-8
+
+
+def _check_walls(
+    setup: _Setup, w: jax.Array, inside: np.ndarray, caller: _Caller, port: str
+) -> None:
+    """Raise if the displacement moves a node across the section's outer wall.
+
+    ``w`` is the in-plane displacement ``(m, 2)`` of the moved nodes
+    ``inside`` (a mask over the section's nodes). Its value is read as numbers
+    (`jax.grad` passes it through); a batch of `jax.vmap` is not checked.
+    """
+    value = jax.lax.stop_gradient(w)
+    if is_traced(value) or not len(setup.section.walls):
+        return
+    full = np.zeros((len(inside), 2), complex)
+    full[inside] = np.asarray(value)
+    scale = np.abs(full).max()
+    walls, normals = setup.section.walls, setup.section.normals
+    across = np.abs(np.einsum("kij,kj->ki", full[walls], normals))
+    if not scale or across.max() <= _ACROSS * scale:
+        return
+    k, end = np.unravel_index(np.argmax(across), across.shape)
+    node = setup.section.nodes[walls[k, end]]
+    at = ", ".join(f"{v:.6g}" for v in setup.nodes_xy[node])
+    raise ValueError(
+        f"{caller.owner}: the displacement moves node ({at}) m of wave port "
+        f"{port!r}'s section across the section's outer edge, the truncation "
+        "of the optical domain (its walls are not a surface of the structure, "
+        "and moving them changes the mode). Keep the moving parts away from the "
+        "edge: enlarge the optical section, or clamp the mechanical solid where "
+        "it meets the edge."
+    )
+
+
 def _parts(
     model: Model,
     setup: _Setup,
@@ -306,30 +525,31 @@ def _parts(
     *,
     inside: np.ndarray,
     points: np.ndarray,
-    owner: str,
+    caller: _Caller,
     port: str,
 ) -> tuple[jax.Array, jax.Array]:
     """The moving-boundary and photoelastic overlaps of one displacement."""
-    crystal, ip = setup.crystal, setup.ip
+    crystal, rows = setup.crystal, setup.photoelastic_rows
     mb = jnp.zeros((), dtype=jnp.complex128)
     pe = jnp.zeros((), dtype=jnp.complex128)
-    if len(ip):
+    if inside.any():
+        w = jnp.stack([displacement[c].at(points) for c in "xy"], axis=1)
+        _check_walls(setup, w, inside, caller, port)
+        g = jnp.asarray(solved.grad[setup.section.nodes[inside]][:, :2])
+        mb = jnp.sum(g * w).astype(jnp.complex128)
+    if len(rows):
         mean_s = _mean_strain_of(
             displacement,
             model.mesh,
-            setup.tets[crystal.rows[ip]],
+            setup.tets[crystal.rows[rows]],
             offset=jnp.zeros(2),
-            owner=f"{owner} (wave port {port!r})",
+            owner=f"{caller.owner} (wave port {port!r})",
             moved={},
         )
-        eta = jnp.einsum("nIJ,nJ->nI", crystal.p[ip], mean_s)
+        eta = jnp.einsum("nIJ,nJ->nI", crystal.p[rows], mean_s)
         pe = _contribution(
-            solved.weights[crystal.rows[ip]], crystal.eps[ip], eta[None]
+            solved.weights[crystal.rows[rows]], crystal.eps[rows], eta[None]
         )[0]
-    if inside.any():
-        w = jnp.stack([displacement[c].at(points) for c in "xy"], axis=1)
-        g = jnp.asarray(solved.grad[setup.section[inside]][:, :2])
-        mb = jnp.sum(g * w).astype(jnp.complex128)
     return mb, pe.astype(jnp.complex128)
 
 
@@ -366,9 +586,22 @@ def optomechanical_overlap(
     node of a section that is invariant along :math:`z`). It is the discrete
     form of Johnson's interface integral, exact for the discrete problem, for
     any permittivity (anisotropic included) and without a one-sided sampling of
-    the field at a corner. It needs no conformity of the two meshes: an
-    interface of the optical mesh carries the term, and a mechanical boundary
-    inside a homogeneous optical region contributes discretization error only.
+    the field at a corner. An interface of the optical mesh carries the term,
+    and a mechanical boundary inside a homogeneous optical region contributes
+    discretization error only. The two meshes need not share nodes: where a
+    curved boundary is meshed twice, each mesh's boundary is the polygon
+    through its own vertices, and an interface node of the section that lies
+    off the mechanical polygon, within a quarter of the nearest mechanical
+    boundary edge's length :math:`h` (beyond the chord's sagitta
+    :math:`\approx h^2/(8R)` wherever the radius of curvature :math:`R`
+    exceeds :math:`5h/8`), reads the displacement at the nearest point of that
+    boundary. A node that is not on an interface, and one farther off, does
+    not move.
+
+    The section's outer edge, the truncation of the optical domain (a PEC or
+    natural wall), must clear the moving parts: a displacement that moves a
+    node of that edge across it is refused, as it would move the wall. A
+    motion along a straight wall is not a motion of the wall and is read.
 
     The photoelastic part is the first-order shift of
     `gfem.acousto_optic_shift` for the strain :math:`\bar S_t` of the
@@ -384,10 +617,15 @@ def optomechanical_overlap(
     parts, and a mechanical mode's own sign follows its phase convention.
     A positive value means the displacement raises the effective index.
 
-    The optical mode is solved once and held constant. `jax.grad` reaches
-    the displacement's fields (so every input of the mechanical solve that
-    made them) and the ``photoelastic_tensor`` of a `gfem.MaterialField`; the
-    optical model's other inputs are refused.
+    The optical mode is solved once (two port mode solves: one with its
+    backward pass for the node gradient, one for the photoelastic weights)
+    and held constant. `jax.grad` reaches the displacement's fields (so every
+    input of the mechanical solve that made them) and the
+    ``photoelastic_tensor`` of a `gfem.MaterialField`; the optical model's
+    other inputs are refused. The function runs outside `jax.jit` only. A
+    mode's sign follows its phase convention, which can flip between two
+    nearby designs of a symmetric section: an objective reads the
+    convention-free :math:`|\partial n_\mathrm{eff}/\partial\alpha|^2`.
 
     Args:
         model: The optical model: a 3D slab (`gfem.Mesh.from_gmsh_cross_section`)
@@ -397,7 +635,7 @@ def optomechanical_overlap(
             the same global :math:`(x, y)` as the optical section (translate a
             mesh to align them).
         port: The wave port's name; its section lies in a plane
-            :math:`z` = const.
+            :math:`z = \mathrm{const}`.
         frequency: One optical frequency, Hz.
         mode: Which mode (1 = the most propagating), or ``None`` for the wave
             port's own.
@@ -411,10 +649,12 @@ def optomechanical_overlap(
         ValueError: ``port`` is not a wave port of the model, a sequence of
             frequencies is given, ``displacement`` lacks a component, is not
             on a 2D mesh or has an axial wavenumber other than 0, the port's
-            section is not in a plane z = const, no node of the section is in
-            the displacement's support and no element has a
-            ``photoelastic_tensor``, or an element with one lies outside the
-            displacement's support (the message names the region).
+            section is not in a plane :math:`z = \mathrm{const}`, no node of
+            the section is in the displacement's support and no element has a
+            ``photoelastic_tensor``, an element with one lies outside the
+            displacement's support (the message names the region), or the
+            displacement moves a node of the section's outer edge across it
+            (the message names the node).
         NotImplementedError: The model is on a 2D mesh (a 2D `gfem.PortMode` is
             a line mode) or the section is lossy (a complex ``eps_r``, a
             ``tan_delta`` or ``conductivity`` other than 0, or a permittivity
@@ -422,18 +662,11 @@ def optomechanical_overlap(
         NonDifferentiableError: Under `jax.grad`, an input of the optical
             model other than the photoelastic tensors (its ``eps_r``,
             ``tan_delta``, ``mu_r``, ``conductivity`` or node coordinates):
-            the mode is held constant.
+            the mode is held constant. Inside `jax.jit`: the overlap reads
+            the mode's node gradient and the meshes as numbers.
     """
-    setup = _setup(
-        model,
-        port,
-        frequency,
-        _OWNER,
-        "the optomechanical overlap",
-        through="the displacement or the photoelastic_tensor",
-        displacement=displacement,
-    )
-    inside, points = _check_support(setup, displacement, _OWNER, port)
+    setup = _setup(model, port, frequency, _OVERLAP, displacement)
+    inside, points = _check_support(setup, displacement, _OVERLAP, port)
     solved = _solve_optical(model, setup, port, mode)
     mb, pe = _parts(
         model,
@@ -442,7 +675,7 @@ def optomechanical_overlap(
         displacement,
         inside=inside,
         points=points,
-        owner=_OWNER,
+        caller=_OVERLAP,
         port=port,
     )
     return OptomechanicalOverlap(
@@ -482,7 +715,7 @@ class OptomechanicalCoupling:
     Attributes:
         overlap: The `OptomechanicalOverlap` of each mode, arrays of
             shape ``(n,)`` over the modes (``n_eff``, ``n_g`` are scalars:
-            one optical solve serves every mode).
+            one optical mode serves every mode).
         omega_m: The mechanical modes' complex angular frequencies, rad/s,
             ``(n,)``.
         moving_boundary: The moving-boundary part of :math:`\tilde g_0`, ``(n,)``.
@@ -543,18 +776,22 @@ def _modes(mechanical: MechanicalEigenmodeResult, selection: Any) -> tuple[int, 
     n = mechanical.n_modes
     if selection is None:
         return tuple(range(n))
-    picked = [selection] if isinstance(selection, int | np.integer) else selection
+    single = isinstance(selection, int | np.integer | bool | np.bool_)
     modes = []
-    for k in picked:
-        if not isinstance(k, int | np.integer):
+    for k in [selection] if single else selection:
+        if isinstance(k, bool | np.bool_) or not isinstance(k, int | np.integer):
             raise TypeError(
-                f"{_COUPLING}: mechanical_modes takes an int or a sequence of "
-                f"ints, got {k!r}."
+                f"{_COUPLING.owner}: mechanical_modes takes an int or a sequence "
+                f"of ints, got {k!r}."
             )
-        mechanical.displacement(int(k))  # raises IndexError for a missing mode
+        if not -n <= int(k) < n:
+            raise IndexError(
+                f"{_COUPLING.owner}: Mode {int(k)} does not exist: the result has "
+                f"{n} mode(s), numbered from 0."
+            )
         modes.append(int(k) % n)
     if not modes:
-        raise ValueError(f"{_COUPLING}: mechanical_modes is empty.")
+        raise ValueError(f"{_COUPLING.owner}: mechanical_modes is empty.")
     return tuple(modes)
 
 
@@ -587,22 +824,23 @@ def optomechanical_coupling(
         \frac{\partial n_\mathrm{eff}}{\partial\alpha}\,
         \sqrt{\frac{\hbar\,\mathrm{Re}\,\Omega}{4}}
 
-    with :math:`n_g` the port mode's group index (material dispersion
-    included) and :math:`\hbar` from `scipy.constants`. The sign is the
+    with :math:`n_g` the port mode's group index and :math:`\hbar` from
+    `scipy.constants`. The sign is the
     convention :math:`g_0 = -(\partial\omega_c/\partial\alpha)\,\alpha_\mathrm{zpf}`,
     positive when the mode's displacement raises the effective index, and it
     follows the mode's phase convention: read :math:`|g_0|`. The modes
     are intramodal forward couplings at :math:`q = 0`; the roto-optic term is
     not counted.
 
-    The optical mode, its node gradient and its weights are solved once, for
-    every requested mechanical mode. `jax.grad` reaches every input of the
-    mechanical solve (stiffness, density, quality factor, piezoelectric
-    tensor, permittivity, node coordinates of the mechanical mesh) through
-    :math:`\mathrm{Re}\,\Omega` and the mode field, and the
-    ``photoelastic_tensor``; a clustered (degenerate) mode is refused by the
+    The optical mode, its node gradient and its weights are solved once (two
+    port mode solves) for every requested mechanical mode. `jax.grad`
+    reaches every input of the mechanical solve (stiffness, density, quality
+    factor, piezoelectric tensor, permittivity, node coordinates of the
+    mechanical mesh) through :math:`\mathrm{Re}\,\Omega` and the mode field,
+    and the ``photoelastic_tensor``; a clustered (degenerate) mode is refused by the
     mechanical solve's backward pass, as for any scalar of the mode. The
-    optical model's other inputs are refused (the mode is held constant).
+    optical model's other inputs are refused (the mode is held constant), and
+    so is `jax.jit`. An objective reads the convention-free :math:`|g_0|^2`.
 
     Args:
         model: The optical model, as for `optomechanical_overlap`.
@@ -632,29 +870,22 @@ def optomechanical_coupling(
     """
     from gfem.results import MechanicalEigenmodeResult
 
+    _refuse_jit(_COUPLING)
     if not isinstance(mechanical, MechanicalEigenmodeResult):
         raise TypeError(
-            f"{_COUPLING} takes a gfem.MechanicalEigenmodeResult (the solve of a "
+            f"{_COUPLING.owner} takes a gfem.MechanicalEigenmodeResult (the solve of a "
             f"gfem.MechanicalEigenmode), got {type(mechanical).__name__}; give a "
             "displacement FieldMap to optomechanical_overlap instead."
         )
     if mechanical.wavenumber != 0:
         raise ValueError(
-            f"{_COUPLING}: the mechanical modes have the axial wavenumber "
+            f"{_COUPLING.owner}: the mechanical modes have the axial wavenumber "
             f"q = {mechanical.wavenumber:g} rad/m; only q = 0 is read (a mode "
             "with q != 0 averages to zero against an optical mode with itself)."
         )
     modes = _modes(mechanical, mechanical_modes)
     first = mechanical.displacement(modes[0])
-    setup = _setup(
-        model,
-        port,
-        frequency,
-        _COUPLING,
-        "the optomechanical coupling",
-        through="the mechanical model or the photoelastic_tensor",
-        displacement=first,
-    )
+    setup = _setup(model, port, frequency, _COUPLING, first)
     inside, points = _check_support(setup, first, _COUPLING, port)
     solved = _solve_optical(model, setup, port, mode)
     parts = [
@@ -665,7 +896,7 @@ def optomechanical_coupling(
             mechanical.displacement(m),
             inside=inside,
             points=points,
-            owner=_COUPLING,
+            caller=_COUPLING,
             port=port,
         )
         for m in modes

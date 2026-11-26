@@ -1,17 +1,18 @@
 r"""`gfem.optomechanical_coupling`: the vacuum coupling of mechanical modes.
 
 The optical section is the layered slab of `test_optomechanics` with a
-photoelastic film; the mechanical side is the same film alone, a 2 x 0.6 um
-rectangle of an isotropic silicon-like solid suspended in air (every side
-free), on a native 2D mesh of the same (x, y), solved by
-`gfem.MechanicalEigenmode` at :math:`q = 0`. Its modes near 2.15 GHz are a
-strong symmetric mode (index 0, :math:`|\tilde g_0|` of order $10^3$) and a
-weak one 5 % above it (index 1).
+photoelastic film and oxide beside it (`optomechanics_cases.embedded`: the
+side walls clear the film, whose free ends move along x); the mechanical side
+is the film alone, a 2 x 0.6 um rectangle of an isotropic silicon-like solid
+suspended in air (every side free), on a native 2D mesh of the same (x, y),
+solved by `gfem.MechanicalEigenmode` at :math:`q = 0`. Its modes near 2.15 GHz
+are a strong symmetric mode (index 0, :math:`|\tilde g_0|` of order
+:math:`10^3`) and a weak one 5 % above it (index 1).
 
-Gradients are read through $|\cdot|^2$ of the parts and the total: the phase
-gauge of a mode (largest displacement coefficient real and positive) ties on
-this mirror-symmetric section, so the sign of $g_0$ can flip between finite
-difference samples, and $|g_0|^2$ is gauge-free.
+Gradients are read through :math:`|\cdot|^2` of the parts and the total: the
+phase gauge of a mode (largest displacement coefficient real and positive)
+ties on this mirror-symmetric section, so the sign of :math:`g_0` can flip
+between finite difference samples, and :math:`|g_0|^2` is gauge-free.
 """
 
 import dataclasses
@@ -20,6 +21,7 @@ import electro_optic_cases as eo
 import finite_differences as fd
 import jax
 import jax.numpy as jnp
+import mechanical_cases as mc
 import numpy as np
 import optomechanics_cases as oc
 import pytest
@@ -58,12 +60,12 @@ def _coupling(model, result, **kw):
 @pytest.fixture(scope="module")
 def meshes(tmp_path_factory):
     path = tmp_path_factory.mktemp("coupling")
-    return oc.film_rectangle(path / "film.msh"), oc.slab(path / "slab.msh", ROUGH)
+    return oc.film_rectangle(path / "film.msh"), oc.embedded(path / "slab.msh", ROUGH)
 
 
 @pytest.fixture(scope="module")
 def optical(meshes):
-    return oc.model(meshes[1], _film())
+    return oc.embedded_model(meshes[1], _film())
 
 
 @pytest.fixture(scope="module")
@@ -137,9 +139,12 @@ def test_the_modes_are_selected_by_number(optical, modes, coupling):
     np.testing.assert_allclose(swapped.total, coupling.total[::-1], rtol=1e-10, atol=0)
 
 
-def test_one_optical_solve_serves_every_mechanical_mode(optical, modes, monkeypatch):
-    # the optical work is the port mode's node gradient (one gfem.solve) and the
-    # weights (one _mode_weights): the same count for one mode as for two
+def test_one_optical_solve_set_serves_every_mechanical_mode(
+    optical, modes, monkeypatch
+):
+    # the optical work is two port mode solves: the node gradient (one
+    # gfem.solve and its backward pass) and the weights rule (one _mode_weights,
+    # its own solve); the same count for one mechanical mode as for two
     from gfem import optomechanics
 
     calls = {"solve": 0, "weights": 0}
@@ -160,8 +165,7 @@ def test_one_optical_solve_serves_every_mechanical_mode(optical, modes, monkeypa
     calls.update(solve=0, weights=0)
     _coupling(optical, modes)
     assert calls == one
-    assert one["solve"] >= 1
-    assert one["weights"] == 1
+    assert one == {"solve": 1, "weights": 1}
 
 
 def test_a_mode_stores_one_joule_per_metre_which_the_formula_assumes(modes, meshes):
@@ -289,8 +293,10 @@ def test_modes_out_of_range_or_empty_raise(optical, modes):
         _coupling(optical, modes, mechanical_modes=[0, -3])
     with pytest.raises(ValueError, match="mechanical_modes is empty"):
         _coupling(optical, modes, mechanical_modes=[])
-    with pytest.raises(TypeError, match="takes an int or a sequence of ints"):
-        _coupling(optical, modes, mechanical_modes=[0.5])
+    for bad in ([0.5], True, [False]):
+        # a bool is no mode number, though Python counts it an int
+        with pytest.raises(TypeError, match="takes an int or a sequence"):
+            _coupling(optical, modes, mechanical_modes=bad)
 
 
 @pytest.mark.parametrize("length", [0.0, -1e-3])
@@ -324,7 +330,7 @@ def test_no_photoelastic_tensor_and_no_node_in_the_support_raises(meshes, modes)
             for f in modes.displacement_fields
         ),
     )
-    plain = oc.model(meshes[1], gfem.Material(eps_r=EPS))
+    plain = oc.embedded_model(meshes[1], gfem.Material(eps_r=EPS))
     with pytest.raises(ValueError, match=r"optomechanical_coupling: no element"):
         _coupling(plain, away)
 
@@ -334,10 +340,27 @@ def test_a_traced_optical_permittivity_raises_with_the_stop_gradient_advice(
 ):
     def f(eps):
         film = gfem.MaterialField(eps_r=eps, photoelastic_tensor=jnp.asarray(P))
-        return jnp.real(_coupling(oc.model(meshes[1], film), modes).total[0])
+        return jnp.real(_coupling(oc.embedded_model(meshes[1], film), modes).total[0])
 
     with pytest.raises(gfem.NonDifferentiableError, match="optomechanical coupling"):
         jax.grad(f)(jnp.asarray(EPS))
+
+
+def test_the_coupling_refuses_jit_by_name(optical, meshes):
+    # the coupling reads the optical node gradient and the meshes as numbers
+    model = oc.film_model(meshes[0])
+
+    def f(scale):
+        result = gfem.solve(
+            mc.edited(model, ["film"], stiffness=scale * jnp.asarray(C_BASE)),
+            gfem.MechanicalEigenmode(TARGET, n_modes=2),
+        )
+        return jnp.abs(_coupling(optical, result).total[0])
+
+    with pytest.raises(
+        gfem.NonDifferentiableError, match=r"cannot run inside jax\.jit"
+    ):
+        jax.jit(f)(jnp.asarray(1.0))
 
 
 def test_a_clustered_mode_raises_under_grad(optical, meshes):
@@ -379,43 +402,14 @@ def _check(objective, p0, d, step, *, groups=None, inert=()):
     :math:`10^{-3}` of its group's largest is read against that floor, so
     round-off on a near zero is not a failure.
     """
-    jacobian = np.asarray(fd._alone(jax.jacrev(objective), p0))
-    n = jacobian.shape[0]
-    samples = np.array(
-        [np.asarray(fd._alone(objective, p0 + k * step * d)) for k in (-2, -1, 1, 2)]
+    fd.assert_jacobian_matches_by_group(
+        objective, p0, [d], step, groups or GROUPS, inert=inert
     )
-    difference = (8 * (samples[2] - samples[1]) - (samples[3] - samples[0])) / (
-        12 * step
-    )
-    derivative = jacobian.reshape(n, -1) @ np.reshape(d, -1)
-    assert np.abs(derivative).max() > 0
-    # an output that does not read the input at all has exactly no derivative
-    assert all(derivative[i] == 0 for i in inert)
-    for label, indices in (groups or GROUPS).items():
-        floor = 1e-3 * np.abs(derivative[indices]).max()
-        for i in indices:
-            scale = max(abs(difference[i]), floor)
-            error = abs(derivative[i] - difference[i]) / scale
-            assert error < fd.RTOL, (
-                f"{label}[{i}]: gradient {derivative[i]:.12e} vs difference "
-                f"{difference[i]:.12e} (relative error {error:.2e})"
-            )
-
-
-def _fields(model):
-    return {
-        region: material
-        if isinstance(material, gfem.MaterialField)
-        else gfem.MaterialField.uniform(region, material)
-        for region, material in model.materials.items()
-    }
 
 
 def _edited(model, **values):
     """``model`` with the leaves ``values`` of its film replaced."""
-    fields = _fields(model)
-    fields["film"] = dataclasses.replace(fields["film"], **values)
-    return model.replace(materials=fields)
+    return mc.edited(model, ["film"], **values)
 
 
 def _lossy(mesh):
@@ -426,11 +420,6 @@ def _lossy(mesh):
     )
 
 
-def _per_element(mesh, seed):
-    n = len(mesh.elements("film"))
-    return fd.unit_directions(np.random.default_rng(seed), (n,), 1)[0]
-
-
 def test_the_photoelastic_tensor_gradient_matches_finite_differences(meshes, modes):
     # the total is affine in p (the moving-boundary part has none): |.|^2 is
     # quadratic, the fourth-order difference has no truncation; the round-off is
@@ -439,7 +428,7 @@ def test_the_photoelastic_tensor_gradient_matches_finite_differences(meshes, mod
     d = fd.unit_directions(np.random.default_rng(3), (6, 6), 1)[0]
 
     def objective(q):
-        model = oc.model(
+        model = oc.embedded_model(
             meshes[1],
             gfem.MaterialField(
                 eps_r=jnp.asarray(EPS), photoelastic_tensor=jnp.asarray(P + 0.03 * q)
@@ -458,12 +447,6 @@ def test_the_photoelastic_tensor_gradient_matches_finite_differences(meshes, mod
     )
 
 
-def _symmetric(seed):
-    d = np.random.default_rng(seed).standard_normal((6, 6))
-    d = d + d.T
-    return d / np.linalg.norm(d)
-
-
 #: name -> (edit(film model, p), direction(mesh), lossy): a unit of p is 1e10 Pa
 #: of the 1.65e11 Pa stiffness scale, 100 kg/m^3 of 2329 or 5 of Q = 50; the
 #: step 1e-2 is a relative change of 1e-4 to 1e-3 of the leaf. The truncation
@@ -473,25 +456,39 @@ def _symmetric(seed):
 LEAVES = {
     "stiffness": (
         lambda m, p: _edited(m, stiffness=C_BASE + 1e10 * p),
-        lambda _: _symmetric(5),
+        lambda _: mc.symmetric_direction(5),
         False,
     ),
     "mass_density": (
         lambda m, p: _edited(m, mass_density=oc.RHO_SI + 100.0 * p),
-        lambda mesh: _per_element(mesh, 3),
+        lambda mesh: mc.per_element_direction(mesh, "film", 3),
         False,
     ),
     "mechanical_quality_factor": (
         lambda m, p: _edited(
             m, mechanical_quality_factor=_quality_field(m.mesh) + 5.0 * p
         ),
-        lambda mesh: _per_element(mesh, 4),
+        lambda mesh: mc.per_element_direction(mesh, "film", 4),
         True,
     ),
 }
 
 
-@pytest.mark.parametrize("name", LEAVES)
+#: Each case below solves the mechanical modes and the coupling at four samples
+#: and runs a jacrev of six backward passes; the unit tier keeps one per path of
+#: the gradient (the quality factor of the lossy film, whose complex mode runs
+#: every term of the eigenvector adjoint; the photoelastic tensor; the node
+#: stretch) and the slow tier the other leaves.
+SLOW_LEAVES = ("stiffness", "mass_density")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param(n, marks=(pytest.mark.slow,) if n in SLOW_LEAVES else ())
+        for n in LEAVES
+    ],
+)
 def test_a_mechanical_input_gradient_matches_finite_differences(optical, meshes, name):
     edit, direction, lossy = LEAVES[name]
     model = _lossy(meshes[0]) if lossy else oc.film_model(meshes[0])
@@ -504,11 +501,12 @@ def test_a_mechanical_input_gradient_matches_finite_differences(optical, meshes,
     _check(objective, jnp.zeros_like(d), d, 1e-2)
 
 
+@pytest.mark.slow
 def test_the_stiffness_gradient_of_a_lossy_film_matches_finite_differences(
     optical, meshes
 ):
     model = _lossy(meshes[0])
-    d = _symmetric(6)
+    d = mc.symmetric_direction(6)
 
     def objective(p):
         result = gfem.solve(
@@ -520,15 +518,60 @@ def test_the_stiffness_gradient_of_a_lossy_film_matches_finite_differences(
     _check(objective, jnp.zeros_like(d), d, 1e-2)
 
 
-def test_a_stretch_of_the_mechanical_nodes_matches_finite_differences(optical, meshes):
-    # the mechanical mesh stretched along x about its centre by s = 1.01 + t: it
-    # keeps covering the optical film (and every optical node that was in the
-    # support), so no node enters or leaves it within the 2e-3 of the samples
+#: The stretch's finite-difference step: a change of 1e-3 of the mesh's width.
+STRETCH_STEP = 1e-3
+
+
+def _stretch_base(optical, mesh, modes):
+    r"""A stretch :math:`s` whose samples :math:`s \pm 2h` keep every reading point.
+
+    The mode is read at fixed points: the strain at the optical quadrature
+    points, the displacement at the section's nodes. Within a mechanical
+    triangle a reading is smooth; across its edges the strain jumps and the
+    displacement's slope does (the field is :math:`H^1`), so a sample that
+    moves an edge across a reading point breaks the difference. The points
+    are fixed and the triangles scale with :math:`s` along a straight path, so
+    a point in the same triangle at both ends of the samples never leaves it.
+    Returns the first such :math:`s` from 1.01 up.
+    """
+    from gfem import _probe, acousto_optic, optomechanics
+
+    u = modes.displacement(0)
+    setup = optomechanics._setup(optical, "p", FREQUENCY, optomechanics._COUPLING, u)
+    rows = setup.crystal.rows[setup.photoelastic_rows]
+    strain_points, _ = acousto_optic._points(
+        optical.mesh, setup.tets[rows], u["x"].order
+    )
+    _, node_points = optomechanics._sampled_nodes(
+        u, setup.nodes_xy[setup.section.nodes], setup.section.interface
+    )
+    points = np.concatenate([strain_points, node_points])
+    nodes = np.asarray(mesh.nodes)
+
+    def cells(s):
+        stretched = mesh.with_nodes(nodes * np.array([s, 1.0]))
+        located = _probe.engine().locate(stretched, _probe.layout(u["x"]), points)
+        return located.tetrahedra
+
+    for s in 1.01 + 5 * STRETCH_STEP * np.arange(10):
+        if np.array_equal(cells(s - 2 * STRETCH_STEP), cells(s + 2 * STRETCH_STEP)):
+            return float(s)
+    raise AssertionError("every stretch moves a mechanical edge across a point")
+
+
+def test_a_stretch_of_the_mechanical_nodes_matches_finite_differences(
+    optical, meshes, modes
+):
+    # the mechanical mesh stretched along x about its centre by s + t, s a bit
+    # over 1: it keeps covering the optical film (and every optical node that
+    # was in the support), so no node enters or leaves it within the 2e-3 of
+    # the samples, and no reading point changes triangle (`_stretch_base`)
     mesh = meshes[0]
     materials = oc.film_model(mesh).materials
+    base = _stretch_base(optical, mesh, modes)
 
     def objective(t):
-        s = 1.01 + t
+        s = base + t
         nodes = jnp.asarray(mesh.nodes) * jnp.array(
             [s, 1.0, 1.0][: mesh.nodes.shape[1]]
         )
@@ -538,4 +581,4 @@ def test_a_stretch_of_the_mechanical_nodes_matches_finite_differences(optical, m
         )
         return _outputs(_coupling(optical, result))
 
-    _check(objective, jnp.asarray(0.0), np.asarray(1.0), 1e-3)
+    _check(objective, jnp.asarray(0.0), np.asarray(1.0), STRETCH_STEP)

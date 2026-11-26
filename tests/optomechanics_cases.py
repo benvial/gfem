@@ -209,6 +209,45 @@ def film_rectangle(path: Path, maxh: float = 0.3) -> gfem.Mesh:
     return gfem.Mesh.from_gmsh(path, length_unit="um")
 
 
+#: The oxide that `embedded` puts beside the film, um on each side.
+SIDE = 0.5
+
+
+def embedded(path: Path, factor: float = 1.0) -> gfem.Mesh:
+    r"""The slab with oxide beside the film: its side walls clear the film.
+
+    Regions ``below``, ``film``, ``above`` as in `slab` and ``side``, the oxide
+    `SIDE` um wide on either side of the film; the edges ``left`` and ``right``
+    at :math:`x = \pm(h + s)` for the film's half width :math:`h` (`HALF`) and
+    :math:`s` = `SIDE`. A free film, whose ends move along x, leaves the walls
+    in place. Edge lengths as in `slab`.
+    """
+    h, c, t, w = HALF + SIDE, CLAD, FILM, HALF
+    rects = [
+        (-h, -c, h, 0.0, "below", 0.12 * factor),
+        (-h, 0.0, -w, t, "side", 0.12 * factor),
+        (-w, 0.0, w, t, "film", 0.08 * factor),
+        (w, 0.0, h, t, "side", 0.12 * factor),
+        (-h, t, h, t + c, "above", 0.12 * factor),
+    ]
+    edges = [
+        (lambda p: abs(p[0] - h) < 1e-9, "right"),
+        (lambda p: abs(p[0] + h) < 1e-9, "left"),
+    ]
+    return tc.section(path, rects, 0.3 * factor, edges)
+
+
+def embedded_model(mesh, film) -> gfem.Model:
+    """`embedded` with ``film`` in oxide and PEC side walls."""
+    oxide = gfem.Material(eps_r=eo.N_OX**2)
+    return gfem.Model(
+        mesh,
+        materials={"below": oxide, "side": oxide, "film": film, "above": oxide},
+        boundaries=[gfem.PEC("left"), gfem.PEC("right")],
+        ports=[gfem.WavePort("p", "front")],
+    )
+
+
 def film_material(*, quality: float | None = None) -> gfem.Material:
     """The film's mechanical material, with a uniform :math:`Q_m` if given."""
     return gfem.Material(
@@ -302,3 +341,89 @@ def parities(displacement, width: float, height: float):
         )
         out.append(float(np.sum(np.conj(v) * vm).real / norm))
     return out[0], out[1], float(np.sum(np.abs(v[:, 2]) ** 2) / norm)
+
+
+# --- a curved interface: an elliptic rod ---------------------------------------------
+
+#: The rod's semi-axes along x and y (um) and the PEC box's half widths around it:
+#: an ellipse, so the two lowest modes are split (a circular rod's are degenerate).
+ROD_A, ROD_B, ROD_BOX = 0.45, 0.25, (1.2, 1.0)
+
+
+def _rod_mesh2d(h_rod: float, h_air: float | None):
+    """Netgen's triangles of the rod alone, or in its air box when ``h_air`` is given.
+
+    Returns nodes (um), ``(name, vertices)`` triangles and the box's ``wall`` lines.
+    """
+    import ngsolve as ngs
+    from netgen.occ import Glue, OCCGeometry, Rectangle, WorkPlane
+
+    rod = WorkPlane().Ellipse(ROD_A, ROD_B).Face()
+    rod.faces.name = "rod"
+    rod.faces.maxh = h_rod
+    if h_air is None:
+        shape, maxh = rod, h_rod
+    else:
+        bx, by = ROD_BOX
+        box = Rectangle(2 * bx, 2 * by).Face().Move((-bx, -by, 0))
+        air = box - rod
+        air.faces.name = "air"
+        shape, maxh = Glue([air, rod]), h_air
+        for edge in shape.edges:
+            c = edge.center
+            if max(abs(c.x) - bx, abs(c.y) - by) > -1e-9:
+                edge.name = "wall"
+    mesh = ngs.Mesh(OCCGeometry(shape, dim=2).GenerateMesh(maxh=maxh))
+    nodes = np.array([v.point for v in mesh.vertices])
+    tris = [(el.mat, [v.nr for v in el.vertices]) for el in mesh.Elements(ngs.VOL)]
+    lines = [
+        (el.mat, [v.nr for v in el.vertices])
+        for el in mesh.Elements(ngs.BND)
+        if el.mat == "wall"
+    ]
+    return nodes, tris, lines
+
+
+def rod_meshes(path: Path, h_rod: float, h_air: float) -> tuple[gfem.Mesh, gfem.Mesh]:
+    """The rod's optical slab and the conforming mechanical mesh cut from it.
+
+    The slab holds the regions ``rod`` and ``air`` with the edge ``wall``; the
+    second mesh is the slab section's own ``rod`` triangles as a native 2D mesh,
+    so every interface node of the section is one of its vertices.
+    """
+    nodes, tris, lines = _rod_mesh2d(h_rod, h_air)
+    tc._write_section(path / "rod_slab.msh", nodes, tris, lines)
+    slab = gfem.Mesh.from_gmsh_cross_section(path / "rod_slab.msh")
+    kept = [(name, v) for name, v in tris if name == "rod"]
+    used = np.unique([i for _, v in kept for i in v])
+    renumber = {int(old): new for new, old in enumerate(used)}
+    rod = [(name, [renumber[i] for i in v]) for name, v in kept]
+    tc._write_section(path / "rod_conforming.msh", nodes[used], rod, [])
+    return slab, gfem.Mesh.from_gmsh(path / "rod_conforming.msh", length_unit="um")
+
+
+def rod_mechanical(path: Path, h: float) -> gfem.Mesh:
+    """The rod alone meshed on its own at edge ``h`` um: its boundary vertices are
+    on the ellipse, but not the slab's, which lie off its boundary polygon."""
+    nodes, tris, _ = _rod_mesh2d(h, None)
+    tc._write_section(path, nodes, tris, [])
+    return gfem.Mesh.from_gmsh(path, length_unit="um")
+
+
+def on_rod(xy: np.ndarray) -> np.ndarray:
+    """Which points ``xy`` (``(n, 2)``, m) lie in the rod (its boundary to 1e-9)."""
+    r = (xy[:, 0] / (ROD_A * 1e-6)) ** 2 + (xy[:, 1] / (ROD_B * 1e-6)) ** 2
+    return r <= 1 + 1e-9
+
+
+def rod_optical(mesh: gfem.Mesh) -> gfem.Model:
+    """The rod (index `N_FILM`) in air in a PEC box, without a photoelastic tensor."""
+    return gfem.Model(
+        mesh,
+        materials={
+            "rod": gfem.Material(eps_r=N_FILM**2),
+            "air": gfem.Material(eps_r=1.0),
+        },
+        boundaries=[gfem.PEC("wall")],
+        ports=[gfem.WavePort("p", "front")],
+    )

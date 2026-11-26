@@ -58,6 +58,35 @@ __all__ = ["AcoustoOpticShift", "acousto_optic_shift"]
 _OWNER = "acousto_optic_shift"
 
 
+@dataclasses.dataclass(frozen=True)
+class _Caller:
+    """Who runs the shared section checks, as their messages name it.
+
+    Attributes:
+        owner: The public function, the head of every message.
+        what: What it computes, as a refusal names it.
+        order: What the held mode makes it first order in.
+        through: The inputs a gradient may go through.
+        section: The z-invariant result it reads on the section.
+    """
+
+    owner: str
+    what: str
+    order: str
+    through: str
+    section: str
+
+
+_SHIFT = _Caller(
+    _OWNER,
+    "the acousto-optic shift",
+    "the acoustic fields",
+    "the acoustic result, the photoelastic_tensor, the electro_optic_tensor or "
+    "the offset",
+    "acoustic",
+)
+
+
 @dataclasses.dataclass(frozen=True, eq=False)
 class AcoustoOpticShift:
     r"""The first-order acousto-optic shift of a wave port's mode, per volt.
@@ -190,7 +219,9 @@ def _check_acoustic(acoustic: Any, terminal: str | None) -> tuple[str, np.ndarra
 
 
 def _check_displacement(displacement: Any, owner: str) -> None:
-    """Raise unless ``displacement`` is a q = 0 `gfem.FieldMap` of x, y, z on a 2D mesh.
+    """Raise unless ``displacement`` is a `gfem.FieldMap` of x, y, z on a 2D mesh.
+
+    At the axial wavenumber :math:`q = 0`.
 
     Raises:
         TypeError: ``displacement`` is not a `gfem.FieldMap`.
@@ -245,11 +276,7 @@ def _offset(offset: Any) -> jax.Array:
 
 
 def _check_plane(
-    mesh: Any,
-    faces: np.ndarray,
-    port: str,
-    owner: str = _OWNER,
-    section: str = "acoustic",
+    mesh: Any, faces: np.ndarray, port: str, caller: _Caller = _SHIFT
 ) -> None:
     """Raise unless the port's section lies in a plane :math:`z` = const.
 
@@ -261,18 +288,13 @@ def _check_plane(
     extent = np.ptp(np.asarray(mesh.nodes, float), axis=0).max()
     if np.ptp(z) > 1e-9 * extent:
         raise ValueError(
-            f"{owner}: wave port {port!r} is not in a plane z = const: the "
-            f"{section} section is invariant along z, so the guide must run along z."
+            f"{caller.owner}: wave port {port!r} is not in a plane z = const: the "
+            f"{caller.section} section is invariant along z, so the guide must run "
+            "along z."
         )
 
 
-def _check_optical_fixed(
-    model: Model,
-    owner: str = _OWNER,
-    what: str = "the acousto-optic shift",
-    through: str = "the acoustic result, the photoelastic_tensor, the "
-    "electro_optic_tensor or the offset",
-) -> None:
+def _check_optical_fixed(model: Model, caller: _Caller = _SHIFT) -> None:
     """Raise `NonDifferentiableError` for a traced input of the port mode problem.
 
     The mode is held constant; the refusal comes before the acoustic fields
@@ -283,11 +305,11 @@ def _check_optical_fixed(
         for name in names:
             if is_traced(getattr(material, name, None)):
                 raise NonDifferentiableError(
-                    f"{owner}: gfem cannot differentiate {what} "
+                    f"{caller.owner}: gfem cannot differentiate {caller.what} "
                     f"with respect to the optical model's {name}: the mode is held "
-                    "constant (first order in the displacement). Wrap it in "
+                    f"constant (first order in {caller.order}). Wrap it in "
                     "jax.lax.stop_gradient to use its value without its "
-                    f"derivative. Differentiate through {through}."
+                    f"derivative. Differentiate through {caller.through}."
                 )
 
 
@@ -324,15 +346,15 @@ def _crystal(
     model: Model,
     port: str,
     tets: np.ndarray,
-    owner: str = _OWNER,
+    caller: _Caller = _SHIFT,
     *,
-    tensors: tuple[str, ...] = ("photoelastic_tensor", "electro_optic_tensor"),
+    electro_optic: bool = True,
     require: bool = True,
 ) -> _Crystal:
     """The section's elements with a photoelastic or electro-optic tensor.
 
-    ``tensors`` names the tensors that count (the photoelastic one alone for the
-    overlap of a displacement). Lossy regions raise whatever they carry. With no
+    ``electro_optic=False`` counts the photoelastic tensor alone (the overlap
+    of a displacement). Lossy regions raise whatever they carry. With no
     element holding a counted tensor, ``require`` raises and its absence gives
     an empty crystal.
 
@@ -349,29 +371,23 @@ def _crystal(
         loss = _lossy(material, pos)
         if loss is not None:
             raise NotImplementedError(
-                f"{owner}: region {region!r} of wave port {port!r}'s section has "
-                f"{loss}. The first-order shift weighs Re(E E^H), which holds for "
+                f"{caller.owner}: region {region!r} of wave port {port!r}'s section "
+                f"has {loss}. The first-order shift weighs Re(E E^H), which holds for "
                 "a lossless section only: give the section's regions a real eps_r "
                 "with no tan_delta or conductivity (an optical window or "
                 "EM-excluded electrodes keep the loss out of the section)."
             )
-        photoelastic = (
-            "photoelastic_tensor" in tensors
-            and material.photoelastic_tensor is not None
-        )
-        electro_optic = (
-            "electro_optic_tensor" in tensors
-            and material.electro_optic_tensor is not None
-        )
-        if not (photoelastic or electro_optic):
+        photoelastic = material.photoelastic_tensor is not None
+        electric = electro_optic and material.electro_optic_tensor is not None
+        if not (photoelastic or electric):
             continue
         n = len(at)
         rows.append(at)
         eps.append(_permittivity(material, pos))
         p.append(_photoelastic(material, pos) if photoelastic else jnp.zeros((n, 6, 6)))
-        r.append(_tensor(material, pos) if electro_optic else jnp.zeros((n, 6, 3)))
+        r.append(_tensor(material, pos) if electric else jnp.zeros((n, 6, 3)))
         has_p.append(np.full(n, photoelastic))
-        has_r.append(np.full(n, electro_optic))
+        has_r.append(np.full(n, electric))
     if not rows:
         if not require:
             return _Crystal(
@@ -383,11 +399,15 @@ def _crystal(
                 np.zeros(0, bool),
             )
         names = ", ".join(repr(name) for name in regions)
+        counted = (
+            "a photoelastic_tensor or an electro_optic_tensor"
+            if electro_optic
+            else "a photoelastic_tensor"
+        )
         raise ValueError(
-            f"{_OWNER}: no element of wave port {port!r}'s section has a "
-            f"photoelastic_tensor or an electro_optic_tensor (its regions are "
-            f"{names}), so the shift is zero. Set them on the crystal's optical "
-            "material."
+            f"{caller.owner}: no element of wave port {port!r}'s section has "
+            f"{counted} (its regions are {names}), so {caller.what} is zero. Set "
+            "it on the crystal's optical material."
         )
     return _Crystal(
         np.concatenate(rows),

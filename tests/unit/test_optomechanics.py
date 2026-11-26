@@ -66,7 +66,7 @@ def slabs(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def dilation(mechanical):
-    """The film's dilation about its middle: u_y = y - y_c on the film alone."""
+    """The dilation :math:`u_y = y - y_c` of the film about its middle, film only."""
     return oc.displacement(
         mechanical,
         ("film",),
@@ -89,16 +89,21 @@ _POLARIZATIONS = {
     "TE": (1, ((0, oc.P12),), True),
     "TM": (2, ((1, oc.P11), (2, oc.P12)), False),
 }
-#: Gates, 2x the errors measured on this mesh pair (a relative error of the
-#: overlap's parts, an absolute one of n_eff), per polarization and edge factor.
-#: Measured, factor 2 then 1: TE n_eff 4.6e-4, 3.1e-5; moving boundary 1.3e-2,
-#: 1.3e-3; photoelastic 5.7e-4, 3.9e-5. TM n_eff 5.0e-5, 4.4e-6; moving boundary
-#: 2.6e-3, 2.7e-4; photoelastic 1.6e-4, 1.2e-5.
+#: Gates of the errors (a relative error of the overlap's parts, an absolute one
+#: of n_eff), per polarization and edge factor: 3x the errors measured on this
+#: mesh pair. The meshes come from netgen at test time, so another netgen or
+#: platform can place the nodes differently at the same edge lengths; the errors
+#: fall as ~h^3 (the ratios of the next test), so a mesh whose effective edge is
+#: sqrt(2) longer has 2^1.5 = 2.8x the error and still passes, while a mesh a
+#: whole level coarser (~10x) fails. The convergence test below is the check that
+#: holds whatever the mesher. Measured, factor 2 then 1: TE n_eff 4.6e-4, 3.1e-5;
+#: moving boundary 1.3e-2, 1.3e-3; photoelastic 5.7e-4, 3.9e-5. TM n_eff 5.0e-5,
+#: 4.4e-6; moving boundary 2.6e-3, 2.7e-4; photoelastic 1.6e-4, 1.2e-5.
 _GATES = {
-    ("TE", COARSE): {"n_eff": 1e-3, "moving_boundary": 3e-2, "photoelastic": 1.2e-3},
-    ("TE", FINE): {"n_eff": 7e-5, "moving_boundary": 3e-3, "photoelastic": 1e-4},
-    ("TM", COARSE): {"n_eff": 1e-4, "moving_boundary": 6e-3, "photoelastic": 4e-4},
-    ("TM", FINE): {"n_eff": 1e-5, "moving_boundary": 6e-4, "photoelastic": 3e-5},
+    ("TE", COARSE): {"n_eff": 1.4e-3, "moving_boundary": 4e-2, "photoelastic": 1.7e-3},
+    ("TE", FINE): {"n_eff": 1e-4, "moving_boundary": 4e-3, "photoelastic": 1.2e-4},
+    ("TM", COARSE): {"n_eff": 1.5e-4, "moving_boundary": 8e-3, "photoelastic": 5e-4},
+    ("TM", FINE): {"n_eff": 1.4e-5, "moving_boundary": 8e-4, "photoelastic": 3.6e-5},
 }
 
 
@@ -149,7 +154,7 @@ def test_the_film_dilation_matches_the_slab_closed_form(measured, polarization, 
     # closed form is the exact dispersion (a root of the transcendental
     # equation), differentiated by fourth-order central differences (truncation
     # ~1e-12, round-off ~1e-13); the gap is the mode's discretization. Gates
-    # are 2x the measured errors of `_GATES`.
+    # are 3x the measured errors of `_GATES`.
     got = measured(polarization, factor)
     gate = _GATES[polarization, factor]
     for name, error in _errors(got, polarization).items():
@@ -208,28 +213,48 @@ def test_the_moving_boundary_part_equals_the_gradient_through_the_node_map(
     assert abs(got.imag) < 1e-12 * abs(got.real)
 
 
-def test_a_dilation_of_the_whole_nondispersive_section_gives_n_g_minus_n_eff(
-    slabs, mechanical
-):
+def _everywhere(mechanical):
+    """:math:`u = (x, y, 0)` on every region: the whole section scales, walls too."""
+    return oc.displacement(
+        mechanical, ("below", "film", "above"), gradients=[(1, 0), (0, 1), (0, 0)]
+    )
+
+
+def test_a_dilation_of_the_whole_nondispersive_section_gives_n_g_minus_n_eff(slabs):
     # u = (x, y, 0) everywhere scales the section about the origin, the walls
     # included: the discrete problem on the scaled mesh at omega is the problem
     # on the original at omega (1 + alpha), so d n_eff / d alpha = omega d n_eff /
     # d omega = n_g - n_eff for a section of constant permittivities, with n_g
-    # the exact derivative of the discrete gamma. Holds to the two derivatives'
+    # the exact derivative of the discrete gamma. The overlap refuses to move the
+    # walls (next test), so the node gradient it contracts is read here and
+    # dotted with u on every node of the section. Holds to the two derivatives'
     # round-off (a shape adjoint and a frequency derivative), measured 6e-15
     # relative; the gate 1e-10 is the thread-order noise of the eigen-solve (6e-14)
     # with margin.
-    everywhere = oc.displacement(
-        mechanical,
-        ("below", "film", "above"),
-        gradients=[(1, 0), (0, 1), (0, 0)],
-    )
+    from gfem import optomechanics
+
     model = oc.model(slabs(COARSE), gfem.Material(eps_r=EPS))
-    got = _overlap(model, everywhere)
-    assert got.photoelastic == 0
+    grad, n_eff, n_g, _ = optomechanics._node_gradient(model, "p", FREQUENCY, None)
+    # the gradient is zero off the port's section, so every node can take u
+    moving_boundary = np.sum(grad[:, :2] * np.asarray(model.mesh.nodes)[:, :2])
     np.testing.assert_allclose(
-        got.moving_boundary.real, float(got.n_g) - float(got.n_eff), rtol=1e-10, atol=0
+        moving_boundary, float(n_g) - float(n_eff), rtol=1e-10, atol=0
     )
+
+
+def test_a_displacement_that_moves_the_outer_walls_raises_naming_the_node(
+    rough, mechanical
+):
+    # the side and bottom walls are the optical domain's truncation: moving them
+    # changes the mode, so the whole-section dilation is refused by name, and so
+    # is the film's motion across the side walls it meets
+    with pytest.raises(ValueError, match=r"moves node \(.*across the section's outer"):
+        _overlap(oc.model(rough, _film()), _everywhere(mechanical))
+    across = oc.displacement(
+        mechanical, ("film",), gradients=[(0, 0)] * 3, offsets=(1e-9, 0.0, 0.0)
+    )
+    with pytest.raises(ValueError, match="truncation of the optical domain"):
+        _overlap(oc.model(rough, _film()), across)
 
 
 def _linear(u, v, a, b):
@@ -250,12 +275,13 @@ def test_the_overlap_is_linear_in_the_displacement(rough, mechanical, dilation):
     # (the dilation's support, so the coefficients add); complex weights. Every
     # step is linear in the coefficients, so the sides differ by round-off only
     # (measured 8e-16 relative); the gate 1e-10 is the eigen-solve's thread-order
-    # noise (6e-14 relative) with margin.
+    # noise (6e-14 relative) with margin. No u_x: the film meets the side walls,
+    # which an affine u_x would move.
     other = oc.displacement(
         mechanical,
         ("film",),
-        gradients=[(0.3, 2.0), (-0.4, 0.5), (1.0, 0.2)],
-        offsets=(1e-9, -2e-9, 3e-9),
+        gradients=[(0.0, 0.0), (-0.4, 0.5), (1.0, 0.2)],
+        offsets=(0.0, -2e-9, 3e-9),
     )
     model = oc.model(rough, _film())
     a, b = 0.7 - 0.2j, -1.3 + 0.9j
@@ -267,18 +293,90 @@ def test_the_overlap_is_linear_in_the_displacement(rough, mechanical, dilation):
         assert abs(getattr(second, name)) > 0
 
 
+def _below(mechanical):
+    r"""The cladding below lifted, :math:`u_y = 10^{-3}(y + c)` (m), still at its wall.
+
+    It is zero on the bottom wall :math:`y = -c` and lifts the interface
+    :math:`y = 0` by 1.2 nm.
+    """
+    return oc.displacement(
+        mechanical,
+        ("below",),
+        gradients=[(0, 0), (0, 1e-3), (0, 0)],
+        offsets=(0.0, 1e-3 * oc.CLAD * 1e-6, 0.0),
+    )
+
+
 def test_a_displacement_of_the_cladding_alone_moves_the_boundary_and_strains_nothing(
     rough, mechanical
 ):
-    # u_y = const on the cladding below: no strain in the film, and only the
-    # interface nodes at y = 0 are in the support (the support's boundary counts),
-    # which move the lower interface
-    below = oc.displacement(
-        mechanical, ("below",), gradients=[(0, 0)] * 3, offsets=(0.0, 1e-9, 0.0)
-    )
-    got = _overlap(oc.model(rough, gfem.Material(eps_r=EPS)), below)
+    # the cladding below lifted: no strain in the film, and only the interface
+    # nodes at y = 0 of the film are in the support (the support's boundary
+    # counts), which move the lower interface
+    got = _overlap(oc.model(rough, gfem.Material(eps_r=EPS)), _below(mechanical))
     assert got.photoelastic == 0
     assert got.moving_boundary != 0
+
+
+# --- a curved interface on two meshes ------------------------------------------------
+
+#: The elliptic rod's edge length in the optical slab and in the air (um), and the
+#: two edge lengths of its own mechanical mesh (um), on either side of the slab's.
+ROD_H, ROD_AIR, ROD_MECHANICAL = 0.06, 0.2, (0.09, 0.045)
+#: Gates of the rod's relative gap, coarse and fine mechanical mesh: 3x the
+#: measured 5.3e-3 and 1.3e-3. The gap falls as h^2 (ratio 4.2 here, 5.2 for the
+#: next halving), so a mesher that makes the mechanical edge sqrt(2) longer at the
+#: same maxh doubles it and still passes; the sampling that loses the off-polygon
+#: nodes gave 0.97 at both edge lengths.
+ROD_GATES = (1.6e-2, 4e-3)
+
+
+@pytest.fixture(scope="module")
+def rod(tmp_path_factory):
+    """The rod's optical model, its conforming mechanical mesh and a directory."""
+    path = tmp_path_factory.mktemp("rod")
+    slab, conforming = oc.rod_meshes(path, ROD_H, ROD_AIR)
+    return oc.rod_optical(slab), conforming, path
+
+
+def _rod_dilation(mesh):
+    """:math:`u = (x, y, 0)` on the rod: every point of its boundary moves out."""
+    return oc.displacement(mesh, ("rod",), gradients=[(1, 0), (0, 1), (0, 0)])
+
+
+def test_a_curved_interface_on_its_own_mechanical_mesh_moves_as_on_a_conforming_one(
+    rod,
+):
+    # The rod's boundary vertices lie on the ellipse in both meshes, so each
+    # mesh's boundary is the polygon through its own vertices: a slab interface
+    # node that is not a vertex of the mechanical mesh lies outside its polygon by
+    # up to the chord's sagitta. Such a node still moves, by the displacement at
+    # the nearest point of the mechanical boundary. The reference is the
+    # conforming mesh (the slab's own rod triangles), where every interface node
+    # is a mechanical vertex and reads the exact field.
+    from gfem import optomechanics
+
+    model, conforming, path = rod
+    reference = _overlap(model, _rod_dilation(conforming)).moving_boundary
+    gaps = []
+    for h in ROD_MECHANICAL:
+        mechanical = _rod_dilation(oc.rod_mechanical(path / f"rod{h}.msh", h))
+        got = _overlap(model, mechanical).moving_boundary
+        gaps.append(abs(got / reference - 1))
+        # every node of the rod's interface moves, and no other node of the air
+        setup = optomechanics._setup(
+            model, "p", FREQUENCY, optomechanics._OVERLAP, mechanical
+        )
+        xy = setup.nodes_xy[setup.section.nodes]
+        moved, _ = optomechanics._sampled_nodes(mechanical, xy, setup.section.interface)
+        on_rod = oc.on_rod(xy)
+        assert moved[setup.section.interface].all()
+        assert not moved[~on_rod & ~setup.section.interface].any()
+    assert gaps[0] < ROD_GATES[0], gaps
+    assert gaps[1] < ROD_GATES[1], gaps
+    # the gap falls with the mechanical edge (measured ratio 4.2 for h^2; at
+    # least the first power here)
+    assert gaps[0] / gaps[1] > 2, gaps
 
 
 # --- gradients -----------------------------------------------------------------------
@@ -321,11 +419,13 @@ def test_the_gradient_in_the_displacement_matches_finite_differences(rough, dila
     # solve's output). The overlap is linear in them, |total|^2 quadratic: no
     # truncation in the fourth-order difference; the round-off is the mode
     # solve's, as above (measured 2e-15), h = 1 against a perturbation of 5e-8
-    # of the coefficients.
+    # of the coefficients. The noise leaves u_x alone: the film meets the side
+    # walls, which a u_x there would move (refused).
     rng = np.random.default_rng(8)
     base = {c: dilation[c].coefficients for c in "xyz"}
     model = oc.model(rough, _film())
     noise = {c: jnp.asarray(rng.standard_normal(len(base[c]))) for c in "xyz"}
+    noise["x"] = jnp.zeros_like(noise["x"])
 
     def objective(t):
         u = FieldMap(
@@ -365,6 +465,16 @@ def test_a_traced_optical_permittivity_raises_with_the_stop_gradient_advice(
 
     with pytest.raises(gfem.NonDifferentiableError, match="optomechanical overlap"):
         jax.grad(f)(jnp.asarray(EPS))
+
+
+def test_the_overlap_refuses_jit_by_name(rough, dilation):
+    def f(q):
+        return jnp.real(_overlap(_field_model(rough, P + q), dilation).total)
+
+    with pytest.raises(
+        gfem.NonDifferentiableError, match=r"cannot run inside jax\.jit"
+    ):
+        jax.jit(f)(jnp.zeros((6, 6)))
 
 
 def test_the_optical_node_coordinates_raise_under_grad(rough, dilation):
@@ -487,9 +597,7 @@ def test_neither_a_photoelastic_tensor_nor_a_node_in_the_support_raises_naming_t
 def test_an_element_with_a_tensor_outside_the_support_raises_naming_the_region(
     rough, mechanical
 ):
-    below = oc.displacement(
-        mechanical, ("below",), gradients=[(0, 0)] * 3, offsets=(0.0, 1e-9, 0.0)
-    )
+    below = _below(mechanical)
     with pytest.raises(
         ValueError, match=r"wave port 'p'.*reading the strain.*region 'film'"
     ):
