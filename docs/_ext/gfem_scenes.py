@@ -17,12 +17,21 @@ A scene is named after the source of the cell that shows it (a hash: nbconvert
 gives the kernel no cell id) and its rank in that cell, so a re-run overwrites
 it in place; ``just notebooks`` then runs ``tools/prune_scenes.py``, which
 deletes the scenes no notebook output names any more (those of edited cells).
+
+The same hook saves the card stills (``gfem_stills.py``): after the cell a
+tutorial tags ``card`` the tutorial's script in ``docs/_stills/`` builds its
+still from the kernel's namespace. With ``GFEM_STILLS_ONLY=1`` (``just
+stills``) ``show()`` only closes the plotter, so earlier visible cells write no
+scene and display nothing.
 """
 
 import base64
 import hashlib
+import importlib.util
 import io
 import os
+import sys
+import traceback
 from pathlib import Path
 
 DOCS = Path(__file__).resolve().parents[1]
@@ -73,18 +82,47 @@ def _iframe(scene: Path, theme: str, alt: str) -> str:
     )
 
 
+def _stills():
+    """The ``gfem_stills`` module, loaded by path like this one."""
+    spec = importlib.util.spec_from_file_location(
+        "gfem_stills", DOCS / "_ext" / "gfem_stills.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["gfem_stills"] = module  # its helpers load siblings by name
+    spec.loader.exec_module(module)
+    return module
+
+
 def install(shell):
     """Export each shown PyVista plotter as an interactive scene in ``shell``."""
     import pyvista as pv
     from IPython.display import display
 
-    cell = {"id": None, "rank": 0}
+    stills = _stills()
+    anchors = stills.anchors()  # sha256 of a ``card`` cell's source -> notebook stem
+    cell = {"id": None, "rank": 0, "stem": None}
 
     def pre_run_cell(info):
-        cell["id"] = hashlib.sha256(info.raw_cell.encode()).hexdigest()[:12]
+        raw = info.raw_cell.encode()
+        cell["id"] = hashlib.sha256(raw).hexdigest()[:12]
         cell["rank"] = 0
+        cell["stem"] = anchors.get(hashlib.sha256(raw).hexdigest())
+
+    def post_run_cell(result):
+        stem, cell["stem"] = cell["stem"], None
+        if stem is None or not result.success:
+            return
+        try:
+            stills.run_card(stem, shell.user_ns)
+        except Exception:  # noqa: BLE001
+            # An event callback's error is only logged: say it on stderr, and
+            # `tools/stills.py` sees that the still is not new.
+            sys.stderr.write(f"gfem still {stem} failed:\n{traceback.format_exc()}")
 
     def show(plotter, *_args, **_kwargs):
+        if os.environ.get("GFEM_STILLS_ONLY") == "1":
+            plotter.close()
+            return
         SCENES.mkdir(parents=True, exist_ok=True)
         name = f"{cell['id']}-{cell['rank']}"
         cell["rank"] += 1
@@ -108,4 +146,5 @@ def install(shell):
         )
 
     shell.events.register("pre_run_cell", pre_run_cell)
+    shell.events.register("post_run_cell", post_run_cell)
     pv.Plotter.show = show

@@ -64,11 +64,20 @@ PLAIN = {
     "#808080": "#9a9a96",  # "gray" -> muted-dark
 }
 
-# The sensitivity ramp: one hue, from the ground to 0.92 * red + 0.08 * ground,
-# per theme.
+# The ramps, stops from low to high, per theme. The sensitivity ramp is one hue
+# from the ground to the signal red; the three kind ramps are the ones the card
+# stills use (docs/_ext/gfem_stills.py): magnitude (grey to red), signed (cycle
+# blue, grey at zero, red) and temperature (grey, cycle orange, deep orange).
+# The dark grey ends are the dark mesh token, the zero of a field on a dark body.
 RAMPS = {
     "gfem_sensitivity": ("#f2f2f2", "#b5262f"),
     "gfem_sensitivity_dark": ("#1b1b1b", "#d63038"),
+    "gfem_magnitude": ("#dcdcdc", "#b5262f"),
+    "gfem_magnitude_dark": ("#474747", "#f0555a"),
+    "gfem_signed": ("#2a78d6", "#dcdcdc", "#b5262f"),
+    "gfem_signed_dark": ("#3987e5", "#474747", "#f0555a"),
+    "gfem_temperature": ("#dcdcdc", "#eb6834", "#a64600"),
+    "gfem_temperature_dark": ("#474747", "#d95926", "#f0904a"),
 }
 CMAP_SWAP = {"gfem_sensitivity": "gfem_sensitivity_dark"}
 # Greyscale density maps are data: the same in both themes.
@@ -117,13 +126,17 @@ def _recolour_table():
 RECOLOUR = _recolour_table()
 
 
-def _ramp(name, ground, accent):
-    ground_rgb = mcolors.to_rgb(ground)
-    top = [
-        0.92 * a + 0.08 * g
-        for a, g in zip(mcolors.to_rgb(accent), ground_rgb, strict=True)
-    ]
-    return LinearSegmentedColormap.from_list(name, [ground_rgb, top])
+def _ramp(name, stops):
+    rgb = [mcolors.to_rgb(stop) for stop in stops]
+    if name.startswith("gfem_sensitivity"):
+        # The sensitivity ramp stops short of the full red: 0.92 * red + 0.08 * ground.
+        rgb[-1] = [0.92 * a + 0.08 * g for a, g in zip(rgb[-1], rgb[0], strict=True)]
+    return LinearSegmentedColormap.from_list(name, rgb)
+
+
+def ramp(name):
+    """The colormap of one `RAMPS` entry, built the same way everywhere."""
+    return _ramp(name, RAMPS[name])
 
 
 def _not_a_weight_fallback(record):
@@ -138,9 +151,9 @@ def apply_style():
     logging.getLogger("matplotlib.font_manager").addFilter(_not_a_weight_fallback)
     for font in sorted(FONTS.glob("*.ttf")):
         font_manager.fontManager.addfont(font)
-    for name, (ground, accent) in RAMPS.items():
+    for name in RAMPS:
         if name not in mpl.colormaps:
-            mpl.colormaps.register(_ramp(name, ground, accent))
+            mpl.colormaps.register(ramp(name))
     mstyle.use(LIGHT_STYLE)
 
 
