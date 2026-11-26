@@ -7,15 +7,13 @@ import numpy as np
 
 RECIPES = Path(__file__).resolve().parents[1] / "recipes"
 WIDTH, FILM, ETCH = 1.4, 0.6, 0.3  # um, the second-harmonic recipe's ridge
-LENGTH, LIFT, HALF = (
-    7.0,
-    2.0,
-    1.6,
-)  # um of guide behind the face; heights stretched; half width
+LENGTH = 7.0  # um of guide behind the end face
+LIFT = 2.0  # the section's heights are stretched by this, or the film is a line
+HALF = 1.6  # um, half the width of the drawn slab
 
 
+def card(_ns):
     """Solve the recipe's ridge at 1550 nm; draw its pump mode on an extruded guide."""
-    """Solve the recipe's ridge at 1550 nm, its pump mode on the end of an extruded guide."""
     import pyvista as pv
     from gfem_stills import save_still
     from scipy.constants import c
