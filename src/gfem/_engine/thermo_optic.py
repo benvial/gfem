@@ -193,3 +193,104 @@ def section_tensor_weights(space: Any, coefficients: np.ndarray) -> np.ndarray:
     frame = np.asarray(section.frame, float)
     w = np.einsum("ai,tab,bj->tij", frame, w, frame)
     return (w + np.swapaxes(w, 1, 2)) / 2
+
+
+def section_complex_tensor_weights(space: Any, coefficients: np.ndarray) -> np.ndarray:
+    r"""The complex tensor weight per section triangle, in the global frame.
+
+    It is :math:`H_t = \tfrac{c\varepsilon_0}{4}\int_t E E^H\,dA`: Hermitian,
+    not symmetrized. The pair of a mode with its counter-propagating twin
+    reads its blocks separately (the real part of the in-plane block and the
+    imaginary part of the cross block), so the imaginary part is kept. Its
+    real part is `section_tensor_weights`.
+
+    Args:
+        space: The `gfem._engine.port_mode.PortModeSpace` of the section.
+        coefficients: The mode's full coefficient vector of ``(E_t, E_n)``,
+            V/m at 1 W.
+
+    Returns:
+        ``(n_tri, 3, 3)`` complex, in the section's triangle order.
+    """
+    gf = ngs.GridFunction(space.space)
+    gf.vec.FV().NumPy()[:] = coefficients
+    et, en = gf.components
+    local = [et[0], et[1], en]
+    section = space.section
+    w = np.empty((len(section.triangles), 3, 3), complex)
+    for i in range(3):
+        for j in range(3):
+            w[:, i, j] = np.asarray(
+                ngs.Integrate(
+                    local[i] * ngs.Conj(local[j]),
+                    space.mesh,
+                    order=2 * space.order,
+                    element_wise=True,
+                )
+            )
+    c_eps0 = scipy.constants.c * scipy.constants.epsilon_0
+    w *= c_eps0 / 4 * section.scale**2
+    frame = np.asarray(section.frame, float)
+    return np.einsum("ai,tab,bj->tij", frame, w, frame)
+
+
+def section_ez_boundary_weights(space: Any, coefficients: np.ndarray) -> np.ndarray:
+    r"""The node weights of the normal field's moving-boundary correction.
+
+    For a P1 vector field :math:`v` on the section (global :math:`x, y`), the
+    linear form
+
+    .. math::
+
+        v \mapsto \frac{c\varepsilon_0}{4}\sum_t \varepsilon_{nn,t}
+        \int_t \nabla\cdot\left(|E_n|^2 v\right)\,dA
+
+    has, on the hat function of node :math:`i` along :math:`x` or :math:`y`,
+    the weight ``c[i]``. By the divergence theorem the elements of one region
+    cancel, and what is left is the flux of :math:`\varepsilon_{nn}|E_n|^2` of
+    each region through its boundary: for the discrete fields exactly
+    :math:`\tfrac{c\varepsilon_0}{4}\oint u_n\,\Delta\varepsilon_{nn}
+    |E_n|^2\,dl` over the interfaces (zero over a wall that does not move).
+    The permittivity along the normal enters piece by piece, so a jump of
+    :math:`\varepsilon_{nn}` at an interface is weighed by its own size.
+
+    Args:
+        space: The `gfem._engine.port_mode.PortModeSpace` of the section.
+        coefficients: The mode's full coefficient vector of ``(E_t, E_n)``,
+            V/m at 1 W.
+
+    Returns:
+        ``(n_vertices, 2)`` in 1/m, rows in the order of the section's
+        points, columns the global :math:`x, y` components.
+    """
+    section = space.section
+    mesh = space.mesh
+    gf = ngs.GridFunction(space.space)
+    gf.vec.FV().NumPy()[:] = coefficients
+    _, en = gf.components
+    l2 = ngs.L2(mesh, order=0)
+    eps = ngs.GridFunction(l2)
+    eps.vec.FV().NumPy()[:] = np.asarray(section.eps_nn).real
+    h1 = ngs.H1(mesh, order=1)
+    v = h1.TestFunction()
+    density = (en * ngs.Conj(en)).real
+    grad_density = 2 * (ngs.Conj(en) * ngs.grad(en)).real
+    frame = np.asarray(section.frame, float)
+    c_eps0 = scipy.constants.c * scipy.constants.epsilon_0
+    out = np.empty((len(section.points), 2))
+    for a in range(2):
+        # the global direction e_a in the local (u, v) components
+        d = ngs.CF((float(frame[0, a]), float(frame[1, a])))
+        lf = ngs.LinearForm(h1)
+        lf += (
+            eps
+            * (
+                ngs.InnerProduct(d, grad_density) * v
+                + density * ngs.InnerProduct(d, ngs.grad(v))
+            )
+            * ngs.dx(bonus_intorder=1)
+        )
+        lf.Assemble()
+        out[:, a] = lf.vec.FV().NumPy()[: len(section.points)]
+    # the local gradient is per local unit, the area in local units squared
+    return out * (c_eps0 / 4 * section.scale)
