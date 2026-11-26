@@ -34,6 +34,7 @@ recipes/sax-circuit
 :caption: Nonlinear and quantum optics
 
 recipes/waveguide-nonlinearity
+recipes/crystal-kerr
 recipes/second-harmonic-generation
 recipes/photon-pair-sources
 ```

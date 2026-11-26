@@ -1530,8 +1530,8 @@ class Material:
             `eps_r` of 1 (the crystal's optical permittivity left out); a
             `nonlinear_anisotropy` that is not one finite real number,
             sits beside an anisotropic `eps_r` (cubic crystals are optically
-            isotropic) or a `PermittivityLaw` (no `axes`), or has neither a `nonlinear_index` nor a
-            `two_photon_absorption`; a `raman_spectrum` that holds a
+            isotropic) or a `PermittivityLaw` (no `axes`), or has neither a
+            `nonlinear_index` nor a `two_photon_absorption`; a `raman_spectrum` that holds a
             traced gain (`NonDifferentiableError`), sits beside an
             anisotropic `eps_r`, or is cubic beside a `PermittivityLaw`; a
             `stiffness` that is not a real,
@@ -1709,7 +1709,7 @@ def _check_anisotropy(material: Material, owner: str) -> None:
             "Give n2 (or beta_TPA) along a crystal axis."
         )
     if isinstance(material.eps_r, PermittivityLaw):
-        raise ValueError(
+        raise ValueError(  # noqa: TRY004
             f"{owner}: nonlinear_anisotropy is given in the crystal frame of axes, "
             "but eps_r is a PermittivityLaw, which takes no axes, so the frame "
             "would be lost. Give the optical permittivity at the wavelength as a "
