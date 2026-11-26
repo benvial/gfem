@@ -79,7 +79,9 @@ def test_the_two_parts_add_and_g0_is_the_coupling_over_the_root_length(ran):
 
 
 def test_the_gain_is_the_published_one_to_the_coarse_meshs_error(ran):
-    mb, pe, total = dp.numbers(_example(ran, "The Brillouin gain of the guide").printed)
+    mb, pe, total = dp.numbers(
+        _example(ran, "The Brillouin gain of the guide").printed
+    )[:3]
     # published 4400, 4200, 17200 1/(W m); measured -1.6, -3.0, -2.3 % on this mesh;
     # the gate is twice the largest, as the verification test's
     assert mb == pytest.approx(4400, rel=6e-2)

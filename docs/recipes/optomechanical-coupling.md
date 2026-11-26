@@ -225,7 +225,7 @@ coupling").
 
 `gfem.optomechanical_coupling` reads the displacements of a mechanical solve.
 {py:obj}`gfem.optomechanical_overlap` reads any displacement
-{py:obj}`gfem.FieldMap` with the components $x, y, z$ on a 2D mesh, whatever
+field map (as `modes.displacement(k)`) with the components $x, y, z$ on a 2D mesh, whatever
 made it: another mechanical solve, or the displacement of a driven
 {py:class}`gfem.Piezoelectric` problem at $q = 0$, per volt. It gives
 $\partial n_\mathrm{eff}/\partial\alpha$ for the displacement scaled by a
