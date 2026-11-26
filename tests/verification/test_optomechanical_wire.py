@@ -9,8 +9,9 @@ here the moving-boundary part), 0.42e4 (electrostriction, the photoelastic part)
 and 1.72e4 1/(W m) in total. The 300 x 280 nm wire of Rakich et al. has its E2 at
 13.0 GHz.
 
-E2 is found by symmetry, not by index: the one mode, among those nearest
-12.5 GHz, even under both mirrors (:math:`s_x = s_y = +1`) with no :math:`u_z`.
+E2 is found by symmetry, not by index: the lowest mode, among those nearest
+12.5 GHz, even under both mirrors (:math:`s_x = s_y = +1`) with no :math:`u_z`
+(the next such mode, 14.9 GHz, couples 10 times less).
 The gain follows from the coupling as
 :math:`G_B = 4 Q_m \tilde g_0^2/(\hbar\omega v_g^2\,\mathrm{Re}\,\Omega)`,
 :math:`v_g = c/n_g`, per part by squaring that part's :math:`\tilde g_0`.
@@ -44,14 +45,14 @@ PUBLISHED_RAKICH = 13.0e9
 
 
 def _e2(result, width, height):
-    """The number of the one mode even under both mirrors without u_z."""
+    """The number of the lowest mode even under both mirrors without u_z."""
     found = []
     for k in range(result.n_modes):
         sx, sy, uz = oc.parities(result.displacement(k), width, height)
         if sx > 0.99 and sy > 0.99 and uz < 1e-6:
             found.append(k)
-    assert len(found) == 1, found
-    return found[0]
+    assert found, "no mode even under both mirrors"
+    return min(found, key=lambda k: float(result.frequency[k]))
 
 
 @pytest.fixture(scope="module")
