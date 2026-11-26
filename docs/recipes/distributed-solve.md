@@ -188,6 +188,12 @@ solving communicator holds, so solves on a second communicator
 BDDC's coarse factorizations kept between solves count against
 `retain_memory`; with `retain_memory=0` every solve sets them up anew.
 
+With `bddc_gmres`, gfem factors BDDC's coarse problem on a share of the ranks.
+The same script on the same ranks and stack always takes the same route, and
+the route is not an option: S stays that of the coarse problem factored on one
+rank, to round-off. A singular coarse problem raises at once; only a MUMPS
+workspace error is retried, with more workspace.
+
 Measured times for each layout, up to 108.6 M DOF on 32 nodes, are on
 {doc}`../project/scaling`.
 

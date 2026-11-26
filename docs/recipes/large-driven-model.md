@@ -119,6 +119,9 @@ How gfem itself is checked: {doc}`../verification`.
   raises.
 - **Optimization loops**: each design builds the solver again, starting its
   iterations from the previous design's solution.
+- **Reuse across a sweep**: a reused BDDC or p-multigrid preconditioner is set
+  up again before a step an octave from the frequency it was set up at, and
+  when a reused step costs as much as the mean per step since the setup.
 - **Small models**: on a model of a few hundred thousand unknowns the direct
   solver is faster; keep `"auto"`.
 
