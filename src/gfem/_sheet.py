@@ -71,7 +71,8 @@ class SheetField:
     A direct solve is insensitive to the fill. A large model on an iterative
     solver slows when a faint inductive face (an ``Impedance`` with an
     ``inductance``, a kinetic-inductance film) has a reactance per square
-    :math:`\omega L / w` near
+    :math:`\omega L / w` (:math:`L` the sheet inductance per square,
+    :math:`w` the face's fill) near
     :math:`X \approx \eta_0 \lambda_0 / (2 h (\varepsilon_1 + \varepsilon_2))`,
     with :math:`h` the mesh size along the sheet and
     :math:`\varepsilon_{1,2}` the relative permittivities on its two sides:

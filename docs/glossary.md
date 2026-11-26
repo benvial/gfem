@@ -383,7 +383,7 @@ Source-free temperature
 
 Thermo-optic coefficient
   The rate of change of a material's refractive index with temperature,
-  dn/dT in 1/K, constant, about the index of its `eps_r`. It may be negative. See {doc}`tutorials/heater3d`.
+  $dn/dT$ in $\mathrm{K}^{-1}$, constant, about the index of its `eps_r`. It may be negative. See {doc}`tutorials/heater3d`.
 
 DC conduction
   The steady current through the conductors of a model between named

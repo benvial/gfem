@@ -404,6 +404,20 @@ ports, whose S has a closed form far below the mesh's low-frequency floor
 Wave ports give the same S gauged and ungauged above the floor; below it their
 mode problem is not gauged and the solve warns.
 
+## Broadband models and time responses
+
+({doc}`recipes/time-responses`, {doc}`recipes/rational-model`)
+
+| Case | Compared with | Test | Runs |
+|---|---|---|---|
+| Lossless 75 Ω line behind a 50 Ω port, ended by 30 Ω: step, impulse, windows, renormalization | Closed-form S and reflections | {gfem-test}`tests/unit/test_time_responses.py` | Every change |
+| Exact rational S from known poles; lossless lines several wraps long; passivity enforcement | Same poles; tolerance; passive truth | {gfem-test}`tests/unit/test_rational_fit.py` | Every change |
+| Closed-form step of a model | Inverse Laplace transform; windowed step of its own S | {gfem-test}`tests/unit/test_rational_step.py` | Every change |
+| SPICE and Verilog-A netlists; AC solver of the cards | Model's S on every platform | {gfem-test}`tests/unit/test_netlist_export.py` | Every change |
+| ngspice and VACASK runs of the netlists; transient | Model's S; closed-form ramp response | {gfem-test}`tests/unit/test_netlist_simulators.py` | Every change |
+| Lossy parallel-plate line on wave ports | Complex $Z_{PV}$ reference; passive model from non-passive data | {gfem-test}`tests/unit/test_broadband_wave_ports.py` | Every change |
+| Parallel-plate line of {doc}`get-started`, wave-port line 10 wraps long, dielectric insert above cutoff | Reflectometer profile; exact TEM line; mode matching | {gfem-test}`tests/verification/test_broadband_fem.py` | Before release |
+
 ## Eigenmodes with wave ports
 
 Eigenmode problems with wave ports, against exact roots or a driven sweep
@@ -579,20 +593,6 @@ direct solver, on models that need each part of its {term}`direct set`.
 | Memory estimate and `"auto"`; each refusal | The direct set the solver builds; named error | {gfem-test}`tests/unit/test_auto_solver.py` | Every change |
 | Unit checks of the solver | Closed-form operators | {gfem-test}`tests/unit/test_pmg.py` | Every change |
 | Guides of 2.9 and 6.6 million unknowns, half model with a layer of 2.1 million, bend of 17.2 million | Direct solver; its outgoing waves from an earlier run | {doc}`project/scaling` | Once |
-
-## Broadband models and time responses
-
-({doc}`recipes/time-responses`, {doc}`recipes/rational-model`)
-
-| Case | Compared with | Test | Runs |
-|---|---|---|---|
-| Lossless 75 Ω line behind a 50 Ω port, ended by 30 Ω: step, impulse, windows, renormalization | Closed-form S and reflections | {gfem-test}`tests/unit/test_time_responses.py` | Every change |
-| Exact rational S from known poles; lossless lines several wraps long; passivity enforcement | Same poles; tolerance; passive truth | {gfem-test}`tests/unit/test_rational_fit.py` | Every change |
-| Closed-form step of a model | Inverse Laplace transform; windowed step of its own S | {gfem-test}`tests/unit/test_rational_step.py` | Every change |
-| SPICE and Verilog-A netlists; AC solver of the cards | Model's S on every platform | {gfem-test}`tests/unit/test_netlist_export.py` | Every change |
-| ngspice and VACASK runs of the netlists; transient | Model's S; closed-form ramp response | {gfem-test}`tests/unit/test_netlist_simulators.py` | Every change |
-| Lossy parallel-plate line on wave ports | Complex $Z_{PV}$ reference; passive model from non-passive data | {gfem-test}`tests/unit/test_broadband_wave_ports.py` | Every change |
-| Parallel-plate line of {doc}`get-started`, wave-port line 10 wraps long, dielectric insert above cutoff | Reflectometer profile; exact TEM line; mode matching | {gfem-test}`tests/verification/test_broadband_fem.py` | Before release |
 
 (verification-petsc)=
 ## PETSc and SLEPc

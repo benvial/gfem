@@ -6,7 +6,8 @@ What gfem solves, which results it differentiates, and what it refuses.
 
 "Matrix" in a Gradient cell points to the
 {ref}`generated matrix <what-you-can-differentiate>`; "Yes" and "Partial" are
-claims of the linked page.
+claims of the linked page. In the feature tables, "3D only" is "No" where the
+feature also runs in 2D.
 
 ### Problems
 
@@ -23,19 +24,14 @@ claims of the linked page.
 | {py:obj}`gfem.Piezoelectric` | Admittance per length, clamped capacitance | Yes | No | Matrix | {doc}`recipes/piezoelectric-admittance` |
 | {py:class}`gfem.MechanicalEigenmode` | Complex frequency, Q, group velocity at an {term}`axial wavenumber` | Yes | No | `omega` and fields | {doc}`recipes/mechanical-modes` |
 
-### Features
-
-Each group follows the sidebar. "3D only" is "No" where the feature also runs
-in 2D.
-
-#### Integrated photonics
+### Integrated photonics
 
 | Feature | Calls | 3D only | Gradient | Page |
 |---|---|---|---|---|
 | Several modes on one wave-port surface | {py:obj}`gfem.WavePort` | Yes | Matrix, at port faces too | {doc}`recipes/shared-port-surface` |
 | Circuits | {py:obj}`gfem.SaxComponent`, `to_sdict`, `to_skrf` | No | Yes, not forward mode | {doc}`recipes/sax-circuit` |
 
-#### Nonlinear and quantum optics
+### Nonlinear and quantum optics
 
 | Feature | Calls | 3D only | Gradient | Page |
 |---|---|---|---|---|
@@ -43,13 +39,13 @@ in 2D.
 | Second-harmonic and three-wave coupling | {py:obj}`gfem.second_harmonic`, {py:obj}`gfem.three_wave_coupling` | No | Partial: materials, not nodes | {doc}`recipes/second-harmonic-generation` |
 | Photon pairs | {py:obj}`gfem.spdc`, {py:obj}`gfem.sfwm` | No | Partial: materials, not nodes | {doc}`recipes/photon-pair-sources` |
 
-#### Electro-optics
+### Electro-optics
 
 | Feature | Calls | 3D only | Gradient | Page |
 |---|---|---|---|---|
 | Electro-optic shift, $V_\pi L$ | {py:obj}`gfem.electro_optic_shift` | No | Partial: not the optical model | {doc}`recipes/electro-optic-phase` |
 
-#### Heat and thermo-optics
+### Heat and thermo-optics
 
 | Feature | Calls | 3D only | Gradient | Page |
 |---|---|---|---|---|
@@ -59,14 +55,14 @@ in 2D.
 | Thermo-optic phase | {py:obj}`gfem.thermo_optic_shift`, {py:obj}`gfem.route_phase` | No | Matrix | {doc}`recipes/thermo-optic-phase` |
 | Rise time, time constant | {py:obj}`gfem.rise_time`, {py:obj}`gfem.time_constant` | No | No | {doc}`recipes/thermal-step-response` |
 
-#### Mechanics and acoustics
+### Mechanics and acoustics
 
 | Feature | Calls | 3D only | Gradient | Page |
 |---|---|---|---|---|
 | Acousto-optic shift | {py:obj}`gfem.acousto_optic_shift` | No | Partial: not the optical model | {doc}`recipes/acousto-optic-shift` |
 | Optomechanical $g_0$ | {py:obj}`gfem.optomechanical_coupling`, {py:obj}`gfem.optomechanical_overlap` | No | Partial: optical mode held | {doc}`recipes/optomechanical-coupling` |
 
-#### Free-space scattering
+### Free-space scattering
 
 | Feature | Calls | 3D only | Gradient | Page |
 |---|---|---|---|---|
@@ -77,7 +73,7 @@ in 2D.
 | Multipoles | {py:obj}`gfem.multipoles`, {py:obj}`gfem.current_moments` | Yes | Partial: multipoles, not nodes | {doc}`recipes/multipoles` |
 | Optical force | {py:obj}`gfem.optical_force` | Yes | Yes | {doc}`recipes/optical-force` |
 
-#### Periodic surfaces
+### Periodic surfaces
 
 | Feature | Calls | 3D only | Gradient | Page |
 |---|---|---|---|---|
@@ -88,7 +84,7 @@ in 2D.
 | Emissivity | `gfem.diffraction` | Yes | Partial: not the angles | {doc}`recipes/emissivity` |
 | Metasurface aperture fields | `gfem.diffraction` | Yes | Partial: not the angle | {doc}`recipes/metasurface-from-cells` |
 
-#### RF and microwave
+### RF and microwave
 
 | Feature | Calls | 3D only | Gradient | Page |
 |---|---|---|---|---|
@@ -96,14 +92,14 @@ in 2D.
 | Rational model, SPICE and Verilog-A | `NetworkParameters.fit_rational` | n/a | No | {doc}`recipes/rational-model` |
 | Time responses, impedance profile | `step_response`, `impulse_response` | n/a | Yes | {doc}`recipes/time-responses` |
 
-#### Resonators and qubits
+### Resonators and qubits
 
 | Feature | Calls | 3D only | Gradient | Page |
 |---|---|---|---|---|
 | Dressed modes, kinetic inductance | {py:obj}`gfem.quantum.dressed_modes`, `sheet_participation` | Yes | Yes | {doc}`recipes/quantum-metrics` |
 | $1/Q$ budget, $T_1$ limits | {py:obj}`gfem.interface_participation`, {py:obj}`gfem.dissipated_power` | Yes | Partial: isolated modes | {doc}`recipes/loss-budget` |
 
-#### Meshes, materials and boundaries
+### Meshes, materials and boundaries
 
 | Feature | Calls | 3D only | Gradient | Page |
 |---|---|---|---|---|
@@ -114,14 +110,14 @@ in 2D.
 | Material library and fit | {py:mod}`gfem.materials`, {py:obj}`gfem.fit_permittivity` | n/a | n/a | {doc}`recipes/fit-measured-data` |
 | Perfectly matched layer | {py:obj}`gfem.PML` | Yes | Yes, not layer parameters | {doc}`recipes/perfectly-matched-layer` |
 
-#### Design workflow
+### Design workflow
 
 | Feature | Calls | 3D only | Gradient | Page |
 |---|---|---|---|---|
 | Layer patterns to GDS | {py:obj}`gfem.design.LayerPattern`, {py:obj}`gfem.design.write_gds` | n/a | No; call it on the final design | {doc}`recipes/fabricable-layout` |
 | Tolerance report | {py:obj}`gfem.tolerance_report` | No | n/a | {doc}`recipes/tolerance-report` |
 
-#### Results and files
+### Results and files
 
 | Feature | Calls | 3D only | Gradient | Page |
 |---|---|---|---|---|
@@ -151,14 +147,6 @@ factorization. How large a model each solver has finished is in
 
 ```{gfem-gradient-matrix}
 ```
-
-- **FD-verified**: supported; the gradient is checked against finite
-  differences.
-- **Exact zero**: the result does not depend on this input; `jax.grad`
-  returns zero, correctly.
-- **Raises**: asking for this gradient raises
-  {py:obj}`gfem.NonDifferentiableError` (or the error named) instead of
-  returning a wrong value.
 
 - **FD-verified**: supported; the gradient is checked against finite
   differences.

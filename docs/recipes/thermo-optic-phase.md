@@ -181,7 +181,7 @@ across the section, and the section's own.
   change with temperature is left out.
 - A lossless optical section only: no metal, absorber or `tan_delta` in the
   optical solve's regions.
-- The coefficient is constant per material: no temperature-dependent dn/dT, no
+- The coefficient is constant per material: no temperature-dependent $dn/dT$, no
   strain-optic effect.
 - The window is a straight guide's section: the route phase does not see the
   mode shifting outwards in a tight bend.
