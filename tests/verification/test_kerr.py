@@ -127,6 +127,35 @@ def test_the_filled_wr90_coefficient_converges_to_its_closed_form(guide_model):
     assert n_errors[-1] < 1e-10, n_errors
 
 
+def test_the_filled_wr90_with_a_cubic_anisotropy_follows_its_factor(guide_model):
+    # E is y alone in the continuum TE10, so the Kerr coefficient is the
+    # isotropic one times rho + (1 - rho) sum_s (a_s . y)^4, which is
+    # (1 + rho) / 2 for a frame turned 45 degrees about z; the mesh's x
+    # component is the error, converging with the order like the isotropic one
+    # (measured 3.1e-6, 1.3e-7, 7.9e-10, 1.5e-12 at orders 2-5)
+    rho, c = 1.27, np.cos(np.pi / 4)
+    axes = ((c, c, 0.0), (-c, c, 0.0), (0.0, 0.0, 1.0))
+    material = gfem.Material(
+        eps_r=N_FILL**2, nonlinear_index=N2_FILL, nonlinear_anisotropy=rho, axes=axes
+    )
+    model = gfem.Model(
+        guide_model.mesh,
+        materials={"air": material},
+        boundaries=guide_model.boundaries,
+        ports=guide_model.ports,
+    )
+    errors = []
+    for p in ORDERS:
+        mode = gfem.solve(
+            model,
+            gfem.PortMode("p1", [F_GUIDE]),
+            options=gfem.SolverOptions(order=p),
+        )
+        gamma = complex(gfem.kerr_nonlinearity(model, mode).gamma_nl[0])
+        errors.append(abs(gamma.real - (1 + rho) / 2 * GUIDE_GAMMA) / GUIDE_GAMMA)
+    _converges(errors, 1e-10)
+
+
 # --- a silicon wire ---------------------------------------------------------------
 
 

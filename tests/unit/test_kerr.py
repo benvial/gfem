@@ -746,3 +746,277 @@ def test_the_tensor_is_a_pytree_with_gamma_as_its_only_leaf(waves):
     again = jax.tree.unflatten(tree, leaves)
     assert (again.port, again.waves) == (tensor.port, tensor.waves)
     np.testing.assert_array_equal(again.gamma_nl, tensor.gamma_nl)
+
+
+# --- the cubic anisotropy ---------------------------------------------------------
+
+RHO = 1.27  # silicon, 1.2 to 2.4 um (Zhang et al. 2007): rho = 3 / 2.36 = 1.271
+
+
+def _axes(rotation):
+    return tuple(tuple(float(v) for v in row) for row in rotation)
+
+
+def _random_axes(seed):
+    from scipy.spatial.transform import Rotation
+
+    return _axes(Rotation.random(random_state=seed).as_matrix())
+
+
+def _cubic(rho, axes=None, **kwargs):
+    return gfem.Material(
+        eps_r=N**2, nonlinear_index=N2, nonlinear_anisotropy=rho, axes=axes, **kwargs
+    )
+
+
+def _quartic_factor(axes, direction):
+    """:math:`\\rho`-free part of the factor :math:`\\sum_s (a_s\\cdot u)^4`."""
+    return float(np.sum((np.asarray(axes) @ np.asarray(direction)) ** 4))
+
+
+class _Uniform:
+    """Stand-in waves: one point per wave with a given field, weight 1."""
+
+    def __init__(self, fields, material):
+        self.fields = jnp.asarray(fields, dtype=complex)[:, None, None, :]
+        n = len(self.fields)
+        self.port = "p1"
+        self.modes = (1,) * n
+        self.frequency = np.full(n, 8e9)
+        self.vectors = jnp.arange(n)
+        self.weights = jnp.ones((1, 1))
+        self.materials = material
+
+    def row(self, vector):
+        return self.fields[vector]
+
+    def field(self):
+        return self.fields
+
+
+@pytest.fixture
+def uniform(monkeypatch, filled):
+    """``measure(fields, rho, axes, what)``: the overlap of given uniform fields."""
+    model, mode, _ = filled
+
+    def measure(fields, rho, axes=None, coupling=False):
+        axes = np.eye(3) if axes is None else axes
+        fields = np.asarray(fields, complex)
+        n = len(fields)
+        has = rho is not None
+        kerr_materials = kerr._Kerr(
+            n2=jnp.asarray([N2]),
+            beta=jnp.zeros(1),
+            eps=jnp.full((n, 1), N**2),
+            keep=np.ones(1, bool),
+            rho=jnp.asarray([rho]) if has else None,
+            axes=np.asarray(axes)[None] if has else None,
+        )
+        waves = _Uniform(fields, kerr_materials)
+        monkeypatch.setattr(kerr, "_waves", lambda *_: waves)
+        if coupling:
+            return np.asarray(gfem.kerr_coupling(model, mode).gamma_nl)
+        return np.asarray(gfem.kerr_nonlinearity(model, mode).gamma_nl)
+
+    return measure
+
+
+X, Y, Z = np.eye(3)
+
+
+def test_rho_one_is_the_isotropic_overlap_whatever_the_axes(guide_mesh, filled):
+    _, mode, kn = filled
+    base = gfem.Material(eps_r=N**2, nonlinear_index=N2, two_photon_absorption=TPA)
+    reference = np.asarray(
+        gfem.kerr_coupling(guide_model(guide_mesh, base), mode).gamma_nl
+    )
+    for seed in range(3):
+        material = _cubic(1.0, _random_axes(seed), two_photon_absorption=TPA)
+        other = guide_model(guide_mesh, material)
+        # 1 * q + 3 (1 - 1) * c is q in floating point, up to the compiler's
+        # reordering: round-off 1e-16, gate 1e-12
+        got = gfem.kerr_nonlinearity(other, mode)
+        np.testing.assert_allclose(got.gamma_nl, kn.gamma_nl, rtol=1e-12)
+        tensor = np.asarray(gfem.kerr_coupling(other, mode).gamma_nl)
+        np.testing.assert_allclose(tensor, reference, rtol=1e-12, atol=0)
+
+
+def test_a_material_with_axes_and_one_permittivity_is_accepted_without_rho(
+    guide_mesh, filled
+):
+    _, mode, kn = filled
+    material = gfem.Material(
+        eps_r=N**2,
+        nonlinear_index=N2,
+        two_photon_absorption=TPA,
+        axes=_random_axes(5),
+    )
+    got = gfem.kerr_nonlinearity(guide_model(guide_mesh, material), mode)
+    np.testing.assert_allclose(got.gamma_nl, kn.gamma_nl, rtol=1e-12)
+
+
+def test_uniform_field_ratios_follow_rho(uniform):
+    # each ratio is a closed form of rho; the operations are a few products of
+    # numbers of order 1, so round-off is 1e-16 and the gate 1e-13
+    def q(field):
+        return uniform([field], RHO)[0].real
+
+    lin = q(X)
+    assert q((X + Y) / np.sqrt(2)) / lin == pytest.approx((1 + RHO) / 2, rel=1e-13)
+    assert q((X + Y + Z) / np.sqrt(3)) / lin == pytest.approx(
+        (1 + 2 * RHO) / 3, rel=1e-13
+    )
+    circular = q((X + 1j * Y) / np.sqrt(2)) / lin
+    assert circular == pytest.approx(0.5 + RHO / 6, rel=1e-13)
+    assert circular == pytest.approx(0.711667, abs=1e-6)
+    assert q((X + Y) / np.sqrt(2)) / lin == pytest.approx(1.135, abs=1e-12)
+    assert q((X + Y + Z) / np.sqrt(3)) / lin == pytest.approx(1.18, abs=1e-12)
+
+
+def test_the_cubic_form_reads_the_crystal_frame_not_the_global_one(uniform):
+    # a linear field along the first row of a rotated frame is its [100]
+    axes = np.asarray(_random_axes(7))
+    along = uniform([axes[0]], RHO, axes)[0]
+    diagonal = uniform([(axes[0] + axes[1]) / np.sqrt(2)], RHO, axes)[0]
+    assert diagonal / along == pytest.approx((1 + RHO) / 2, rel=1e-13)
+    # the same field in the global frame is not a cube axis
+    assert abs(uniform([axes[0]], RHO)[0].real / along.real - 1) > 0.01
+
+
+def test_orthogonal_polarizations_cross_phase_follows_rho(uniform):
+    def ratios(a, b):
+        g = uniform([a, b], RHO, coupling=True)
+        spm = g[0, 0, 0, 0]
+        return (g[0, 0, 1, 1] + g[0, 1, 0, 1]) / spm, g[0, 1, 1, 0] / spm
+
+    xpm, coherent = ratios(X, Y)
+    assert xpm == pytest.approx(2 * RHO / 3, rel=1e-13)
+    assert coherent == pytest.approx(RHO / 3, rel=1e-13)
+    rho = 3 / 2.36
+    g = uniform([(X + Y) / np.sqrt(2), (X - Y) / np.sqrt(2)], rho, coupling=True)
+    spm = g[0, 0, 0, 0]
+    assert (g[0, 0, 1, 1] + g[0, 1, 0, 1]) / spm == pytest.approx(0.507463, abs=1e-6)
+    assert g[0, 1, 1, 0] / spm == pytest.approx(0.253731, abs=1e-6)
+
+
+def test_the_coupling_diagonal_is_the_coefficient_with_rho(uniform):
+    fields = [(X + 2 * Y + 0.5j * Z) / 2]
+    diagonal = uniform(fields, RHO, _random_axes(3), coupling=True)[0, 0, 0, 0]
+    single = uniform(fields, RHO, _random_axes(3))[0]
+    assert diagonal == pytest.approx(single, rel=1e-13)
+
+
+@pytest.mark.parametrize(
+    "axes",
+    [
+        np.eye(3),
+        np.diag([1.0, -1.0, 1.0]),
+        np.array([[0, 1.0, 0], [-1.0, 0, 0], [0, 0, 1.0]]),
+        np.array([[0, 0, 1.0], [1.0, 0, 0], [0, 1.0, 0]]),
+    ],
+    ids=["identity", "sign", "quarter turn", "cyclic"],
+)
+def test_te10_is_unchanged_by_the_cube_axes_along_its_field(guide_mesh, filled, axes):
+    _, mode, kn = filled
+    other = guide_model(guide_mesh, _cubic(RHO, _axes(axes), two_photon_absorption=TPA))
+    got = gfem.kerr_nonlinearity(other, mode).gamma_nl
+    # E is y up to the mesh's x component (measured 1.07e-5 relative in gamma at
+    # order 2, gate 2e-5); a signed permutation sends y to an axis, the factor is 1
+    np.testing.assert_allclose(got, kn.gamma_nl, rtol=2e-5)
+
+
+def test_te10_at_45_degrees_has_the_factor_one_plus_rho_over_two(guide_mesh, filled):
+    _, mode, _ = filled
+    c = np.cos(np.pi / 4)
+    about_z = [[c, c, 0], [-c, c, 0], [0, 0, 1]]
+    about_x = [[1, 0, 0], [0, c, c], [0, -c, c]]
+    for axes in (about_z, about_x):
+        other = guide_model(guide_mesh, _cubic(RHO, _axes(axes)))
+        plain = guide_model(guide_mesh, gfem.Material(eps_r=N**2, nonlinear_index=N2))
+        got = complex(gfem.kerr_nonlinearity(other, mode).gamma_nl[0])
+        ref = complex(gfem.kerr_nonlinearity(plain, mode).gamma_nl[0])
+        factor = RHO + (1 - RHO) * _quartic_factor(axes, Y)
+        assert factor == pytest.approx((1 + RHO) / 2, rel=1e-15)
+        assert got.real / ref.real == pytest.approx(factor, rel=2e-5)
+
+
+def test_gamma_is_affine_in_rho_exactly(guide_mesh, filled):
+    _, mode, _ = filled
+    axes = _random_axes(11)
+
+    def gamma(rho):
+        other = guide_model(guide_mesh, _cubic(rho, axes, two_photon_absorption=TPA))
+        return complex(gfem.kerr_nonlinearity(other, mode).gamma_nl[0])
+
+    g1, g2, g3 = gamma(1.0), gamma(2.0), gamma(RHO)
+    # the third is the affine combination of the first two: 1e-16 round-off
+    # of a sum of a few terms, gate 1e-12
+    assert g3 == pytest.approx(g1 + (RHO - 1) * (g2 - g1), rel=1e-12)
+
+
+def test_an_ez_line_port_has_the_factor_of_the_z_axis(slab):
+    model, mode = slab
+    axes = _random_axes(4)
+    base = complex(gfem.kerr_nonlinearity(model, mode).gamma_nl[0])
+    cubic = {
+        name: dataclasses.replace(m, nonlinear_anisotropy=RHO, axes=axes)
+        for name, m in model.materials.items()
+    }
+    got = complex(
+        gfem.kerr_nonlinearity(model.replace(materials=cubic), mode).gamma_nl[0]
+    )
+    # the field has one component, along z: every term of the integral is
+    # scaled by the same factor; round-off of the sum 1e-16, gate 1e-12
+    factor = RHO + (1 - RHO) * _quartic_factor(axes, Z)
+    assert abs(factor - 1) > 0.05  # the frame is not a cube axis along z
+    assert got.real == pytest.approx(factor * base.real, rel=1e-12)
+
+
+def test_a_field_along_a_cube_axis_sees_the_axis_value_for_every_rho(uniform):
+    base = uniform([Y], None)[0]
+    assert uniform([Y], 1.7)[0].real == pytest.approx(base.real, rel=1e-13)
+
+
+# --- the refusals of the anisotropy -------------------------------------------------
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), [1.0, 1.0], 1j, "1.2"])
+def test_a_nonlinear_anisotropy_must_be_one_finite_real_number(bad):
+    with pytest.raises(ValueError, match="nonlinear_anisotropy"):
+        gfem.Material(eps_r=N**2, nonlinear_index=N2, nonlinear_anisotropy=bad)
+
+
+def test_a_nonlinear_anisotropy_needs_a_kerr_property():
+    with pytest.raises(ValueError, match=r"nonlinear_anisotropy.*no nonlinear_index"):
+        gfem.Material(eps_r=N**2, nonlinear_anisotropy=1.27)
+    gfem.Material(eps_r=N**2, two_photon_absorption=TPA, nonlinear_anisotropy=1.27)
+
+
+def test_a_nonlinear_anisotropy_beside_an_anisotropic_permittivity_is_refused():
+    with pytest.raises(ValueError, match=r"nonlinear_anisotropy.*optically isotropic"):
+        gfem.Material(
+            eps_r=(2.0, 2.0, 2.3), nonlinear_index=N2, nonlinear_anisotropy=1.27
+        )
+
+
+def test_a_nonlinear_anisotropy_is_refused_under_a_trace():
+    def build(rho):
+        gfem.Material(eps_r=N**2, nonlinear_index=N2, nonlinear_anisotropy=rho)
+        return rho
+
+    with pytest.raises(NonDifferentiableError, match="nonlinear_anisotropy"):
+        jax.grad(build)(1.27)
+
+
+def test_a_field_blending_an_anisotropy_is_refused():
+    kerr_end = _cubic(1.27)
+    other = gfem.Material(eps_r=1.0, nonlinear_index=0.0)
+    with pytest.raises(ValueError, match="nonlinear_anisotropy"):
+        gfem.MaterialField.interpolate(jnp.asarray([0.5]), other, kerr_end)
+
+
+def test_the_anisotropy_survives_a_pytree_and_a_job_round_trip():
+    material = _cubic(RHO, _random_axes(2))
+    leaves, tree = jax.tree.flatten(material)
+    assert jax.tree.unflatten(tree, leaves).nonlinear_anisotropy == RHO
+    assert "nonlinear_anisotropy=1.27" in repr(material)

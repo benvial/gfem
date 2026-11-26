@@ -997,8 +997,12 @@ for _cls in (Material, MaterialField):
             mechanical_quality_factor=None,
             photoelastic_tensor=None,
             second_order_nonlinear_tensor=None,
-            # only a Material carries a Raman spectrum
-            **({"raman_spectrum": None} if _cls is Material else {}),
+            # only a Material carries a Raman spectrum or a Kerr anisotropy
+            **(
+                {"raman_spectrum": None, "nonlinear_anisotropy": None}
+                if _cls is Material
+                else {}
+            ),
         ),
         from_args=_renamed_density_from_args(_cls),
         # "density": the mass density as gfem 0.1 wrote it (a read alias)

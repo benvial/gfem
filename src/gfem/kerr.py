@@ -75,6 +75,11 @@ class KerrNonlinearity:
     and :math:`\delta\alpha = \mathrm{Im}\,\gamma_\mathrm{NL}\,P \ge 0`, the
     convention of the generalized nonlinear Schrodinger equation.
 
+    A material with a `Material.nonlinear_anisotropy` :math:`\rho` replaces
+    the bracket by :math:`\rho \left[2 |E|^4 + |E\cdot E|^2\right] +
+    3(1-\rho) \sum_s |a_s\cdot E|^4`, with :math:`a_s` the rows of its
+    `axes` (the cube axes): the bracket at :math:`\rho = 1`, whatever the axes.
+
     Attributes:
         port: The wave port's name.
         mode: Which mode (1 = the most propagating).
@@ -138,6 +143,11 @@ class KerrCoupling:
     only those that conserve energy (:math:`\omega_a + \omega_b = \omega_c +
     \omega_d` up to ordering).
 
+    A material with a `Material.nonlinear_anisotropy` :math:`\rho` replaces
+    :math:`S` by :math:`S_\rho = \rho S + 3(1-\rho)\sum_s (a_s\cdot
+    u)(a_s\cdot v)(a_s\cdot w)(a_s\cdot z)` over the rows :math:`a_s` of its
+    `axes` (the cube axes), which is :math:`S` at :math:`\rho = 1`.
+
     Attributes:
         port: The wave port's name.
         waves: ``(mode, frequency)`` of each wave, in order (Hz).
@@ -181,19 +191,37 @@ class _Kerr:
     ``n2`` and ``beta`` ``(n_el,)`` (0 where an element has none), ``eps``
     ``(n_wave, n_el)`` the real part of the permittivity at each wave's
     frequency, ``keep`` ``(n_el,)`` False on a perfectly matched layer's
-    triangles.
+    triangles. ``rho`` ``(n_el,)`` and ``axes`` ``(n_el, 3, 3)`` (the crystal
+    axes as rows) are the Kerr anisotropy of each element and its frame, both
+    ``None`` when no element carries a `Material.nonlinear_anisotropy`: the
+    isotropic path then runs unchanged.
     """
 
     n2: jax.Array
     beta: jax.Array
     eps: jax.Array
     keep: np.ndarray
+    rho: jax.Array | None = None
+    axes: np.ndarray | None = None
 
 
 def _anisotropic(material: Material | MaterialField) -> bool:
+    # a Material's axes with one permittivity only orient its crystal (the Kerr
+    # anisotropy); a field's axes mean a tensor, as everywhere in the engine
     if isinstance(material, Material):
-        return not material.isotropic or material.axes is not None
+        return not material.isotropic
     return material.axes is not None
+
+
+def _crystal_components(e: jax.Array, axes: jax.Array) -> jax.Array:
+    r""":math:`a_s\cdot E` of every point: ``(..., n_c)`` fields, ``(..., 3)`` result.
+
+    ``axes`` broadcasts against ``e`` as ``(..., 3, 3)`` rows. The field of an
+    Ez line port has one component, along :math:`\hat z`.
+    """
+    if e.shape[-1] == 1:
+        return e * axes[..., :, 2]
+    return jnp.einsum("...c,...sc->...s", e, axes)
 
 
 def _region_permittivity(
@@ -243,6 +271,9 @@ def _kerr_materials(
     beta = jnp.zeros(n_el)
     eps = jnp.zeros((len(frequency), n_el))
     carries = np.zeros(n_el, bool)
+    rho = np.ones(n_el)
+    frames = np.broadcast_to(np.eye(3), (n_el, 3, 3)).copy()
+    anisotropy = False
     for tag in np.unique(tags):
         region = names[int(tag)]
         material = model.materials[region]
@@ -271,6 +302,11 @@ def _kerr_materials(
         rows = np.flatnonzero(tags == tag)
         pos = np.searchsorted(mesh.elements(region), cells[rows])
         carries[rows] = True
+        if isinstance(material, Material) and material.nonlinear_anisotropy is not None:
+            anisotropy = True
+            rho[rows] = material.nonlinear_anisotropy
+            if material.axes is not None:
+                frames[rows] = np.asarray(material.axes)
         if given["nonlinear_index"] is not None:
             n2 = n2.at[rows].set(_per_element(given["nonlinear_index"], pos))
         if given["two_photon_absorption"] is not None:
@@ -292,7 +328,9 @@ def _kerr_materials(
             f"{regions}), so the nonlinearity is zero. Set one on the core's "
             "material."
         )
-    return _Kerr(n2, beta, eps, keep)
+    if not anisotropy:
+        return _Kerr(n2, beta, eps, keep)
+    return _Kerr(n2, beta, eps, keep, jnp.asarray(rho), frames)
 
 
 # --- public functions ------------------------------------------------------------
@@ -319,6 +357,11 @@ def kerr_nonlinearity(model: Model, mode: PortModeResult) -> KerrNonlinearity:
     single-material core, :math:`A_\mathrm{eff} = k_0 n_2 / \mathrm{Re}\,
     \gamma_\mathrm{NL}`.
 
+    ``nonlinear_anisotropy`` :math:`\rho` (a cubic crystal such as silicon,
+    with its cube axes in ``axes``) makes the coefficient depend on the field's
+    direction in the crystal; ``nonlinear_index`` and ``two_photon_absorption``
+    then refer to light polarized along a cube axis. See `KerrNonlinearity`.
+
     Exactly linear in ``nonlinear_index`` and ``two_photon_absorption``;
     under `jax.grad` the traced mode field makes it differentiable with
     respect to the section's ``eps_r``, laws, losses and density blends (one 2D
@@ -337,8 +380,9 @@ def kerr_nonlinearity(model: Model, mode: PortModeResult) -> KerrNonlinearity:
     Raises:
         ValueError: No element outside a perfectly matched layer carries a
             Kerr property.
-        NotImplementedError: A region carrying one is anisotropic, or a density
-            blend without a per-element permittivity; an Hz line port.
+        NotImplementedError: A region carrying one has an anisotropic
+            permittivity, or is a density blend without a per-element
+            permittivity; an Hz line port.
         TypeError: ``mode`` is not a `gfem.PortModeResult`, or has no electric
             field.
         NonDifferentiableError: The node coordinates are traced by `jax.grad`.
@@ -352,6 +396,9 @@ def kerr_nonlinearity(model: Model, mode: PortModeResult) -> KerrNonlinearity:
         )
     waves = _waves(model, mode, owner, _kerr_materials, _kerr_columns)
     weights = waves.weights
+    kerr = waves.materials
+    rho = None if kerr.rho is None else kerr.rho[:, None]
+    frames = None if kerr.axes is None else jnp.asarray(kerr.axes)[:, None]
 
     @jax.checkpoint
     def integral(vector: jax.Array) -> jax.Array:
@@ -360,12 +407,16 @@ def kerr_nonlinearity(model: Model, mode: PortModeResult) -> KerrNonlinearity:
         e2 = jnp.sum(re * re + im * im, axis=-1)
         ee = jnp.sum(e * e, axis=-1)
         quartic = 2 * e2 * e2 + jnp.real(ee) ** 2 + jnp.imag(ee) ** 2
+        if rho is not None and frames is not None:
+            # S_rho: the cubic part sums |a_s . E|^4 over the crystal axes
+            p = _crystal_components(e, frames)
+            cubic = jnp.sum(jnp.real(p * jnp.conj(p)) ** 2, axis=-1)
+            quartic = rho * quartic + 3 * (1 - rho) * cubic
         return jnp.sum(weights * quartic, axis=-1)
 
     # one row at a time: the point values of a row are (n_el, n_q, 3) complex
     per_element = jax.lax.map(integral, waves.vectors)  # (n_wave, n_el)
     k0 = jnp.asarray(2 * np.pi * waves.frequency / _C)[:, None]
-    kerr = waves.materials
     # conjugate of n2 - i beta / (2 k0): the e^{-i omega t} convention
     n2 = kerr.n2[None] + 1j * kerr.beta[None] / (2 * k0)
     gamma = (k0[:, 0] * _C**2 * _EPS0**2 / 12) * jnp.sum(
@@ -434,6 +485,10 @@ def kerr_coupling(
         * (kerr.n2[None] - 1j * kerr.beta[None] * _C / (2 * omega[:, None]))
     )
     x = jnp.repeat(chi, n_q, axis=1) * waves.weights.reshape(-1)[None]
+    if kerr.rho is not None:
+        rho = jnp.repeat(kerr.rho, n_q)[None]
+        x_cubic = 3 * (1 - rho) * x
+        x = rho * x
     p = jnp.einsum("bnx,cnx->bcn", points, points)
     q = jnp.einsum("bnx,cnx->bcn", points, jnp.conj(points))
     t = (
@@ -441,6 +496,12 @@ def kerr_coupling(
         + jnp.einsum("an,ban,cdn->abcd", x, q, q)
         + jnp.einsum("an,bdn,can->abcd", x, q, q)
     )
+    if kerr.rho is not None:
+        frames = jnp.repeat(jnp.asarray(kerr.axes), n_q, axis=0)
+        r = _crystal_components(points, frames[None])  # (n_wave, n, 3)
+        t = t + jnp.einsum(
+            "an,bns,cns,ans,dns->abcd", x_cubic, r, r, jnp.conj(r), jnp.conj(r)
+        )
     gamma = jnp.conj(omega[:, None, None, None] * _EPS0 / 16 * t)
     return KerrCoupling(
         port=waves.port,

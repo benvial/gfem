@@ -1423,6 +1423,17 @@ class Material:
             :math:`\delta\alpha = \beta_\mathrm{TPA} I`, in m/W: one real
             number, :math:`\ge 0`. Read by `gfem.kerr_nonlinearity` and
             `gfem.kerr_coupling` only. ``None`` means none.
+        nonlinear_anisotropy: The anisotropy :math:`\rho =
+            3\chi_{1122}/\chi_{1111}` of a cubic crystal's Kerr effect (1.27
+            for silicon at 1.2 to 2.4 um), one real number, the same for
+            `nonlinear_index` and `two_photon_absorption`, which then refer to
+            light polarized along a crystal axis (a row of `axes`, ``[100]``)
+            rather than to ``[110]``: :math:`n_2^{[100]} = 2
+            n_2^{[110]}/(1+\rho)`. A field along the unit vector :math:`u`
+            of the crystal frame sees
+            :math:`\rho + (1-\rho)\sum_s u_s^4` times that value. Read by
+            `gfem.kerr_nonlinearity` and `gfem.kerr_coupling` only. ``None``
+            means isotropic (:math:`\rho = 1`, whatever `axes`).
         raman_spectrum: The bulk Raman gain, a `gfem.RamanSpectrum` (its
             ``symmetry`` is ``"cubic"`` for silicon, on this material's
             `axes`, or ``"isotropic"``). Read by `gfem.raman_gain` only,
@@ -1514,7 +1525,10 @@ class Material:
             an entry above 1e-8 m/V (a value in pm/V), or sits beside a
             matrix property, left-handed `axes`, a `PermittivityLaw` or an
             `eps_r` of 1 (the crystal's optical permittivity left out); a
-            `raman_spectrum` that holds a
+            `nonlinear_anisotropy` that is not one finite real number,
+            sits beside an anisotropic `eps_r` (cubic crystals are optically
+            isotropic) or has neither a `nonlinear_index` nor a
+            `two_photon_absorption`; a `raman_spectrum` that holds a
             traced gain (`NonDifferentiableError`), sits beside an
             anisotropic `eps_r`, or is cubic beside a `PermittivityLaw`; a
             `stiffness` that is not a real,
@@ -1558,6 +1572,7 @@ class Material:
     thermo_optic_coefficient: float | None = None
     nonlinear_index: float | None = None
     two_photon_absorption: float | None = None
+    nonlinear_anisotropy: float | None = None
     electro_optic_tensor: tuple[tuple[float, float, float], ...] | None = None
     stiffness: tuple[tuple[float, ...], ...] | None = None
     piezoelectric_tensor: tuple[tuple[float, ...], ...] | None = None
@@ -1608,6 +1623,7 @@ class Material:
             for name, value in _law_material_values(self, owner).items():
                 object.__setattr__(self, name, value)
             _check_raman(self, owner)
+            _check_anisotropy(self, owner)
             return
         values = {
             p.name: _material_value(p, getattr(self, p.name), owner) for p in PROPERTIES
@@ -1638,6 +1654,7 @@ class Material:
         if axes is not None:
             object.__setattr__(self, "axes", _axes(axes, owner))
         _check_raman(self, owner)
+        _check_anisotropy(self, owner)
 
     def __repr__(self) -> str:
         parts = [
@@ -1659,6 +1676,41 @@ class Material:
             isinstance(getattr(self, p.name), tuple)
             for p in PROPERTIES
             if p.may_be_tensor
+        )
+
+
+def _check_anisotropy(material: Material, owner: str) -> None:
+    """Raise if a Kerr anisotropy cannot sit beside the rest of the material."""
+    rho = material.nonlinear_anisotropy
+    if rho is None:
+        return
+    if is_traced(rho):
+        raise NonDifferentiableError(
+            f"{owner}: nonlinear_anisotropy is computed inside jax.grad, "
+            f"jax.jit or jax.vmap, but Material values are fixed constants. "
+            f"{_TRACED_REMEDY}"
+        )
+    arr = np.asarray(rho)
+    if arr.shape != () or np.iscomplexobj(arr) or arr.dtype.kind not in "iuf":
+        raise ValueError(
+            f"{owner}: nonlinear_anisotropy must be one real number "
+            f"(rho = 3 chi_1122 / chi_1111), got {rho!r}."
+        )
+    if not np.isfinite(arr):
+        raise ValueError(f"{owner}: nonlinear_anisotropy must be finite, got {rho!r}.")
+    object.__setattr__(material, "nonlinear_anisotropy", float(arr))
+    if material.nonlinear_index is None and material.two_photon_absorption is None:
+        raise ValueError(
+            f"{owner}: nonlinear_anisotropy scales the Kerr effect, but the "
+            "material has no nonlinear_index and no two_photon_absorption. "
+            "Give n2 (or beta_TPA) along a crystal axis."
+        )
+    if not material.isotropic:
+        raise ValueError(
+            f"{owner}: nonlinear_anisotropy is the cubic form, for a crystal "
+            "that is optically isotropic, but this material has an anisotropic "
+            "tensor property. Give eps_r one value (with axes for the crystal "
+            "frame)."
         )
 
 
@@ -2308,7 +2360,17 @@ def _blend_solid(void: Material, solid: Material, axes: Any, w: Any) -> dict:
 
 
 def _check_kerr_ends(void: Material, solid: Material) -> None:
-    """Raise if one end only gives a Kerr property: the blend is linear in it."""
+    """Raise if one end only gives a Kerr property: the blend is linear in it.
+
+    A Kerr anisotropy is the crystal's, not a number that blends.
+    """
+    for end in (void, solid):
+        if end.nonlinear_anisotropy is not None:
+            raise ValueError(
+                "MaterialField.interpolate: a nonlinear_anisotropy is a "
+                "property of the crystal, not a number that blends; give "
+                "the material on a Material region instead."
+            )
     for name in _NONLINEAR:
         given = [getattr(m, name) is not None for m in (void, solid)]
         if any(given) and not all(given):
@@ -2762,7 +2824,7 @@ class MaterialField:
                 `stiffness`) or with a `mechanical_quality_factor`; a solid
                 end under a layer density; one end only with a
                 `nonlinear_index` or a `two_photon_absorption`; an end with a
-                `raman_spectrum`.
+                `raman_spectrum` or a `nonlinear_anisotropy`.
             NonDifferentiableError: An end's law is computed inside
                 `jax.grad`, `jax.jit` or `jax.vmap`: differentiate a law on a
                 `Material` region instead.
