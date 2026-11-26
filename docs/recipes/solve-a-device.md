@@ -318,7 +318,8 @@ True
   time-domain solve ({doc}`../capabilities`).
 - **Eigenmodes.** Only the `n_modes` nearest `target`: ask for more and check
   the farthest lies outside your band. A lossy region with about 10 modes per
-  linewidth raises `gfem.EigenmodeConvergenceError`: sweep instead.
+  linewidth raises `gfem.EigenmodeConvergenceError`: sweep instead
+  ({doc}`dispersive-materials`).
 
 ## Next
 
