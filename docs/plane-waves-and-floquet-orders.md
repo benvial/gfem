@@ -5,8 +5,8 @@ How is a plane wave, a diffraction order or a multipole labelled and signed, and
 Every wave here is a phasor with the time dependence $e^{+i\omega t}$, so an
 outgoing wave is $e^{-ikr}/r$ and a delay is $e^{-i\beta L}$
 ({doc}`conventions`). The rules are one entry each there; this page derives
-them and checks the Floquet ones on a solved cell. The sign of loss and the S
-convention are those of {doc}`phasors-and-power-waves`.
+them and checks the Floquet ones on a solved cell. Sign of loss and S convention:
+{doc}`phasors-and-power-waves`.
 
 (theory-plane-waves-and-floquet-orders-floquet-ports)=
 ## Floquet ports
@@ -102,15 +102,15 @@ print(abs(s["glass TE", "glass TE"][0]) ** 2 + abs(s["air TE", "glass TE"][0]) *
 $2\times2$ block of S in the Floquet references, ordered (TM, TE): rows the
 outgoing order's polarizations, columns the incident order's,
 $J_{ij} = S_{(p,i)\leftarrow(q,j)}$. The references are the same on both
-faces and in both directions, so nothing flips on reflection, and at normal
-incidence TM is $\hat{\mathbf{e}}_1$ and TE is $\hat{\mathbf{e}}_2$ on both faces:
-the Jones matrix is then the lab Cartesian one, and a wave plate with its axis
+faces and in both directions, so nothing flips on reflection; at normal
+incidence TM is $\hat{\mathbf{e}}_1$ and TE is $\hat{\mathbf{e}}_2$ on both faces,
+the Jones matrix is the lab Cartesian one, and a wave plate with its axis
 at $\psi$ from $\hat{\mathbf{e}}_1$ reads at $\psi$ from either side. The entries are power-wave
 ratios like S, so $|J_{ij}|^2$ is an efficiency; the ratio of the fields is
 $J_{ij}\sqrt{Z_{\mathrm{out},i}/Z_{\mathrm{in},j}}$. Both polarizations of
 each order need a port, and both columns of the incident order must be
-excited. The transmission of the interface above, glass to air, is diagonal,
-with $|J|^2 = 1 - r^2$ for the reflection $r$ of the previous block:
+excited. The transmission of the interface above, glass to air, is diagonal, with
+$|J|^2 = 1 - r^2$ for the previous block's reflection $r$:
 
 ```python
 jones = gfem.diffraction.jones(floquet, "top", "bottom", model=interface)
@@ -173,10 +173,9 @@ $e^{-i (\boldsymbol{\kappa}_p - \boldsymbol{\kappa}_q) \cdot \mathbf{r}_0}$, so 
 so order $(m, n)$ maps to $(-m, -n)$, and the TE and TM references, odd in $\hat{\boldsymbol{\kappa}}$,
 flip sign with it. With $\sigma = -1$ for an order with $\boldsymbol{\kappa} \ne 0$ and $+1$ for $\boldsymbol{\kappa} = 0$,
 {term}`Bloch reciprocity` reads $S_{p\leftarrow q}(\mathbf{k}) = \sigma_p \sigma_q S_{-q\leftarrow -p}(-\mathbf{k})$, where
-$-p$ is port $p$'s face and polarization with the opposite order. The plain
-transpose never holds as it stands; the
-{doc}`metagrating tutorial <tutorials/metagrating>` checks the signed form
-on its design.
+$-p$ is port $p$'s face and polarization with the opposite order. The plain transpose never holds as it stands; the
+{doc}`metagrating tutorial <tutorials/metagrating>` checks the signed form on
+its design.
 
 **Circular polarization.** No port is circular: combine columns. With the TE
 and TM ports of the same order on the top face (incidence along $-\hat{\mathbf{e}}_3$),
@@ -280,20 +279,20 @@ real, $4\times4$, mapping the incident Stokes vector to the outgoing one,
 and $M_{00} = \tfrac12 \sum_{ij} |J_{ij}|^2$ is the efficiency for unpolarized
 light. Because each beam has its own frame, $M$ is always a Mueller-Jones matrix: a
 mirror is $\mathrm{diag}(1, 1, -1, -1)$ and free transmission is the identity.
-The cost is that for a downward beam $S_2$ is measured from
+The cost: for a downward beam $S_2$ is measured from
 $\hat{\boldsymbol{\theta}} = -\hat{\mathbf{E}}_\mathrm{TM}$, so a plate with its axis at $\psi$
-lit from the top shows its linear block at $-\psi$; lit from the bottom it
-reads at $+\psi$. A
-quarter-wave plate with its slow axis along $\hat{\mathbf{e}}_1$ turns light linearly
+shows its linear block at $-\psi$ lit from the top and at $+\psi$ from the
+bottom. A quarter-wave plate with its slow axis along $\hat{\mathbf{e}}_1$ turns light linearly
 polarized at 45° into right-handed light when lit from the top, and into left-handed
 light from the bottom.
 
 **Normal incidence in a conical scan.** At $\boldsymbol{\kappa} = 0$ the references
 are $\hat{\mathbf{e}}_1$ and $\hat{\mathbf{e}}_2$ whatever the azimuth $\varphi$ of the scan, while for
-$\theta > 0$ they are those rotated by $\varphi$: a $\theta$ scan at $\varphi \ne 0$ sees
+$\theta > 0$ they are rotated by $\varphi$: a $\theta$ scan at $\varphi \ne 0$ sees
 the linear entries of $J$ jump by that rotation at $\theta = 0$, and the linear block
-of $M$ by twice the angle. Efficiencies do not change, and the circular entries
-change only by phases $e^{\pm i\varphi}$. No basis is continuous at $\boldsymbol{\kappa} = 0$, so the jump is not corrected.
+of $M$ by twice the angle. Efficiencies do not change; the circular entries
+change only by phases $e^{\pm i\varphi}$. No basis is continuous at
+$\boldsymbol{\kappa} = 0$, so the jump is not corrected.
 
 **Emission direction.** An emitter in equilibrium radiates into a direction as it
 absorbs the time-reversed wave (Kirchhoff's law). A wave with the in-plane wave
@@ -358,8 +357,7 @@ of this one. The long-wavelength moments of `CurrentMoments`,
 $p_0 = \frac{1}{i\omega}\int J\,dV$ and $T = \frac{1}{10v}\int[(r\cdot J)r - 2r^2J]\,dV$
 with $v = \omega/k$, approximate the exact dipole as $p \approx p_0 - ikT$; the
 anapole review's $T$ (A·m³) is $vT$. The long-wavelength anapole is $p_0 = ikT$, the
-exact one $p = 0$. The first Kerker condition for $\hat k = \hat z$ is
-$p_x = m_y/v$.
+exact one $p = 0$. The first Kerker condition for $\hat k = \hat z$ is $p_x = m_y/v$.
 
 From a paper in $e^{-i\omega t}$: conjugate every phasor and material; since
 $\overline{Y_{lm}} = (-1)^m Y_{l,-m}$ and $\overline{X_{lm}} = (-1)^{m+1}X_{l,-m}$, a
