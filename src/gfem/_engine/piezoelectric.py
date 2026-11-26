@@ -52,6 +52,7 @@ displacement is in m per V.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable, Hashable
 from typing import Any
 
@@ -509,13 +510,34 @@ def _coefficients(model: Model, built: Any, frame: Any) -> dict[str, Any]:
 
 
 def _weak_forms(
-    co: dict[str, Any], built: Any, order: int, mech: Any, diel: Any
+    co: dict[str, Any],
+    built: Any,
+    order: int,
+    mech: Any,
+    diel: Any,
+    *,
+    wavenumber_pieces: bool = False,
 ) -> dict[str, tuple[Callable[[Any, Any], Any], Any]]:
-    """The five pieces of :math:`A`: ``(integrand, measure)`` by name.
+    r"""The pieces of :math:`A`: ``(integrand, measure)`` by name.
 
     The integrand takes ``(trial, test)`` 4-tuples ``(u_x, u_y, u_z, phi)``.
     The one place the forms are written: the system assembles them and the
     node pass differentiates them.
+
+    With ``wavenumber_pieces`` the forms of a field :math:`e^{-iqz}` follow,
+    for the stiffness, the loss, the coupling and the dielectric: with
+    :math:`S_z(u)` the strain :math:`\partial_z u` per unit :math:`\partial_z`
+    (:math:`u_z` in zz, :math:`u_y` in yz, :math:`u_x` in xz), the trial's
+    :math:`\partial_z` is :math:`-iq` and the test's :math:`+iq`, so that the form is
+    ``<piece>`` :math:`-iq` ``<piece>1`` :math:`+ q^2` ``<piece>2`` with the
+    three real forms ``<piece>`` (the in-plane strains alone),
+    ``<piece>1`` :math:`= S_\perp(v)\cdot c\,S_z(u) - S_z(v)\cdot
+    c\,S_\perp(u)` and ``<piece>2`` :math:`= S_z(v)\cdot c\,S_z(u)`. The
+    wavenumber in a weight is that of the mesh's length unit
+    (:math:`q\,\text{scale}`). The coupling and the dielectric split the same
+    way, with :math:`g_z(\varphi) = \varphi` for the potential in the place of
+    :math:`S_z(u)` (``coupling1``, ``coupling2``, ``dielectric1``,
+    ``dielectric2``); they read the potential, so they are for 4-tuples only.
     """
     c, e, eps, rho, loss = co["c"], co["e"], co["eps"], co["rho"], co["loss"]
     scale = built.scale
@@ -543,62 +565,176 @@ def _weak_forms(
     def mass(u: Any, v: Any) -> Any:
         return scale**2 * rho * (u[0] * v[0] + u[1] * v[1] + u[2] * v[2])
 
-    return {
+    forms = {
         "stiffness": (stiffness, dx_mech),
         "loss": (damping, dx_mech),
         "coupling": (coupling, dx_mech),
         "dielectric": (dielectric, dx_diel),
         "mass": (mass, dx_mech),
     }
+    if not wavenumber_pieces:
+        return forms
+
+    def axial(u: Any) -> Any:
+        return ngs.CF((0, 0, u[2], u[1], u[0], 0))
+
+    def cross(u: Any, v: Any) -> Any:
+        return strain(v) * (c * axial(u)) - axial(v) * (c * strain(u))
+
+    def along(u: Any, v: Any) -> Any:
+        return axial(v) * (c * axial(u))
+
+    forms |= {
+        "stiffness1": (cross, dx_mech),
+        "stiffness2": (along, dx_mech),
+        "loss1": (lambda u, v: loss * cross(u, v), dx_mech),
+        "loss2": (lambda u, v: loss * along(u, v), dx_mech),
+    }
+
+    def lifted(u: Any) -> Any:
+        return ngs.CF((0, 0, u[3]))
+
+    def coupling_cross(u: Any, v: Any) -> Any:
+        return (
+            strain(v) * (e.trans * lifted(u))
+            + gradient(v) * (e * axial(u))
+            - axial(v) * (e.trans * gradient(u))
+            - lifted(v) * (e * strain(u))
+        )
+
+    def coupling_along(u: Any, v: Any) -> Any:
+        return axial(v) * (e.trans * lifted(u)) + lifted(v) * (e * axial(u))
+
+    def dielectric_cross(u: Any, v: Any) -> Any:
+        return -(gradient(v) * (eps * lifted(u)) - lifted(v) * (eps * gradient(u)))
+
+    def dielectric_along(u: Any, v: Any) -> Any:
+        return -(lifted(v) * (eps * lifted(u)))
+
+    forms |= {
+        "coupling1": (coupling_cross, dx_mech),
+        "coupling2": (coupling_along, dx_mech),
+        "dielectric1": (dielectric_cross, dx_diel),
+        "dielectric2": (dielectric_along, dx_diel),
+    }
+    return forms
 
 
 # --- the tensor pass ----------------------------------------------------------------
 
-#: The strains that are not zero when nothing varies along z (Voigt order).
-_ACTIVE = (0, 1, 3, 4, 5)
-#: The 15 entries ``I <= J`` of a symmetric moment of the active strains.
-_UPPER = tuple((i, j) for a, i in enumerate(_ACTIVE) for j in _ACTIVE[a:])
-#: The 10 entries ``(a, I)`` of the coupling moment: in-plane gradient, active strain.
-_COUPLED = tuple((a, i) for a in range(2) for i in _ACTIVE)
-#: The 3 entries ``a <= b`` of the symmetric in-plane gradient moment.
-_PLANE = ((0, 0), (1, 1), (0, 1))
+
+@dataclasses.dataclass(frozen=True)
+class _Layout:
+    """The entries of the symmetric moments, by which strains and gradients vary.
+
+    Attributes:
+        active: The strains (Voigt order) that are not zero.
+        upper: The entries ``I <= J`` of a symmetric moment of the strains.
+        coupled: The entries ``(a, I)`` of the coupling moment: gradient
+            component, strain.
+        plane: The entries ``a <= b`` of the symmetric gradient moment.
+        dim: The number of gradient components.
+    """
+
+    active: tuple[int, ...]
+    upper: tuple[tuple[int, int], ...]
+    coupled: tuple[tuple[int, int], ...]
+    plane: tuple[tuple[int, int], ...]
+    dim: int
+
+    @classmethod
+    def of(cls, active: tuple[int, ...], dim: int) -> _Layout:
+        """The layout of ``active`` strains and ``dim`` gradient components."""
+        return cls(
+            active,
+            tuple((i, j) for a, i in enumerate(active) for j in active[a:]),
+            tuple((a, i) for a in range(dim) for i in active),
+            tuple((a, b) for a in range(dim) for b in range(a, dim)),
+            dim,
+        )
 
 
-def _strains(u: Any) -> ngs.CoefficientFunction:
-    """The strain of a compound field ``u`` of the system's space."""
-    return _strain(*(u.components[i] for i in range(3)))
+#: Nothing varies along z: the strains that are not zero (Voigt order), and
+#: the in-plane gradient.
+_PLANAR = _Layout.of((0, 1, 3, 4, 5), 2)
+#: A field :math:`e^{-iqz}`: every strain and gradient component.
+_AXIAL = _Layout.of((0, 1, 2, 3, 4, 5), 3)
 
 
-def _gradient(u: Any) -> ngs.CoefficientFunction:
-    """The in-plane gradient of the potential of a compound field."""
+def _strains(u: Any, shift: complex = 0.0) -> ngs.CoefficientFunction:
+    r"""The strain of a compound field ``u`` of the system's space.
+
+    With a ``shift`` the strain of a field with :math:`\partial_z =` ``shift``.
+    """
+    ux, uy, uz = (u.components[i] for i in range(3))
+    strain = _strain(ux, uy, uz)
+    if shift == 0:
+        return strain
+    return strain + shift * ngs.CF((0, 0, uz, uy, ux, 0))
+
+
+def _gradient(u: Any, shift: complex = 0.0) -> ngs.CoefficientFunction:
+    r"""The potential's gradient of a compound field, :math:`\partial_z =` ``shift``."""
     g = ngs.grad(u.components[3])
-    return ngs.CF((g[0], g[1]))
+    if shift == 0:
+        return ngs.CF((g[0], g[1]))
+    return ngs.CF((g[0], g[1], shift * u.components[3]))
+
+
+def _shifts(wavenumber: float) -> tuple[complex, complex]:
+    r"""The :math:`\partial_z` of the left (test) and right (trial) field.
+
+    A field :math:`e^{-iqz}` has :math:`-iq` as trial and :math:`+iq` as test.
+    """
+    return 1j * wavenumber, -1j * wavenumber
 
 
 def _strain_moment(
-    weight: ngs.CoefficientFunction | None,
+    weight: ngs.CoefficientFunction | None, layout: _Layout = _PLANAR, q: float = 0.0
 ) -> Any:
-    r"""The moment :math:`\frac12 (S_I(l) S_J(r) + S_J(l) S_I(r))`, :math:`I \le J`."""
+    r"""The moment :math:`\frac12 (S_I(l) S_J(r) + S_J(l) S_I(r))`, :math:`I \le J`.
+
+    With a wavenumber ``q`` the left field is the test (:math:`+iq`) and the
+    right one the trial (:math:`-iq`).
+    """
+    tl, tr = _shifts(q)
 
     def entries(left: Any, right: Any) -> ngs.CoefficientFunction:
-        sl, sr = _strains(left), _strains(right)
-        out = ngs.CF(tuple(0.5 * (sl[i] * sr[j] + sl[j] * sr[i]) for i, j in _UPPER))
+        sl, sr = _strains(left, tl), _strains(right, tr)
+        out = ngs.CF(
+            tuple(0.5 * (sl[i] * sr[j] + sl[j] * sr[i]) for i, j in layout.upper)
+        )
         return out if weight is None else weight * out
 
     return entries
 
 
-def _coupling_moment(left: Any, right: Any) -> ngs.CoefficientFunction:
-    r""":math:`g_a(l) S_I(r) + g_a(r) S_I(l)`, :math:`g` the potential's gradient."""
-    gl, gr = _gradient(left), _gradient(right)
-    sl, sr = _strains(left), _strains(right)
-    return ngs.CF(tuple(gl[a] * sr[i] + gr[a] * sl[i] for a, i in _COUPLED))
+def _coupling_moment(layout: _Layout = _PLANAR, q: float = 0.0) -> Any:
+    r""":math:`g_a(l) S_I(r) + g_a(r) S_I(l)`, :math:`g` the potential's gradient.
+
+    The left field is the test and the right one the trial (see `_strain_moment`).
+    """
+    tl, tr = _shifts(q)
+
+    def entries(left: Any, right: Any) -> ngs.CoefficientFunction:
+        gl, gr = _gradient(left, tl), _gradient(right, tr)
+        sl, sr = _strains(left, tl), _strains(right, tr)
+        return ngs.CF(tuple(gl[a] * sr[i] + gr[a] * sl[i] for a, i in layout.coupled))
+
+    return entries
 
 
-def _gradient_moment(left: Any, right: Any) -> ngs.CoefficientFunction:
+def _gradient_moment(layout: _Layout = _PLANAR, q: float = 0.0) -> Any:
     r""":math:`\frac12 (g_a(l) g_b(r) + g_b(l) g_a(r))`, :math:`a \le b`."""
-    gl, gr = _gradient(left), _gradient(right)
-    return ngs.CF(tuple(0.5 * (gl[a] * gr[b] + gl[b] * gr[a]) for a, b in _PLANE))
+    tl, tr = _shifts(q)
+
+    def entries(left: Any, right: Any) -> ngs.CoefficientFunction:
+        gl, gr = _gradient(left, tl), _gradient(right, tr)
+        return ngs.CF(
+            tuple(0.5 * (gl[a] * gr[b] + gl[b] * gr[a]) for a, b in layout.plane)
+        )
+
+    return entries
 
 
 def _displacement_moment(left: Any, right: Any) -> ngs.CoefficientFunction:
@@ -630,8 +766,22 @@ def _rotation_rows(shape: tuple[int, int], axes: Any, rotate: Any) -> np.ndarray
     return np.asarray(rotate(unit, axes, None)).reshape(n, n)
 
 
-def _tensors(rule: PiezoelectricRule, model: Model, wanted: frozenset) -> Tensors:
-    """The moment blocks and the contraction of the wanted material leaves."""
+def _tensors(
+    rule: Any,
+    model: Model,
+    wanted: frozenset,
+    *,
+    wavenumber: float = 0.0,
+    coupled: bool = True,
+) -> Tensors:
+    r"""The moment blocks and the contraction of the wanted material leaves.
+
+    With a ``wavenumber`` :math:`q` (in the mesh's length unit) the moments are
+    those of a field :math:`e^{-iqz}`, every strain and gradient component
+    dressed with :math:`\partial_z = \mp iq` (``coupled`` False: no potential,
+    so no coupling or dielectric moment).
+    """
+    layout = _PLANAR if wavenumber == 0 else _AXIAL
     kinds = [k for k in wanted if k[0] == "material"]
     props = {k[2] for k in kinds}
     built = discretization(model.mesh).built
@@ -641,25 +791,47 @@ def _tensors(rule: PiezoelectricRule, model: Model, wanted: frozenset) -> Tensor
     if props & {"stiffness", "mechanical_quality_factor"}:
         blocks.append(
             MomentBlock(
-                "SS", len(_UPPER), _strain_moment(None), mech, ("stiffness", "loss")
+                "SS",
+                len(layout.upper),
+                _strain_moment(None, layout, wavenumber),
+                mech,
+                ("stiffness", "loss"),
             )
         )
     if "stiffness" in props and rule.frame is not None:
         eta = _frame_depth(model, built, rule.frame)
         blocks.append(
-            MomentBlock("SSeta", len(_UPPER), _strain_moment(eta), mech, ("loss",))
+            MomentBlock(
+                "SSeta",
+                len(layout.upper),
+                _strain_moment(eta, layout, wavenumber),
+                mech,
+                ("loss",),
+            )
         )
-    if "piezoelectric_tensor" in props:
+    if "piezoelectric_tensor" in props and coupled:
         blocks.append(
-            MomentBlock("ES", len(_COUPLED), _coupling_moment, mech, ("coupling",))
+            MomentBlock(
+                "ES",
+                len(layout.coupled),
+                _coupling_moment(layout, wavenumber),
+                mech,
+                ("coupling",),
+            )
         )
-    if "eps_r" in props:
+    if "eps_r" in props and coupled:
         blocks.append(
-            MomentBlock("EE", len(_PLANE), _gradient_moment, diel, ("dielectric",))
+            MomentBlock(
+                "EE",
+                len(layout.plane),
+                _gradient_moment(layout, wavenumber),
+                diel,
+                ("dielectric",),
+            )
         )
     if "mass_density" in props:
         blocks.append(MomentBlock("uu", 1, _displacement_moment, mech, ("mass",)))
-    return Tensors(blocks, _Contraction(model, kinds, built.scale))
+    return Tensors(blocks, _Contraction(model, kinds, built.scale, layout))
 
 
 class _Contraction:
@@ -678,8 +850,15 @@ class _Contraction:
     - :math:`\bar Q_m = -\theta_l Q_m^{-2}\, c_\mathrm{lab} : M_{SS}`.
     """
 
-    def __init__(self, model: Model, kinds: list[tuple], scale: float) -> None:
+    def __init__(
+        self,
+        model: Model,
+        kinds: list[tuple],
+        scale: float,
+        layout: _Layout = _PLANAR,
+    ) -> None:
         self.model = model
+        self.layout = layout
         self.kinds = kinds
         self.scale = scale
         self.arrays = _element_arrays(model)
@@ -703,7 +882,7 @@ class _Contraction:
     def _strain_moment(self, moments, index) -> np.ndarray | None:
         if "SS" not in moments:
             return None
-        return _symmetric(moments["SS"][index], _UPPER, 6)
+        return _symmetric(moments["SS"][index], self.layout.upper, 6)
 
     def _stiffness(self, weights, moments, index, material) -> np.ndarray:
         n = len(index)
@@ -714,7 +893,7 @@ class _Contraction:
             factor = weights.get("stiffness", 0) + loss * self.arrays["loss"][index]
             lab += factor[:, None, None] * ss
         if "SSeta" in moments:
-            lab += loss * _symmetric(moments["SSeta"][index], _UPPER, 6)
+            lab += loss * _symmetric(moments["SSeta"][index], self.layout.upper, 6)
         rows = _rotation_rows((6, 6), material.axes, stiffness_in_frame)
         return (lab.reshape(n, 36) @ rows.T).reshape(n, 6, 6)
 
@@ -730,7 +909,7 @@ class _Contraction:
         n = len(index)
         lab = np.zeros((n, 3, 6), complex)
         if "ES" in moments:
-            for k, (a, i) in enumerate(_COUPLED):
+            for k, (a, i) in enumerate(self.layout.coupled):
                 lab[:, a, i] = weights.get("coupling", 0) * moments["ES"][index, k]
         rows = _rotation_rows((3, 6), material.axes, piezoelectric_in_frame)
         return (lab.reshape(n, 18) @ rows.T).reshape(n, 3, 6)
@@ -738,8 +917,9 @@ class _Contraction:
     def _permittivity(self, weights, moments, index, material) -> np.ndarray:
         lab = np.zeros((len(index), 3, 3), complex)
         if "EE" in moments:
-            ee = _symmetric(moments["EE"][index], _PLANE, 2)
-            lab[:, :2, :2] = -weights.get("dielectric", 0) * EPS0 * ee
+            dim = self.layout.dim
+            ee = _symmetric(moments["EE"][index], self.layout.plane, dim)
+            lab[:, :dim, :dim] = -weights.get("dielectric", 0) * EPS0 * ee
         if material.has_principal_values("eps_r"):
             axes = element_axes(self.model)[index]
             return np.real(np.einsum("eki,eij,ekj->ek", axes, lab, axes))
@@ -754,7 +934,7 @@ class _Contraction:
 # --- checks ------------------------------------------------------------------------
 
 
-def _check_mechanical(model: Model) -> Any:
+def _check_mechanical(model: Model, owner: str = "Piezoelectric") -> Any:
     """The mechanical domain; raise when it is empty.
 
     Raises:
@@ -764,7 +944,7 @@ def _check_mechanical(model: Model) -> Any:
     if not domain.active.any():
         raise ValueError(
             "Every volume is excluded from mechanical problems, so the "
-            "Piezoelectric problem has nothing to solve on. Exclude fewer "
+            f"{owner} problem has nothing to solve on. Exclude fewer "
             'volumes for mechanical problems (excluded={"mechanical": ...}).'
         )
     return domain
@@ -823,11 +1003,14 @@ class Electrodes:
         return tuple(dict.fromkeys([*out, *self.ground_lines]))
 
 
-def _check_electrodes(model: Model, problem: Piezoelectric) -> Electrodes:
-    """The electrodes the problem names, checked against the model."""
+def _check_electrodes(model: Model, problem: Any) -> Electrodes:
+    """The electrodes the problem names, checked against the model.
+
+    ``problem`` is a `Piezoelectric` or a `MechanicalEigenmode` (``ground`` only).
+    """
     terminals = []
     named = set()
-    for name, surfaces in problem.terminals:
+    for name, surfaces in getattr(problem, "terminals", ()):
         lines, areas = _lines_and_areas(model, surfaces, "terminal")
         terminals.append((name, lines, areas))
         named.update(surfaces)
@@ -843,10 +1026,14 @@ def _check_electrodes(model: Model, problem: Piezoelectric) -> Electrodes:
     return Electrodes(tuple(terminals), tuple(dict.fromkeys([*lines, *pec])), areas)
 
 
-def _check_clamped(model: Model, problem: Piezoelectric) -> None:
-    """Raise for a clamped line that does not border the mechanical domain."""
+def _check_clamped(model: Model, problem: Any) -> None:
+    """Raise for a clamped line that does not border the mechanical domain.
+
+    ``problem.clamped`` holds names, or ``(name, components)`` pairs.
+    """
     mechanical = model._domain_of("mechanical")  # noqa: SLF001
-    for name in problem.clamped:
+    for item in problem.clamped:
+        name = item if isinstance(item, str) else item[0]
         region = model.mesh.region(name)
         if region.dim == model.mesh.dim or not mechanical.touches(name):
             raise ValueError(
@@ -855,14 +1042,14 @@ def _check_clamped(model: Model, problem: Piezoelectric) -> None:
             )
 
 
-def _check_absorbing(model: Model) -> None:
+def _check_absorbing(model: Model, owner: str = "Piezoelectric") -> None:
     """Raise for an `Absorbing` line that borders the mechanical domain."""
     mechanical = model._domain_of("mechanical")  # noqa: SLF001
     for b in model.boundaries:
         if isinstance(b, Absorbing) and mechanical.touches(b.surface):
             raise ValueError(
                 f"gfem.Absorbing on {b.surface!r} absorbs electromagnetic waves; "
-                "a Piezoelectric problem leaves that line traction-free. Absorb "
+                f"a {owner} problem leaves that line traction-free. Absorb "
                 "acoustic waves with damping_frame=gfem.DampingFrame(...)."
             )
 
@@ -906,7 +1093,7 @@ def _check_materials(model: Model) -> None:
         raise MissingMaterialPropertyError(missing, physics="mechanical")
 
 
-def _check_frame(model: Model, problem: Piezoelectric) -> Any:
+def _check_frame(model: Model, problem: Any) -> Any:
     """The damping frame's regions checked; ``None`` without a frame.
 
     Raises:

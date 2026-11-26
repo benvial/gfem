@@ -1557,6 +1557,17 @@ Mechanical domain
   {term}`stiffness` and a `mass_density`; air and a handle's potential-only
   regions are left out of it.
 
+Mechanical eigenmode
+  A source-free solution of linear elasticity on a 2D section, varying as
+  $e^{-iqz}$ along the section's normal: a complex angular frequency whose
+  imaginary part is the decay from mechanical loss and damping frames, and a
+  displacement normalized to 1 J/m ({py:class}`gfem.MechanicalEigenmode`). A
+  material with a piezoelectric tensor couples the potential to it.
+
+Axial wavenumber
+  The real propagation constant $q$ in rad/m along $z$ of a
+  {term}`mechanical eigenmode`; 0 for a mode uniform along $z$.
+
 Interdigital transducer
   Interleaved comb electrodes on a piezoelectric surface whose alternating
   fingers launch and detect acoustic waves. In a cross-section model it is the

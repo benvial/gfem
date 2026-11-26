@@ -34,6 +34,7 @@ if TYPE_CHECKING:
         Driven,
         Eigenmode,
         Electrostatic,
+        MechanicalEigenmode,
         Piezoelectric,
         PortMode,
         SteadyThermal,
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
         DrivenResult,
         EigenmodeResult,
         ElectrostaticResult,
+        MechanicalEigenmodeResult,
         PiezoelectricResult,
         PortModeResult,
         SteadyThermalResult,
@@ -125,6 +127,15 @@ def solve(
     comm: Any = None,
     cache: str | os.PathLike | None = None,
 ) -> PiezoelectricResult: ...
+@overload
+def solve(
+    model: Model,
+    problem: MechanicalEigenmode,
+    *,
+    options: SolverOptions | None = None,
+    comm: Any = None,
+    cache: str | os.PathLike | None = None,
+) -> MechanicalEigenmodeResult: ...
 def solve(
     model: Model,
     problem: Any,

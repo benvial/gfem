@@ -1149,6 +1149,38 @@ Tests: [unit checks](https://github.com/benvial/gfem/blob/main/tests/unit/test_p
 [closed forms](https://github.com/benvial/gfem/blob/main/tests/verification/test_piezoelectric.py),
 [gradients](https://github.com/benvial/gfem/blob/main/tests/unit/test_piezoelectric_gradients.py).
 
+## Mechanical eigenmodes
+
+The elastic modes of a 2D section are checked against the closed forms of an
+isotropic solid at order 4 on refined meshes, and against identities that hold
+exactly in the discrete problem. Each check runs on every change to gfem.
+
+- **Closed forms.** The anti-plane standing wave of a free rectangle, the shear
+  horizontal modes of a strip with sliding walls (frequency and group
+  velocity), the Lamb modes S0 and A0 of a plate (the roots of the
+  Rayleigh-Lamb relations) and the Rayleigh wave of a deep block (frequency
+  and group velocity) agree to better than $10^{-9}$ in frequency, and
+  $10^{-7}$ for the Rayleigh wave, which also carries the finite depth. The
+  error falls at least 100 times when the edge length halves.
+- **Identities.** A uniform quality factor scales every frequency by
+  $\sqrt{1 + i/Q_m}$; a lossless mode has a real frequency; $\omega(-q) =
+  \omega(q)$ for a section; a mode is normalized to 1 J/m with a real
+  largest coefficient; the group velocity matches a central difference of the
+  band.
+- **Piezoelectric plate.** The thickness-extensional plate of a 6mm crystal
+  matches the stiffened half-wave frequency with open faces and the root of
+  $\tan X / X = 1/k_t^2$ with grounded faces, to $10^{-9}$, and the grounded
+  plate's mode is a pole of the `gfem.Piezoelectric` admittance.
+- **Gradients.** The gradient of `omega` in the stiffness, density, quality
+  factor, piezoelectric tensor, permittivity and node coordinates matches
+  fourth-order central differences to $10^{-6}$, with and without an axial
+  wavenumber.
+
+Tests: [unit checks](https://github.com/benvial/gfem/blob/main/tests/unit/test_mechanical_eigenmode.py),
+[closed forms](https://github.com/benvial/gfem/blob/main/tests/verification/test_mechanical_eigenmode.py),
+[piezoelectric plate](https://github.com/benvial/gfem/blob/main/tests/verification/test_mechanical_eigenmode_piezo.py),
+[gradients](https://github.com/benvial/gfem/blob/main/tests/unit/test_mechanical_eigenmode_gradients.py).
+
 (verification-acousto-optic)=
 ## Acousto-optic shift
 

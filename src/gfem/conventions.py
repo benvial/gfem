@@ -584,6 +584,34 @@ V_\mathrm{inc}\, 2 Z_\mathrm{IDT}/(Z_L + Z_0)`, with :math:`Z_\mathrm{IDT} =
 1/Y` and :math:`Z_L = Z_\mathrm{IDT} + R_s`. A quantity per terminal volt is
 referred to the incident wave by that factor.
 
+Mechanical eigenmodes
+---------------------
+A `gfem.MechanicalEigenmode` problem finds the source-free solutions of the
+elasticity of "Piezoelectric problems" on a 2D section (with the potential
+coupled when a material carries a piezoelectric tensor), for fields
+:math:`u(x, y)\,e^{i\omega t - iqz}`: :math:`q` is the axial wavenumber in rad/m
+and :math:`\partial_z \to -iq` in the strain, so a mode with :math:`q > 0`
+travels along :math:`+z` where its group velocity is positive. The stiffness and
+the loss are the piezoelectric problem's, under :math:`e^{+i\omega t}`: a
+decaying mode has :math:`\mathrm{Im}\,\omega > 0` and its quality factor is
+
+.. math::
+
+    Q = \frac{\mathrm{Re}\,\omega}{2\,\mathrm{Im}\,\omega}.
+
+- A mode is normalized to :math:`\tfrac12 (\mathrm{Re}\,\omega)^2 \int \rho\,|u|^2\,
+  \mathrm{d}A = 1` J per metre along :math:`z`, with its largest coefficient
+  real and positive: for a lossless mode the time-averaged energy.
+- ``group_velocity`` is :math:`\mathrm{Re}\,\mathrm{d}\omega/\mathrm{d}q` in m/s,
+  the exact derivative of the discrete band. Every section is reciprocal:
+  :math:`\omega(-q) = \omega(q)`, the opposite group velocity at :math:`-q`, and
+  exactly 0 at :math:`q = 0`.
+- ``clamped`` fixes all three components on a line given by its name, or the
+  components of a string of ``"xyz"`` (the lab axes): ``"x"`` on a line of
+  constant :math:`x` keeps :math:`u_x = 0` and slides in :math:`y` and :math:`z`.
+  Every other line is traction-free; the rigid-body motions of a free section
+  at :math:`q = 0` have :math:`\omega = 0` and are not returned.
+
 Group index and dispersion
 --------------------------
 A port mode's group index and dispersion are the frequency derivatives of

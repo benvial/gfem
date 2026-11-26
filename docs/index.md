@@ -91,6 +91,7 @@ recipes/thermo-optic-phase
 recipes/electro-optic-phase
 recipes/acousto-optic-shift
 recipes/piezoelectric-admittance
+recipes/mechanical-modes
 recipes/thermal-step-response
 recipes/shared-port-surface
 recipes/measurements

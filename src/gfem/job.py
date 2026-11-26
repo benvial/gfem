@@ -99,6 +99,7 @@ from gfem.problems import (
     Driven,
     Eigenmode,
     Electrostatic,
+    MechanicalEigenmode,
     Piezoelectric,
     PortMode,
     SteadyThermal,
@@ -111,6 +112,7 @@ from gfem.results import (
     EigenmodeResult,
     ElectrostaticResult,
     Field,
+    MechanicalEigenmodeResult,
     NetworkParameters,
     PiezoelectricResult,
     PortModeField,
@@ -778,6 +780,19 @@ def _piezoelectric_args(problem: Piezoelectric, _: _codec.Context) -> dict[str, 
     }
 
 
+def _mechanical_eigenmode_args(
+    problem: MechanicalEigenmode, _: _codec.Context
+) -> dict[str, Any]:
+    return {
+        "target": problem.target,
+        "n_modes": problem.n_modes,
+        "wavenumber": problem.wavenumber,
+        "clamped": dict(problem.clamped),
+        "ground": problem.ground,
+        "damping_frame": problem.damping_frame,
+    }
+
+
 #: A transient's arguments: its waveform is written as the pytree holds it,
 #: start times and scales apart, so the scales' sidecar key is their leaf path.
 _TRANSIENT_NAMES = (
@@ -1109,6 +1124,8 @@ _codec.register(
 _codec.register(Piezoelectric, to_args=_piezoelectric_args)
 _codec.register(DampingFrame)
 _codec.register(PiezoelectricResult)
+_codec.register(MechanicalEigenmode, to_args=_mechanical_eigenmode_args)
+_codec.register(MechanicalEigenmodeResult)
 _codec.register(Electrostatic, to_args=_terminal_args)
 _codec.register(DCConduction, to_args=_terminal_args)
 _codec.register(
