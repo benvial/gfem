@@ -123,13 +123,13 @@ Give every rank the same number of cores, and size the layout by the solver:
   on a 112-core node (`srun --ntasks-per-node=28 --cpus-per-task=4`).
 - **Without PETSc**: one BDDC step runs on the first rank, so use fewer ranks
   with more threads, for example 8 ranks × 14 threads.
-- Use fewer ranks when a rank would hold under about 90 k DOF; no `--cpu-bind`.
+- Use fewer ranks when a rank would hold under about 90 k DOF. No `--cpu-bind`.
 - `bddc_gmres` on a large model ran faster on 16 and 32 nodes than on 8
   ({doc}`../project/scaling`; stack from the current `petsc_wheelhouse.sh`,
   {doc}`petsc-slepc`). Keep a loop's designs in one script on the same ranks.
 
-With `threads=None`, one narrow CPU mask slows every rank
-({py:obj}`gfem.SolverOptions`). Measured times: {doc}`../project/scaling`.
+With `threads=None`, one narrow CPU mask slows every rank; that and BDDC's
+coarse-problem ranks: {py:obj}`gfem.SolverOptions`. Times: {doc}`../project/scaling`.
 
 ## Check your results
 

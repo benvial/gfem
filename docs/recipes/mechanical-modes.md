@@ -6,10 +6,6 @@ of a rib, at a given {term}`axial wavenumber` $q$. Each mode has a frequency, a
 quality factor $Q$, a displacement and a group velocity.
 {py:class}`gfem.MechanicalEigenmode` solves a 2D section, one solve a wavenumber.
 
-The device is a silica-like plate held at both ends by a frame;
-{download}`plate_section.py <plate_section.py>` meshes it. The frames' outer
-ends are the line `"end"`.
-
 ## A solid and its modes
 
 A solid needs a `stiffness` ({py:obj}`gfem.isotropic_stiffness`), a
@@ -48,6 +44,10 @@ print(res)
 ```text
 MechanicalEigenmodeResult([974.596 MHz (Q 1000), 1.08455 GHz (Q 1000), 1.11127 GHz (Q 1000)], wavenumber=2e+06 rad/m)
 ```
+
+The device is a silica-like plate held at both ends by a frame;
+{download}`plate_section.py <plate_section.py>` meshes it. The frames' outer
+ends are the line `"end"`.
 
 The modes are the `n_modes` nearest the `target`. `res.omega` is the complex
 angular frequency, `res.frequency` its real part over $2\pi$ in Hz and `res.q`

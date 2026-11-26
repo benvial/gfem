@@ -209,7 +209,7 @@ projection and the solve reads the pattern's pixels bilinearly; here the
 difference stays within 0.02. A larger one means the chain from pixels to
 polygons and back is broken. For the third digit, use a finer mesh or grid.
 
-## Non-rectangular footprints, 2D models and sheets
+## Limits
 
 - A pattern closes on the footprint's bounding rectangle. Set pixels outside a
   non-rectangular footprint void before the filter

@@ -6,10 +6,6 @@ poling period that cancels it, and the harmonic power along a poled guide, over
 a band of pump wavelengths. `gfem.second_harmonic` reads the pump's and the
 harmonic's {py:obj}`gfem.PortModeResult` and the model's materials.
 
-The guide is the x-cut thin-film lithium niobate ridge of Wang et al., Optica
-5, 1438 (2018): 600 nm film, 300 nm etch, 1.4 µm wide, quasi-TE at 1.55 µm into
-quasi-TE at 775 nm. Units are SI ({doc}`../conventions`).
-
 ## Lithium niobate and its $d$ tensor
 
 The tensor $d_{il}$ goes on the material beside its permittivity, made at the
@@ -65,6 +61,10 @@ print(np.sqrt(film.eps_r), film.second_order_nonlinear_tensor[2][:3])
 ```text
 [2.21111101 2.21111101 2.13755965] (4.6e-12, 4.6e-12, 2.5e-11)
 ```
+
+The guide is the x-cut thin-film lithium niobate ridge of Wang et al., Optica
+5, 1438 (2018): 600 nm film, 300 nm etch, 1.4 µm wide, quasi-TE at 1.55 µm into
+quasi-TE at 775 nm. Units are SI ({doc}`../conventions`).
 
 Lithium niobate has four independent numbers ($d_{15} = d_{31}$ by Kleinman
 symmetry), read in Wang's text after Shoji et al. 1997; $d$ varies with

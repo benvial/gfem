@@ -303,7 +303,15 @@ class SolverOptions:
             this Python cannot use raises `gfem.SolverUnavailableError` when
             the solve starts. With a Bloch wave vector (``wave_vector=`` on
             the problem), use ``"direct"``, or ``"bddc_gmres"`` for driven
-            problems only; ``"petsc"`` raises.
+            problems only; ``"petsc"`` raises. Under rank copies (one
+            complete solve per process, ``comm=MPI.COMM_SELF``), use PETSc on
+            every copy or on none: a job that mixes them has not been tried.
+            With ``"bddc_gmres"`` across ranks, gfem factors BDDC's coarse
+            problem on a share of the ranks, the same for the same script,
+            ranks and stack, and not an option: S stays that of the coarse
+            problem factored on one rank, to round-off. A singular coarse
+            problem raises at once; only a MUMPS workspace error is retried,
+            with more workspace.
         tolerance: Relative residual at which an iterative linear solve
             stops (see Notes for its norm). It is not the error of S or of
             the fields: with ``"bddc_gmres"`` at the default 1e-6, S was
@@ -436,18 +444,23 @@ class SolverOptions:
             electrostatic solves ignore it. SLEPc this Python cannot use
             raises `gfem.SolverUnavailableError` when the solve starts.
         petsc_options: PETSc and SLEPc option names, without the leading
-            ``-``, and their values, read by ``linear_solver="petsc"`` and
-            ``eigen_solver="slepc"``; a value of ``None`` is a flag, a
-            ``bool`` is ``true`` / ``false``. They override gfem's defaults
+            ``-`` (``-ksp_type`` raises), and their values, read by
+            ``linear_solver="petsc"`` and ``eigen_solver="slepc"``; a value of
+            ``None`` is a flag, a ``bool`` is ``true`` / ``false``. They override
+            gfem's defaults
             (the MUMPS factorization is ``ksp_type preonly``, ``pc_type
             cholesky``), under each solver's own options prefix: never write
             one. ``ksp_type preonly`` measures no residual, so it takes only
             ``pc_type`` ``lu`` or ``cholesky``, without a pivot shift; any
-            other preconditioner needs a Krylov ``ksp_type``. Names starting
-            ``eps_``, ``bv_``, ``ds_``, ``rg_`` or ``fn_`` need
+            other preconditioner needs a Krylov ``ksp_type``; to try PETSc's
+            ILU, also set ``pc_factor_mat_solver_type`` to ``petsc``, since
+            gfem's default MUMPS has no ILU and ``pc_type`` ``ilu`` alone is
+            refused. Names starting ``eps_``, ``bv_``, ``ds_``, ``rg_`` or
+            ``fn_`` need
             ``eigen_solver="slepc"``, every other name needs
             ``linear_solver="petsc"``, so an option never goes to a solver
-            that is not selected. Options gfem sets from
+            that is not selected (``ksp_type`` with ``linear_solver="direct"``
+            raises: select ``"petsc"``). Options gfem sets from
             its own fields (``ksp_rtol`` from ``tolerance``, ``eps_tol`` from
             ``eigen_tolerance``, ...) raise `ValueError`, and so does
             ``ksp_atol``: gfem stops on the relative residual only. An option the
