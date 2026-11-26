@@ -93,8 +93,15 @@ def test_a_bent_field_divides_the_normal_component_by_h(bent):
     raw = np.asarray(solved.at(points))[0]
     h = 1 + (x - A / 2) / radius
     # the frame of the port is the identity on this mesh (normal along z):
-    # $E_x, E_y$ unchanged, $E_z / h$; one division, so within rounding
-    np.testing.assert_allclose(physical[:, :2], raw[:, :2], rtol=0, atol=0)
+    # $E_x, E_y$ unchanged, $E_z / h$; one division, so within rounding. The
+    # physical field goes through a JAX product with the frame and the solved
+    # one through NumPy's: a 3-term dot product is within $3u\sum|e_k f_k|$ of
+    # either ($u$ the unit round-off), so the gate is 4 ulp times the length,
+    # absolute on the largest component
+    ulp = 4 * 3 * np.finfo(float).eps
+    np.testing.assert_allclose(
+        physical[:, :2], raw[:, :2], rtol=ulp, atol=ulp * np.abs(raw).max()
+    )
     np.testing.assert_allclose(
         physical[:, 2] * h,
         raw[:, 2],
