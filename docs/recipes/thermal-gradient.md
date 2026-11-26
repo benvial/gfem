@@ -6,23 +6,16 @@ every element, the thermo-optic coefficient. One `jax.grad` call through the
 chain {py:obj}`gfem.DCConduction` → {py:obj}`gfem.joule_heating` →
 {py:obj}`gfem.SteadyThermal` → {py:obj}`gfem.thermo_optic_shift` gives all of
 them, for one adjoint solve per forward solve, however many inputs there
-are: the input of an optimizer that shapes a heater's materials, or of a
-tolerance study.
+are.
 
 The device is the heater section of {doc}`heater-temperature` and
-{doc}`thermo-optic-phase`, 320 µm long, driven at 6.74 mA: close to a $\pi$
-shift. The chain is linear in the rise, and the rise in the heat, so each
-input enters in a way that has a closed form to check the gradient against.
-Units are SI: the gradient of a phase in rad with respect to a current in A
-is in rad/A ({doc}`../conventions`).
+{doc}`thermo-optic-phase`, 320 µm long, driven at 6.74 mA, close to a $\pi$
+shift. Units are SI ({doc}`../conventions`).
 
 ## The phase as a function of its inputs
 
-Per-element values go in a {py:obj}`gfem.MaterialField`, one value per
-element of a region, in the order of `mesh.elements(region)`. The thermal
-model carries them; the optical model, with only the core and its window in
-its optical solve, carries the permittivity and the thermo-optic
-coefficient, scaled here by one number:
+Per-element values go in a {py:obj}`gfem.MaterialField`, in the order of
+`mesh.elements(region)`; the optical model's coefficient is scaled by one number:
 
 ```python
 import urllib.request
@@ -103,13 +96,12 @@ phase: 3.1454 rad
 ```
 
 - `jax.grad` differentiates with respect to any argument that reaches a
-  material, a source or a drive; `argnums` picks them, and a mapping of
-  arrays comes back as a mapping of arrays.
-- The mode is solved once per call and held constant: the gradient goes
-  through the weights of each element, not through the mode. So the optical
-  model's permittivity cannot be an input (see "What raises").
-- The heater is out of the optical solve: a model whose solved regions hold a
-  traced electrical conductivity cannot give a mode.
+  material, a source or a drive; `argnums` picks them.
+- The mode is held constant: the gradient goes through each element's weight,
+  not through the mode, so the optical permittivity cannot be an input (see
+  "What raises").
+- The heater stays out of the optical solve: a traced electrical conductivity
+  in a solved region cannot give a mode.
 
 ## Check the gradient against closed forms
 
@@ -146,17 +138,11 @@ dphi/dc / phi:           1.000000
   substrate: -0.0226
 ```
 
-The sum over the thermal conductivities misses −1 by 2 × 10⁻⁵, of the order
-of the share of the heat that leaves through the top: the convection
-coefficient was not scaled. The split by region says where the phase is made: the oxide between
-the heater and the core (the cladding and the window) and the buried oxide
-under it hold almost all of the sensitivity; the silicon substrate, a
-hundred times more conductive, a little; the heater and the core almost
-none.
-
-For any other objective, check against finite differences: perturb one
-input, or a random direction of many, by a small step both ways and compare
-the difference quotient with the gradient's projection.
+The sum misses −1 by 2 × 10⁻⁵, of the order of the heat that leaves through
+the top, whose convection coefficient was not scaled. The oxide between the
+heater and the core and the buried oxide hold almost all of the sensitivity.
+For any other objective, compare a central difference along one input, or a
+random direction, with the gradient's projection.
 
 ## The heat through a surface as an objective
 
@@ -196,44 +182,34 @@ out of the heater: 70.0000 W/m
 largest |d(out)/dk|: 0.0
 ```
 
-- The flow up is the top's convection over the rise there, and scaling
-  every conductivity by a factor divides the rise nearly by it: the
-  gradient times the conductivities is nearly minus the flow, as the
-  central difference of that scaling confirms.
-- A side with no heat sink in it, no fixed-temperature node and no
-  convection face, such as the heater, gives off exactly the heat it makes,
-  whatever the conductivities: its gradient with respect to them is exactly
+- Scaling every conductivity divides the rise nearly by the factor, so the
+  gradient times the conductivities is nearly minus the flow, as the central
+  difference confirms.
+- A side with no heat sink in it, such as the heater, gives off exactly the
+  heat it makes: its gradient with respect to the conductivities is exactly
   zero. The heat's own amount, or the drive of `joule_heating`, still
   differentiates.
-- The flow is read from the discrete heat balance, so it is exact for the
-  solved temperature, and its gradient is the gradient of that number
-  ({doc}`heater-temperature`, "Where the heat goes").
-- In a transient run, the {term}`heat out` trace
-  ({py:meth}`gfem.Trace.heat_out`) differentiates with respect to the same
-  inputs, and the mass density and specific heat besides.
+- The flow is read from the discrete heat balance ({doc}`heater-temperature`,
+  "Where the heat goes"). In a transient run the {term}`heat out` trace
+  ({py:meth}`gfem.Trace.heat_out`) differentiates too.
 
 ## What differentiates
 
-- **Inputs**: a fixed temperature, a convection's coefficient and ambient and
-  a heat flux (`FixedTemperature.temperature`, `Convection.coefficient`,
-  `Convection.ambient`, `HeatFlux.flux`; the rise reads only the
-  coefficient, so its gradient with respect to the others is exactly zero);
-  per-element `thermal_conductivity`, `conductivity` (through
-  the DC solve), `thermo_optic_coefficient`, and, in a transient solve,
-  `mass_density` and `specific_heat`; the amount of a
-  {py:meth}`gfem.HeatSource.uniform`; the drive of `joule_heating`
-  (voltage, current or power); the scales of a transient's waveform. Through
-  {py:obj}`gfem.electromagnetic_heating`, the driven solve's materials,
-  sheets and drive ({doc}`electromagnetic-heating`, "Gradients").
-- **Outputs**: the temperature, rise, heat and power of a steady solve, and
-  its heat flow; the traces (heat out included) and kept fields of a
-  transient one; the conductance, dissipation
-  and potentials of a DC solve; the shift's `delta_n_eff` and
+- **Inputs**: `FixedTemperature.temperature`, `Convection.coefficient` and
+  `.ambient`, `HeatFlux.flux` (the rise reads only the coefficient, so its
+  gradient with respect to the others is exactly zero); per-element
+  `thermal_conductivity`, `conductivity`, `thermo_optic_coefficient` and, in a
+  transient solve, `mass_density` and `specific_heat`; the amount of a
+  {py:meth}`gfem.HeatSource.uniform`; the drive of `joule_heating`; a
+  transient's waveform scales. Through {py:obj}`gfem.electromagnetic_heating`,
+  the driven solve's materials, sheets and drive ({doc}`electromagnetic-heating`,
+  "Gradients").
+- **Outputs**: the temperature, rise, heat, power and heat flow of a steady
+  solve; the traces and kept fields of a transient one; a DC solve's
+  conductance, dissipation and potentials; `delta_n_eff`,
   `phase_per_length`; a route's phase.
 - A steady solve's gradient with respect to `mass_density` and
   `specific_heat` is exactly zero.
-- A transient gradient keeps the run's trajectory for the reverse sweep, or,
-  when it does not fit in memory, checkpoints and recomputes it.
 
 The full table, with how each mark is checked, is on {doc}`../capabilities`.
 
