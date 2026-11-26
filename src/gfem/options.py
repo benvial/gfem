@@ -445,8 +445,8 @@ class SolverOptions:
             raises `gfem.SolverUnavailableError` when the solve starts.
         petsc_options: PETSc and SLEPc option names, without the leading
             ``-`` (``-ksp_type`` raises), and their values, read by
-            ``linear_solver="petsc"`` and ``eigen_solver="slepc"``; a value of ``None`` is a flag, a
-            ``bool`` is ``true`` / ``false``. They override gfem's defaults
+            ``linear_solver="petsc"`` and ``eigen_solver="slepc"``; a value of
+            ``None`` is a flag, a ``bool`` is ``true`` / ``false``. They override gfem's defaults
             (the MUMPS factorization is ``ksp_type preonly``, ``pc_type
             cholesky``), under each solver's own options prefix: never write
             one. ``ksp_type preonly`` measures no residual, so it takes only
