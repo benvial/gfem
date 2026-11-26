@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+Get started:
+
+- **Physics pages.** The front page opens on a card per field of physics, each
+  leading to a page of its tutorials and recipes ({doc}`../index`).
+
 Integrated photonics:
 
 - **Behaviour change: a `PortMode` solve costs more.** It takes about 15 to 30 %
