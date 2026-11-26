@@ -42,7 +42,7 @@ electro-optic shift.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
@@ -57,7 +57,9 @@ from gfem._engine.thermo_optic import (
 )
 from gfem._sweep.port_mode import PortModeRule
 from gfem.mesh import Mesh
-from gfem.model import Model
+
+if TYPE_CHECKING:
+    from gfem.model import Model
 
 __all__ = [
     "AcoustoOpticWeightsRule",

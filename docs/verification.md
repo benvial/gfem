@@ -533,19 +533,20 @@ across platforms.
 (verification-brillouin)=
 ## Brillouin gain
 
-The peak gain of a mechanical mode on a guided mode
-({py:obj}`gfem.brillouin_gain`, forward or backward) ($G_B = Q_m\omega|\delta n_{ps}|^2/c^2$, the peak gain of the Lorentzian line
-of Van Laer et al., Phys. Rev. A 93, 053828 (2016)) is checked against a closed
-form, against identities, against finite differences and against a published
-device:
+The peak gain of a mechanical mode on a guided mode, forward or backward
+({py:obj}`gfem.brillouin_gain`), $G_B = Q_m\omega|\delta n_{ps}|^2/c^2$, the
+peak gain of the Lorentzian line of Van Laer et al., Phys. Rev. A 93, 053828
+(2016), is checked against a closed form, against identities, against finite
+differences and against a published device:
 
 - **Closed form.** A film dilation of a TM slab, phase matched at
   $q = 2k_0 n_\mathrm{exact}$, has a backward pair overlap with three terms:
   the moving boundary with its $|E_z|^2$ correction, the photoelastic diagonal
   part ($p_{11}$, $p_{12}$) and the photoelastic shear part ($p_{44}$, with the
   strain $-iq(y-y_c)$ of the dilation). The moving boundary matches the closed
-  form to the gate of each mesh, and the error of every part falls at least 2.5-fold (5-fold for the
-  moving boundary and the diagonal part) when the edge halves. The shear part
+  form to the gate of each mesh, and the error of every part falls at least
+  2.5-fold (5-fold for the moving boundary and the diagonal part) when the edge
+  halves. The shear part
   converges at the rate of the element-mean strain, $O(h^2)$. The TE slab,
   whose $E_z$ vanishes, equals its forward closed form.
 - **Identities.** The forward gain is $4Q_m|\tilde g_0|^2/(\hbar\omega
@@ -555,21 +556,24 @@ device:
   phase-matching window raises with the expected value, at both edges.
 - **Scaling laws.** For an isotropic single material,
   $\mathrm{d}\ln G_B/\mathrm{d}\ln E = -1$ and
-  $\mathrm{d}\ln G_B/\mathrm{d}\ln\rho = 0$, to $10^{-6}$.
-- **Gradients.** The gradients in the photoelastic tensor (exact to
-  round-off), the quality factor and a stretch of the mechanical nodes match
-  fourth-order central differences of relative step $10^{-3}$ to $10^{-6}$.
-- **A published device.** The backward gain of the suspended silicon wire of
-  315 by 283.5 nm at 1.552 µm (Qiu et al., Opt. Express 21, 31402 (2013),
-  Fig. 3(b)), with the phonon at $q = 2\beta$ of gfem's own mode, for the modes
-  E1, E2, E3 and E4 (even under both mirrors, found by symmetry and ordered by
-  frequency). Frequencies agree with the published 13.99, 15.54 and 22.70 GHz within 2 %
-  (measured -0.7 %, -0.8 %, -0.7 %: the reading offset of the figure's axis and
-  gfem's $\beta$, 0.46 % below the published one). The published values are
-  reads of a figure, $\pm 30$ 1/(W m) a bar, and the text's totals. On the test
-  mesh (wire edge 20 nm, air 150 nm, mechanical 10 nm, order 3; a mesh 1.4 times
-  finer moves every gated part and total by at most 1.7 %), the photoelastic
-  and moving-boundary gains and the totals, 1/(W m), against Qiu's bars are:
+  $\mathrm{d}\ln G_B/\mathrm{d}\ln\rho = 0$, to $10^{-10}$.
+- **Gradients.** The gradient in the photoelastic tensor matches a two-sample
+  central difference, exact because the gain is quadratic in the tensor (to
+  $10^{-12}$). The gradients in the quality factor and in a stretch of the
+  mechanical nodes match fourth-order central differences of relative step
+  $10^{-3}$ to $10^{-6}$.
+- **A published device.** The backward gain of the suspended silicon wire of 315
+  by 283.5 nm at 1.552 µm (Qiu et al., Opt. Express 21, 31402 (2013), Fig.
+  3(b)), with the phonon at $q = 2\beta$ of gfem's own mode, for the modes E1,
+  E2, E3 and E4 (even under both mirrors, found by symmetry and ordered by
+  frequency). Frequencies agree with the published 13.99, 15.54 and 22.70 GHz
+  within 2 % (measured -0.7 %, -0.8 %, -0.7 %: the reading offset of the
+  figure's axis and gfem's $\beta$, 0.46 % below the published one). The
+  published values are reads of a figure, $\pm 30$ 1/(W m) a bar, and the text's
+  totals. On the test mesh (wire edge 20 nm, air 150 nm, mechanical 10 nm, order
+  3; a mesh 1.4 times finer moves every gated part and total by at most 1.7 %),
+  the photoelastic and moving-boundary gains and the totals, 1/(W m), against
+  Qiu's bars are:
 
   | mode | photoelastic (published) | moving boundary (published) | total (published) |
   |---|---|---|---|

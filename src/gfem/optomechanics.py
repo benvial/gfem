@@ -532,9 +532,9 @@ def _solve_weights(
 #: :math:`|q - 2\beta s| \le 2\tau\beta`. Its floor: the Stokes wave sits
 #: :math:`\Omega n_g/c` (at most 1e-3 of :math:`2\beta`) off the phase-matched
 #: wavenumber, which is dropped, and a phonon wavenumber taken from published
-#: effective indices differs from gfem's by 4.6e-3 of :math:`\beta`: the half
-#: width :math:`2\tau\beta = 2\times10^{-2}\beta` is twice that gap and ten
-#: times the Stokes envelope. Its ceiling: the smallest blunder that still
+#: effective indices differs from gfem's by 4.6e-3 of :math:`2\beta`: the half
+#: width :math:`2\tau\beta`, :math:`10^{-2}` of :math:`2\beta`, is twice that
+#: gap and ten times the Stokes envelope. Its ceiling: the smallest blunder that still
 #: reads a number (:math:`q = \beta`, :math:`k_0` for :math:`\beta`, :math:`n_g`
 #: for :math:`n_\mathrm{eff}`, another optical mode, um for m) is off by 5e-2 of
 #: :math:`2\beta`, five times the half width.
