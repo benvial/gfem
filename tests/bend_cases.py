@@ -90,6 +90,35 @@ SLAB_TAU2 = {
     (5, "Hy"): 0.953106322777 + 0.0189360834048j,
     (8, "Hy"): 0.982133746489 + 0.00121415293946j,
 }
+#: $|E_x / E_s|$ of the physical field of the Hy slab at $R = 5$ um, at the
+#: cladding abscissas $x$ (um) of the bend's outward axis: the exact
+#: $|\nu H_y / (r\,\partial_r H_y)|$ with $r = R + x$ and $H_y \propto
+#: H^{(2)}_\nu(k_0 n_\mathrm{cl} r)$, $\nu$ the 14-digit `SLAB_NU` (30-digit
+#: Hankel functions, `mpmath`; 13 digits written).
+SLAB_FIELD_RATIO = {
+    0.6: 2.905998149404,
+    1.0: 3.967677228794,
+    1.5: 2.652930646934,
+    2.0: 1.837997280243,
+    2.4: 1.506874916368,
+}
+#: Kerr $\gamma_\mathrm{NL}$ of the exact bent modes, per unit $n_2$ (1/(W m) per
+#: m^2/W), vacuum with a Kerr index, 10 GHz, $\gamma_\mathrm{NL} = k_0c^2
+#: \varepsilon_0^2 n_2/12 \int [2|E|^4 + |E\cdot E|^2]\,h\,\mathrm{d}A / P^2$ with
+#: the Bessel mode, $h = r/R$ and $P$ the physical power: 40-digit `mpmath`
+#: quadrature of the closed form at the roots of `WR90` and `LINE` (16 digits
+#: written; $\varepsilon_0 = 1/(\mu_0c^2)$, $\mu_0 = 1.25663706212\times10^{-6}$).
+#: H: the WR-90 H-plane bend ($R$ in mm); E: the parallel-plate line ($R$ in mm).
+KERR_H = {
+    20.0: 2598691.648756385,
+    30.0: 2466338.058624144,
+    60.0: 2396438.959541749,
+}
+KERR_E = {
+    10.0: 10107616.99701453,
+    20.0: 8756295.722082433,
+    40.0: 8472972.015889645,
+}
 #: Whispering-gallery slab, w = 2 um, R = 2 um ($n_\mathrm{eff} = 2.549 >
 #: n_\mathrm{co}$): $\nu$ at 8 digits (the continuation recipe's pick).
 WGM_NU = {"Ey": 20.66859418 - 0.06335274j, "Hy": 20.20448391 - 0.10560599j}
