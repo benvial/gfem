@@ -175,3 +175,13 @@ def test_one_field_estimator_refinement_cycle_completes(case_a):
     assert last.tetrahedra > first.tetrahedra
     f = ghz(refined.result.omega)
     assert np.min(np.abs(f - ROOT_A)) / abs(ROOT_A) < 1e-2
+
+
+def test_a_target_below_a_requested_cutoff_is_the_public_error_not_a_lost_seed(
+    case_a,
+):
+    # the refusal a refinement iterate meets is an internal subclass; the
+    # target's own below-cutoff check stays the public class
+    with pytest.raises(gfem.PortModeError) as raised:
+        gfem.solve(case_a, gfem.Eigenmode(target=5e9, n_modes=2), options=ORDER_2)
+    assert type(raised.value) is gfem.PortModeError

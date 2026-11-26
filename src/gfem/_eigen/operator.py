@@ -343,15 +343,20 @@ class EigenOperator:
         self._thetas = tuple(p.value(k) for p in self.nonpolynomial)
         return t
 
-    def _wrap(self, base: Handle, k: complex) -> Handle:
+    def _wrap(
+        self,
+        base: Handle,
+        k: complex,
+        stacked: tuple[np.ndarray, np.ndarray] | None = None,
+    ) -> Handle:
         """``base`` with the low-rank terms at ``k`` (``base`` itself without).
 
         The update borrows ``base``: a reshift refactorizes it and wraps it
-        again.
+        again. ``stacked``: `_stacked` at ``k``, when already evaluated.
         """
         if not self.low_rank:
             return base
-        u, c = self._stacked(k)
+        u, c = stacked if stacked is not None else self._stacked(k)
         return low_rank_update(base, u, c, borrow=True)
 
     def _stacked(
@@ -401,15 +406,19 @@ class EigenOperator:
         the seed's count when it moves back to the target for a seed solve.
         """
         if self._handle is not None:
+            # everything that can refuse (the port term at ``k``) before the
+            # handle is freed: a refusal leaves the operator at its shift
+            stacked = self._stacked(k) if self.low_rank else None
+            t = self._operator(k)
             if self._handle is not self._base:
                 self._handle.free()  # the update's own columns
             self._base = refactorize_or_prepare(
                 self._base,
-                self._operator(k),
+                t,
                 lambda t: self.prepare(t, solves),
                 solves=solves,
             )
-            self._handle = self._wrap(self._base, k)
+            self._handle = self._wrap(self._base, k, stacked)
         self.shift = k
         self.shifts += 1
 

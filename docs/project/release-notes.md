@@ -82,6 +82,30 @@ Piezoelectric:
   `jax.grad` in the tensors, the acoustic inputs and `offset`
   ({doc}`../tutorials/acousto-optic`, {doc}`../recipes/acousto-optic-shift`).
 
+Eigenmode solves:
+
+- **Low-Q resonances are found whatever `n_modes`.** With wave ports, an
+  eigenmode solve lists the modes of a strip around `target` (Q above about
+  2), nearest in $\mathrm{Re}\,f$ first, and the modes it returns no longer
+  depend on `n_modes` beyond its length. A resonance of Q 3.7 behind
+  high-Q ones of an unrequested port mode family is found with one mode
+  asked for. A strip that holds more modes than the search can list raises
+  `gfem.EigenmodeConvergenceError`; a resonance below Q about 2 is for a
+  `gfem.Driven` sweep ({doc}`../modes-and-ports`).
+- **`requested_power_share` and `gfem.UnrequestedPortModeWarning`.**
+  `EigenmodeResult.requested_power_share` gives, per wave port surface and
+  mode, the share of the power the surface absorbs that its requested modes
+  carry: near 1 for a mode of a requested family, 1e-3 or less for a mode an
+  unrequested family carries or one trapped against the port. A share below
+  one half warns, once per surface, with the mode to request or the port to
+  move. It is exported by `to_xarray` and is not differentiable
+  ({doc}`../modes-and-ports`).
+- **A refinement leaving a port's reach loses its seed, not the solve.**
+  A mode whose refinement runs where the port cannot follow its mode, or
+  where two port modes cannot be told apart, is dropped from the search
+  instead of ending the solve, and a port mode is followed in a way that no
+  longer depends on the mesh unit.
+
 Thermal:
 
 - **Thermal boundary values differentiate.** A fixed temperature, a

@@ -653,6 +653,7 @@ REPLAYED = (
     errors.FloquetOrderCapWarning,
     errors.ObliqueAbsorberWarning,
     errors.SkippedPortModeWarning,
+    errors.UnrequestedPortModeWarning,
     errors.PortModeTrackingWarning,
     errors.ThinLayerWarning,
     errors.LayerClearanceWarning,

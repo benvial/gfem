@@ -2551,6 +2551,27 @@ class EigenmodeResult:
             frequency-dependent terms of conductors, second-order absorbing
             boundaries and wave ports; at most
             ``SolverOptions.eigen_tolerance``.
+        requested_power_share: The share of the power each wave port surface
+            absorbs from the mode that the surface's requested modes carry,
+            by surface name in the order of each surface's first wave port,
+            ``(n_modes,)``:
+            :math:`\eta_s = \sum_{p \in s} P_p / P_s`, with :math:`P_p`
+            the power wave port :math:`p`'s requested mode carries out (the
+            one `q_port` divides) and :math:`P_s = \mathrm{Im}(\bar x^\mathsf{T}
+            B_s x) / (2\, \mathrm{Re}\,\omega\, \mu_0 s_\ell)` the power
+            the surface's port term :math:`B_s` absorbs. The port absorbs its
+            requested modes exactly and any other field on its surface only
+            through its Robin scalar, so :math:`\eta_s` is near 1 (within
+            :math:`O(1/Q^2)`, up to 1.004 measured) for a mode of the
+            requested families, and 1e-3 or less for a mode carried by an
+            unrequested family or trapped against the port. Between one half
+            and 1 a discontinuity close to the port puts an evanescent tail
+            on it: :math:`1 - \eta_s` is the part of the port loss no
+            requested mode carries, and the Q over :math:`\eta_s` is close to
+            the Q of a port moved away. Empty without wave ports; NaN where
+            the surface absorbs no power from the mode. Below one half a
+            solve warns `gfem.UnrequestedPortModeWarning`. A diagnostic of the
+            found mode, like ``error``: not differentiable.
         q_port: Coupling Q of each port that takes power out of the mode, by
             port name, in model order: each lumped port with a resistance R
             and each wave port. A lumped port's is
@@ -2693,6 +2714,9 @@ class EigenmodeResult:
     sheet_participation: dict[str, jax.Array] = dataclasses.field(default_factory=dict)
     pml: PML | None = None
     v_g: jax.Array | None = None
+    requested_power_share: dict[str, jax.Array] = dataclasses.field(
+        default_factory=dict
+    )
 
     def __post_init__(self) -> None:
         """Hold fields, materials and pairs as tuples and dict; label simple modes."""
@@ -2749,8 +2773,9 @@ class EigenmodeResult:
         `bulk_participation` over ``("mode", "region")``, and
         `principal_participation` over ``("mode", "anisotropic_region",
         "axis")`` (axis 0, 1, 2 in each material's ``axes`` order),
-        `sheet_participation` over ``("mode", "sheet")``, and `v_g` (m/s)
-        over ``("mode", "direction")`` (x, y, z) of a Bloch solve. The fields
+        `sheet_participation` over ``("mode", "sheet")``,
+        `requested_power_share` over ``("mode", "port_surface")``, and `v_g`
+        (m/s) over ``("mode", "direction")`` (x, y, z) of a Bloch solve. The fields
         and materials are not exported. Needs the ``xarray`` extra: ``pip
         install "gfem[xarray]"``.
 
@@ -2804,6 +2829,14 @@ class EigenmodeResult:
         if self.v_g is not None:
             coords["direction"] = ["x", "y", "z"]
             data["v_g"] = _variable(("mode", "direction"), self.v_g, "m/s")
+        if self.requested_power_share:
+            coords["port_surface"] = list(self.requested_power_share)
+            data["requested_power_share"] = _variable(
+                ("mode", "port_surface"),
+                np.stack(
+                    [np.asarray(v) for v in self.requested_power_share.values()], 1
+                ),
+            )
         return xr.Dataset(data, coords=coords)
 
     def __repr__(self) -> str:
@@ -2830,6 +2863,7 @@ register_fields(
         "principal_participation",
         "sheet_participation",
         "v_g",
+        "requested_power_share",
     ),
 )
 

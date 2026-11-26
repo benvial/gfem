@@ -60,6 +60,7 @@ from gfem._linalg.superlu import shift_invert_eigs
 from gfem._pml import Stretch
 from gfem._port_section import port_section
 from gfem._sweep.port_mode import (
+    _AMBIGUOUS,
     PortModeSweep,
     _overlaps,
     _Reduced,
@@ -68,11 +69,17 @@ from gfem._sweep.port_mode import (
     port_mode_sweep,
     propagating_modes,
 )
-from gfem._text import hertz
+from gfem._text import complex_hertz, hertz
 from gfem.errors import PortModeError
 from gfem.model import Model
 
-__all__ = ["PortTerm", "PortTermValue", "port_terms", "sweep_band"]
+__all__ = [
+    "PortTerm",
+    "PortTermRefusalError",
+    "PortTermValue",
+    "port_terms",
+    "sweep_band",
+]
 
 # The band [max(_CUTOFF f_c, _LOW f_t), _HIGH f_t] with _POINTS frequencies.
 _CUTOFF, _LOW, _HIGH, _POINTS = 1.05, 0.7, 1.4, 9
@@ -188,6 +195,25 @@ def _below_cutoff(
     )
 
 
+class PortTermRefusalError(PortModeError):
+    """The port term cannot evaluate at an iterate of a mode refinement.
+
+    Internal: the eigen search catches it and loses the seed (a mode
+    refinement may wander to a complex frequency where the port's mode cannot
+    be followed), so it never reaches a caller. The public `PortModeError`
+    stays for a target below a requested mode's cutoff.
+
+    Attributes:
+        label: The surface's wave ports, for messages.
+        k: The complex wavenumber (per file unit) of the iterate.
+    """
+
+    def __init__(self, label: str, k: complex, why: str) -> None:
+        super().__init__(why)
+        self.label = label
+        self.k = k
+
+
 @dataclasses.dataclass(frozen=True)
 class PortTermValue:
     r"""A surface's port term at one complex wavenumber :math:`k`.
@@ -292,6 +318,18 @@ class PortTerm:
     def _columns(self) -> None:
         """``vectors`` and the face reactions of the current basis."""
         modes = self.modes
+        # the tracking mass splits by field part: $e_t = \gamma E_t$ scales with the
+        # file unit, $e_n$ does not (`_pairs` weighs the parts alike)
+        v = self._reduced.v
+        n_t = getattr(modes, "n_t", None)
+        if n_t is None:  # a line port's mass has no normal part
+            self._tangential = None
+            self._mass_t, self._mass_n = self._reduced.mass, None
+        else:
+            self._tangential = np.asarray(modes.free) < n_t
+            t = self._tangential[:, None]
+            self._mass_t = v.T @ (modes.mass @ (v * t))
+            self._mass_n = v.T @ (modes.mass @ (v * ~t))
         self._reduction = modes.reduce(self._reduced.v)
         w = self._reduction.w
         basis = np.zeros((modes.space.ndof, w.shape[1]))
@@ -308,8 +346,8 @@ class PortTerm:
         Raises:
             NotImplementedError: The cross-section has an absorbing edge
                 beside a permittivity law (not analytic in the frequency).
-            PortModeError: Enrichment does not bring a mode's reduced pair
-                under the guard.
+            PortTermRefusalError: Enrichment does not bring a mode's reduced pair
+                under the guard (a `PortModeError`).
         """
         k = complex(k)
         hit = self._cache.get(k)
@@ -324,14 +362,16 @@ class PortTerm:
             bad = [i for i, (_, _, eta) in enumerate(pairs) if not eta <= floor[i]]
             if not bad:
                 break
+            self._refuse_ambiguous(k, pairs, bad, floor)
             if attempt == _ENRICHMENTS:
-                raise PortModeError(
+                raise PortTermRefusalError(
+                    self.label,
+                    k,
                     f"{self.label}: the port mode at the complex wavenumber "
                     f"{k:.6g} per file unit has a backward error "
                     f"{max(pairs[i][2] for i in bad):.1e} above the port mode "
                     f"tolerance {self.tolerance:.1e} after {_ENRICHMENTS} exact "
-                    "solves. Raise SolverOptions.port_mode_tolerance, or move the "
-                    "target nearer the resonance."
+                    "solves.",
                 )
             self._enrich(k, pairs, bad)
         value = self._value(k, pairs, d_theta)
@@ -339,6 +379,38 @@ class PortTerm:
             self._cache.clear()
         self._cache[k] = value
         return value
+
+    def _refuse_ambiguous(
+        self, k: complex, pairs: list, bad: list[int], floor: list[float]
+    ) -> None:
+        """Refuse at once a pair that passes the guard but is not told apart.
+
+        An exact solve cannot separate two accurate modes (it moves the basis
+        and the pair stays ambiguous), so enriching would only spend solves.
+
+        Raises:
+            PortTermRefusalError: A bad pair is finite, passes the guard on its
+                own backward error and overlaps two reduced modes almost equally.
+        """
+        theta = self.modes.pencil.theta(k)  # ty: ignore[invalid-argument-type]
+        for i in bad:
+            lam, y, eta = pairs[i]
+            if eta != math.inf or not np.isfinite(lam):
+                continue
+            if self._reduced.backward_error(theta, lam, y) > floor[i]:
+                continue
+            first, second = self._reduced.margins[i]
+            if second <= first - _AMBIGUOUS:
+                continue  # two references on one pair: enrichment may separate them
+            f = k * scipy.constants.c / (2 * math.pi * self.modes.section.scale)
+            raise PortTermRefusalError(
+                self.label,
+                k,
+                f"{self.label}: two reduced modes overlap the port mode at "
+                f"the complex frequency {complex_hertz(f)} almost equally "
+                f"(overlaps {first:.3f} and {second:.3f}), so it cannot be "
+                "followed there.",
+            )
 
     def below_cutoff(self, k: float) -> bool:
         """Whether a port mode of the surface is below its cutoff at the real ``k``.
@@ -388,8 +460,26 @@ class PortTerm:
                 for s, y in zip(self.sweeps, refs, strict=True)
             ], floors
         k_max = 2 * self._k_max[j] * abs(k) / self._k[j]
-        pairs = self._reduced.solve(k, k_max, refs)  # ty: ignore[invalid-argument-type]
+        pairs = self._reduced.solve(k, k_max, refs, mass=self._tracking_mass(k))  # ty: ignore[invalid-argument-type]
         return pairs, floors
+
+    def _tracking_mass(self, k: complex) -> np.ndarray:
+        r"""The reduced matrix of :math:`M_t + |k|^2 M_n`, the pairs' inner product.
+
+        The tangential part of a port mode's field carries :math:`\gamma`
+        (:math:`e_t = \gamma E_t`) and the normal part does not, so the plain
+        mass weighs them by the file unit; :math:`|k|` per file unit balances
+        them, and the margin between two pairs no longer depends on the unit.
+        """
+        if self._mass_n is None:
+            return self._mass_t
+        return self._mass_t + abs(k) ** 2 * self._mass_n
+
+    def _weights(self, k: complex) -> np.ndarray:
+        """The diagonal ``D`` of the tracking inner product ``D M D`` on free DOFs."""
+        if self._tangential is None:
+            return np.ones(len(self.modes.free))
+        return np.where(self._tangential, 1.0, abs(k))
 
     def _enrich(self, k: complex, pairs: list, bad: list[int]) -> None:
         """Exact solves at ``k`` for modes ``bad``, added to the basis."""
@@ -404,7 +494,19 @@ class PortTerm:
                 lam, y = g**2 * (k / self._k[j]) ** 2, self._ref(i, j)
             _, vecs = shift_invert_eigs(a, b, lam, min(_NEV, n - 2))
             ref = self._reduced.lift(y)
-            found.append(vecs[:, int(np.argmax(_overlaps(self.modes.mass, ref, vecs)))])
+            weight = self._weights(k)
+            found.append(
+                vecs[
+                    :,
+                    int(
+                        np.argmax(
+                            _overlaps(
+                                self.modes.mass, ref * weight, vecs * weight[:, None]
+                            )
+                        )
+                    ),
+                ]
+            )
         self._reduced.add(np.stack(found, axis=1))
         self._columns()
         self._cache.clear()

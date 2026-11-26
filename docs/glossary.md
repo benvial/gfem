@@ -144,6 +144,28 @@ Outgoing branch
   real roots that are not resonances (anti-bound roots), which an
   eigenmode solve drops with a warning.
 
+Requested power share
+  For an eigenmode solve with {term}`wave port`s, the part of the power a
+  port surface absorbs from a mode that the surface's requested modes carry
+  out, $\eta_s = \sum_p P_p / P_s$, with $P_p$ the power port $p$'s
+  requested mode carries and $P_s$ the surface's total. Near 1 for a mode of
+  a requested family; the rest of $1 - \eta_s$ leaves through a field no port
+  requested, which the port absorbs only partly. Reported in
+  `EigenmodeResult.requested_power_share`.
+
+Trapped mode
+  A {term}`resonant mode` held inside the model, against a {term}`wave port`,
+  by a port mode family that propagates in the model but is cut off at the
+  port. Its loss is the port's absorption of the evanescent tail, so its Q is
+  a lower bound on the device's and grows as the port moves away. Its
+  {term}`requested power share` is near 0.
+
+Unrequested port mode
+  A mode of a port's guide that no {term}`wave port` on the surface requests.
+  The port absorbs it only partly, reflecting the rest, so a resonance it
+  carries has a Q that is the port's, not the device's. Request the mode on
+  the surface to read where its power goes.
+
 Port mode sweep
   The {term}`port mode problem` solved over a driven problem's output
   frequencies, or over a band around an eigenmode problem's target, before

@@ -22,6 +22,7 @@ from pathlib import Path
 import jax
 import numpy as np
 import pytest
+import structured_meshes as sm
 from finite_differences import assert_gradient_matches, unit_directions
 from wave_port_cases import (
     ANTI_BOUND_A3,
@@ -48,12 +49,16 @@ from wave_port_cases import (
 )
 
 import gfem
+from gfem._eigen import arpack
 from gfem._eigen import rule as eigen_rule
 from gfem._eigen.operator import split
+from gfem._eigen.search import ModeSearch
+from gfem._eigen.seed import SeedBoundReached
 from gfem._engine import cache
 from gfem._engine.driven import driven_operator, operator_terms
 from gfem._engine.eigen import eigen_ports
-from gfem._engine.port_term import PortTerm
+from gfem._engine.port_term import PortTerm, PortTermRefusalError
+from gfem._sweep.port_mode import _Reduced
 from gfem.errors import AntiBoundRootWarning
 
 DATA = Path(__file__).parent / "data"
@@ -557,3 +562,447 @@ def test_a_port_mode_is_degenerate_within_the_relative_gap(hybrid):
     k = 2 * math.pi * 12e9 / C0 * op.built.scale * (1 + 0.02j)
     assert port.term.degenerate(k, 1e-6) == []
     assert port.term.degenerate(k, 10.0) == [0]
+
+
+# --- the requested power share and its warning ----------------------------------
+
+
+@pytest.fixture(scope="module")
+def line(case_a):
+    """Case A at three modes: the root and two modes trapped against the port."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = gfem.solve(
+            case_a, gfem.Eigenmode(target=11.67e9, n_modes=3), options=ORDER_3
+        )
+    texts = [
+        str(c.message) for c in caught if c.category is gfem.UnrequestedPortModeWarning
+    ]
+    return result, texts
+
+
+def test_the_requested_power_share_is_one_row_per_port_surface(line):
+    result, _ = line
+    share = result.requested_power_share
+    assert list(share) == ["port"]
+    assert share["port"].shape == (3,)
+    assert share["port"].dtype == np.float64
+    j = int(np.argmin(np.abs(ghz(result.omega) - ROOT_A)))
+    assert abs(1 - float(share["port"][j])) <= 2e-2
+
+
+def test_a_model_without_wave_ports_has_no_requested_power_share():
+    result = gfem.EigenmodeResult(omega=np.array([1.0]), error=np.zeros(1))
+    assert result.requested_power_share == {}
+
+
+def test_a_surface_that_absorbs_no_power_has_a_nan_share(hybrid):
+    from gfem._eigen.rule import _layout
+    from gfem._eigen.share import requested_power_shares
+    from gfem._engine import terms
+
+    _, _, op, ports = hybrid
+    k = terms.wavenumber(2 * math.pi * 12e9, op.built.scale)
+    x = np.zeros((op.space.ndof, 1), complex)
+    share, loss = requested_power_shares(
+        ports, op.space, x, [k], scale=op.built.scale, pair=_layout(op).pair
+    )
+    assert share.shape == (1, 1)
+    assert np.isnan(share).all()
+    assert np.isnan(loss).all()
+
+
+def test_the_requested_power_share_is_exported_over_mode_and_port_surface(line):
+    pytest.importorskip("xarray")
+    result, _ = line
+    data = result.to_xarray()
+    variable = data["requested_power_share"]
+    assert variable.dims == ("mode", "port_surface")
+    assert list(data["port_surface"].values) == ["port"]
+    np.testing.assert_array_equal(
+        variable.values[:, 0], np.asarray(result.requested_power_share["port"])
+    )
+
+
+def test_a_result_with_its_share_survives_pickle(line):
+    import pickle
+
+    result, _ = line
+    back = pickle.loads(pickle.dumps(result))  # noqa: S301
+    np.testing.assert_array_equal(
+        back.requested_power_share["port"], result.requested_power_share["port"]
+    )
+
+
+def test_the_requested_power_share_takes_no_gradient(lone_a):
+    mesh, eps = lone_a
+
+    def objective(read):
+        return _objective(mesh, gfem.Eigenmode(target=11.67e9), read)
+
+    with pytest.raises(gfem.NonDifferentiableError, match="requested_power_share"):
+        jax.grad(objective(lambda r: r.requested_power_share["port"][0]))(eps)
+    # the opt-out reads the value, and omega keeps its gradient
+    grad = jax.grad(
+        objective(
+            lambda r: (
+                jax.lax.stop_gradient(r.requested_power_share["port"][0])
+                + r.frequency[0]
+            )
+        )
+    )(eps)
+    assert np.all(np.isfinite(np.asarray(grad)))
+    assert np.abs(np.asarray(grad)).max() > 0
+
+
+# --- the warning's forms -----------------------------------------------------------
+
+
+def _surface(requested, share, loss=None):
+    """A stand-in surface of ``requested`` ranks and its flagged-mode rows."""
+    from types import SimpleNamespace
+
+    from gfem._eigen.share import Unrequested
+
+    ports = [SimpleNamespace(mode=r) for r in requested]
+    port = SimpleNamespace(term=SimpleNamespace(ports=ports, modes=object()))
+    share = np.asarray(share, float)
+    loss = np.ones_like(share) if loss is None else np.asarray(loss, float)
+    return Unrequested(port, share, loss)
+
+
+KS = [0.5 + 0.01j, 0.6 + 0.02j, 0.7 + 0.03j]
+
+
+def test_a_mode_with_an_unrequested_rank_propagating_gets_the_open_form(monkeypatch):
+    from gfem._eigen import share as module
+
+    monkeypatch.setattr(module, "propagating_modes", lambda _modes, _f, rank: rank)
+    flagged = _surface([1], [1.0, 1e-9, 0.2])
+    (text,) = flagged.messages("s", KS, 1.0, np.array([5.0, 190.0, 40.0]))
+    assert "mode(s) 1 at" in text
+    assert "2 at" in text
+    assert "Mode 2 of the surface propagates" in text
+    assert "mode=2" in text
+    assert "If the warning persists" in text
+    assert "0 at" not in text.split("on wave port")[0]
+
+
+def test_a_skipped_rank_always_propagates_and_gets_the_open_form(monkeypatch):
+    from gfem._eigen import share as module
+
+    def never(*_args):
+        raise AssertionError("a skipped rank needs no port mode solve")
+
+    monkeypatch.setattr(module, "propagating_modes", never)
+    flagged = _surface([2], [1.0, 1e-9, 1.0])
+    (text,) = flagged.messages("s", KS, 1.0, np.array([5.0, 190.0, 5.0]))
+    assert "Mode 1 of the surface propagates" in text
+    assert "mode=1" in text
+
+
+def test_a_mode_with_no_unrequested_rank_propagating_gets_the_trapped_form(
+    monkeypatch,
+):
+    from gfem._eigen import share as module
+
+    monkeypatch.setattr(module, "propagating_modes", lambda _modes, _f, rank: rank - 1)
+    flagged = _surface([1], [1.0, 1e-9, 1e-12])
+    (text,) = flagged.messages("s", KS, 1.0, np.array([5.0, 190.0, 191.0]))
+    assert "trapped" in text
+    assert "propagates" not in text
+    assert "1 at" in text
+    assert "2 at" in text
+
+
+def test_the_two_forms_are_two_warnings_and_a_loss_gate_drops_a_mode(monkeypatch):
+    from gfem._eigen import share as module
+
+    # mode 1's frequency has rank 2 propagating, mode 2's does not; mode 0 is a
+    # requested one, and mode 3 has a tiny share of a surface that takes
+    # little of its loss
+    monkeypatch.setattr(
+        module, "propagating_modes", lambda _modes, f, rank: rank if f < 3e7 else 0
+    )
+    ks = [0.5, 0.6, 0.7, 0.8]
+    flagged = _surface([1], [1.0, 1e-9, 1e-9, 1e-9], [1.0, 1.0, 1.0, 7e-4])
+    assert list(flagged.flagged) == [1, 2]
+    texts = flagged.messages("s", ks, 1.0, np.ones(4))
+    assert len(texts) == 2
+    assert "propagates" in texts[0]
+    assert "propagates" not in texts[1]
+
+
+def test_the_warning_is_public_and_replayed_by_the_solve_cache():
+    from gfem import _solve_cache
+
+    assert "UnrequestedPortModeWarning" in gfem.__all__
+    assert issubclass(gfem.UnrequestedPortModeWarning, UserWarning)
+    assert gfem.UnrequestedPortModeWarning in _solve_cache.REPLAYED
+
+
+# --- a refusal of the port term at an iterate -----------------------------------
+
+
+def refuse_off_axis(monkeypatch, share):
+    """The port term refuses where Im k exceeds ``share`` of Re k, but at the
+    search's seed shift (a stand-in for a complex frequency its port mode
+    cannot be followed to). Returns the list of the refusals it raised."""
+    real = PortTerm.at
+    refusals = []
+
+    def at(self, k):
+        z = complex(k)
+        if z.imag > share * z.real and abs(z.imag / z.real - 0.125) > 1e-9:
+            refusals.append(z)
+            raise PortTermRefusalError(self.label, z, "forced")
+        return real(self, k)
+
+    monkeypatch.setattr(PortTerm, "at", at)
+    return refusals
+
+
+@pytest.fixture
+def refuses_off_axis(monkeypatch):
+    return refuse_off_axis(monkeypatch, 0.05)
+
+
+def test_a_guard_seed_the_port_term_refuses_is_dropped_silently(
+    case_h, refuses_off_axis
+):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        result = gfem.solve(
+            case_h, gfem.Eigenmode(target=7.3e9, n_modes=1), options=ORDER_3
+        )
+    assert len(result.omega) == 1
+    assert abs(ghz(result.omega[0]) - (7.30912 + 0.21415j)) <= 1e-3
+    # at Im/Re 0.15 the coverage search never refined the guard where the term
+    # refuses; at 0.05 it does, and the root (0.029) is still followed
+    assert refuses_off_axis
+
+
+def test_a_requested_seed_the_port_term_refuses_is_reported_on_a_lost_line(
+    case_h, monkeypatch
+):
+    refuse_off_axis(monkeypatch, 0.0)
+    problem = gfem.Eigenmode(target=7.3e9, n_modes=2)
+    with pytest.raises(gfem.EigenmodeConvergenceError) as raised:
+        gfem.solve(case_h, problem, options=ORDER_3)
+    lines = str(raised.value).splitlines()
+    lost = [x for x in lines if x.lstrip().startswith("lost:")]
+    assert lost
+    assert "GHz" in lost[0]
+    assert "WavePort 'p' on surface" in lost[0]
+    assert "can follow its port mode" in lost[0]
+
+
+def test_a_refusal_in_a_reshift_leaves_the_operator_usable(hybrid, monkeypatch):
+    _, rule, op, ports = hybrid
+    sigma = 2 * math.pi * 12e9 / C0 * op.built.scale
+    eop = rule.operator(op, sigma, ports=ports)
+    try:
+        x = free_vector(eop, 3)
+        eop.solve(x)  # prepared at sigma
+        far = sigma * (1.01 + 0.03j)
+        real = PortTerm.at
+
+        def at(self, k):
+            if complex(k) == far:
+                raise PortTermRefusalError(self.label, complex(k), "forced")
+            return real(self, k)
+
+        monkeypatch.setattr(PortTerm, "at", at)
+        with pytest.raises(PortTermRefusalError):
+            eop.reshift(far)
+        assert eop.shift == sigma
+        back = eop.solve(eop.apply(sigma, x))  # the old factorization lives
+        assert np.linalg.norm(back - x) <= 1e-10 * np.linalg.norm(x)
+        near = sigma * (1.01 + 0.02j)
+        eop.reshift(near)
+        back = eop.solve(eop.apply(near, x))
+        assert np.linalg.norm(back - x) <= 1e-10 * np.linalg.norm(x)
+    finally:
+        eop.free_handle()
+
+
+def test_a_port_refusal_in_polishing_flags_the_mode_unpolished(case_a, monkeypatch):
+    # a polish step reshifts the port term at its Newton iterates: a refusal
+    # there leaves the refined mode, flagged, instead of raising
+    calls = []
+    found = []
+
+    def polish(_eop, mode, _gap, *, index):
+        calls.append(index)
+        raise PortTermRefusalError("p1", complex(mode.k), "forced")
+
+    real = ModeSearch.find
+
+    def find(self, *args, **kw):
+        out = real(dataclasses.replace(self, polish=polish), *args, **kw)
+        found.append(out)
+        return out
+
+    monkeypatch.setattr(ModeSearch, "find", find)
+    result = gfem.solve(
+        case_a, gfem.Eigenmode(target=11.67e9, n_modes=1), options=ORDER_3
+    )
+    assert calls == [0]
+    assert len(result.omega) == 1
+    assert abs(ghz(result.omega[0]) - ROOT_A) <= 1e-3 * abs(ROOT_A)
+    assert not found[0].reach.isolated[0]
+
+
+# --- the coverage search ---------------------------------------------------------
+
+
+def test_a_strip_the_attempts_cannot_cover_raises_instead_of_returning(
+    case_a, monkeypatch
+):
+    # a first seed solve of two pairs does not reach the certificate's radius,
+    # and one attempt cannot ask for more
+    from gfem._eigen import search
+
+    monkeypatch.setattr(search, "_COVER_NEV", 2)
+    monkeypatch.setattr(search, "_COVER_ATTEMPTS", 1)
+    with pytest.raises(gfem.EigenmodeConvergenceError, match="could not cover") as e:
+        gfem.solve(case_a, gfem.Eigenmode(target=11.67e9, n_modes=1), options=ORDER_3)
+    assert "after 1 attempts" in str(e.value)
+    assert "lower n_modes or move target" in str(e.value)
+
+
+def test_too_few_modes_at_the_attempt_cap_is_an_uncovered_strip(case_a, monkeypatch):
+    # the one attempt returns its full request but one pair of it is no mode of
+    # the strip: nothing wider can be asked for, so the strip is not covered,
+    # and the message says so instead of counting the modes
+    from gfem._eigen import search
+
+    real = ModeSearch._select_cover
+
+    def drop_one(self, *args, **kw):
+        modes, *rest = real(self, *args, **kw)
+        return modes[:-1], *rest
+
+    monkeypatch.setattr(ModeSearch, "_select_cover", drop_one)
+    monkeypatch.setattr(search, "_COVER_NEV", 2)
+    monkeypatch.setattr(search, "_COVER_ATTEMPTS", 1)
+    with pytest.raises(gfem.EigenmodeConvergenceError, match="could not cover"):
+        gfem.solve(case_a, gfem.Eigenmode(target=11.67e9, n_modes=2), options=ORDER_3)
+
+
+def test_a_seed_solve_at_its_restart_bound_never_returns_an_uncertified_result(
+    case_a, monkeypatch
+):
+    real = arpack.shift_invert
+
+    def bounded(op, project, nev, *, tol):
+        k, vectors = real(op, project, nev, tol=tol)
+        raise SeedBoundReached(k, vectors, restarts=5, applies=7)
+
+    monkeypatch.setattr(arpack, "shift_invert", bounded)
+    with pytest.raises(gfem.EigenmodeConvergenceError) as raised:
+        gfem.solve(case_a, gfem.Eigenmode(target=11.67e9, n_modes=1), options=ORDER_3)
+    text = str(raised.value)
+    assert "did not converge in 5 restarts" in text
+    assert "not certified" in text
+
+
+def test_the_nearest_mode_does_not_depend_on_n_modes(case_a):
+    one = gfem.solve(case_a, gfem.Eigenmode(target=11.67e9, n_modes=1), options=ORDER_3)
+    two = gfem.solve(case_a, gfem.Eigenmode(target=11.67e9, n_modes=2), options=ORDER_3)
+    assert abs(one.omega[0] - two.omega[0]) <= 1e-7 * abs(two.omega[0])
+    f = ghz(one.omega)
+    assert abs(f[0] - ROOT_A) <= 1e-3 * ROOT_A
+
+
+def test_a_seed_shift_the_port_term_refuses_raises_a_convergence_error(
+    case_h, monkeypatch
+):
+    real = PortTerm.at
+
+    def at(self, k):
+        if complex(k).imag > 0.1 * complex(k).real:
+            raise PortTermRefusalError(self.label, complex(k), "forced")
+        return real(self, k)
+
+    monkeypatch.setattr(PortTerm, "at", at)
+    with pytest.raises(gfem.EigenmodeConvergenceError, match="cannot follow"):
+        gfem.solve(case_h, gfem.Eigenmode(target=7.3e9, n_modes=1), options=ORDER_3)
+
+
+# --- tracking a port mode independently of the length unit -----------------------
+
+
+def solve_h_in(unit, tmp_path, monkeypatch):
+    """Case H written in ``unit`` ("mm" or "m"), solved for the root near 7.3 GHz."""
+    if unit == "m":  # the same guide, its coordinates written in metres
+        write, load = sm.write_msh22, gfem.Mesh.from_gmsh
+
+        def from_gmsh(path, **kw):
+            return load(path, **{**kw, "length_unit": "m"})
+
+        monkeypatch.setattr(
+            sm,
+            "write_msh22",
+            lambda path, mesh: write(path, (mesh[0] * 1e-3, *mesh[1:])),
+        )
+        monkeypatch.setattr(gfem.Mesh, "from_gmsh", staticmethod(from_gmsh))
+    model = hybrid_model(hybrid_guide(tmp_path / f"h_{unit}.msh"))
+    problem = gfem.Eigenmode(target=7.3e9, n_modes=1)
+    return gfem.solve(model, problem, options=ORDER_3)
+
+
+def test_the_same_guide_in_mm_and_in_m_gives_one_root(tmp_path, monkeypatch):
+    # a unit-dependent tracking measure refused this iterate in mm only
+    roots = [solve_h_in(u, tmp_path, monkeypatch).omega for u in ("mm", "m")]
+    assert [len(r) for r in roots] == [1, 1]
+    assert abs(roots[0][0] - roots[1][0]) <= 1e-9 * abs(roots[1][0])
+
+
+def test_an_ambiguous_but_accurate_pair_is_refused_without_enriching(
+    hybrid, monkeypatch
+):
+    ports = hybrid[3]
+    term = ports[0].term
+    k = term._k[len(term._k) // 2] * (1 + 0.04j)
+    real = _Reduced.solve
+
+    def solve(self, *args, **kw):  # the pairs stay accurate; the tracking is not clear
+        pairs = real(self, *args, **kw)
+        self.margins = [(0.52, 0.5) for _ in pairs]
+        return [(lam, y, math.inf) for lam, y, _ in pairs]
+
+    monkeypatch.setattr(_Reduced, "solve", solve)
+    size, version = term.vectors.shape[1], term.version
+    with pytest.raises(PortTermRefusalError) as raised:
+        term.at(k)
+    assert term.version == version
+    assert term.vectors.shape[1] == size
+    text = str(raised.value)
+    assert "port_mode_tolerance" not in text
+    assert "GHz" in text
+    assert "overlap" in text
+
+
+def test_a_pair_two_references_share_with_a_clear_margin_is_enriched_not_refused(
+    hybrid, monkeypatch
+):
+    # an infinite error from two references picking one pair says nothing
+    # about this reference's margin: enrichment can still separate them
+    term = hybrid[3][0].term
+    k = term._k[len(term._k) // 2] * (1 + 0.04j)
+    real = _Reduced.solve
+    calls = []
+
+    def solve(self, *args, **kw):
+        pairs = real(self, *args, **kw)
+        if calls:
+            return pairs
+        calls.append(1)
+        self.margins = [(0.99, 0.2) for _ in pairs]
+        return [(lam, y, math.inf) for lam, y, _ in pairs]
+
+    monkeypatch.setattr(_Reduced, "solve", solve)
+    version = term.version
+    term.at(k)
+    assert term.version != version

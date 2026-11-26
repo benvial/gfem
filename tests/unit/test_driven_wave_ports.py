@@ -1034,8 +1034,11 @@ def test_a_gap_between_requested_modes_warns_skipped_port_mode(plate_mesh):
 
 
 def test_a_lone_first_mode_never_warns_though_mode_2_propagates(plate_mesh):
-    # mode 2 propagates at 2.0 and 2.5 THz
-    _silent(line(plate_mesh), gfem.Driven(F), OPTIONS)
+    # mode 2 propagates at 2.0 and 2.5 THz; the eigenmode solve's warning about
+    # an unrequested mode is not a driven solve's
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", gfem.UnrequestedPortModeWarning)
+        _silent(line(plate_mesh), gfem.Driven(F), OPTIONS)
 
 
 # A rectangular guide (a = 4 mm, b = 1.5 mm, 2 mm long) with an eps_r = 4

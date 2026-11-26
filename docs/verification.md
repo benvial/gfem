@@ -320,12 +320,23 @@ exact root or with a driven sweep of the same model:
   matches $1/Q$ to $O(1/Q^2)$, and two ports split the loss as the exact
   powers out of each end do. A mirror-symmetric guide gives its two ports
   the same coupling Q.
+- **A low-Q resonance among high-Q ones.** A guide whose unrequested port
+  mode family fills the search's neighbourhood with high-Q modes hides a
+  resonance of Q 3.7; another hides one of Q 2.8 with one mode requested. Both
+  are found at every `n_modes` from 1 up, at the same root each time.
+- **Modes the ports do not absorb.** The requested power share is at least
+  0.96 on the exact guides' resonances and at most $10^{-3}$ on the modes
+  trapped against a port, which the solve warns about on the surface that
+  holds them. On the partly filled guide, whose hybrid port mode has no
+  closed form, it is 0.87, and the Q over the share matches the Q of the same
+  guide with the port moved farther.
 - **Against a driven sweep.** A pole fitted to a driven sweep through the
   same ports, on the same mesh, sits at the eigenfrequency, to the port mode
   tolerance and the fit's own bias: within $10^{-12}$ on a single port at
   Q 869, $5\times10^{-8}$ on the shared port surface's TE20 resonance, and
   $3\times10^{-7}$ on a guide partly filled with a dielectric, whose hybrid
-  port mode has no closed form.
+  port mode has no closed form; that guide also solves at element order 3
+  with one mode requested.
 - **A line loaded by a guide.** The "Solve a device" recipe's line, open at
   one end and with a wave port at the other, resonates at the roots of
   $Z_\mathrm{in}(f) + Z_0 = 0$, and its `q` and `q_port` match the
@@ -334,7 +345,8 @@ exact root or with a driven sweep of the same model:
   finite differences with respect to the materials away from the port face.
 - **Refusals.** A target below a port mode's cutoff raises, a real root
   below cutoff is dropped with a warning, and the unsupported combinations
-  raise by name.
+  raise by name. A refinement that leaves a neighbour's port reach loses
+  that seed only, and the other modes are returned.
 
 Tests: [exact roots and driven cross-check](https://github.com/benvial/gfem/blob/main/tests/verification/test_eigenmode_wave_ports.py),
 [unit](https://github.com/benvial/gfem/blob/main/tests/unit/test_eigenmode_wave_ports.py),

@@ -244,12 +244,14 @@ modes = gfem.solve(loaded, gfem.Eigenmode(target=4.4e9, n_modes=2))
 print(modes.frequency / 1e9)  # GHz
 print(modes.q)
 print(modes.q_port["p1"])  # the guide's coupling Q
+print(modes.requested_power_share["port1"])  # what the requested mode carries
 ```
 
 ```text
 [4.4386642  6.40626756]
 [10.05955574 17.40900762]
 [10.04712206 17.40182595]
+[1. 1.]
 ```
 
 - The {term}`wave port` absorbs the guide's mode. A decaying resonance has a
@@ -260,6 +262,12 @@ print(modes.q_port["p1"])  # the guide's coupling Q
   $\mathrm{Re}\,\omega\, E / P$, with $E$ the mode's electric energy and $P$
   the power the port's mode carries out. It sits in the same dict as a
   resistive lumped port's.
+- `modes.requested_power_share["port1"]` is the share of the port's absorbed
+  power that its requested mode carries, $\eta = \sum_p P_p / P_s$: near 1
+  here, where the guide's one mode is the only way out. A mode a requested
+  mode does not carry, which the port only partly absorbs, has a share near 0
+  and a Q that is the port's, not the device's; the solve warns
+  `gfem.UnrequestedPortModeWarning` below one half.
 - Nothing else is lossy, so `q` and `q_port` agree to terms of order $1/Q$:
   `q` divides $|\omega|$ by $2\,\mathrm{Im}\,\omega$, while the coupling Q is
   a ratio of energy to power.
@@ -433,9 +441,12 @@ True
   process only (`gfem.DistributedUnsupportedError` across ranks), and
   refuses a `wave_vector`, a port face crossing a perfectly matched layer
   and quantity estimates. A port mode that no wave port requests is partly
-  reflected, and can come back as a spurious mode with a finite Q: request
-  it on the port surface. For a strongly radiating structure (Q below about
-  5), find the resonance from a driven sweep.
+  reflected, so a mode it carries, or one trapped against the port, has the
+  port's Q, not the device's: the solve warns
+  `gfem.UnrequestedPortModeWarning`, and the message says whether to request
+  a mode or to move the port. The solve lists the modes of a strip around
+  `target`, those with a Q above about 2; for a strongly radiating structure
+  (Q below about 2), find the resonance from a driven sweep.
 - Where a lossy region holds about 10 or more modes within one linewidth of
   the target, "nearest" is ill-defined. The eigen solver's first pass then
   stops after 100 restarts and raises `gfem.EigenmodeConvergenceError`

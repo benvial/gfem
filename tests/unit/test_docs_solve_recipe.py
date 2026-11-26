@@ -187,7 +187,9 @@ def test_two_equal_ports_halve_the_coupling_q(ran):
 
 def test_the_guide_loaded_resonances_are_the_line_roots(ran):
     (printed,) = _printed(ran, "A resonator loaded by a guide")
-    frequency, q, q_port = (printed[i : i + 2] for i in (0, 2, 4))
+    frequency, q, q_port, share = (printed[i : i + 2] for i in (0, 2, 4, 6))
+    # The page says "near 1": a lossless line has only its requested mode.
+    assert share == pytest.approx([1.0, 1.0], abs=1e-6)
     roots = np.array(
         [_guide_loaded_resonance(g) for g in (4.4e9 + 0.2e9j, 6.4e9 + 0.2e9j)]
     )

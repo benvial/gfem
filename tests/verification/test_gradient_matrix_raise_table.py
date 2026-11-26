@@ -17,6 +17,7 @@ v0.1's gradients (``pytest -m verification -k gradient_matrix``).
 """
 
 import dataclasses
+import importlib
 import math
 from pathlib import Path
 
@@ -714,6 +715,7 @@ EXPECTED |= {
         "omega",
         "error",
         "q_port.p1",
+        "requested_power_share.port",
         "participation.l1",
         *(f"bulk_participation.{r}" for r in ("dielectric", "spacer", "air")),
         "cluster",
@@ -2686,12 +2688,48 @@ def test_a_shift_keeps_refusing_the_optical_inputs_of_its_mode(rule):
     assert "is not wired through the shift's weights" in reason
 
 
+@pytest.fixture
+def one_forward_per_state(monkeypatch):
+    """Run a forward that keeps nothing once per design state.
+
+    A cell whose input the solve does not read (or whose output the table
+    only reads) pulls nothing back: its host forward keeps no entry, and its
+    result is the same for every output of the cell's problem. The table
+    repeats it per output, which the dear solves (a wave port eigenmode's
+    coverage search) cannot afford. A forward that keeps an entry for the
+    backward, and every backward, still runs per cell.
+    """
+    module = importlib.import_module("gfem._adjoint.solve_vjp")
+    forward = module._forward
+    memo = {}
+
+    def memoized(rule, model, *, keep, request):
+        if keep:
+            return forward(rule, model, keep=keep, request=request)
+        leaves = [
+            *jax.tree_util.tree_leaves(model),
+            *jax.tree_util.tree_leaves(rule.problem),
+        ]
+        key = (
+            type(rule),
+            str(jax.tree_util.tree_structure((model, rule.problem))),
+            request.wanted,
+            tuple(np.asarray(x).tobytes() for x in leaves),
+        )
+        if key not in memo:
+            memo[key] = forward(rule, model, keep=keep, request=request)
+        return memo[key]
+
+    monkeypatch.setattr(module, "_forward", memoized)
+
+
 @pytest.mark.bitwise  # its low-Q lumped mode converges run to run only on one thread
 @pytest.mark.parametrize(
     ("name", "leaf"),
     RAISE_TABLE_ITEMS,
     ids=[n if leaf is None else f"{n}-{leaf}" for n, leaf in RAISE_TABLE_ITEMS],
 )
+@pytest.mark.usefixtures("one_forward_per_state")
 def test_raise_table(request, name, leaf):
     """One case (a slow one, one result leaf) per item: it builds only its fixtures."""
     only = {name: _case(request, name)}

@@ -15,6 +15,11 @@ at 3x to 30x the measured errors, written beside each.
 - L, a lossy anisotropic port section; D, a coax (TEM); A3, a root just
   above the port's cutoff; E, a circular guide on TM01, a port mode with
   :math:`E_n \ne 0`.
+- The requested power share and its warning: the share of the port's loss
+  that its requested modes carry is near 1 on a requested family's root, near
+  0 on modes trapped against the port or carried by an unrequested family
+  (warned, in two forms), and 0.87 on the hybrid guide, whose window 3 mm
+  from the port puts an evanescent tail on the port (reported, not warned).
 - The driven cross-check: eigen and driven solves share the mesh, the port
   modes and the operator, so the pole of a one-pole fit of the driven S
   (degree-6 numerator, 41 points over one half-width each side) matches the
@@ -23,13 +28,16 @@ at 3x to 30x the measured errors, written beside each.
   port mode has no exact value.
 """
 
+import re
+import warnings
+
 import numpy as np
 import pytest
 import wave_port_cases as w
 from resonance import fit_resonance
 
 import gfem
-from gfem.errors import PortModeError
+from gfem.errors import PortModeError, UnrequestedPortModeWarning
 
 
 def direct(order, **options):
@@ -71,7 +79,7 @@ def test_a_lone_port_s_resonance_converges_with_order(meshes, name):
     model = lone_port(meshes, name, layers)
     errors, im = [], None
     for order in (2, 3, 4):
-        result = eigen(model, target, 3 if name == "A" else 1, order)
+        result = eigen(model, target, 1, order)
         error, j = w.nearest_error(result, root)
         errors.append(error)
         if order == 3:
@@ -142,12 +150,18 @@ def test_two_port_surfaces_meet_the_root_and_split_the_coupling_q(meshes):
 
 
 def test_a_lossy_anisotropic_port_section_meets_its_root(meshes):
-    # Q 2.8: twelve modes, since higher-Q modes of other families lie nearer
-    # the real target
-    result = eigen(lone_port(meshes, "l", w.CASE_L), 11.67e9, 12, 3)
-    error, j = w.nearest_error(result, w.ROOT_L)
-    assert error <= 1e-4  # 7.9e-6
-    assert w.im_error(result, j, w.ROOT_L) <= 1e-3  # 4.4e-5
+    # Q 2.8, behind higher-Q modes of other families that lie nearer the real
+    # target: found from its own seed at one mode and at four, the same mode 0
+    model = lone_port(meshes, "l", w.CASE_L)
+    found = []
+    for n in (1, 4):
+        result = eigen(model, 11.67e9, n, 3)
+        error, j = w.nearest_error(result, w.ROOT_L)
+        assert j == 0
+        assert error <= 1e-4  # 7.9e-6
+        assert w.im_error(result, j, w.ROOT_L) <= 1e-3  # 4.4e-5
+        found.append(complex(result.omega[0]))
+    assert abs(found[0] - found[1]) <= 1e-14 * abs(found[1])  # 3.9e-16
 
 
 def test_a_coax_s_tem_roots_meet_the_closed_form(meshes):
@@ -175,29 +189,40 @@ def test_a_root_just_above_the_port_s_cutoff_meets_the_exact_root(meshes):
     assert error <= 3e-6  # 3.5e-7
 
 
-# The port absorbs TM01 only, so the guide's other families ring at high Q
-# around the target, nearer it than the low-Q TM01 root (Q 3.7): the eigen
-# solve returns one of them (13.65 GHz, Q 8000) instead of the root.
-@pytest.mark.xfail(
-    raises=AssertionError,
-    strict=True,
-    reason="the eigen solve's seeds miss a low-Q root among high-Q resonances "
-    "of the families the port does not absorb",
-)
-def test_a_port_mode_with_a_normal_field_meets_the_line_root(meshes):
-    # straight-sided mesh of the disk (16 x 16): the reference takes the
-    # port's discrete cutoff, so only the 3D discretization error remains
+def circular_guide_model(meshes):
+    """E: the circular guide (16 x 16 straight-sided disk) closed by a TM01 port."""
     mesh = meshes("e", w.circular_guide, w.CASE_A, n=16)
-    model = w.ported_model(mesh, w.CASE_A, [gfem.WavePort("p1", "port", mode=3)])
-    f0 = 13.4e9
+    return w.ported_model(mesh, w.CASE_A, [gfem.WavePort("p1", "port", mode=3)])
+
+
+def tm01_root(model, f0):
+    """E's exact root (GHz): the line's, from the port's discrete cutoff at ``f0``."""
     modes = gfem.solve(model, gfem.PortMode("p1", f0), options=direct(3))
     k0 = 2 * np.pi * f0 / w.C0
     gamma = complex(np.asarray(modes.gamma).ravel()[0])
     kc = float(np.sqrt((gamma**2 + k0**2).real))
-    root = w.line_root("TM", kc, [(4.0, 10.0), (1.0, 5.0)], 13.4 + 1.8j)
-    result = eigen(model, f0, 1, 3)
-    error, _ = w.nearest_error(result, root)
-    assert error <= 3e-4  # 2.3e-6 when found
+    return w.line_root("TM", kc, [(4.0, 10.0), (1.0, 5.0)], 13.4 + 1.8j)
+
+
+def test_a_port_mode_with_a_normal_field_meets_the_line_root(meshes):
+    # The port absorbs TM01 only, so the guide's other families ring at high Q
+    # around the target, nearer it than the low-Q TM01 root (Q 3.7): the search
+    # finds the root from its own seed whatever n_modes, the same mode 0.
+    # straight-sided mesh of the disk (16 x 16): the reference takes the
+    # port's discrete cutoff, so only the 3D discretization error remains
+    model = circular_guide_model(meshes)
+    f0 = 13.4e9
+    root = tm01_root(model, f0)
+    found = []
+    for n in (1, 2):
+        result = eigen(model, f0, n, 3)
+        error, j = w.nearest_error(result, root)
+        assert j == 0
+        assert error <= 1e-5  # 2.3e-6
+        assert w.im_error(result, j, root) <= 1e-4  # 1.3e-5
+        found.append(complex(result.omega[0]))
+    # the same seed, refined the same way: equal to round-off (3.7e-16 measured)
+    assert abs(found[0] - found[1]) <= 1e-14 * abs(found[1])
 
 
 # --- the driven cross-check -----------------------------------------------------
@@ -270,3 +295,143 @@ def test_a_hybrid_dispersive_port_s_root_is_the_driven_pole(case_h):
     error, im = cross_check(case_h, 7.3e9, 1, 2)
     assert error <= 3e-7
     assert im <= 1.5e-6
+
+
+# --- the requested power share and its warning ----------------------------------
+
+
+def share_warnings(model, target, n_modes, order=3):
+    """The result of an eigen solve and its `UnrequestedPortModeWarning` texts."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = eigen(model, target, n_modes, order)
+    texts = [str(c.message) for c in caught if c.category is UnrequestedPortModeWarning]
+    return result, texts
+
+
+def test_a_requested_root_carries_the_port_s_loss_on_a_lone_te_line(meshes):
+    # A: measured 1 - eta = -3.7e-3; L (lossy, anisotropic section): 3.9e-3
+    for name, layers, root, target, n in (
+        ("a", w.CASE_A, w.ROOT_A, 11.67e9, 1),
+        ("l", w.CASE_L, w.ROOT_L, 11.67e9, 1),
+    ):
+        result, _ = share_warnings(lone_port(meshes, name, layers), target, n)
+        _, j = w.nearest_error(result, root)
+        eta = float(result.requested_power_share["port"][j])
+        assert abs(1 - eta) <= 2e-2, (name, eta)
+
+
+def test_the_tm_root_of_a_circular_guide_carries_most_of_the_port_s_loss(meshes):
+    # E (Q 3.7): measured eta 0.962, the O(1/Q^2) floor reaching 0.04; the
+    # search finds it among the guide's other families at one mode
+    model = circular_guide_model(meshes)
+    result, _ = share_warnings(model, 13.4e9, 1)
+    error, j = w.nearest_error(result, tm01_root(model, 13.4e9))
+    assert j == 0
+    assert error <= 3e-5  # 2.3e-6
+    assert float(result.requested_power_share["port"][j]) >= 0.9
+
+
+def test_modes_trapped_against_a_port_are_warned_in_the_trapped_form(meshes):
+    # A at three modes: the two modes beside the root are TE30 and TE21-like,
+    # below cutoff at the port, whose Q (190) is the port's Robin scalar on
+    # their evanescent tail. Measured eta 2e-8 and 2e-12
+    result, texts = share_warnings(lone_port(meshes, "a", w.CASE_A), 11.67e9, 3)
+    f = w.ghz(result.omega)
+    root = int(np.argmin(np.abs(f - w.ROOT_A)))
+    trapped = [j for j in range(3) if j != root]
+    share = np.asarray(result.requested_power_share["port"])
+    assert all(share[j] <= 1e-3 for j in trapped)
+    assert len(texts) == 1
+    assert "'port'" in texts[0]
+    assert "trapped" in texts[0]
+    assert "propagates" not in texts[0]
+    assert all(f"{j} at" in texts[0] for j in trapped)
+    assert f"{root} at" not in texts[0]
+
+
+def test_a_surface_that_takes_little_of_a_mode_s_loss_is_not_named(meshes):
+    # B3, two ports: the trapped modes (Q 420) lose their power at "port" (Q/q_s
+    # 0.999); at "portl", far from the structure's side, their share is a
+    # ratio of two tiny powers (Q/q_s 7.3e-4, 14x below the 0.01 gate)
+    mesh = meshes("b3", w.ported_guide, w.CASE_B3, left_port=True)
+    result, texts = share_warnings(
+        w.ported_model(mesh, w.CASE_B3, w.TWO_PORTS), 9.97e9, 3
+    )
+    assert list(result.requested_power_share) == ["portl", "port"]
+    _, j = w.nearest_error(result, w.ROOT_B3)
+    for surface in ("portl", "port"):
+        # measured 7.2e-5 at both surfaces
+        assert abs(1 - float(result.requested_power_share[surface][j])) <= 1e-3
+    assert len(texts) == 1
+    assert "'port'" in texts[0]
+    assert "'portl'" not in texts[0]
+
+
+def test_unrequested_modes_of_a_lossy_multimode_section_are_warned_in_the_open_form(
+    meshes,
+):
+    # L's section carries seven unrequested ranks at the target: the modes at
+    # 11.32, 11.27 and 11.13 GHz (Q 4 to 47, beside the root's 2.8) are warned
+    # with the conditional wording, and the root, mode 0, is not named.
+    # Measured eta 1.3e-9 and below, Q/q_s 0.95 to 1.0
+    result, texts = share_warnings(lone_port(meshes, "l", w.CASE_L), 11.67e9, 4)
+    share = np.asarray(result.requested_power_share["port"])
+    f = w.ghz(result.omega)
+    _, root = w.nearest_error(result, w.ROOT_L)
+    assert root == 0
+    assert abs(1 - share[0]) <= 2e-2
+    others = [1, 2, 3]
+    for j, expected in zip(others, (11.32, 11.27, 11.13), strict=True):
+        assert share[j] <= 1e-3
+        # measured 4.5e-3, 3.6e-3 and 4.2e-4 GHz: the listed values are rounded
+        # to 0.01 GHz, so 5e-3 is their own resolution
+        assert abs(f[j].real - expected) <= 5e-3, f[j]
+    assert len(texts) == 1
+    assert "propagates at that frequency" in texts[0]
+    assert "mode=" in texts[0]
+    assert all(f"{j} at" in texts[0] for j in others)
+    assert "0 at" not in texts[0].split("on wave port")[0]
+
+
+def test_a_share_between_one_half_and_one_is_reported_and_not_warned(case_h):
+    # H: a window 3 mm from the port puts an evanescent tail on it; measured
+    # 0.870 at order 3, 0.869 at order 2 (this fixture)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UnrequestedPortModeWarning)
+        result = eigen(case_h, 7.3e9, 1, 2)
+    eta = float(result.requested_power_share["port"][0])
+    assert 0.5 < eta < 1
+    assert 0.8 <= eta <= 0.92  # measured 0.869
+
+
+def test_the_share_of_the_hybrid_guide_is_the_q_error_of_its_near_port(meshes):
+    # moving the port from 3 mm to 15 mm behind the window raises the share
+    # toward 1 and the Q to 20.2; Q / eta at 3 mm (19.6) is within 3 % of it.
+    # The other two modes are trapped ones, warned in the trapped form
+    q, eta = {}, {}
+    for gap in (3.0, 15.0):
+        mesh = meshes(f"h{gap:g}", w.hybrid_guide, gap_mm=gap)
+        result, texts = share_warnings(w.hybrid_model(mesh), 7.3e9, 3)
+        share = np.asarray(result.requested_power_share["port"])
+        j = int(np.nanargmax(share))
+        # one warning in the trapped form, naming the two other modes (their
+        # shares measured 2e-8 and below)
+        assert len(texts) == 1
+        assert "is trapped inside the model" in texts[0]
+        assert "propagates" not in texts[0]
+        for other in (m for m in range(3) if m != j):
+            assert re.search(rf"(?<![\d.]){other} at ", texts[0])
+        assert not re.search(rf"(?<![\d.]){j} at ", texts[0])
+        q[gap], eta[gap] = float(result.q[j]), float(share[j])
+    assert 0.5 < eta[3.0] < eta[15.0] <= 1.01
+    assert abs(q[3.0] / eta[3.0] - q[15.0]) <= 0.1 * q[15.0]
+
+
+def test_a_hybrid_guide_s_single_mode_root_is_the_three_mode_root(case_h):
+    # order 3: the guard seed's refinement wanders to a complex frequency
+    # where the port term cannot follow its mode; losing that seed must not
+    # lose the solve (it raised PortModeError with one mode)
+    one = eigen(case_h, 7.3e9, 1, 3)
+    three = eigen(case_h, 7.3e9, 3, 3)
+    assert abs(one.omega[0] - three.omega[0]) <= 1e-7 * abs(three.omega[0])

@@ -245,17 +245,8 @@ def test_cache_must_be_a_path(stack):
         gfem.solve(stack, ELECTROSTATIC, options=OPTIONS, cache=True)
 
 
-def test_an_eigenmode_solve_with_a_wave_port_is_read_back(tmp_path, monkeypatch):
-    from gfem._eigen.rule import EigenmodeRule
-
-    calls = []
-    forward = EigenmodeRule.forward
-
-    def counted(self, *args, **kwargs):
-        calls.append(1)
-        return forward(self, *args, **kwargs)
-
-    monkeypatch.setattr(EigenmodeRule, "forward", counted)
+def _wave_port_line(tmp_path):
+    """The model of a WR-90 line with a dielectric and a wave port, and its options."""
     # WR-90 from a short at z = 0 through eps_r = 4 to z = 10 mm, then air to
     # a wave port at z = 15 mm (mm)
     edges = (np.linspace(0, 22.86, 5), np.linspace(0, 10.16, 2), np.linspace(0, 15, 7))
@@ -278,10 +269,53 @@ def test_an_eigenmode_solve_with_a_wave_port_is_read_back(tmp_path, monkeypatch)
         boundaries=[gfem.PEC("walls")],
         ports=[gfem.WavePort("p1", "port")],
     )
+    return model, gfem.SolverOptions(order=2, linear_solver="direct")
+
+
+def test_an_eigenmode_solve_with_a_wave_port_is_read_back(tmp_path, monkeypatch):
+    from gfem._eigen.rule import EigenmodeRule
+
+    calls = []
+    forward = EigenmodeRule.forward
+
+    def counted(self, *args, **kwargs):
+        calls.append(1)
+        return forward(self, *args, **kwargs)
+
+    monkeypatch.setattr(EigenmodeRule, "forward", counted)
+    model, options = _wave_port_line(tmp_path)
     problem = gfem.Eigenmode(target=11.67e9)
-    options = gfem.SolverOptions(order=2, linear_solver="direct")
     first = gfem.solve(model, problem, options=options, cache=tmp_path / "c")
     second = gfem.solve(model, problem, options=options, cache=tmp_path / "c")
     assert len(calls) == 1
     assert list(second.q_port) == ["p1"]
     _assert_bit_equal(second, first)
+
+
+def test_a_cache_hit_replays_the_unrequested_port_mode_warning(tmp_path, monkeypatch):
+    from gfem._eigen import share
+    from gfem._eigen.rule import EigenmodeRule
+
+    # every mode counts as unrequested, so the line's own mode (at 12.02 GHz,
+    # which loses some power to the port) is warned
+    calls = []
+    forward = EigenmodeRule.forward
+
+    def counted(self, *args, **kwargs):
+        calls.append(1)
+        return forward(self, *args, **kwargs)
+
+    monkeypatch.setattr(EigenmodeRule, "forward", counted)
+    monkeypatch.setattr(share, "THRESHOLD", 2.0)
+    monkeypatch.setattr(share, "LOSS_FLOOR", 0.0)
+    model, options = _wave_port_line(tmp_path)
+    problem = gfem.Eigenmode(target=11.67e9)
+    with pytest.warns(gfem.UnrequestedPortModeWarning) as miss:
+        first = gfem.solve(model, problem, options=options, cache=tmp_path / "c")
+    with pytest.warns(gfem.UnrequestedPortModeWarning) as hit:
+        second = gfem.solve(model, problem, options=options, cache=tmp_path / "c")
+    assert len(calls) == 1  # the second solve is read back, not recomputed
+    assert [str(w.message) for w in hit] == [str(w.message) for w in miss]
+    np.testing.assert_array_equal(
+        second.requested_power_share["port"], first.requested_power_share["port"]
+    )

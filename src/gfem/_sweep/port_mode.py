@@ -1799,6 +1799,12 @@ class _Reduced:
         self._r = np.linalg.qr(np.concatenate(products, axis=1), mode="r")
         self._red = [self.v.T @ p for p in products]
         self._mass = self.v.T @ (self.space.mass @ self.v)
+        self.margins: list[tuple[float, float]] = []
+
+    @property
+    def mass(self) -> np.ndarray:
+        """The reduced L2 mass, the default inner product of `solve`."""
+        return self._mass
 
     def project(self, x: np.ndarray) -> np.ndarray:
         return self.v.T @ x
@@ -1937,13 +1943,22 @@ class _Reduced:
         return ar, br
 
     def solve(
-        self, k0: float, k_max: float, refs: list[np.ndarray]
+        self,
+        k0: float,
+        k_max: float,
+        refs: list[np.ndarray],
+        *,
+        mass: np.ndarray | None = None,
     ) -> list[tuple[complex, np.ndarray, float]]:
         """The reduced pair that tracks each of ``refs``, and its backward error.
 
         A backward error is infinite when no pair qualifies, two overlap its
         reference almost equally, or two references pick the same pair.
+        Pairs are told apart by their overlap in the reduced matrix ``mass``
+        (the reduced L2 mass by default); afterwards ``margins`` holds, per
+        reference, its two largest overlaps (the second is 0 with one pair).
         """
+        mass = self._mass if mass is None else mass
         theta = self.space.pencil.theta(k0)
         n = self.size
         ar, br = self.matrices(theta)
@@ -1954,29 +1969,32 @@ class _Reduced:
         # the basis of a mode whose shape does not change with frequency (a
         # homogeneous cross-section) it overlaps the mode within `_AMBIGUOUS`
         ok &= np.abs(beta) > _EVANESCENT * k_max
+        self.margins = [(0.0, 0.0) for _ in refs]
         if not ok.any():
             return [(complex(math.nan), np.zeros(n), math.inf) for _ in refs]
         idx = np.flatnonzero(ok)
         y = vecs[:, idx]
-        norms = np.einsum("ik,ij,jk->k", y.conj(), self._mass, y).real
+        norms = np.einsum("ik,ij,jk->k", y.conj(), mass, y).real
         picks, clear = [], []
-        for ref in refs:
-            num = np.abs(ref.conj() @ self._mass @ y)
-            overlap = num / np.sqrt((ref.conj() @ self._mass @ ref).real * norms)
+        for r, ref in enumerate(refs):
+            num = np.abs(ref.conj() @ mass @ y)
+            overlap = num / np.sqrt((ref.conj() @ mass @ ref).real * norms)
             best = np.argsort(-overlap, kind="stable")
             i = int(best[0])
+            second = float(overlap[best[1]]) if len(best) > 1 else 0.0
+            self.margins[r] = (float(overlap[i]), second)
             picks.append(i)
             clear.append(len(best) == 1 or overlap[best[1]] <= overlap[i] - _AMBIGUOUS)
         out = []
         for i, ok_i in zip(picks, clear, strict=True):
             lam_i, y_i = complex(lam[idx[i]]), y[:, i]
             if ok_i and picks.count(i) == 1:
-                out.append((lam_i, y_i, self._backward_error(theta, lam_i, y_i)))
+                out.append((lam_i, y_i, self.backward_error(theta, lam_i, y_i)))
             else:  # ambiguous, or two modes on one pair
                 out.append((lam_i, y_i, math.inf))
         return out
 
-    def _backward_error(
+    def backward_error(
         self, theta: tuple[complex, ...], lam: complex, y: np.ndarray
     ) -> float:
         """``|A x - lam B x| / (|A x| + |lam| |B x|)`` of ``x = V y``, exactly."""
