@@ -35,6 +35,7 @@ recipes/sax-circuit
 
 recipes/waveguide-nonlinearity
 recipes/crystal-kerr
+recipes/raman-gain
 recipes/second-harmonic-generation
 recipes/photon-pair-sources
 ```
