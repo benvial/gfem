@@ -125,6 +125,8 @@ def test_the_lossless_amplitude_is_the_sinc_with_its_phase():
 def test_the_amplitude_and_its_gradient_are_finite_at_zero_mismatch_and_loss():
     length = 0.01
 
+    # jitted: one compilation per function instead of one per eager operation
+    @jax.jit
     def parts(delta, a_pair, a_pump):
         amp = pp.pair_amplitude(length, delta, a_pair, a_pump)
         return jnp.real(amp), jnp.imag(amp)
@@ -133,7 +135,7 @@ def test_the_amplitude_and_its_gradient_are_finite_at_zero_mismatch_and_loss():
     assert complex(value) == pytest.approx(length, rel=1e-15)
     # d/d delta = i L^2/2 and d/d alpha = -L^2/2 for the signal-idler and the
     # pump decay (the z integral of z or L - z)
-    d = jax.jacfwd(parts, argnums=(0, 1, 2))(0.0, 0.0, 0.0)
+    d = jax.jit(jax.jacfwd(parts, argnums=(0, 1, 2)))(0.0, 0.0, 0.0)
     want = np.array(
         [[0.0, -(length**2) / 2, -(length**2) / 2], [length**2 / 2, 0.0, 0.0]]
     )
@@ -141,9 +143,10 @@ def test_the_amplitude_and_its_gradient_are_finite_at_zero_mismatch_and_loss():
     # the series is exact to 1e-17 relative at the origin
     np.testing.assert_allclose(got.T, want.T, rtol=1e-13, atol=1e-15)
     # no overflow of a lossy long guide (sinh alone overflows past 710)
-    big = pp.pair_amplitude(1.0, 10.0, 800.0, 1.0)
-    assert np.isfinite(complex(big))
-    g = jax.grad(lambda a: jnp.abs(pp.pair_amplitude(1.0, 10.0, a, 1.0)))(800.0)
+    big, g = jax.jit(
+        jax.value_and_grad(lambda a: jnp.abs(pp.pair_amplitude(1.0, 10.0, a, 1.0)))
+    )(800.0)
+    assert np.isfinite(float(big))
     assert np.isfinite(float(g))
 
 
@@ -295,7 +298,7 @@ def test_the_trace_purity_has_a_finite_gradient_at_a_separable_state():
     def purity(scale):
         return pp.trace_purity(base * (1 + scale * np.outer(x, x)))
 
-    g = float(jax.grad(purity)(0.0))
+    g = float(jax.jit(jax.grad(purity))(0.0))
     assert np.isfinite(g)
     # purity <= 1 and the separable state is its maximum: the slope is 0
     assert abs(g) < 1e-12
@@ -320,6 +323,7 @@ def _spectrum(length, duration, period):
     return 2e3 * gain * pump * pp.pair_amplitude(length, delta, 3.0, 2.0) * 2 * np.pi
 
 
+@jax.jit
 def _figures(length, duration, period):
     jsa = _spectrum(length, duration, period)
     step = _FS[1] - _FS[0]
@@ -332,7 +336,7 @@ _ARGS = (5e-3, 1e-12, _PERIOD0 * 1.0003)
 @pytest.mark.parametrize("which", [0, 1, 2], ids=["length", "duration", "period"])
 def test_the_figures_differentiate_like_their_finite_differences(which):
     x = np.array(_ARGS)
-    jac = np.asarray(jax.jacfwd(_figures, argnums=which)(*_ARGS))
+    jac = np.asarray(jax.jit(jax.jacfwd(_figures, argnums=which))(*_ARGS))
     # central difference at a relative step r: truncation (h^2/6) f'''/f' with
     # h f'''/f' ~ the phase the step adds, and round-off eps / r on each value.
     # Length and duration move the phase by ~1e2 r rad: r = 1e-5 gives
@@ -349,13 +353,7 @@ def test_the_figures_differentiate_like_their_finite_differences(which):
 
 
 def test_the_jitted_figures_are_the_eager_figures():
-    eager = np.asarray(_figures(*_ARGS))
-    jitted = np.asarray(jax.jit(_figures)(*_ARGS))
+    eager = np.asarray(_figures.__wrapped__(*_ARGS))
+    jitted = np.asarray(_figures(*_ARGS))
     # XLA may fuse and reorder the sums: a few hundred eps at most
     np.testing.assert_allclose(jitted, eager, rtol=1e-12)
-    grad = jax.jit(jax.jacfwd(_figures, argnums=0))(*_ARGS)
-    np.testing.assert_allclose(
-        np.asarray(grad),
-        np.asarray(jax.jacfwd(_figures, argnums=0)(*_ARGS)),
-        rtol=1e-10,
-    )

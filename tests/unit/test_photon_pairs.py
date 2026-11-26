@@ -31,9 +31,15 @@ ORDER = gfem.SolverOptions(order=2)
 F_S = np.linspace(8.0e9, 8.3e9, 5)
 F_I = np.linspace(8.5e9, 8.8e9, 5)
 #: one band that carries identical photons, and the pump of both processes
-F_W = np.linspace(8.0e9, 8.8e9, 6)
-F_P = np.linspace(16.0e9, 17.6e9, 8)
+F_W = np.linspace(8.0e9, 8.8e9, 5)
+F_P = np.linspace(16.0e9, 17.6e9, 5)
 EPS = np.finfo(float).eps
+
+# the bands are a fraction of a GHz, a fraction of one lobe of the phase-matching
+# sinc of any guide here: the continuous-wave figures are cut by them on purpose,
+# these tests check their algebra, not the band's coverage (the warning has its
+# own tests)
+pytestmark = pytest.mark.filterwarnings("ignore::gfem.UnresolvedJointSpectrumWarning")
 
 
 def d_yyy(scale=1.0):
@@ -144,6 +150,8 @@ def test_the_bands_the_grid_and_the_identical_flag_follow_the_arms(
     np.testing.assert_allclose(pair.signal_frequency, np.linspace(8.0e9, 8.3e9, 201))
     np.testing.assert_allclose(pair.idler_frequency, np.linspace(8.5e9, 8.8e9, 201))
     assert pair.bands == ((16.0e9, 17.6e9), (8.0e9, 8.3e9), (8.5e9, 8.8e9))
+    # the rows the couplings were taken on: nearest the centres, exact here
+    assert pair.coupling_frequency == pytest.approx((16.8e9, 8.15e9, 8.65e9), rel=1e-12)
     assert twin.identical
     assert not pair.identical
     assert not mixing.identical
@@ -163,7 +171,10 @@ def test_the_cw_density_at_the_centre_is_the_coupling_times_the_poling_gain(pair
     got = pair.spectral_brightness(length, power, period=period)
     centre = got.shape[-1] // 2
     ws, wi = 2 * np.pi * 8.15e9, 2 * np.pi * 8.65e9
-    g = 2 * math.sqrt(ws * wi) / (ws + wi) * abs(complex(pair.coupling))
+    # the overlap was taken on the pump row nearest 16.8 GHz, and kappa scales
+    # with that row's frequency
+    wp0 = 2 * np.pi * pair.coupling_frequency[0]
+    g = 2 * math.sqrt(ws * wi) / wp0 * abs(complex(pair.coupling))
     # first-order poling; the mismatch at the centre is the one the period
     # cancels, so the sinc is 1 to (delta L)^2 / 24 with delta ~ 1e-13 rad/m;
     # the lossless rows leave the decay factors at 1 - 1e-8 (alpha ~ 1e-6/m)

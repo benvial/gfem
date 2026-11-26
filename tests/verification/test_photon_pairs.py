@@ -298,8 +298,9 @@ def sfwm_sources(kerr_model, kerr_rows):
 def _sfwm_rate_reference(rows, gamma, nonlinear_phase):
     r"""The rate (pairs/s) of exact formula on the source's band, ``gamma`` in 1/(W m).
 
-    :math:`\Gamma_{si} = \tfrac12(\sqrt{\omega_i/\omega_s} +
-    \sqrt{\omega_s/\omega_i})\gamma` for one mode, the mismatch the fitted
+    :math:`\Gamma_{si} = \sqrt{\omega_s\omega_i}\,\gamma/\omega_0` for one
+    mode (:math:`\gamma` taken on the row at the carrier, :math:`\gamma_{sppi}
+    \propto\omega_s`), the mismatch the fitted
     :math:`2\beta_p - \beta_s - \beta_i` with the pump at the carrier, and
     :math:`2(\gamma_{pppp} - \gamma_{sspp} - \gamma_{iipp})P = -2\gamma P`
     of one mode when ``nonlinear_phase``.
@@ -310,7 +311,7 @@ def _sfwm_rate_reference(rows, gamma, nonlinear_phase):
     def density(omega):
         ws, wi = W0 + omega, W0 - omega
         db = 2 * fit(F0) - fit(ws / (2 * math.pi)) - fit(wi / (2 * math.pi)) + kerr
-        pair = 0.5 * (math.sqrt(wi / ws) + math.sqrt(ws / wi)) * gamma
+        pair = math.sqrt(ws * wi) / W0 * gamma
         return (pair * POWER_KERR * LENGTH_KERR) ** 2 * np.sinc(
             db * LENGTH_KERR / 2 / math.pi
         ) ** 2
@@ -415,9 +416,10 @@ def test_a_pulse_with_a_linear_mismatch_carries_the_rate_per_watt_times_its_ener
     ws, wi = 2 * math.pi * SIGNAL, 2 * math.pi * IDLER
     kappa2 = abs(complex(src.coupling)) ** 2
     # R/P = g^2 L c/|n_gs - n_gi| for the mismatch (n_gs - n_gi) (Omega_s -
-    # Omega_i)/(2c) (the integral of sinc^2 over a line is pi), g at the centres
+    # Omega_i)/(2c) (the integral of sinc^2 over a line is pi), g at the centres,
+    # kappa scaling with the frequency of the pump row it was taken on
     per_watt = (
-        (2 * math.sqrt(ws * wi) / (ws + wi)) ** 2
+        (2 * math.sqrt(ws * wi) / (2 * math.pi * src.coupling_frequency[0])) ** 2
         * kappa2
         * LENGTH_PULSE
         * C
