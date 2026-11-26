@@ -46,14 +46,15 @@ def _face(model, mode):
     return used, section.frame[:2], edge
 
 
-def _directional(objective, mesh, make, mode_of, seed=3):
+def _directional(objective, mesh, make, mode_of, *, seed=3, reference=None):
     r"""The adjoint and fourth-order difference derivatives along a random motion.
 
     ``objective(model)`` is a vector of figures; ``make(nodes)`` the model at
     ``nodes``. The motion is an O(1) random in-plane displacement of every face
     node, in units of ``h = 1e-3`` of the shortest section edge: a truncation
     of about :math:`(h/\ell)^4 = 10^{-12}` of the figure's scale against
-    solve noise of about :math:`10^{-13}/10^{-3} = 10^{-10}`.
+    solve noise of about :math:`10^{-13}/10^{-3} = 10^{-10}`. ``reference``,
+    if given, is differenced instead of ``objective``.
     """
     nodes0 = np.asarray(mesh.nodes, float)
     used, frame, edge = _face(make(jnp.asarray(nodes0)), mode_of(make(nodes0)))
@@ -66,7 +67,10 @@ def _directional(objective, mesh, make, mode_of, seed=3):
 
     jac = jax.jacrev(figures)(jnp.asarray(nodes0))
     got = np.tensordot(np.asarray(jac), v, axes=([-2, -1], [0, 1]))
-    f = [np.asarray(figures(jnp.asarray(nodes0 + t * h * v))) for t in (2, 1, -1, -2)]
+    differenced = figures if reference is None else lambda n: reference(make(n))
+    f = [
+        np.asarray(differenced(jnp.asarray(nodes0 + t * h * v))) for t in (2, 1, -1, -2)
+    ]
     fd = (-f[0] + 8 * f[1] - 8 * f[2] + f[3]) / (12 * h)
     return got, fd
 
@@ -178,25 +182,79 @@ def test_the_loss_part_and_free_carriers_match_too(slab):
 
 def test_a_grid_with_reduced_rows_and_the_coupling_modulus_match(slab):
     mesh, make = slab
-    grid = np.linspace(15e9, 17e9, 5)
+    grid = np.linspace(15e9, 17e9, 7)
+    # a reduced row's gradient is the exact mode's (it is polished first), so
+    # the differences solve every row exactly
+    tight = gfem.SolverOptions(order=2, port_mode_tolerance=1e-9)
+    exact = gfem.SolverOptions(order=2, port_mode_tolerance=1e-12)
+    base = gfem.solve(
+        make(jnp.asarray(mesh.nodes)), gfem.PortMode("p1", grid), options=tight
+    )
+    solved = np.asarray(base.solved)
+    assert solved.sum() >= 2
+    (reduced, *_) = np.flatnonzero(~solved)  # a reduced row stands in the grid
+    other = int(np.flatnonzero(solved)[0])
 
-    def figures(model):
-        mode = _mode(model, grid)
-        tensor = gfem.kerr_coupling(model, mode).gamma_nl
-        # the modulus does not depend on each row's phase: the phase guard passes
-        return jnp.stack(
-            [jnp.sum(jnp.abs(tensor) ** 2), jnp.abs(tensor[1, 1, 3, 3]) ** 2]
-        )
+    def figures_with(options):
+        def figures(model):
+            mode = gfem.solve(model, gfem.PortMode("p1", grid), options=options)
+            g = gfem.kerr_coupling(model, mode).gamma_nl
+            # the modulus does not depend on each row's phase: the guard passes
+            entry = jnp.abs(g[other, other, reduced, reduced]) ** 2
+            return jnp.stack([jnp.sum(jnp.abs(g) ** 2), entry])
 
-    base = make(jnp.asarray(mesh.nodes))
-    solved = np.asarray(_mode(base, grid).solved)
-    assert solved.any()
-    assert not solved.all()  # a reduced row stands in the grid
-    got, fd = _directional(figures, mesh, make, lambda m: _mode(m, grid))
-    # the reduced rows carry a backward error of up to 3e-7 (their residual),
-    # which the eighth power of the fields in the modulus amplifies; measured
-    # 1.1e-6 and 2.8e-6 against 1e-9 on exact rows, gate 3.5 times the larger
-    assert got == pytest.approx(fd, rel=1e-5, abs=0)
+        return figures
+
+    got, fd = _directional(
+        figures_with(tight),
+        mesh,
+        make,
+        lambda m: gfem.solve(m, gfem.PortMode("p1", grid), options=tight),
+        reference=figures_with(exact),
+    )
+    # The overlap reads the reduced row's own field, off the exact mode by
+    # $\delta \approx 1.2 r$ to $1.3 r$ in its DOF vector ($r$ the row's
+    # residual, measured), and each node's term is linear in each of the row's
+    # $m \le 4$ factors in an entry $|\gamma_{aarr}|^2$: an error of at most
+    # $m\delta$ of the node terms' scale $S = \sum_i |g_i \cdot v_i|$. The
+    # random motion's derivative cancels to $|\mathrm{d}F| = S/\kappa$, with
+    # $\kappa = 23$ measured, so the relative error is at most
+    # $\kappa m \delta$. At the default tolerance $10^{-6}$ a five-row grid's
+    # reduced row has $r = 2.8\times10^{-7}$ ($\delta = 3.7\times10^{-7}$):
+    # bound $3.4\times10^{-5}$, measured $4.4\times10^{-6}$, so a gate of
+    # $10^{-6}$ cannot hold there (the row is only promised to the tolerance).
+    # At $10^{-9}$ the reduced row has $r = 2.4\times10^{-11}$
+    # ($\delta = 2.9\times10^{-11}$): bound $2.7\times10^{-9}$ beside the
+    # differences' noise of $10^{-9}$; measured $8.3\times10^{-10}$ and
+    # $1.0\times10^{-9}$, gate $10^{-6}$.
+    assert got == pytest.approx(fd, rel=1e-6, abs=0)
+
+
+def test_a_material_field_moves_with_its_elements(slab):
+    mesh, _ = slab
+    k = len(mesh.elements("slab"))
+    rng = np.random.default_rng(5)
+    field = gfem.MaterialField(
+        region="slab",
+        eps_r=4.0 + 0.4 * rng.random(k),
+        nonlinear_index=N2 * (1 + rng.random(k)),
+        two_photon_absorption=TPA,
+    )
+    materials = {"slab": field, "air": gfem.Material()}
+
+    def make(nodes):
+        return _model(mesh, nodes, materials)
+
+    def gamma(model):
+        mode = _mode(model, [F_SLAB])
+        g = gfem.kerr_nonlinearity(model, mode).gamma_nl[0]
+        return jnp.stack([jnp.real(g), jnp.imag(g)])
+
+    # the differences hold each element's values while its nodes move: the
+    # convected derivative, which the solve and the overlaps both give; the
+    # budget is the uniform slab's, measured 3.1e-10 and 2.5e-10, gate 1e-6
+    got, fd = _directional(gamma, mesh, make, lambda m: _mode(m, [F_SLAB]))
+    assert got == pytest.approx(fd, rel=1e-6, abs=0)
 
 
 def test_the_raman_gain_matches_finite_differences(tmp_path):
