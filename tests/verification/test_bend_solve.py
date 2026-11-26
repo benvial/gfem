@@ -40,14 +40,13 @@ def test_a_bent_strip_mode_is_the_continued_fundamental(tmp_path):
         tmp_path / "strip.msh", 1.2, quarter=False, length=0.1, core_h=0.05, clad_h=0.08
     )
     model = pml_cases.strip_model(mesh)
-    bent, t_bent = _solve(
-        model, gfem.Bend(RADIUS, outward="+x", at=(0.0, 0.0, 0.0)), "bent"
-    )
+    bent, t_bent = _solve(model, gfem.Bend(RADIUS, outward="+x", at=(0.0, 0.0, 0.0)))
     _, t_straight = _solve(model, None)
     k0 = 2 * math.pi * pml_cases.STRIP_F / 299792458.0
     n_eff = -1j * complex(np.asarray(bent.gamma)[0]) / k0
-    # the literal has 4-7 digits (1e-6 relative at the weakest: Im has 4); the
-    # gate 1e-5 sits two decades under the nearest wrong pick
+    # the literal is rounded to 5e-7 in Re and 5e-7 in Im (|rounding| <= 7e-7,
+    # 4.2e-7 relative), so the gate 1e-5 is 24x that; the nearest wrong pick
+    # (the partner polarization, the layer modes) is more than 1e-2 away
     assert abs(n_eff - N_EFF) <= 1e-5 * abs(N_EFF)
     # an observation, not a gate
     print(  # noqa: T201
