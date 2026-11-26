@@ -1,7 +1,7 @@
 {#- gfem custom layout: the front page, selected by `layout: gfem-home` in index.md's front matter
     (Shibuya's page.html extends 'layout/' + meta.layout + '.html').
-    Header: the site-head partial fed the two-item front-page nav (gfem_nav_home in conf.py) by
-    re-binding theme_nav_links before the include; gfem_home drops the drawer's site tree.
+    Header: the site-head partial with the same nav links as every other page; gfem_home drops the
+    drawer's site tree.
     Body: static copy in this template (conf.py's front-page block lists it); numbers from the build:
       gfem_front         docs/_data/front-page.json (just front-page-data), the 3D bend's run record, via conf.py
       gfem_code_line     the 3D bend run's value_and_grad line, read from tools/bend3d_run.py by conf.py
@@ -22,7 +22,6 @@
 
 {%- block document -%}
 <div class="gfem-home">
-  {%- set theme_nav_links = gfem_nav_home -%}
   {%- set gfem_home = True -%}
   {% include "partials/site-head.html" with context %}
   <main id="gfem-home" class="gfem-home-main sy-container mx-auto">

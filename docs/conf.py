@@ -405,13 +405,6 @@ html_context["gfem_code_line"] = _code_line(DOCS.parent / "tools" / "bend3d_run.
 html_context["gfem_install"] = gfem_install
 html_context["gfem_status"] = gfem_status  # the footer and the front page
 html_context["gfem_python"] = gfem_python
-# The front-page header: Get started and Capabilities (no Theory, no API). Tutorials
-# sit in their physics-domain sections of the sidebar, so the header has no Tutorials link.
-html_context["gfem_nav_home"] = [
-    link
-    for link in html_theme_options["nav_links"]
-    if link["title"] in {"Get started", "Capabilities"}
-]
 # --- end front page ---------------------------------------------------------------
 
 
