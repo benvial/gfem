@@ -20,8 +20,8 @@ Optics:
   ({doc}`../recipes/photon-pair-sources`).
 - **Optomechanical coupling.** `gfem.optomechanical_coupling(model, modes, port=,
   frequency=)` gives the vacuum coupling $\tilde g_0$ of the modes of a
-  `gfem.MechanicalEigenmode` solve to a wave port's mode, from one optical
-  solve, split into a moving-boundary and a photoelastic part, with
+  `gfem.MechanicalEigenmode` solve to a wave port's mode, solved once for all
+  of them, split into a moving-boundary and a photoelastic part, with
   `g0(length)`; `gfem.optomechanical_overlap` gives the change of the effective
   index per unit amplitude of any displacement. Both differentiate in the
   mechanical solve's inputs and the `photoelastic_tensor`

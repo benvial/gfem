@@ -33,6 +33,15 @@ the wire alone for the sound.
 - The wire is a cubic crystal approximated by an isotropic solid
   (170 GPa, $\nu = 0.28$) and a cubic photoelastic tensor, as in the
   published case. A real wire's orientation moves both.
+- The two meshes need not share nodes. The moving boundary is read at the
+  optical section's nodes: those in the mechanical mesh take its displacement,
+  and so do the nodes of an optical interface just outside it, where a curved
+  boundary meshed twice leaves them (within a quarter of the nearest
+  mechanical boundary edge, which holds while that edge is shorter than
+  1.6 times the radius of curvature); those are read at the nearest point of the
+  mechanical boundary.
+- The outer wall of the optical section is a truncation, not a surface of the
+  structure: it must clear the moving parts.
 
 ## Conventions
 
@@ -325,7 +334,13 @@ d ln g0 / d ln E = -0.25000
   node in the displacement's support.
 - The optical mode is held constant: an optical permittivity, conductivity or
   node coordinate that `jax.grad` traces raises `NonDifferentiableError`, and
-  the coupling cannot run under `jax.jit`.
+  so does a call inside `jax.jit` (call it outside and jit the rest).
+- A displacement that moves a node of the optical section's outer wall
+  across it (a mechanical body that reaches the wall) raises `ValueError`
+  naming the node: enlarge the optical section or clamp the body there.
+- The optical work is two port mode solves, for every mechanical mode at once:
+  one with its backward pass for the moving boundary, one for the
+  photoelastic weights.
 - `mechanical_modes` out of range raises `IndexError`; an empty selection or
   a length that is not positive raises `ValueError`.
 - A clustered (degenerate) mechanical mode has no gradient; the

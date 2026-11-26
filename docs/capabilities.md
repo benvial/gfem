@@ -159,7 +159,8 @@ v0.1.
   the windows' `offset`) ({doc}`recipes/acousto-optic-shift`).
 - **Optomechanical coupling**: {py:obj}`gfem.optomechanical_coupling` (the vacuum
   coupling $\tilde g_0$ of the mechanical modes of a section to a wave port's
-  mode, from one optical solve, with its moving-boundary and photoelastic parts;
+  mode, with one optical mode for all of them, with its moving-boundary and
+  photoelastic parts;
   $g_0(L)$ of a length; the forward Brillouin gain follows) and
   {py:obj}`gfem.optomechanical_overlap` (the change of $n_\mathrm{eff}$ per unit
   amplitude of any displacement); differentiable in every input of the mechanical
