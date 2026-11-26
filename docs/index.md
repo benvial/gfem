@@ -19,6 +19,7 @@ recipes/solve-a-device
 :hidden:
 :caption: Integrated photonics
 
+physics/integrated-photonics
 tutorials/bend
 tutorials/bend3d
 tutorials/metal-bend
@@ -33,6 +34,7 @@ recipes/sax-circuit
 :hidden:
 :caption: Nonlinear and quantum optics
 
+physics/nonlinear-and-quantum-optics
 recipes/waveguide-nonlinearity
 recipes/crystal-kerr
 recipes/raman-gain
@@ -46,6 +48,7 @@ recipes/photon-pair-sources
 :hidden:
 :caption: Electro-optics
 
+physics/electro-optics
 tutorials/modulator
 recipes/electro-optic-phase
 recipes/electro-optic-gradient
@@ -55,6 +58,7 @@ recipes/electro-optic-gradient
 :hidden:
 :caption: Heat and thermo-optics
 
+physics/heat-and-thermo-optics
 tutorials/heater
 tutorials/heater3d
 recipes/heater-temperature
@@ -68,6 +72,7 @@ recipes/electromagnetic-heating
 :hidden:
 :caption: Mechanics and acoustics
 
+physics/mechanics-and-acoustics
 tutorials/transducer
 tutorials/acousto-optic
 recipes/mechanical-modes
@@ -82,6 +87,7 @@ recipes/brillouin-gain
 :hidden:
 :caption: Free-space scattering
 
+physics/free-space-scattering
 tutorials/nanosphere
 tutorials/meta-atom
 recipes/incident-fields
@@ -96,6 +102,7 @@ recipes/optical-force
 :hidden:
 :caption: Periodic surfaces
 
+physics/periodic-surfaces
 tutorials/metagrating
 tutorials/photonic-crystal
 tutorials/metalens
@@ -111,6 +118,7 @@ recipes/metasurface-from-cells
 :hidden:
 :caption: RF and microwave
 
+physics/rf-and-microwave
 tutorials/topology
 tutorials/sheet
 tutorials/shape
@@ -125,6 +133,7 @@ recipes/rational-model
 :hidden:
 :caption: Resonators and qubits
 
+physics/resonators-and-qubits
 tutorials/transmon
 recipes/eigenmode-gradient
 recipes/quantum-metrics

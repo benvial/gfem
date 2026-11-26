@@ -1,0 +1,49 @@
+/* Physics cards: the landing grid ("What you can solve") and the section pages.
+   Tokens come from gfem.css; the light/dark swap of the stills is Shibuya's
+   .light-only / .dark-only. */
+.gfem-home section.s.solve { grid-template-columns: minmax(0, 1fr); gap: var(--s-5); }
+
+.gfem-cards, .gfem-recipe-list { list-style: none; margin: 0; padding: 0; }
+.gfem-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-5); }
+@media (max-width: 899px) { .gfem-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 599px) { .gfem-cards { grid-template-columns: minmax(0, 1fr); } }
+.gfem-cards.wide { margin: var(--s-5) 0 var(--s-6); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 699px) { .gfem-cards.wide { grid-template-columns: minmax(0, 1fr); } }
+
+.gfem-cards > li { margin: 0; padding: 0; }
+.gfem-card a {
+  display: flex; flex-direction: column; gap: var(--s-2); height: 100%;
+  text-decoration: none; color: inherit; border: 1px solid var(--hair); background: var(--panel);
+}
+.gfem-card a:hover { border-color: var(--ink); }
+.gfem-card a:hover .gfem-card-name { color: var(--accent); }
+.gfem-card a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.gfem-card-still { display: block; aspect-ratio: 16 / 10; overflow: hidden; border-bottom: 1px solid var(--hair); }
+.gfem-card-still img { display: block; width: 100%; height: 100%; object-fit: cover; margin: 0; border-radius: 0; }
+
+.gfem-card-name { font: 500 18px/1.3 var(--f-text); color: var(--ink); margin: 0; padding: 0 var(--s-4); border: 0; }
+.gfem-card-line { font: var(--t-small); color: var(--ink-2); margin: 0; padding: 0 var(--s-4); }
+.gfem-card-tag {
+  margin: auto 0 0; font: var(--t-data); color: var(--muted);
+  border-top: 1px solid var(--hair); padding: var(--s-2) var(--s-4) var(--s-3);
+}
+.gfem-card-tag span { text-transform: uppercase; letter-spacing: .08em; }
+.gfem-card:not(:has(.gfem-card-tag)) a { padding-bottom: var(--s-4); }
+
+/* Article typography (.yue) would add list markers, margins and heading rules. */
+.yue .gfem-cards > li::marker, .yue .gfem-recipe-list > li::marker { content: none; }
+.yue ul.gfem-cards, .yue ul.gfem-recipe-list { padding: 0; list-style: none; }
+.yue ul.gfem-cards.wide { margin: var(--s-5) 0 var(--s-6); }
+.yue .gfem-cards .gfem-card-name { font: 500 18px/1.3 var(--f-text); margin: 0; padding: 0 var(--s-4); border: 0; }
+.yue .gfem-cards a, .yue .gfem-recipe-list a { text-decoration: none; }
+.yue .gfem-recipe-list a { border-bottom: 1px solid var(--hair); }
+.yue .gfem-recipe-list a:hover { color: var(--accent); border-color: var(--accent); }
+.yue .gfem-cards p { margin: 0; }
+.yue .gfem-cards .gfem-card-tag { margin-top: auto; }
+.yue .gfem-card-still img { margin: 0; border-radius: 0; }
+
+.gfem-recipe-list { font: var(--t-small); }
+.gfem-recipe-list li { margin: 0 0 var(--s-2); padding: 0; break-inside: avoid; }
+@media (min-width: 700px) { .gfem-recipe-list { columns: 2; column-gap: var(--s-5); } }
+.yue .gfem-cards > li, .yue .gfem-recipe-list > li { margin-left: 0; padding-left: 0; }

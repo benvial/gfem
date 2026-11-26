@@ -1,4 +1,4 @@
-# Nonlinear and quantum optics
+# Nonlinear and quantum formulas
 
 Which sign, unit and normalization does a nonlinear coefficient, a three-wave coupling or a photon-pair figure carry, and what are their closed forms?
 

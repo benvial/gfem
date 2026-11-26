@@ -72,23 +72,23 @@ result.
 The documentation is at <https://bvial.info/gfem/>. [Get started](https://bvial.info/gfem/get-started.html)
 installs gfem, runs a first solve and differentiates it. Each physics domain opens with its tutorials:
 
-- [Integrated photonics](https://bvial.info/gfem/tutorials/bend.html): waveguide bends in 2D and 3D, a grating
+- [Integrated photonics](https://bvial.info/gfem/physics/integrated-photonics.html): waveguide bends in 2D and 3D, a grating
   coupler, dispersion and multimode ports.
-- [Nonlinear and quantum optics](https://bvial.info/gfem/recipes/waveguide-nonlinearity.html): Kerr nonlinearity,
+- [Nonlinear and quantum optics](https://bvial.info/gfem/physics/nonlinear-and-quantum-optics.html): Kerr nonlinearity,
   second-harmonic generation and photon-pair sources.
-- [Electro-optics](https://bvial.info/gfem/tutorials/modulator.html): a lithium niobate modulator and the phase a
+- [Electro-optics](https://bvial.info/gfem/physics/electro-optics.html): a lithium niobate modulator and the phase a
   voltage puts on a waveguide.
-- [Heat and thermo-optics](https://bvial.info/gfem/tutorials/heater.html): heaters, temperature over time, heat
+- [Heat and thermo-optics](https://bvial.info/gfem/physics/heat-and-thermo-optics.html): heaters, temperature over time, heat
   from electromagnetic loss and the phase a heater puts on a waveguide, in 2D and 3D.
-- [Mechanics and acoustics](https://bvial.info/gfem/tutorials/transducer.html): mechanical modes, piezoelectric
+- [Mechanics and acoustics](https://bvial.info/gfem/physics/mechanics-and-acoustics.html): mechanical modes, piezoelectric
   transducers, and acousto-optic and optomechanical coupling.
-- [Free-space scattering](https://bvial.info/gfem/tutorials/nanosphere.html): cross sections, far fields,
+- [Free-space scattering](https://bvial.info/gfem/physics/free-space-scattering.html): cross sections, far fields,
   multipoles, dipole emission and optical force.
-- [Periodic surfaces](https://bvial.info/gfem/tutorials/metagrating.html): a metagrating, a photonic band gap, a
+- [Periodic surfaces](https://bvial.info/gfem/physics/periodic-surfaces.html): a metagrating, a photonic band gap, a
   two-colour metalens, diffraction efficiencies and emissivity.
-- [RF and microwave](https://bvial.info/gfem/tutorials/topology.html): a band-stop line, a matched attenuator, a
+- [RF and microwave](https://bvial.info/gfem/physics/rf-and-microwave.html): a band-stop line, a matched attenuator, a
   coplanar line matched to 50 Ω, time-domain reflectometry and SPICE export.
-- [Resonators and qubits](https://bvial.info/gfem/tutorials/transmon.html): a transmon's dispersive shift,
+- [Resonators and qubits](https://bvial.info/gfem/physics/resonators-and-qubits.html): a transmon's dispersive shift,
   quantum metrics and loss budgets.
 - Infrastructure: [meshes, materials and boundaries](https://bvial.info/gfem/recipes/prepare-a-mesh.html),
   [design workflow](https://bvial.info/gfem/recipes/shape-gradient.html),
