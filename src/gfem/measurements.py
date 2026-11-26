@@ -676,7 +676,7 @@ def junction_coupling(model: Model, a: PortModeResult, b: PortModeResult) -> jax
         NonDifferentiableError: The node coordinates, or a ``mu_r`` or
             principal axis of the model, are traced.
     """
-    from gfem._junction import junction_tau2
+    from gfem._engine.junction import junction_tau2
 
     return junction_tau2(model, a, b)
 
