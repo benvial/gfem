@@ -259,7 +259,7 @@ class FreeCarriers:
         return f"{head}, overlap {_range(g)}, generation {_range(t)} 1/(W^2 m^3 s))"
 
 
-register_fields(FreeCarriers, ("overlap", "generation"))
+register_fields(FreeCarriers, ("overlap", "area", "generation"))
 
 
 def _range(a: np.ndarray) -> str:

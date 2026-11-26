@@ -295,6 +295,23 @@ def test_the_overlaps_refuse_staged_node_coordinates(guide):
         staged(nodes0)
 
 
+def test_free_carriers_return_a_concrete_area_beside_their_gradient(guide):
+    mesh, make = guide
+    nodes0 = jnp.asarray(mesh.nodes)
+
+    def overlap(nodes):
+        model = make(nodes)
+        fc = gfem.free_carriers(model, _mode(model, [F_WR90]))
+        return fc.overlap[0], fc
+
+    _, fc = jax.grad(overlap, has_aux=True)(nodes0)
+    base = make(nodes0)
+    # the same sums at the same values, outside the gradient: round-off only
+    assert float(fc.area) == pytest.approx(
+        float(gfem.free_carriers(base, _mode(base, [F_WR90])).area), rel=1e-14
+    )
+
+
 def test_a_mode_solved_outside_the_gradient_is_refused(guide):
     # the mode's field holds no node derivative: the overlap would get only the
     # motion of its quadrature points
