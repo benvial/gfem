@@ -25,7 +25,7 @@ the wire alone for the sound.
 - The two modes overlap at the same cross-section, with the optical mode
   propagating along $z$ and the mechanical mode at $q = 0$: the vibration
   is uniform along the guide, which couples the optical mode to itself (an
-  intramodal, forward interaction). The overlap is the first-order change of
+  intramodal, forward interaction). The {term}`optomechanical overlap` is the first-order change of
   the optical $n_\mathrm{eff}$ at fixed frequency.
 - The optical section is lossless, and the optical mode is held constant: the
   coupling is exact in the mechanical inputs and the photoelastic tensor, and

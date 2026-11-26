@@ -69,6 +69,11 @@ here is the instantaneous electronic one with two-photon absorption: the
 delayed Raman response and the free carriers of two-photon absorption are not
 in it.
 
+The {term}`clearance` $c$ from the core to a side
+{term}`perfectly matched layer` perturbs $n_\text{eff}$ by about
+$10^{-2} e^{-2\gamma_t c}$, with $\gamma_t$ the mode's transverse decay rate,
+and the {term}`group-velocity dispersion` far more.
+
 ## Second-order nonlinearity
 
 A material's `second_order_nonlinear_tensor` is the contracted tensor
