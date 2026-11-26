@@ -108,9 +108,14 @@ def _sweeps(model, frequencies, modes, radius_um):
     )
 
 
-# The picks are converged eigenvalues of one pencil found from two shifts, so
-# they agree to the eigensolver's tolerance (1e-10 on the shifted eigenvalue);
-# measured agreement is 1e-14.
+# The picks are converged eigenvalues of one pencil found from two shifts.
+# ARPACK's tolerance $10^{-10}$ is on $\theta = 1/(\lambda-\sigma)$, so each
+# $\lambda = \gamma^2$ of a well-conditioned mode is within
+# $10^{-10}|\lambda-\sigma|$ of the pencil's. The shifts here sit at most at
+# $|\lambda-\sigma|/|\lambda| = 0.75$ (the second mode
+# of the 0.6 um slab, from the first one's shift), so the two $\gamma$ agree
+# to $2 \times 0.75\times10^{-10}/2 = 7.5\times10^{-11}$ at worst; measured
+# agreement is 1e-14.
 RTOL = 1e-10
 
 

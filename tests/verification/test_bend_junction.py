@@ -26,6 +26,16 @@ CEILING = 1e-6
 #: each case in the comment of the test), except that the Ey gates are not below
 #: $2\times10^{-12}$: the literals hold 12 significant digits, so a comparison
 #: cannot resolve less than $\sim 5\times10^{-13}$ whatever the discretization.
+#: The eigen-solve does not bound $\tau^2$ that far: ARPACK's tolerance
+#: $10^{-10}$ is on $\theta = 1/(\lambda-\sigma)$, so it bounds $\lambda$ to
+#: $10^{-10}|\lambda-\sigma|/|\lambda|$ (0.005 to 0.045 for the bent shift at
+#: the closed straight mode, 0.3 to 0.4 for the straight one's beyond every
+#: mode) and the overlap's vectors to about $10^{-10}$. The pairs come out
+#: converged to round-off, not to the tolerance: backward error
+#: $3\times10^{-15}$, and $\tau^2$ moves by less than $2\times10^{-15}$ when the
+#: tolerance falls to $10^{-15}$ (measured at $p = 5$, every case), so the gates
+#: stand on the discretization's error, as the straight port mode's exact
+#: verification gates do.
 GATE = {
     ("Ey", 3): 2e-12,
     ("Ey", 5): 2e-12,
@@ -85,9 +95,14 @@ def test_the_radius_gradient_of_the_slab_junction_matches_differences(workdir):
 
     # fourth-order central difference, step $10^{-3}\rho$: truncation
     # $(\delta/\rho)^4 \approx 10^{-12}$, round-off
-    # $1.5\,\epsilon_\mathrm{solve}\,\rho/\delta \approx 1.5\times10^{-10}$ for a
-    # solve accurate to $10^{-13}$, so the repository's gate $10^{-6}$ keeps
-    # four orders of room
+    # $1.5\,\epsilon\,|\tau|/(\delta|\mathrm{d}|\tau|/\mathrm{d}R|)$ with
+    # $\epsilon$ the relative error of the solved $|\tau|$. The eigen-solve's
+    # tolerance bounds the vectors $|\tau|$ reads to about $10^{-10}$ only (see
+    # `GATE`), and $|\tau|/(\delta|\mathrm{d}|\tau|/\mathrm{d}R|) \approx 6\times10^4$
+    # here ($|\tau|^2$ from 0.92 to 0.98 over $R$ = 3 to 8 um): $10^{-5}$ at that
+    # worst case. The vectors come out converged to round-off ($\tau^2$ moves by
+    # less than $2\times10^{-15}$ with a tolerance of $10^{-15}$), so the
+    # round-off is about $2\times10^{-10}$, under the repository's gate $10^{-6}$
     fd.assert_gradient_matches(
         objective, jnp.asarray(radius), [1.0], step=1e-3 * rho, rel=fd.RTOL
     )
