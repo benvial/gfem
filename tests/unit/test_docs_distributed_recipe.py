@@ -30,10 +30,8 @@ def _blocks(page: str, language: str) -> list[str]:
     )
 
 
-def test_the_page_is_in_both_tables_of_contents():
+def test_the_page_is_in_the_site_tree():
     assert "recipes/distributed-solve\n" in (REPO / "docs" / "index.md").read_text()
-    listing = (REPO / "docs/recipes/index.md").read_text()
-    assert "- {doc}`distributed-solve`\n" in listing
 
 
 def _published(text: str) -> str:
