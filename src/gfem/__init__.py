@@ -77,6 +77,7 @@ from gfem.errors import (  # noqa: E402
     SweepNotConvergedWarning,
     SweepRankDeficientWarning,
     ThinLayerWarning,
+    UnabsorbedBendWarning,
     UnanchoredBandWindowWarning,
     UnrequestedOrderWarning,
     UnrequestedPortModeWarning,
@@ -159,6 +160,7 @@ from gfem.photon_pairs import (  # noqa: E402
     spdc,
 )
 from gfem.problems import (  # noqa: E402
+    Bend,
     DampingFrame,
     DCConduction,
     Driven,
@@ -234,6 +236,7 @@ __all__ = [
     "AntiBoundRootWarning",
     "Background",
     "BandDiagram",
+    "Bend",
     "BrillouinGain",
     "Conductor",
     "Convection",
@@ -351,6 +354,7 @@ __all__ = [
     "Trace",
     "TransientThermal",
     "TransientThermalResult",
+    "UnabsorbedBendWarning",
     "UnanchoredBandWindowWarning",
     "UnrequestedOrderWarning",
     "UnrequestedPortModeWarning",

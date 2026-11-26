@@ -95,6 +95,8 @@ from gfem._port_section import (
     PLANE_RTOL,
     PortSection,
     anisotropic_absorbing,
+    outer_edges_conduct,
+    outer_sides,
     port_geometry,
     port_section,
 )
@@ -105,6 +107,7 @@ from gfem.errors import (
     NonDifferentiableError,
     PortModeError,
     PortModeTrackingWarning,
+    UnabsorbedBendWarning,
 )
 from gfem.model import Model
 from gfem.options import SolverOptions
@@ -331,14 +334,20 @@ class PortModeRule:
         if not isinstance(problem, PortMode):
             raise TypeError(f"Expected gfem.PortMode, got {problem!r}.")
         refuse_anisotropic(model)
+        if problem.bend is not None and model.mesh.dim == 2:
+            raise NotImplementedError(
+                f"PortMode({problem.port!r}): a bend is a 3D port mode problem; a "
+                "line port on a 2D mesh has none in this version."
+            )
         self.problem = problem
         self.options = options
         self.comm = comm
         self.port = _wave_port(model, problem.port)
         self.mode = self.port.mode if problem.mode is None else problem.mode
         # its own mode: the surface's joint sweep, with the surface's wave
-        # ports in model order, as a driven problem runs it
-        if problem.mode is None:
+        # ports in model order, as a driven problem runs it; a bent mode has
+        # its own section, whatever the surface's other ports see
+        if problem.mode is None and problem.bend is None:
             self._ports = list(wave_port_surfaces(model.ports)[self.port.surface])
             self._index = self._ports.index(self.port)
         else:
@@ -417,6 +426,8 @@ class PortModeRule:
         values are refused. A wave port's face is differentiated by the
         section's shape kernel.
         """
+        if self.problem.bend is not None:
+            return _BEND_NO_GRADIENTS
         if self._model.mesh.dim == 2:
             from gfem._engine.driven2d import _NO_GRADIENTS
 
@@ -486,7 +497,9 @@ class PortModeRule:
         stretch = _pml.stretch(model, self.problem.frequency)
         if stretch is not None:
             stretch.warn_thin()
-        section = port_section(model, lead, stretch)
+        section = port_section(model, lead, stretch, self.problem.bend)
+        if isinstance(section, PortSection) and section.bend is not None:
+            self._warn_unabsorbed(section)
         with task_manager(self.options.threads, self.comm):
             space = mode_space(section, self.options.order, self.problem.polarization)
             sweeps, _ = swept_once(
@@ -511,6 +524,21 @@ class PortModeRule:
         } | {name: getattr(sweep, name) for name in _DISPERSION_FIELDS}
         entry = PortModeEntry("em", sweeps=sweeps) if keep else None
         return outputs, entry
+
+    def _warn_unabsorbed(self, section: PortSection) -> None:
+        """Warn `UnabsorbedBendWarning` for a bent section with no absorber."""
+        if outer_sides(section) or outer_edges_conduct(section):
+            return
+        warnings.warn(
+            f"WavePort {self.port.name!r}: the bent port mode has no perfectly "
+            "matched layer on its outer side (along outward) and its outer edge "
+            "is not a perfect conductor, so the field the bend radiates "
+            "reflects from that edge: gamma and bend_loss are those of the "
+            "closed cavity, not of the open bend. Add a gfem.PML beyond the "
+            "caustic on the outer side.",
+            UnabsorbedBendWarning,
+            stacklevel=_mpi.outside_gfem(),
+        )
 
     def backward(
         self,
@@ -683,6 +711,7 @@ class PortModeRule:
             e_field=None if hz else field,
             h_field=field if hz else None,
             pml=self._model.pml,
+            bend=self.problem.bend,
             n_g=jnp.asarray(outputs["n_g"]),
             beta_2=jnp.asarray(outputs["beta_2"]),
             beta_3=jnp.asarray(outputs["beta_3"]),
@@ -722,6 +751,10 @@ _AT_NODES = (
     "node coordinates: the derivative of a point value on a moving section is not "
     "available in this version. Differentiate gamma, n_eff or Z_PV, or wrap the "
     "node coordinates in jax.lax.stop_gradient."
+)
+_BEND_NO_GRADIENTS = (
+    "the port mode of a bent guide (PortMode(bend=...)) is not differentiable in "
+    "this version; wrap its result in jax.lax.stop_gradient"
 )
 _AT_STAGED = (
     "PortModeResult.e_field.at needs concrete node coordinates to locate the "
@@ -1201,6 +1234,9 @@ class _Greedy:
         """Warn for each picked mode with a layer energy share above `_CLEARANCE`."""
         if first.share is None:
             return
+        if getattr(self.space.section, "bend", None) is not None:
+            self._warn_caustic(first)
+            return
         for k, mode in enumerate(self.modes):
             share = float(first.share[mode - 1])
             if share <= _CLEARANCE:
@@ -1216,6 +1252,46 @@ class _Greedy:
                 LayerClearanceWarning,
                 stacklevel=_mpi.outside_gfem(),
             )
+
+    def _warn_caustic(self, first: _Candidates) -> None:
+        r"""Warn for each picked mode whose outer layer starts before its caustic.
+
+        The mode radiates beyond :math:`x_c = R\,(\mathrm{Re}\,n_\mathrm{eff}
+        / n_\mathrm{cl} - 1)`, the distance from the reference arc where the
+        local wavenumber :math:`k_0 n_\mathrm{cl}(R + x)/R` falls to
+        :math:`\mathrm{Re}\,\beta`; a layer that starts before it sits on the
+        guided field.
+        """
+        section = self.space.section
+        assert isinstance(section, PortSection)  # noqa: S101 - checked by the caller
+        bend = section.bend
+        assert bend is not None  # noqa: S101 - checked by the caller
+        sides = outer_sides(section)
+        if not sides or section.layer is None:
+            return
+        n_cl = math.sqrt(float(section.eps_nn[section.layer].real.max()))
+        outward = np.asarray(bend.outward) @ section.frame[:2]
+        for k, mode in enumerate(self.modes):
+            beta = np.sqrt(-first.lam[mode - 1] + 0j)
+            x_c = bend.radius * (beta.real / self.k0[0] / n_cl - 1)
+            for side in sides:
+                c = outward[side.axis]
+                if abs(abs(c) - 1) > 1e-6:
+                    continue
+                t = (side.face / section.scale - section.origin[side.axis]) / c
+                face = (t - bend.offset) * section.scale
+                if face >= x_c:
+                    continue
+                warnings.warn(
+                    f"{self._who(k)}: the perfectly matched layer on the outer "
+                    f"side starts {face:.4g} m from the reference arc, before "
+                    f"the caustic x_c = {x_c:.4g} m of mode {mode} at "
+                    f"{hertz(self.f[0])}: the layer sits on the guided field and "
+                    "perturbs the mode itself. Move the layer's inner face "
+                    "beyond x_c.",
+                    LayerClearanceWarning,
+                    stacklevel=_mpi.outside_gfem(),
+                )
 
     def _keep(self, j: int, cand: _Candidates, picks: list[int]) -> None:
         """Make candidate ``picks[k]`` of the exact solve at ``j`` mode ``k`` there.
@@ -2081,6 +2157,10 @@ def _wavenumbers(
     k_max = math.sqrt(n2_max) * k0
     if len(section.impedance_terms):
         k_max *= _SLOW_WAVE
+    if isinstance(section, PortSection) and section.bend is not None:
+        # a bent mode's wavenumber per unit length of the reference arc is at
+        # most the bulk one times the largest h of the physical section
+        k_max *= section.bend_h_range(physical=True)[1]
     return k0, k_max, -_TARGET * n2_shift * k0**2
 
 

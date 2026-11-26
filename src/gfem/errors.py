@@ -369,6 +369,24 @@ class LayerClearanceWarning(UserWarning):
     """
 
 
+class UnabsorbedBendWarning(UserWarning):
+    r"""A bent port mode has nothing to absorb the field it radiates outward.
+
+    A bend radiates into the cladding beyond the caustic
+    :math:`x_c = \mathrm{Re}\,\nu/(k_0 n_\mathrm{cl}) - R` (along
+    ``outward``, from the reference arc of radius :math:`R`, with
+    :math:`\nu = -i\gamma R` the angular propagation constant). The warning
+    fires when the section has no perfectly matched layer on the outer side
+    and an outer edge that is not a perfect conductor: the radiated field
+    reflects back from the edge and the loss
+    (`PortModeResult.bend_loss`, dB per :math:`90^\circ` of the reference
+    arc) and :math:`\gamma` are those of a cavity, not of the open bend. A
+    perfectly conducting outer wall radiates nothing and does not warn. Add
+    a `gfem.PML` on the outer side, or filter the warning with Python's
+    `warnings` module.
+    """
+
+
 class FloquetOrderCapWarning(UserWarning):
     """A Floquet surface's mesh cannot resolve every order it should model.
 

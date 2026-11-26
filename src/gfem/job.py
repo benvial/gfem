@@ -95,6 +95,7 @@ from gfem.mesh import (
 from gfem.model import EnclosedBy, Model
 from gfem.options import SolverOptions
 from gfem.problems import (
+    Bend,
     DampingFrame,
     DCConduction,
     Driven,
@@ -1069,11 +1070,21 @@ _codec.register(
     Driven,
     to_args=_unset_omitted(Driven, polarization=None, sources=(), source_fields=True),
 )
-_codec.register(PortMode, to_args=_unset_omitted(PortMode, polarization=None))
+# a bend only when set, so a straight port mode is written as before
+_codec.register(Bend)
+_codec.register(
+    PortMode, to_args=_unset_omitted(PortMode, polarization=None, bend=None)
+)
 _codec.register(
     PortModeResult,
     to_args=_unset_omitted(
-        PortModeResult, h_field=None, pml=None, n_g=None, beta_2=None, beta_3=None
+        PortModeResult,
+        h_field=None,
+        pml=None,
+        n_g=None,
+        beta_2=None,
+        beta_3=None,
+        bend=None,
     ),
 )
 _codec.register(
