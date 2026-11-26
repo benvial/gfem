@@ -191,3 +191,33 @@ def thickness_derivative(eps, d, polarization, h=1e-9):
 
 
 C = scipy.constants.c
+
+
+#: The suspended film's mechanical constants (silicon-like, isotropic): Young's
+#: modulus (Pa), Poisson's ratio, density (kg/m^3).
+E_SI, NU_SI, RHO_SI = 165e9, 0.22, 2329.0
+
+
+def film_rectangle(path: Path, maxh: float = 0.3) -> gfem.Mesh:
+    """A native 2D mesh of the film alone (``x`` in +-HALF, ``y`` in 0..FILM, um).
+
+    The optical slab's film and nothing else, the region ``film``: a rectangle
+    suspended in air, every side free.
+    """
+    nodes, tris, lines = tc._mesh2d([(-HALF, 0.0, HALF, FILM, "film", None)], maxh, [])
+    tc._write_section(path, nodes, tris, lines)
+    return gfem.Mesh.from_gmsh(path, length_unit="um")
+
+
+def film_material(*, quality: float | None = None) -> gfem.Material:
+    """The film's mechanical material, with a uniform :math:`Q_m` if given."""
+    return gfem.Material(
+        stiffness=gfem.isotropic_stiffness(E_SI, NU_SI),
+        mass_density=RHO_SI,
+        mechanical_quality_factor=quality,
+    )
+
+
+def film_model(mesh: gfem.Mesh, *, quality: float | None = None) -> gfem.Model:
+    """The free film as a mechanical model."""
+    return gfem.Model(mesh, materials={"film": film_material(quality=quality)})

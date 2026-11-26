@@ -240,6 +240,7 @@ _ENTRIES = {
     "electro_optic_shift": f"The electro-optic shift runs on the slab: {SLAB}.",
     "acousto_optic_shift": f"The acousto-optic shift runs on the slab: {SLAB}.",
     "optomechanical_overlap": f"The optomechanical overlap runs on the slab: {SLAB}.",
+    "optomechanical_coupling": f"The optomechanical coupling runs on the slab: {SLAB}.",
     "interface_participation": f"For the participations, {SLAB}.",
     "characteristic_impedance": "A line port's mode carries 1 W/m and has no "
     "characteristic impedance: its S-parameters need no reference impedance.",
