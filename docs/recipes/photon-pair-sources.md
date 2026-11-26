@@ -131,16 +131,16 @@ pump mode 2: n_eff 1.9529, eta_norm 0.000147 %/(W cm^2)
 ```
 
 The fundamental is the coupled one. The dispersion of each arm enters the
-joint spectrum, so each is solved on a band, not at one frequency: seven
-frequencies over $\pm 10$ THz around the centre (about $\pm 85$ nm) for the
-signal, and seven over twice that around $2f_0$ for the pump, which must cover
+joint spectrum, so each is solved on a band, not at one frequency: nine
+frequencies over $\pm 14$ THz around the centre (about $\pm 120$ nm) for the
+signal, and nine over twice that around $2f_0$ for the pump, which must cover
 the sums of the signal and idler frequencies. Between the frequencies a
 sweep solves exactly, a port mode comes from a reduced model
 ({doc}`port-mode-gradient`):
 
 ```python
-half = 10e12  # Hz
-signal_frequency = f0 + np.linspace(-half, half, 7)
+half = 14e12  # Hz
+signal_frequency = f0 + np.linspace(-half, half, 9)
 signal = gfem.solve(
     signal_model, gfem.PortMode("wg", signal_frequency), options=options
 )
@@ -152,8 +152,8 @@ print(pump)
 ```
 
 ```text
-PortModeResult(port 'wg', mode 1, 7 frequencies 181-201 THz (5 exact solves), n_eff 1.6776-1.7202, n_g 2.0865-2.1238, no voltage_path)
-PortModeResult(port 'wg', mode 1, 7 frequencies 361.9-401.9 THz (5 exact solves), n_eff 1.9666-1.9949, n_g 2.2506-2.2514, no voltage_path)
+PortModeResult(port 'wg', mode 1, 9 frequencies 177-205 THz (5 exact solves), n_eff 1.6684-1.7282, n_g 2.0776-2.13, no voltage_path)
+PortModeResult(port 'wg', mode 1, 9 frequencies 353.9-409.9 THz (5 exact solves), n_eff 1.9602-1.9999, n_g 2.2502-2.2514, no voltage_path)
 ```
 
 - Each arm's rows are fitted by a polynomial of at most degree 4 in the
@@ -166,14 +166,14 @@ PortModeResult(port 'wg', mode 1, 7 frequencies 361.9-401.9 THz (5 exact solves)
 ## The source
 
 ```python
-source = gfem.spdc(signal_model, pump, signal, signal, points=401)
+source = gfem.spdc(signal_model, pump, signal, signal, points=601)
 print(source)
 period = source.poling_period
 print(f"first-order poling period {period * 1e6:.4f} um (Zhao et al.: 2.8 um)")
 ```
 
 ```text
-PhotonPairSource(spdc, port 'wg', modes 1 -> 1 + 1, identical, pump 361.9-401.9 THz, signal 180.95-200.95 THz, idler 180.95-200.95 THz, |coupling| 1030 1/(sqrt(W) m), poling period 2.784 um)
+PhotonPairSource(spdc, port 'wg', modes 1 -> 1 + 1, identical, pump 353.9-409.9 THz, signal 176.95-204.95 THz, idler 176.95-204.95 THz, |coupling| 1030 1/(sqrt(W) m), poling period 2.784 um)
 first-order poling period 2.7840 um (Zhao et al.: 2.8 um)
 ```
 
@@ -208,7 +208,7 @@ print(f"brightness {per_ghz:.4g} pairs/s/GHz/mW = {per_nm:.4g} pairs/s/nm/mW")
 ```
 
 ```text
-rate in the bands 4.047e+10 pairs/s at 1 mW
+rate in the bands 4.06e+10 pairs/s at 1 mW
 peak density 0.01075 pairs/(s Hz)
 brightness 1.075e+07 pairs/s/GHz/mW = 1.307e+09 pairs/s/nm/mW
 ```
@@ -219,7 +219,7 @@ it is the low-gain check: above 0.1 the first-order result is off by more than
 band, and a poling period that is off detunes it:
 
 ```python
-for mm in (2.5, 5.0, 10.0):
+for mm in (3.5, 7.0, 14.0):
     r = source.rate(mm * 1e-3, power, period=period)
     print(f"L = {mm:4.1f} mm: rate {r:.4g} pairs/s")
 for error in (-1e-3, 0.0, 1e-3):
@@ -228,12 +228,12 @@ for error in (-1e-3, 0.0, 1e-3):
 ```
 
 ```text
-L =  2.5 mm: rate 1.419e+10 pairs/s
-L =  5.0 mm: rate 4.047e+10 pairs/s
-L = 10.0 mm: rate 1.149e+11 pairs/s
-period -0.1 %: rate 0.015 of the matched rate
+L =  3.5 mm: rate 2.374e+10 pairs/s
+L =  7.0 mm: rate 6.731e+10 pairs/s
+L = 14.0 mm: rate 1.905e+11 pairs/s
+period -0.1 %: rate 0.017 of the matched rate
 period +0.0 %: rate 1.000 of the matched rate
-period +0.1 %: rate 0.551 of the matched rate
+period +0.1 %: rate 0.561 of the matched rate
 ```
 
 - The two photons are in one mode family and at the same frequency, so the
@@ -260,8 +260,8 @@ phase-matching function, scaled so that $\sum|f|^2\,\delta f_s\,\delta f_i$ is
 the number of pairs per pulse. This guide's matching is long and narrow in
 the sum of the frequencies, because the pump and the signal differ in group
 velocity (the pump's $n_g$ is 2.25, the signal's 2.11), and broad in their
-difference, so a joint spectrum needs a grid fine in the sum: 401 points over
-20 THz is 0.05 THz, against a matching whose first zeros lie 0.4 THz from its
+difference, so a joint spectrum needs a grid fine in the sum: 601 points over
+28 THz is 0.047 THz, against a matching whose first zeros lie 0.4 THz from its
 peak. In a 5 mm guide a low-gain pulse is a femtojoule, not a picojoule:
 
 ```python
@@ -278,10 +278,10 @@ print(f"pairs per second at 100 MHz: {100e6 * float(spectrum.pairs_per_pulse):.4
 ```
 
 ```text
-JointSpectrum(401 x 401 grid, 0.03226 pairs/pulse, purity 0.03365, Schmidt number 29.72)
-signal photon: 9.30 THz FWHM, 20 THz band
-pairs per pulse 0.03226
-pairs per second at 100 MHz: 3.226e+06
+JointSpectrum(601 x 601 grid, 0.0324 pairs/pulse, purity 0.03338, Schmidt number 29.96)
+signal photon: 9.33 THz FWHM, 28 THz band
+pairs per pulse 0.0324
+pairs per second at 100 MHz: 3.24e+06
 ```
 
 - The pulse's energy is not the power: 1 fJ at 100 MHz is 100 nW. The pairs
@@ -295,11 +295,11 @@ pairs per second at 100 MHz: 3.226e+06
 The heralded purity of one photon of a pair is $\sum_k\lambda_k^2$ over the
 Schmidt weights $\lambda_k$ of the joint spectrum, its Schmidt number
 $K = 1/\sum_k\lambda_k^2$ the number of modes a photon is spread over. It
-changes with the pulse. A finer grid than the 401 points above keeps a long
-pulse, whose spectrum is narrow, resolved (801 points is 0.025 THz):
+changes with the pulse. A finer grid than the 601 points above keeps a long
+pulse, whose spectrum is narrow, resolved (1001 points is 0.028 THz):
 
 ```python
-fine = gfem.spdc(signal_model, pump, signal, signal, points=801)
+fine = gfem.spdc(signal_model, pump, signal, signal, points=1001)
 print("T (ps)   pairs/pulse   purity   Schmidt number")
 for ps in (1.0, 1.5, 2.0, 3.0):
     js = fine.joint_spectrum(
@@ -313,10 +313,10 @@ for ps in (1.0, 1.5, 2.0, 3.0):
 
 ```text
 T (ps)   pairs/pulse   purity   Schmidt number
-  1.0       0.03226   0.0337    29.72
-  1.5       0.03574   0.0323    30.93
-  2.0       0.03749   0.0287    34.88
-  3.0       0.03903   0.0219    45.66
+  1.0        0.0324   0.0334    29.96
+  1.5       0.03587   0.0321    31.15
+  2.0       0.03762   0.0285    35.11
+  3.0       0.03915   0.0218    45.95
 ```
 
 - The purity is low, a Schmidt number of 30 to 45, and has a maximum near
@@ -381,8 +381,8 @@ print(f"central difference    {float(central) * 1e-12:.5g} per ps")
 ```
 
 ```text
-d purity / d duration -0.0076819 per ps
-central difference    -0.0076819 per ps
+d purity / d duration -0.0076168 per ps
+central difference    -0.0076168 per ps
 ```
 
 The same call differentiates in the pulse's energy, the guide's length, the
@@ -447,19 +447,22 @@ the index.
 
 ```python
 length_w, power_w = 1e-2, 1e-3  # m, W
-density = wire_source.spectral_brightness(length_w, power_w)
-rate_w = wire_source.rate(length_w, power_w)
+with warnings.catch_warnings():
+    # the guard band cuts the pairs on purpose: a filtered source is the question
+    warnings.simplefilter("ignore", gfem.UnresolvedJointSpectrumWarning)
+    density = wire_source.spectral_brightness(length_w, power_w)
+    rate_w = wire_source.rate(length_w, power_w)
+    ten = wire_source.rate(length_w, 10 * power_w)
 peak_w = float(density.max())
 per_nm_w = peak_w * f_pump**2 / c * 1e-9 / (power_w * 1e3) ** 2  # Hz/nm/mW^2
 print(f"peak density {peak_w:.4g} pairs/(s Hz), rate in the bands {rate_w:.4g} pairs/s")
 print(f"brightness {per_nm_w:.4g} pairs/s/nm/mW^2")
-ten = wire_source.rate(length_w, 10 * power_w)
 print(f"rate at 10 mW over 1 mW: {ten / rate_w:.2f} (quadratic: 100)")
 ```
 
 ```text
-peak density 3.293e-06 pairs/(s Hz), rate in the bands 7.903e+06 pairs/s
-brightness 4.11e+05 pairs/s/nm/mW^2
+peak density 3.294e-06 pairs/(s Hz), rate in the bands 7.907e+06 pairs/s
+brightness 4.111e+05 pairs/s/nm/mW^2
 rate at 10 mW over 1 mW: 100.88 (quadratic: 100)
 ```
 
@@ -490,7 +493,7 @@ print(wire_pulse)
 ```
 
 ```text
-JointSpectrum(401 x 401 grid, 0.02409 pairs/pulse, purity 0.52, Schmidt number 1.923)
+JointSpectrum(401 x 401 grid, 0.0241 pairs/pulse, purity 0.5201, Schmidt number 1.923)
 ```
 
 ## A ring: an estimate
@@ -577,7 +580,7 @@ print(f"Si: gfem {per_nm_w:.3g} Hz/nm/mW^2, ratio {per_nm_w / 1.9e5:.1f} to {per
 
 ```text
 TFLN: gfem 1.07e+07 against 4.6e5 pairs/s/GHz/mW, ratio 23.4
-TFLN: total 40.5 GHz/mW in the bands (Javid: 13)
+TFLN: total 40.6 GHz/mW in the bands (Javid: 13)
 Si: gfem 4.11e+05 Hz/nm/mW^2, ratio 2.2 to 21.6
 ```
 
@@ -603,15 +606,15 @@ Si: gfem 4.11e+05 Hz/nm/mW^2, ratio 2.2 to 21.6
   says when they have fewer, or when the bands cut the amplitude:
 
   ```python
-  for points in (201, 401, 801):
+  for points in (301, 601, 1201):
       s = gfem.spdc(signal_model, pump, signal, signal, points=points)
       print(f"{points} points: rate {float(s.rate(length, power, period=period)):.6g}")
   ```
 
   ```text
-  201 points: rate 4.04739e+10
-  401 points: rate 4.04739e+10
-  801 points: rate 4.04738e+10
+  301 points: rate 4.05987e+10
+  601 points: rate 4.05987e+10
+  1201 points: rate 4.05987e+10
   ```
 
 - **The fit.** A fit that leaves a residual phase above 0.1 rad over the
@@ -623,7 +626,7 @@ Si: gfem 4.11e+05 Hz/nm/mW^2, ratio 2.2 to 21.6
   ```
 
   ```text
-  [5.61192073e-05 5.38273249e-06 5.38273249e-06]
+  [3.72633599e-04 3.68914427e-05 3.68914427e-05]
   ```
 
 - **The overlap over the band.** The coupling is taken at the bands' centres
@@ -646,7 +649,7 @@ Si: gfem 4.11e+05 Hz/nm/mW^2, ratio 2.2 to 21.6
   ```
 
   ```text
-  |kappa| at the band edges against the centre: -0.43 %
+  |kappa| at the band edges against the centre: -0.83 %
   ```
 
   A few tenths of a percent: the variation of the overlap over a band of
@@ -671,12 +674,12 @@ Si: gfem 4.11e+05 Hz/nm/mW^2, ratio 2.2 to 21.6
   ```
 
   ```text
-  signal: beta changes by 0.0013 1/m, 6.6e-06 rad
-  pump: beta changes by 1.8 1/m, 0.0088 rad
+  signal: beta changes by 0.01 1/m, 5.2e-05 rad
+  pump: beta changes by 0.0035 1/m, 1.7e-05 rad
   ```
 
-  Even $10^{-3}$ leaves the phase at 0.009 rad, a tenth of the limit, and the
-  default is $10^3$ tighter: against a solve at $10^{-12}$ its propagation
+  Even $10^{-3}$ leaves the phase at the $10^{-5}$ rad level, four orders of
+  magnitude below the limit, and the default is $10^3$ tighter: against a solve at $10^{-12}$ its propagation
   constants differ by $10^{-8}$ 1/m, the round-off of the eigenproblem. The
   recipe keeps the default: a tolerance of $10^{-9}$ costs exact solves and
   gains nothing here.
