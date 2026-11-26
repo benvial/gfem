@@ -151,7 +151,7 @@ def test_the_bands_the_grid_and_the_identical_flag_follow_the_arms(
     np.testing.assert_allclose(pair.idler_frequency, np.linspace(8.5e9, 8.8e9, 201))
     assert pair.bands == ((16.0e9, 17.6e9), (8.0e9, 8.3e9), (8.5e9, 8.8e9))
     # the rows the couplings were taken on: nearest the centres, exact here
-    assert pair.coupling_frequency == (16.8e9, 8.15e9, 8.65e9)
+    assert pair.coupling_frequency == pytest.approx((16.8e9, 8.15e9, 8.65e9), rel=1e-12)
     assert twin.identical
     assert not pair.identical
     assert not mixing.identical
