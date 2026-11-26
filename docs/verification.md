@@ -120,11 +120,47 @@ A port mode's $\gamma_\mathrm{NL}$ and its coupling tensor
 | Gradients in $\varepsilon_r$, $n_2$, $\beta_\mathrm{TPA}$; under `jax.grad` | Fourth-order central differences; eager value | {gfem-test}`tests/verification/test_kerr.py` | Every change |
 | Quadrature columns; PML triangles carrying $n_2$ | Field at the points; section area; no change | {gfem-test}`tests/unit/test_kerr.py` | Every change |
 | Each refusal | Raises its named error | {gfem-test}`tests/unit/test_kerr.py` | Every change |
+| Cubic anisotropy $\rho$: invariance at $\rho = 1$, uniform-field ratios, affine in $\rho$ | Identities and closed forms | {gfem-test}`tests/unit/test_kerr.py` | Every change |
+| Filled WR-90 with $\rho$; birefringent filled TE10 | Closed-form factor | {gfem-test}`tests/verification/test_kerr.py`, {gfem-test}`tests/unit/test_kerr.py` | Every change |
+| $\gamma_\mathrm{NL}$ against moved port-face nodes | Fourth-order central differences; closed form of a scaled guide | {gfem-test}`tests/unit/test_overlap_shape.py` | Every change |
 | Recipe's printed value | Its source | {gfem-test}`tests/unit/test_docs_waveguide_nonlinearity_recipe.py` | Every change |
 
 Not checked: a measured nonlinear coefficient, and any literature value (the
 silicon and nitride constants are inputs). The nonlinear-optics theory is on
 {doc}`nonlinear-and-quantum-optics`.
+
+## Raman gain
+
+The modal gain $g_{ab}$ between port modes ({doc}`recipes/raman-gain`).
+
+| Case | Compared with | Test | Runs |
+|---|---|---|---|
+| Cubic and isotropic weights of unit fields | Closed values | {gfem-test}`tests/unit/test_raman.py` | Every change |
+| Antisymmetry, equal frequencies, linearity in the spectrum | Manley-Rowe and identities | {gfem-test}`tests/unit/test_raman.py` | Every change |
+| TE10 and TE01 in a filled guide | Closed forms | {gfem-test}`tests/verification/test_raman.py` | Every change |
+| Silicon-filled guide; crossed fields | Selection rule; swapped rule | {gfem-test}`tests/verification/test_raman.py` | Every change |
+| Slab along [110] and on the axes | Converges with order; vanishes on the axes | {gfem-test}`tests/verification/test_raman.py` | Every change |
+| Gradient in the gain and $\varepsilon$ | Fourth-order central differences | {gfem-test}`tests/verification/test_raman.py` | Every change |
+| Lorentzian peak and width; quoted peak gains | Exact grid nodes; published values | {gfem-test}`tests/unit/test_raman_spectrum.py` | Every change |
+| Each refusal | Raises its named error | {gfem-test}`tests/unit/test_raman.py` | Every change |
+| Recipe's printed value | Its source | {gfem-test}`tests/unit/test_docs_raman_gain_recipe.py` | Every change |
+
+Not checked: a measured gain (the spectra are inputs).
+
+## Free carriers
+
+The confinement $\Gamma_R$ and generation $\theta$ of a port mode
+({doc}`recipes/free-carriers`).
+
+| Case | Compared with | Test | Runs |
+|---|---|---|---|
+| Slab core and cladding overlaps and generation | Closed forms to 30 digits; error falls with order | {gfem-test}`tests/verification/test_free_carriers.py` | Every change |
+| Overlaps weighted by index | Sum to the group index | {gfem-test}`tests/verification/test_free_carriers.py` | Every change |
+| Filled WR-90 | $\Gamma = n/n_\mathrm{eff}$ | {gfem-test}`tests/verification/test_free_carriers.py` | Every change |
+| Generation times photon energy and area | Two-photon loss of `kerr_nonlinearity` | {gfem-test}`tests/verification/test_free_carriers.py` | Every change |
+| Recipe's printed value | Its source | {gfem-test}`tests/unit/test_docs_free_carriers_recipe.py` | Every change |
+
+Not checked: a measured carrier density (the cross sections are inputs).
 
 ## Second-order nonlinearity
 

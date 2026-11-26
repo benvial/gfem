@@ -67,8 +67,8 @@ $10^{-3}$; $D_2$ is good to 5 to 15 % for a nitride ring of 100 µm or a silicon
 ring of 10 µm and useless for a ring of 1 THz free spectral range. The bend
 also hybridizes modes, which a straight solve cannot see. The Kerr response
 here is the instantaneous electronic one with two-photon absorption: the
-delayed Raman response and the free carriers of two-photon absorption are not
-in it.
+delayed Raman response and the free carriers of two-photon absorption are in
+{doc}`recipes/raman-gain` and {doc}`recipes/free-carriers`.
 
 The {term}`clearance` $c$ from the core to a side
 {term}`perfectly matched layer` perturbs $n_\text{eff}$ by about

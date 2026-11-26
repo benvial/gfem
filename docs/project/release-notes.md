@@ -38,6 +38,10 @@ Nonlinear and quantum optics:
 - **Kerr nonlinearity of a port mode.** `gfem.kerr_nonlinearity` and
   `gfem.kerr_coupling` give a port mode's nonlinear coefficient and the coupling
   tensor between its waves ({doc}`../recipes/waveguide-nonlinearity`).
+- **Raman gain, crystal Kerr and free carriers.** `gfem.raman_gain` and
+  `gfem.free_carriers` give a port mode's Raman gain and free-carrier figures;
+  materials take a `raman_spectrum` and a `nonlinear_anisotropy`
+  ({doc}`../recipes/raman-gain`).
 - **Second-harmonic generation.** `gfem.second_harmonic` and
   `gfem.three_wave_coupling` give a pump mode's coupling to its harmonic, the phase
   mismatch and the poled-guide efficiency ({doc}`../recipes/second-harmonic-generation`).

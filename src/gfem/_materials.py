@@ -1528,10 +1528,11 @@ class Material:
             an entry above 1e-8 m/V (a value in pm/V), or sits beside a
             matrix property, left-handed `axes`, a `PermittivityLaw` or an
             `eps_r` of 1 (the crystal's optical permittivity left out); a
-            `nonlinear_anisotropy` that is not one finite real number,
+            ``nonlinear_anisotropy`` that is not one finite real number,
             sits beside an anisotropic `eps_r` (cubic crystals are optically
             isotropic) or a `PermittivityLaw` (no `axes`), or has neither a
-            `nonlinear_index` nor a `two_photon_absorption`; a `raman_spectrum` that holds a
+            `nonlinear_index` nor a `two_photon_absorption`;
+            a ``raman_spectrum`` that holds a
             traced gain (`NonDifferentiableError`), sits beside an
             anisotropic `eps_r`, or is cubic beside a `PermittivityLaw`; a
             `stiffness` that is not a real,
@@ -2834,7 +2835,7 @@ class MaterialField:
                 `stiffness`) or with a `mechanical_quality_factor`; a solid
                 end under a layer density; one end only with a
                 `nonlinear_index` or a `two_photon_absorption`; an end with a
-                `raman_spectrum` or a `nonlinear_anisotropy`.
+                ``raman_spectrum`` or a ``nonlinear_anisotropy``.
             NonDifferentiableError: An end's law is computed inside
                 `jax.grad`, `jax.jit` or `jax.vmap`: differentiate a law on a
                 `Material` region instead.
@@ -3000,8 +3001,8 @@ class MaterialField:
             material: The material.
 
         Raises:
-            ValueError: The material has a `nonlinear_anisotropy` or a
-                `raman_spectrum`, which a field does not carry.
+            ValueError: The material has a ``nonlinear_anisotropy`` or a
+                ``raman_spectrum``, which a field does not carry.
         """
         for dropped in ("nonlinear_anisotropy", "raman_spectrum"):
             if getattr(material, dropped) is not None:

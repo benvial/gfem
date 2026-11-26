@@ -230,7 +230,7 @@ def raman_gain(
     The gain is that of the continuous wave, with the mode of each wave at its
     own frequency; the spectrum's gain is scaled by :math:`\omega_a /
     \omega_\mathrm{ref}`, and the index change between the reference and the
-    wave is neglected. `nonlinear_index` is not touched: it is what was
+    wave is neglected. ``nonlinear_index`` is not touched: it is what was
     measured, with the Kerr symmetry, and the gain is separate from it.
 
     All waves must share one port, element order and cross-section (solve

@@ -291,12 +291,11 @@ clearance 1.5 um: gamma 177.04 /(W m)
 
 ## Limits
 
-- **One scalar per material.** A single $n_2$ and $\beta_\mathrm{TPA}$, no
-  tensor $\chi^{(3)}$ (silicon's $n_2$ depends on the crystal direction): an
-  anisotropic or `axes`-rotated region carrying either is refused.
-- **What is left out.** Free-carrier absorption and dispersion, Raman (the
-  delayed response of silica, the 15.6 THz line of silicon) and heating; a
-  pulse simulation takes $\gamma_\mathrm{NL}$ from here and adds them.
+- **One scalar per material.** A single $n_2$ and $\beta_\mathrm{TPA}$, with the
+  cubic anisotropy $\rho$ of {doc}`crystal-kerr`; no general tensor $\chi^{(3)}$.
+- **What is left out.** Heating and the dispersion of $n_2$; Raman is
+  {doc}`raman-gain` and free carriers are {doc}`free-carriers`, which a pulse
+  simulation adds to $\gamma_\mathrm{NL}$ from here.
 - **Loss.** Lossy and leaky sections run, valid while the attenuation is far
   below the phase constant.
 - **2D.** A line port gives the slab's value in 1/W; the Hz polarization and a

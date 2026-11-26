@@ -664,6 +664,23 @@ on an Ez line port of a 2D model (1 W/m, integral along the line). The
 isotropic scalar :math:`n_2` is real and constant over the grid, and the
 formula holds while :math:`\alpha \ll \beta`.
 
+Raman gain
+----------
+``gfem.raman_gain`` gives the real modal gain :math:`g_{ab}` in 1/(W m)
+between waves :math:`a` and :math:`b` of one port, at 1 W each:
+:math:`\mathrm{d}P_a/\mathrm{d}z \ni g_{ab}P_bP_a`, positive when :math:`a` lies
+below :math:`b` in frequency. It does not depend on the phasor convention,
+and :math:`g_{ba} = -(\omega_b/\omega_a)\,g_{ab}` (Manley-Rowe).
+
+Free carriers
+-------------
+``gfem.free_carriers`` gives the confinement :math:`\Gamma_R` of a mode of
+1 W in the carrier regions and the pair generation :math:`\theta` of
+:math:`\mathrm{d}N/\mathrm{d}t = \theta P^2 - N/\tau`, in 1/(W² m³ s). A
+density :math:`N` changes :math:`n_\mathrm{eff}` by :math:`\Gamma_R(\Delta
+n_\mathrm{FC} - i\sigma N/(2k_0))`, in the :math:`e^{-i\omega t}` convention
+of :math:`\gamma_\mathrm{NL}`.
+
 Second-order nonlinearity
 -------------------------
 A material's ``second_order_nonlinear_tensor`` is the contracted

@@ -253,6 +253,23 @@ absorption and its sign does not follow `n_eff`'s $n' - in''$. It is in
 {doc}`recipes/waveguide-nonlinearity`.
 Derivation and a check on a solve: {ref}`Kerr nonlinearity <theory-nonlinear-and-quantum-optics-kerr-nonlinearity>`.
 
+## Raman gain
+
+`gfem.raman_gain` gives the real modal gain $g_{ab}$ in 1/(W m) between waves
+$a$ and $b$ of one port, at 1 W each: $\mathrm{d}P_a/\mathrm{d}z \ni g_{ab}P_bP_a$,
+positive when $a$ lies below $b$ in frequency. It does not depend on the phasor
+convention, and $g_{ba} = -(\omega_b/\omega_a)\,g_{ab}$ (Manley-Rowe).
+{doc}`recipes/raman-gain`.
+
+## Free carriers
+
+`gfem.free_carriers` gives the confinement $\Gamma_R$ of a mode of 1 W in the
+carrier regions and the pair generation $\theta$ of
+$\mathrm{d}N/\mathrm{d}t = \theta P^2 - N/\tau$, in 1/(W² m³ s). A density $N$
+changes $n_\mathrm{eff}$ by $\Gamma_R(\Delta n_\mathrm{FC} - i\sigma N/(2k_0))$, in
+the $e^{-i\omega t}$ convention of $\gamma_\mathrm{NL}$.
+{doc}`recipes/free-carriers`.
+
 ## Second-order nonlinearity
 
 `second_order_nonlinear_tensor` is the contracted $d_{il} = d_{ijk}$ in m/V, with

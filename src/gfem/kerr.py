@@ -10,9 +10,11 @@ grid (reduced rows included), so a curve over frequency costs no extra solve:
   of each row, the number a pulse-propagation tool takes;
 - `kerr_coupling`: the tensor :math:`\gamma_{abcd}` between the waves (the
   rows) of one or several results: self- and cross-phase modulation and
-  four-wave mixing.
+  four-wave mixing;
+- `free_carriers`: the confinement and the pair generation of the regions
+  where two-photon absorption makes carriers.
 
-Both integrate the mode at 1 W on the port's cross-section. They run on
+The first two integrate the mode at 1 W on the port's cross-section. They run on
 lossy and leaky sections, where they hold while :math:`\alpha \ll \beta`.
 Under `jax.grad` they read the traced mode field, so they differentiate with
 respect to the section's materials and to the node coordinates of a planar
@@ -87,9 +89,9 @@ class KerrNonlinearity:
     A material with a `Material.nonlinear_anisotropy` :math:`\rho` replaces
     the bracket by :math:`\rho \left[2 |E|^4 + |E\cdot E|^2\right] +
     3(1-\rho) \sum_s |a_s\cdot E|^4`, with :math:`a_s` the rows of its
-    `axes` (the cube axes): the bracket at :math:`\rho = 1`, whatever the axes.
+    ``axes`` (the cube axes): the bracket at :math:`\rho = 1`, whatever the axes.
 
-    A region whose `Material.eps_r` has three principal values along `axes`
+    A region whose `Material.eps_r` has three principal values along ``axes``
     (a birefringent crystal) replaces :math:`n^2` and the products
     :math:`u\cdot v` by :math:`N = \sum_k n_k a_k a_k^\mathsf{T}`,
     :math:`n_k = \sqrt{\mathrm{Re}\,\varepsilon_{r,k}}`: the bracket becomes
@@ -164,7 +166,7 @@ class KerrCoupling:
     A material with a `Material.nonlinear_anisotropy` :math:`\rho` replaces
     :math:`S` by :math:`S_\rho = \rho S + 3(1-\rho)\sum_s (a_s\cdot
     u)(a_s\cdot v)(a_s\cdot w)(a_s\cdot z)` over the rows :math:`a_s` of its
-    `axes` (the cube axes), which is :math:`S` at :math:`\rho = 1`. A region
+    ``axes`` (the cube axes), which is :math:`S` at :math:`\rho = 1`. A region
     with a birefringent `Material.eps_r` replaces :math:`n_a^2 S` by
     :math:`S_N`, every :math:`u\cdot v` of :math:`S` becoming
     :math:`u^\mathsf{T} N_a v` with :math:`N_a = \sum_k n_k a_k a_k^\mathsf{T}`
