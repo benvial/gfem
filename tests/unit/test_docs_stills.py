@@ -20,12 +20,12 @@ import zlib
 from pathlib import Path
 
 import numpy as np
+import png_palette as pp
 import pytest
 
 DOCS = Path(__file__).resolve().parents[2] / "docs"
 CARDS = DOCS / "_static" / "cards"
 TUTORIALS = sorted((DOCS / "tutorials").glob("*.ipynb"))
-SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
 def _module(name):
@@ -39,144 +39,32 @@ stills = _module("gfem_stills")
 scenes = _module("gfem_scenes")
 
 
-def _ramps():
-    # gfem_figures imports matplotlib, which the test environment lacks: read
-    # the literal table from its source.
-    tree = ast.parse((DOCS / "_ext" / "gfem_figures.py").read_text(encoding="utf-8"))
-    for node in tree.body:
-        if (
-            isinstance(node, ast.Assign)
-            and isinstance(node.targets[0], ast.Name)
-            and node.targets[0].id == "RAMPS"
-        ):
-            return ast.literal_eval(node.value)
-    raise AssertionError("gfem_figures.RAMPS not found")
-
-
-RAMPS = _ramps()
-
-
-# --- a PNG read with the standard library --------------------------------------
-
-
-def _chunks(data):
-    assert data[:8] == SIGNATURE, "not a PNG"
-    at = 8
-    while at < len(data):
-        length, kind = struct.unpack(">I4s", data[at : at + 8])
-        yield kind, data[at + 8 : at + 8 + length]
-        at += 12 + length
-
-
-def header(path):
-    """(width, height) from the IHDR chunk."""
-    kind, body = next(iter(_chunks(Path(path).read_bytes())))
-    assert kind == b"IHDR"
-    return struct.unpack(">II", body[:8])
-
-
-def corner(path):
-    """The first pixel of the first row as an RGB triple.
-
-    Whatever the row's filter, the first pixel of the first row is stored raw
-    (the left and up neighbours it is predicted from are zero), so it is the
-    bytes after the filter byte.
-    """
-    chunks = list(_chunks(Path(path).read_bytes()))
-    depth, colour = struct.unpack(">BB", chunks[0][1][8:10])
-    assert chunks[0][0] == b"IHDR"
-    data = zlib.decompress(b"".join(body for kind, body in chunks if kind == b"IDAT"))
-    first = data[1:]
-    if colour == 3:  # palette
-        palette = next(body for kind, body in chunks if kind == b"PLTE")
-        index = first[0] >> (8 - depth) if depth < 8 else first[0]
-        return tuple(palette[3 * index : 3 * index + 3])
-    assert depth == 8, "only 8-bit RGB, RGBA and palette PNGs are read"
-    if colour in (2, 6):
-        return tuple(first[:3])
-    raise AssertionError(f"PNG colour type {colour} is not read")
-
-
-def palette(path):
-    """The PLTE entries of a palette PNG as RGB triples."""
-    chunks = list(_chunks(Path(path).read_bytes()))
-    assert struct.unpack(">B", chunks[0][1][9:10])[0] == 3, (
-        "a card still is a palette PNG"
-    )
-    body = next(body for kind, body in chunks if kind == b"PLTE")
-    return [tuple(body[i : i + 3]) for i in range(0, len(body), 3)]
-
-
-# An entry is a colour (not a grey: the ground, the bodies and the anti-aliased
-# edges between them) when its channels span more than 40 of 255. The palette's
-# greys are exact (span 0) and the quantiser moves a channel by a few units at
-# most, so 40 is far above a grey's span and below any mix of a stop with
-# enough ground to keep its hue.
-SATURATED = 40
-# An antialiased or dithered pixel between a stop and the grey ground is a
-# mix of two colours one of which has no hue, so it keeps the stop's hue; the
-# quantiser's rounding to 8 bits moves a hue by well under 1 deg at saturation
-# 40. The measured entries of the five committed stills sit within 15 deg of a
-# stop; 15 deg is also far below the 90 deg between the red and the blue stops.
-HUE_TOLERANCE = 15.0  # deg
-
-
-def hue(rgb):
-    """The hue in degrees of an RGB triple (0-255), from the standard hexcone."""
-    r, g, b = (float(c) for c in rgb)
-    top, bottom = max(r, g, b), min(r, g, b)
-    span = top - bottom
-    if top == r:
-        angle = ((g - b) / span) % 6
-    elif top == g:
-        angle = (b - r) / span + 2
-    else:
-        angle = (r - g) / span + 4
-    return 60.0 * angle
-
-
-def ramp_hues(name):
-    """The hues of the saturated stops of a ``RAMPS`` entry."""
-    stops = [tuple(int(h[i : i + 2], 16) for i in (1, 3, 5)) for h in RAMPS[name]]
-    return [hue(c) for c in stops if max(c) - min(c) > SATURATED]
-
-
-def off_ramp(entries, hues):
-    """The saturated palette entries farther than the tolerance from every hue."""
-    stray = []
-    for rgb in entries:
-        if max(rgb) - min(rgb) <= SATURATED:
-            continue
-        gaps = [min(abs(hue(rgb) - h), 360 - abs(hue(rgb) - h)) for h in hues]
-        if min(gaps) > HUE_TOLERANCE:
-            stray.append(rgb)
-    return stray
-
-
 def test_a_green_pixel_is_off_a_red_and_blue_ramp():
-    hues = ramp_hues("gfem_signed")
+    hues = pp.ramp_hues("gfem_signed")
     assert len(hues) == 2
-    assert off_ramp([(242, 242, 242), (181, 38, 47), (42, 120, 214)], hues) == []
+    assert pp.off_ramp([(242, 242, 242), (181, 38, 47), (42, 120, 214)], hues) == []
     # A mix of a stop and the ground keeps its hue; direct green does not.
-    assert off_ramp([(200, 150, 152)], hues) == []  # spans 50, hue 357 deg
-    assert off_ramp([(40, 200, 60)], hues) == [(40, 200, 60)]
+    assert pp.off_ramp([(200, 150, 152)], hues) == []  # spans 50, hue 357 deg
+    assert pp.off_ramp([(40, 200, 60)], hues) == [(40, 200, 60)]
 
 
 def test_the_hue_wraps_at_red():
-    assert off_ramp([(200, 40, 60)], [5.0]) == []  # 350 deg is 15 deg from 5 deg
-    assert off_ramp([(200, 40, 100)], [5.0]) != []  # 340 deg is 25 deg away
+    assert pp.off_ramp([(200, 40, 60)], [5.0]) == []  # 350 deg is 15 deg from 5 deg
+    assert pp.off_ramp([(200, 40, 100)], [5.0]) != []  # 340 deg is 25 deg away
 
 
 def test_a_green_entry_in_the_png_palette_fails_whatever_the_sidecar_says(tmp_path):
     path = tmp_path / "p.png"
     path.write_bytes(_png([bytes([0, 1])], 2, 3, bytes([242, 242, 242, 40, 200, 60])))
-    assert off_ramp(palette(path), ramp_hues("gfem_magnitude")) == [(40, 200, 60)]
+    assert pp.off_ramp(pp.palette(path), pp.ramp_hues("gfem_magnitude")) == [
+        (40, 200, 60)
+    ]
 
 
 def test_the_palette_reader_returns_the_plte_entries(tmp_path):
     path = tmp_path / "p.png"
     path.write_bytes(_png([bytes([0, 1])], 2, 3, bytes([1, 2, 3, 4, 5, 6])))
-    assert palette(path) == [(1, 2, 3), (4, 5, 6)]
+    assert pp.palette(path) == [(1, 2, 3), (4, 5, 6)]
 
 
 def _png(rows, width, colour, palette=None, *, depth=8, filter_byte=0):
@@ -193,7 +81,7 @@ def _png(rows, width, colour, palette=None, *, depth=8, filter_byte=0):
             + struct.pack(">I", zlib.crc32(kind + body))
         )
 
-    out = SIGNATURE + chunk(b"IHDR", ihdr)
+    out = pp.SIGNATURE + chunk(b"IHDR", ihdr)
     if palette:
         out += chunk(b"PLTE", palette)
     return out + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
@@ -208,14 +96,14 @@ def test_the_corner_reader_ignores_the_filter_of_the_first_row(tmp_path, filter_
     path.write_bytes(
         _png([bytes([1, 0]), bytes([0, 0])], 2, 3, palette, filter_byte=filter_byte)
     )
-    assert corner(path) == (242, 242, 242)
+    assert pp.corner(path) == (242, 242, 242)
     path.write_bytes(_png([bytes([5, 6, 7, 8, 9, 10])], 2, 2, filter_byte=filter_byte))
-    assert corner(path) == (5, 6, 7)
+    assert pp.corner(path) == (5, 6, 7)
     path.write_bytes(
         _png([bytes([5, 6, 7, 255, 9, 10, 11, 255])], 2, 6, filter_byte=filter_byte)
     )
-    assert corner(path) == (5, 6, 7)
-    assert header(path) == (2, 1)
+    assert pp.corner(path) == (5, 6, 7)
+    assert pp.header(path) == (2, 1)
 
 
 def test_the_corner_reader_unpacks_a_palette_of_few_colours(tmp_path):
@@ -223,7 +111,7 @@ def test_the_corner_reader_unpacks_a_palette_of_few_colours(tmp_path):
     palette = bytes([0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
     path = tmp_path / "p.png"
     path.write_bytes(_png([bytes([0b10_00_01_11])], 4, 3, palette, depth=2))
-    assert corner(path) == (4, 5, 6)
+    assert pp.corner(path) == (4, 5, 6)
 
 
 # --- the frame of a still ----------------------------------------------------------
@@ -345,14 +233,14 @@ def test_a_sidecar_draws_from_the_sites_palette(path):
         side = record[theme]
         suffix = "_dark" if theme == "dark" else ""
         ramp = f"gfem_{record['kind']}{suffix}"
-        assert ramp in RAMPS, f"{ramp} is not in gfem_figures.RAMPS"
+        assert ramp in pp.RAMPS, f"{ramp} is not in gfem_figures.RAMPS"
         assert side["colormaps"], f"the {theme} still draws no field"
         assert set(side["colormaps"]) <= {ramp}
         assert set(side["solids"]) <= {stills.BODIES[theme]}
         assert side["ground"] == scenes.THEMES[theme]["ground"]
         # What the sidecar says is not what was drawn: read the pixels.
-        entries = palette(CARDS / f"{path.stem}-{theme}.png")
-        stray = off_ramp(entries, ramp_hues(ramp))
+        entries = pp.palette(CARDS / f"{path.stem}-{theme}.png")
+        stray = pp.off_ramp(entries, pp.ramp_hues(ramp))
         assert not stray, f"{path.stem}-{theme}.png has off-palette colours {stray}"
 
 
@@ -373,9 +261,9 @@ def test_a_sidecar_camera_is_the_preset_unless_it_declares_an_override(path):
 def test_a_png_is_the_size_and_ground_its_sidecar_records(path, theme):
     record = json.loads(path.read_text(encoding="utf-8"))
     png = CARDS / f"{path.stem}-{theme}.png"
-    assert list(header(png)) == record["size"] == list(stills.SIZE)
+    assert list(pp.header(png)) == record["size"] == list(stills.SIZE)
     ground = record[theme]["ground"]
-    assert corner(png) == tuple(int(ground[i : i + 2], 16) for i in (1, 3, 5))
+    assert pp.corner(png) == tuple(int(ground[i : i + 2], 16) for i in (1, 3, 5))
 
 
 # --- the scripts and anchors ---------------------------------------------------

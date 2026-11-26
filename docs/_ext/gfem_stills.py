@@ -17,6 +17,42 @@ final size, crops both renders to one box around the subject and writes
 ``docs/_static/cards/<still>-{light,dark}.png`` and ``<still>.json``, which
 records what was drawn so that a test can check the pair without rendering.
 
+House style
+-----------
+
+Every rule below lives in one named place; reuse the name, not the value.
+
+- Camera: `AZIMUTH`, `ELEVATION` (the direction), up $+z$ and `VIEW_ANGLE`
+  (all four in `PRESET`, which the sidecar records), `ZOOM` after
+  ``reset_camera`` on the visible actors, a key light and a dimmer headlight
+  placed relative to the camera in `_camera`. A script may override the
+  direction only.
+- Sizes: `SIZE` is the final size, 16:10; `RENDER` is twice that, downsampled
+  with LANCZOS in `_crop`, then quantised to 256 colours with the ground exact
+  (`_quantized`) and saved with ``optimize=True``.
+- Crop: one box for both themes, the content of the light render grown to the
+  aspect with `MARGIN` per side (`content_box`, `crop_box`; the ground test is
+  `GROUND_TOLERANCE`).
+- Bodies: grey per theme in `BODIES`; `THEMES` lists the themes.
+- Ground: from the theme, through `ground`, so the scenes, the site and the
+  stills agree; no stored colour.
+- Opacity (`_classify`): a translucent body is redrawn at `SEE_THROUGH`, a
+  solid below `DROP_OPACITY` (cladding, air boxes) is dropped. Lines and
+  wireframes, scalar bars, text and axes are always dropped. A flat cut is
+  drawn unlit so that its colour is the value; a curved surface is lit.
+- Colour: one colormap per quantity kind, `KINDS`, through `ramp_name` to the
+  ``gfem_<kind>`` entries of ``gfem_figures.RAMPS`` and their ``_dark``
+  siblings. ``magnitude`` is for field magnitudes (also the default for a
+  density or a norm), ``signed`` for signed real parts and for displacements
+  on warped geometry, ``temperature`` for temperatures.
+- Files: ``docs/_static/cards/<name>-light.png`` and ``<name>-dark.png`` and
+  the sidecar ``<name>.json`` (`sidecar`), all from one `save_still` call.
+
+To use the style outside the tutorials, write a standalone script
+``docs/_stills/<name>.py`` whose ``card(None)`` builds its own model and ends
+in `save_still`, as ``docs/_stills/waveguide-nonlinearity.py`` does;
+``tools/stills.py`` runs it.
+
 The top of this module needs only the standard library and NumPy, so that the
 tests import the pure helpers; PyVista, Pillow and matplotlib load inside the
 functions that draw.
