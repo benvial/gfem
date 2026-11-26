@@ -100,7 +100,11 @@ def test_floquet_text_names_the_floquet_surface_never_a_port_face(page):
     # GLOSSARY: a Floquet port's face is its Floquet surface ("port face" is
     # the term to avoid), in the recipe, the capabilities limit and the result
     capabilities = (dp.DOCS / "capabilities.md").read_text(encoding="utf-8")
-    (limit,) = [b for b in capabilities.split("\n- ") if b.startswith("**Floquet")]
+    (limit,) = [
+        r
+        for r in dp.section(capabilities, "Limits").splitlines()
+        if r.startswith("| **Floquet")
+    ]
     texts = {
         "recipe": page,
         "capabilities": limit,
