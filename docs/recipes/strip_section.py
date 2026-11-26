@@ -5,11 +5,11 @@ The section in the (x, y) plane, y up: a rectangular core ``"core"``,
 in a rectangular cladding ``"cladding"`` that reaches ``clearance`` beyond the
 core on every side, or ``outer`` and ``inner`` beyond it on its +x and -x
 sides. With ``layer`` a region ``"pml"``, that thick, follows the cladding on
-the +x side: the outer layer of a bent guide. `strip_section` meshes it, writes the mesh as a gmsh 2.2
-file and reads it back through `gfem.Mesh.from_gmsh_cross_section`, as a mesh
-of your own would be: its end face ``"front"`` carries a wave port. Netgen
-meshes on one thread here, so a section meshes the same way on every run and
-the page's numbers reproduce.
+the +x side: the outer layer of a bent guide. `strip_section` meshes it,
+writes the mesh as a gmsh 2.2 file and reads it back through
+`gfem.Mesh.from_gmsh_cross_section`, as a mesh of your own would be: its end
+face ``"front"`` carries a wave port. Netgen meshes on one thread here, so a
+section meshes the same way on every run and the page's numbers reproduce.
 """
 
 from __future__ import annotations
@@ -45,13 +45,17 @@ def strip_section(
     w, t, g = width / UM, height / UM, clearance / UM
     g_out = g if outer is None else outer / UM
     g_in = g if inner is None else inner / UM
-    cladding = Rectangle(w + g_in + g_out, t + 2 * g).Face().Move((-w / 2 - g_in, -g, 0))
+    cladding = (
+        Rectangle(w + g_in + g_out, t + 2 * g).Face().Move((-w / 2 - g_in, -g, 0))
+    )
     core = Rectangle(w, t).Face().Move((-w / 2, 0, 0))
     cladding.faces.name, core.faces.name = "cladding", "core"
     core.faces.maxh = h_core / UM
     parts = [cladding, core]
     if layer is not None:
-        outer_layer = Rectangle(layer / UM, t + 2 * g).Face().Move((w / 2 + g_out, -g, 0))
+        outer_layer = (
+            Rectangle(layer / UM, t + 2 * g).Face().Move((w / 2 + g_out, -g, 0))
+        )
         outer_layer.faces.name = "pml"
         parts.append(outer_layer)
     geometry = OCCGeometry(Glue(parts), dim=2)
