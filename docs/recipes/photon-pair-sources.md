@@ -573,9 +573,13 @@ observation beside them:
 | Shi et al., Light Sci. Appl. 13, 282 (2024), table | silicon and nitride wires, 8 to 11 mm, SFWM | $1.9\times10^4$ to $1.9\times10^5$ Hz/nm/mW$^2$ | the silicon wire's brightness at 1 cm |
 
 ```python
-print(f"TFLN: gfem {per_ghz:.3g} against 4.6e5 pairs/s/GHz/mW, ratio {per_ghz / 4.6e5:.1f}")
+print(
+    f"TFLN: gfem {per_ghz:.3g} against 4.6e5 pairs/s/GHz/mW, ratio {per_ghz / 4.6e5:.1f}"
+)
 print(f"TFLN: total {rate / (power * 1e3) * 1e-9:.3g} GHz/mW in the bands (Javid: 13)")
-print(f"Si: gfem {per_nm_w:.3g} Hz/nm/mW^2, ratio {per_nm_w / 1.9e5:.1f} to {per_nm_w / 1.9e4:.1f}")
+print(
+    f"Si: gfem {per_nm_w:.3g} Hz/nm/mW^2, ratio {per_nm_w / 1.9e5:.1f} to {per_nm_w / 1.9e4:.1f}"
+)
 ```
 
 ```text
