@@ -242,6 +242,12 @@ $10^{-6}$ s/m², 1 ps²/km is $10^{-27}$ s²/m and 1 ps³/km is $10^{-39}$ s³/m
 they mean: {doc}`modes-and-ports`; the calculation:
 {doc}`recipes/waveguide-dispersion`.
 
+On a bent port mode, $\gamma$ and these derivatives are per unit length of the
+reference arc of radius $R$, at the guide's centre line unless `at` says
+otherwise; `outward` points from the bend's axis through the guide. The loss
+per 90° is $(10\pi/\ln 10)\,R\,\mathrm{Re}\,\gamma$ in dB, with the sign of
+loss above. {doc}`modes-and-ports`.
+
 ## Kerr nonlinearity
 
 `nonlinear_index` $n_2$ (m²/W) and `two_photon_absorption`
@@ -252,6 +258,9 @@ absorption and its sign does not follow `n_eff`'s $n' - in''$. It is in
 1/(W m) on a 3D section and 1/W on a line port of a 2D model.
 {doc}`recipes/waveguide-nonlinearity`.
 Derivation and a check on a solve: {ref}`Kerr nonlinearity <theory-nonlinear-and-quantum-optics-kerr-nonlinearity>`.
+On a bent port mode the integral runs over the physical field, with the
+volume element weighted by $h = 1 + \xi/R$, and is per unit length of the
+reference arc. {doc}`recipes/waveguide-bends`.
 
 ## Raman gain
 
