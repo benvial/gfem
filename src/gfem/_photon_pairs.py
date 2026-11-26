@@ -96,9 +96,7 @@ def _sinhc_series(w: Any) -> Any:
     return series
 
 
-def pair_amplitude(
-    length: Any, mismatch: Any, alpha_pair: Any, alpha_pump: Any
-) -> Any:
+def pair_amplitude(length: Any, mismatch: Any, alpha_pair: Any, alpha_pump: Any) -> Any:
     r"""The coherent amplitude of the pairs born along the guide, in m.
 
     .. math::
@@ -146,7 +144,12 @@ def pump_spectrum(omega: Any, energy: Any, duration: Any) -> Any:
     """
     tau = gaussian_width(duration)
     peak = energy / (math.sqrt(math.pi) * tau)
-    return jnp.sqrt(peak) * tau / math.sqrt(2 * math.pi) * jnp.exp(-((omega * tau) ** 2) / 2)
+    return (
+        jnp.sqrt(peak)
+        * tau
+        / math.sqrt(2 * math.pi)
+        * jnp.exp(-((omega * tau) ** 2) / 2)
+    )
 
 
 def pump_square_spectrum(omega: Any, energy: Any, duration: Any) -> Any:
@@ -192,7 +195,7 @@ def cw_rate(density: Any, step: float, identical: bool) -> Any:
 
 
 def pair_count(jsa: Any, step_signal: float, step_idler: float) -> Any:
-    r"""Pairs per pulse :math:`\sum|f|^2\,\delta f_s\,\delta f_i` of a joint spectrum."""
+    r"""Pairs per pulse :math:`\sum|f|^2\,\delta f_s\,\delta f_i` of a spectrum."""
     return jnp.sum(jnp.abs(jsa) ** 2) * step_signal * step_idler
 
 

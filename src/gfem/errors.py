@@ -205,6 +205,34 @@ class PortModeTrackingWarning(UserWarning):
     """
 
 
+class HighGainWarning(UserWarning):
+    r"""A photon-pair source's occupation is too high for the low-gain result.
+
+    `gfem.PhotonPairSource` computes the first order of the parametric gain:
+    the exact density is :math:`\sinh^2(gL)` against :math:`(gL)^2`, and a mean
+    number of pairs :math:`\bar n` per mode also means a multi-pair
+    probability near :math:`\\bar n`. The warning fires when the strongest mode
+    may hold more than 0.1 pairs: for a pulse, ``pairs_per_pulse *
+    sqrt(purity)``; for a continuous pump, the peak spectral density in
+    pairs/(s Hz). The figure then under-counts: lower the pump or the length.
+    Filter it with Python's `warnings` module.
+    """
+
+
+class UnresolvedJointSpectrumWarning(UserWarning):
+    """A joint spectral amplitude is under-sampled or cut by its bands.
+
+    Raised by `gfem.PhotonPairSource.joint_spectrum` when the amplitude jumps
+    by more than 0.25 of its peak between grid neighbours (fewer than about 11
+    points per lobe of the phase-matching function), or reaches more than 0.1
+    of its peak on a band edge (the bands act as ideal filters, so the pairs
+    outside them are not counted, and a tail of that size holds a few percent
+    of the pairs). Use more ``points``, a shorter guide or wider bands; a
+    filtered source is a legitimate question, so filter the warning with
+    Python's `warnings` module if the cut is intended.
+    """
+
+
 class LostBandWarning(UserWarning):
     """A band found inside the window has no partner at a neighbouring wave vector.
 

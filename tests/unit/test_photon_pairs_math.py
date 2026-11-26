@@ -75,12 +75,15 @@ def test_the_fit_is_linear_in_the_rows():
     rng = np.random.default_rng(1)
     a, b = rng.normal(size=(2, 7)) + 1j * rng.normal(size=(2, 7))
     np.testing.assert_allclose(
-        pinv @ (2 * a - 3j * b), 2 * (pinv @ a) - 3j * (pinv @ b), rtol=1e-12, atol=1e-13
+        pinv @ (2 * a - 3j * b),
+        2 * (pinv @ a) - 3j * (pinv @ b),
+        rtol=1e-12,
+        atol=1e-13,
     )
 
 
 def test_an_arm_needs_four_distinct_rows():
-    with pytest.raises(ValueError, match="at least 4 frequency rows.*got 3"):
+    with pytest.raises(ValueError, match=r"at least 4 frequency rows.*got 3"):
         pp.arm_basis(_rows(3))
     with pytest.raises(ValueError, match="distinct"):
         pp.arm_basis(np.array([1.0, 2.0, 2.0, 3.0]) * 1e14)
@@ -96,7 +99,7 @@ def test_the_amplitude_is_the_z_integral_and_its_square_the_decayed_law(alphas):
     for delta in (0.0, 80.0, -220.0, 1500.0):
         amp = complex(pp.pair_amplitude(length, delta, a_pair, a_pump))
 
-        def integrand(z):
+        def integrand(z, delta=delta):
             return np.exp(-a_pump * z - a_pair * (length - z) + 1j * delta * z)
 
         re = scipy.integrate.quad(lambda z: integrand(z).real, 0, length, limit=500)
@@ -114,7 +117,9 @@ def test_the_lossless_amplitude_is_the_sinc_with_its_phase():
     length, delta = 0.01, 313.0
     v = delta * length / 2
     got = complex(pp.pair_amplitude(length, delta, 0.0, 0.0))
-    np.testing.assert_allclose(got, length * np.exp(1j * v) * np.sinc(v / np.pi), rtol=1e-14)
+    np.testing.assert_allclose(
+        got, length * np.exp(1j * v) * np.sinc(v / np.pi), rtol=1e-14
+    )
 
 
 def test_the_amplitude_and_its_gradient_are_finite_at_zero_mismatch_and_loss():
@@ -129,7 +134,9 @@ def test_the_amplitude_and_its_gradient_are_finite_at_zero_mismatch_and_loss():
     # d/d delta = i L^2/2 and d/d alpha = -L^2/2 for the signal-idler and the
     # pump decay (the z integral of z or L - z)
     d = jax.jacfwd(parts, argnums=(0, 1, 2))(0.0, 0.0, 0.0)
-    want = np.array([[0.0, -length**2 / 2, -length**2 / 2], [length**2 / 2, 0.0, 0.0]])
+    want = np.array(
+        [[0.0, -(length**2) / 2, -(length**2) / 2], [length**2 / 2, 0.0, 0.0]]
+    )
     got = np.array([[float(x) for x in d[0]], [float(x) for x in d[1]]])
     # the series is exact to 1e-17 relative at the origin
     np.testing.assert_allclose(got.T, want.T, rtol=1e-13, atol=1e-15)
@@ -150,7 +157,9 @@ def test_the_pump_spectrum_carries_the_pulse_energy_and_the_fwhm():
     a = np.asarray(pp.pump_spectrum(omega, energy, duration))
     # 2 pi int |A|^2 domega = U: a Gaussian on a grid 12 widths wide is exact
     # to the trapezoid's spectral accuracy (1e-15 relative)
-    np.testing.assert_allclose(2 * np.pi * np.trapezoid(a**2, omega), energy, rtol=1e-12)
+    np.testing.assert_allclose(
+        2 * np.pi * np.trapezoid(a**2, omega), energy, rtol=1e-12
+    )
 
     def power(t):
         field = np.trapezoid(a * np.exp(-1j * omega * t), omega)
@@ -167,7 +176,9 @@ def test_the_square_spectrum_is_the_autoconvolution_of_the_envelope():
     w = np.linspace(-14 / tau, 14 / tau, 5601)
     a = np.asarray(pp.pump_spectrum(w, energy, duration))
     for shift in (0.0, 0.7 / tau, -2.3 / tau):
-        conv = np.trapezoid(a * np.asarray(pp.pump_spectrum(shift - w, energy, duration)), w)
+        conv = np.trapezoid(
+            a * np.asarray(pp.pump_spectrum(shift - w, energy, duration)), w
+        )
         np.testing.assert_allclose(
             conv, float(pp.pump_square_spectrum(shift, energy, duration)), rtol=1e-12
         )
@@ -209,7 +220,9 @@ def test_identical_photons_count_each_pair_once():
     m = rng.normal(size=(20, 20)) + 1j * rng.normal(size=(20, 20))
     sym = m + m.T
     full = float(pp.pair_count(pp.identical_scale(True) * sym, 1.0, 1.0))
-    half_plane = np.sum(np.abs(np.triu(sym, 1)) ** 2) + 0.5 * np.sum(np.abs(np.diag(sym)) ** 2)
+    half_plane = np.sum(np.abs(np.triu(sym, 1)) ** 2) + 0.5 * np.sum(
+        np.abs(np.diag(sym)) ** 2
+    )
     np.testing.assert_allclose(full, half_plane, rtol=1e-13)
     assert pp.identical_scale(False) == 1.0
 
@@ -264,7 +277,9 @@ def test_the_trace_purity_is_the_svd_purity_of_a_complex_spectrum():
     rng = np.random.default_rng(7)
     x = np.linspace(-3, 3, 70)
     xs, xi = np.meshgrid(x, x[:55], indexing="ij")
-    jsa = np.exp(-0.5 * (1.3 * xs**2 + 1.1 * xs * xi + 0.8 * xi**2)) * np.exp(0.4j * xs * xi)
+    jsa = np.exp(-0.5 * (1.3 * xs**2 + 1.1 * xs * xi + 0.8 * xi**2)) * np.exp(
+        0.4j * xs * xi
+    )
     jsa = jsa + 0.05 * (rng.normal(size=jsa.shape) + 1j * rng.normal(size=jsa.shape))
     s = np.linalg.svd(jsa, compute_uv=False)
     lam = s**2 / np.sum(s**2)
@@ -298,9 +313,7 @@ _PERIOD0 = 30e-6
 def _spectrum(length, duration, period):
     xs, xi = np.meshgrid(_FS, _FS, indexing="ij")
     delta = (
-        2 * np.pi * (_KS * xs + _KI * xi)
-        + 2 * np.pi / _PERIOD0
-        - 2 * np.pi / period
+        2 * np.pi * (_KS * xs + _KI * xi) + 2 * np.pi / _PERIOD0 - 2 * np.pi / period
     )
     pump = pp.pump_spectrum(2 * np.pi * (xs + xi), 1e-12, duration)
     gain = pp.poling_gain(0.5, 1)
@@ -331,7 +344,8 @@ def test_the_figures_differentiate_like_their_finite_differences(which):
     dn[which] -= h
     fd = (np.asarray(_figures(*up)) - np.asarray(_figures(*dn))) / (2 * h)
     np.testing.assert_allclose(jac, fd, rtol=1e-6, atol=0)
-    assert np.all(np.isfinite(jac)) and np.abs(jac).min() > 0
+    assert np.all(np.isfinite(jac))
+    assert np.abs(jac).min() > 0
 
 
 def test_the_jitted_figures_are_the_eager_figures():
@@ -341,5 +355,7 @@ def test_the_jitted_figures_are_the_eager_figures():
     np.testing.assert_allclose(jitted, eager, rtol=1e-12)
     grad = jax.jit(jax.jacfwd(_figures, argnums=0))(*_ARGS)
     np.testing.assert_allclose(
-        np.asarray(grad), np.asarray(jax.jacfwd(_figures, argnums=0)(*_ARGS)), rtol=1e-10
+        np.asarray(grad),
+        np.asarray(jax.jacfwd(_figures, argnums=0)(*_ARGS)),
+        rtol=1e-10,
     )
