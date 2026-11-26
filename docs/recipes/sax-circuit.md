@@ -4,29 +4,15 @@ Put a finite-element solve inside a circuit of analytic models, and take
 `jax.grad` of the circuit with respect to the solve's design and to the
 analytic models' parameters at once. A {py:obj}`gfem.SaxComponent` turns a
 {py:obj}`gfem.Driven` solve into a model that a
-[SAX](https://github.com/flaport/sax) netlist places like its own splitters,
-waveguides and capacitors. It works for photonic circuits (wavelength in µm)
-and RF circuits (frequency in Hz) alike. Install the extra with
-`pip install "gfem[sax]"`; gfem itself never imports SAX, a component returns
-a plain dictionary that SAX reads.
-
-Two examples follow, both on the meshes of the tutorials: an unbalanced
-Mach-Zehnder interferometer whose arms turn through a finite-element bend, and
-the ceramic line section of {doc}`../get-started` placed behind a series
-capacitor in a 50 Ω system.
+[SAX](https://github.com/flaport/sax) netlist places like its own
+(`pip install "gfem[sax]"`).
 
 ## A photonic circuit
 
-The arms of the interferometer each turn through the 2D waveguide bend of the
-{doc}`../tutorials/bend` (core index 2.25 in a cladding of 1.444, $E_z$
-polarization), whose design square holds a quarter ring of core. Ideal 50/50
-couplers split and join the light, and analytic waveguides carry it between.
-The question: how does the power at the bar output at 1.55 µm change with the
-bend's core pattern and with the length difference of the arms?
-
-The bend is a function of its design: the core fraction of each 0.05 µm pixel
-of the design square, which `bend_at` lays into the model. The component takes
-that function and the frequencies of the band it must answer in:
+In an unbalanced Mach-Zehnder interferometer each arm turns through the 2D
+bend of the {doc}`../tutorials/bend`. How does the power at the bar output at
+1.55 µm change with the bend's core pattern and the arms' length difference?
+The component takes the bend as a function of its design, and a band:
 
 ```python
 import urllib.request
@@ -90,19 +76,12 @@ print(list(block.settings))
 ['density', 'wl']
 ```
 
-- The component's settings are the keyword defaults of the model function,
-  here `density`, plus `wl`, the circuit's wavelength in µm. The constructor
-  solves once, at the defaults.
-- `ports` maps the model's ports to the names the netlist connects: the
-  {term}`circuit port` `o1` is the model's `p1`. A port left out still
-  terminates the device as in a solve.
-- SAX hands `density` over as a JAX array when it is set on an instance, and
-  unchanged otherwise. `arc` is a pixel image, as in the bend tutorial.
+- The settings are the keyword defaults of the model function, here `density`,
+  plus `wl` in µm. `ports` maps the model's ports to the
+  {term}`circuit port` names the netlist connects.
 
-The arms' straight guides are analytic. SAX's `straight` takes an effective
-index and a group index, so take both from the bend's own port mode, the
-index at three neighbouring wavelengths giving the group index
-$n_g = n_\mathrm{eff} - \lambda\,\mathrm{d}n_\mathrm{eff}/\mathrm{d}\lambda$:
+The arms' analytic guides take their indices from the bend's own port mode:
+$n_g = n_\mathrm{eff} - \lambda\,\mathrm{d}n_\mathrm{eff}/\mathrm{d}\lambda$.
 
 ```python
 modes = gfem.solve(
@@ -119,9 +98,7 @@ n_eff 2.0575, n_g 2.3076
 ```
 
 The netlist joins the pieces. Build the circuit once, outside `jax.jit` and
-`jax.grad`, and pass designs as the settings of its instances: SAX's default
-backend cannot build a circuit inside `jax.jit`, and a circuit built once is
-analysed once.
+`jax.grad`, and pass designs as the settings of its instances:
 
 ```python
 mzi, _ = sax.circuit(
@@ -173,49 +150,25 @@ print(f"{power:.4f}", g_density.shape, f"{g_dl:.4f}")
 ```
 
 One `jax.grad` returns the derivative with respect to the bend's 3600 pixels
-(`g_density`, a gfem input) and to the arms' length difference in µm (`g_dl`,
-a SAX input). Both bends are fed the same design, so one solve and one
-backward pass serve them. A 20 µm length difference gives a free spectral
-range near 50 nm, so the bar output has a fringe across the band.
+(`g_density`) and the arms' length difference in µm (`g_dl`, a SAX input); both
+bends share one solve and one backward pass.
 
 ### The polarity reference
 
-Each wave port a component exposes needs a {term}`polarity reference`. A
-port mode is defined up to a sign, and the sign of the port's row and column
-of S is otherwise set by the mesh (and in 3D by the model's orientation). Within
-one block it changes no power. Around a loop of the netlist it swaps an
-interferometer's bar and cross outputs, so it must be physical.
-
-- On a 2D model the reference is a point and `"+z"` or `"-z"`: the field
-  normal to the plane is real and positive at that point, at every frequency.
-  Here the guide's even mode is positive at its centre.
-- On a 3D model it is a point and an in-plane direction: the electric field
-  along that direction is real and positive at the point.
-- A lumped port, or a wave port with a `voltage_path`, needs none: its voltage
-  fixes the sign. A port left out of `ports` needs none.
-
-### Conventions of the photonic block
-
-gfem's fields go as $e^{+i\omega t}$ and SAX's photonic models as
-$e^{-i\omega t}$ (a straight guide of length $L$ is $e^{+ikL}$). A photonic
-component therefore hands SAX $\overline{S}$, the complex conjugate of gfem's
-S, with unit modal power on each wave port. The couplers are ideal and the
-guides analytic with the port mode's index, so the example is a model of
-the interferometer, not a layout. The conventions page lists the rules:
-{doc}`../conventions`.
+Each exposed wave port needs a {term}`polarity reference` (a point and a
+direction): a port mode's sign changes no power inside a block but swaps an
+interferometer's bar and cross outputs around a loop. A lumped port or a wave
+port with a `voltage_path` needs none. A photonic component hands SAX the
+complex conjugate of gfem's S, since SAX's models go as $e^{-i\omega t}$
+({doc}`../conventions`).
 
 ## The band and the circuit's wavelengths
 
 The frequencies of the `Driven` template are the component's
-{term}`component band`. At each evaluation the component solves the whole band
-for the design, and answers any wavelength inside it: exactly at the band's
-frequencies, and by a cubic interpolation in frequency between them. The
-interpolation error is about $\theta^3/16$, with $\theta$ the largest phase
-change of an entry of S between neighbouring band frequencies, so about 25
-band frequencies per $2\pi$ of phase keep it near $10^{-3}$. The bend's 11
-frequencies give steps of 0.29 rad.
-
-A spectrum is then free: no solve runs while the design is unchanged.
+{term}`component band`. Each evaluation solves the whole band for the design
+and answers any wavelength inside it by a cubic interpolation in frequency,
+with an error near $10^{-3}$ at 25 band frequencies per $2\pi$ of phase. A
+spectrum then costs no solve:
 
 ```python
 bar_spectrum = jax.jit(
@@ -241,28 +194,16 @@ print(spectrum.shape, f"{spectrum.min():.2f} to {spectrum.max():.2f}")
 ```
 
 - A wavelength outside the band raises `ValueError`; under `jax.jit` or
-  `jax.grad`, where it may be unknown, the value and the gradient are NaN.
-  Without `wl`, the component reads the band frequency nearest its middle.
-- The derivative with respect to `wl` is that of the interpolant, not a group
-  delay of the physics beyond the interpolation's accuracy.
-- The template's frequencies may come in any order: the component sorts them.
-- A long or resonant block wants a dense band. A 3D model can use
-  `gfem.Driven(..., sweep="adaptive")` over hundreds of frequencies (2D
-  models refuse the adaptive sweep): the component runs it once when it is
-  built and keeps its samples for every later design, so a value never
-  depends on whether it is differentiated ({doc}`adaptive-sweep-gradient`). To
-  compare such a component's gradient with finite differences, build it with
-  `options=gfem.SolverOptions(tolerance=1e-7, adaptive_tolerance=1e-6)`: the
-  adaptive tolerance must be at least ten times `tolerance`, so a tighter sweep
-  needs tighter solves too.
+  `jax.grad` the value and the gradient are NaN. The derivative with respect
+  to `wl` is that of the interpolant.
+- A 3D model can use `gfem.Driven(..., sweep="adaptive")` over hundreds of
+  frequencies, run once at build ({doc}`adaptive-sweep-gradient`).
 
 ## An RF circuit
 
-The RF example is the 20 mm ceramic section of {doc}`../get-started`, a
-parallel-plate line fed by two lumped ports of $\eta_0 h / w \approx 62.8$ Ω,
-placed in a 50 Ω system in series with an ideal capacitor. How does its
-reflection at 5 GHz change with the ceramic's permittivity and the
-capacitance?
+The ceramic section of {doc}`../get-started` sits in a 50 Ω system in series
+with an ideal capacitor. How does its reflection at 5 GHz change with the
+ceramic's permittivity and the capacitance?
 
 ```python
 url = "https://raw.githubusercontent.com/benvial/gfem/main/docs/tutorials/data/line.msh"
@@ -320,75 +261,27 @@ print(f"{value:.4f} {g_eps:.4f} {g_cap:.4e}")
 0.0597 0.1966 1.5793e+10
 ```
 
-The ceramic's permittivity is a scalar setting; the model function turns it
-into the material field the solve needs. The reflection grows by 0.20 per unit
-of permittivity and by $1.6 \times 10^{10}$ per farad of capacitance.
+The reflection grows by 0.20 per unit of permittivity and by
+$1.6 \times 10^{10}$ per farad of capacitance.
 
-- `f` in Hz and `z0` in Ω are settings of the component, with `z0` 50 Ω by
-  default. Set `z0` once for the whole circuit, as above, so SAX passes the
-  same value to every model. The component renormalizes its ports from their own
-  reference impedances to `z0` after the solve, so a new `z0` costs no solve.
-- gfem, SAX's RF models and scikit-rf share $e^{+j\omega t}$, so S is not
-  conjugated.
-- An exposed lumped port needs a resistance (`resistance=` or `impedance=`).
-  A lumped port with only an inductance or a capacitance stays inside the
-  device as an {term}`internal lumped load`: leave it out of `ports`, and its
-  value is still a design setting. An exposed wave port needs a
-  `voltage_path`, which is also its polarity reference. A 2D model, or a
-  Floquet port, cannot be an RF component. Each is refused when the component
-  is built, naming the port and the remedy.
-- The band is 4.5 to 5.5 GHz in 11 frequencies: 0.27 rad of phase between
-  neighbours, so the interpolation between them stays near $10^{-3}$.
-- The common reference is the one real impedance every RF model of the circuit
-  refers its S to ({term}`common reference impedance`).
-
-### SAX's RF models beside a gfem block
-
-gfem cannot check any of the following, because it never sees the netlist.
-
-1. Give every model one reference: pass `z0` to the circuit call, never per
-   instance. A single mismatched instance gives a wrong circuit with no error.
-2. `sax.models.rf.coplanar_waveguide` and `microstrip` are matched to their own
-   characteristic impedance and take no `z0`, so a circuit-wide `z0` does not
-   reach them. Beside a gfem block they are right only when that impedance
-   equals `z0`. Write a small model around
-   `sax.models.rf.transmission_line_s_params(gamma, z_c, length, z_ref=z0)`
-   instead.
-3. In released SAX, `sax.models.rf.admittance` has no `z0` and is normalized to
-   0.5 Ω. Use `impedance(z=1 / y, z0=z0)`.
-4. With SAX 0.16, the coplanar and microstrip helpers need the `jaxellip`
-   package (`pip install "sax[rf]"`); the lumped models and
-   `transmission_line_s_params` need nothing extra.
-
-A quasi-TEM line's impedance has several definitions. To join a wave-port block
-to an analytic line without a spurious reflection, build the line from the
-block's own port mode: pass the `gamma` and `Z_PV` of a
-`gfem.solve(model, gfem.PortMode(...))` result, interpolated on the band, to
-`transmission_line_s_params`.
+- `f` (Hz) and `z0` (Ω, 50 by default) are settings; a new `z0` costs no
+  solve. Set `z0` once for the whole circuit so SAX passes it to every model.
+- SAX's RF `coplanar_waveguide`, `microstrip` and `admittance` ignore `z0`;
+  beside a gfem block use `transmission_line_s_params(..., z_ref=z0)` and
+  `impedance(z=1 / y, z0=z0)`. gfem cannot check the netlist.
 
 ## What a circuit evaluation solves
 
-- Each component solves once when it is built, at its defaults. An evaluation
-  solves each component once per distinct design, over its whole band:
-  instances with equal settings, or fed the same traced value in the same trace,
-  share one solve,
-  and a component whose settings do not change (a fixed block) costs no solve
-  during an optimization. `cache=` passes gfem's disk solve cache
-  ({doc}`save-and-export`) to every solve.
-- Between evaluations gfem keeps the solver state (mesh, plan, factorizations)
-  of up to four distinct meshes. A circuit whose components use more distinct
-  meshes rebuilds some of that state at every evaluation and runs slower, with
-  the same results. Instances of one component, and components built on equal
-  meshes, share one.
-- `jax.vmap` over a design setting runs its solves one after another; over `wl`
-  or `f` it runs none. The in-process reuse of an optimization loop applies
-  ({doc}`s-parameter-gradient`, "In an optimization loop").
+An evaluation solves each component once per distinct design over its whole
+band; instances with equal settings share a solve, and a fixed block costs
+none. `cache=` passes gfem's disk solve cache ({doc}`save-and-export`) to every
+solve. `jax.vmap` over a design setting runs its solves one after another.
 
 ## A solved result as a circuit block
 
 A block that is solved once and never differentiated needs no component:
-`result.s.to_sdict(circuit=..., ports=..., z0=...)` gives the same dictionary
-for a solved result, and a model function that returns it is a model for SAX.
+`result.s.to_sdict(circuit=..., ports=..., z0=...)` gives the dictionary for a
+solved result, and a function that returns it is a model for SAX.
 
 ```python
 result = gfem.solve(line_at(), gfem.Driven(frequency=5e9))
@@ -416,19 +309,15 @@ print(f"{abs(s_fixed['in', 'in']) ** 2:.4f}")
 0.0597
 ```
 
-- Every port pair is in the dictionary, zeros included, because SAX reads a
-  missing pair as zero. Every exposed port must have been excited.
-- For RF the dictionary is always on one `z0`, 50 Ω if none is given.
-- The same S as a scikit-rf network is `result.s.to_skrf()`:
-  {doc}`save-and-export`.
+Every port pair is in the dictionary, zeros included, and every exposed port
+must have been excited. `result.s.to_skrf()` is the same S as a scikit-rf
+network ({doc}`save-and-export`).
 
 ## Check your results
 
-The first two checks use what the page already holds. The gradient of the
-interferometer's arm length is SAX's alone and needs no solve; compare it, and
-the gradient with respect to the design along a random direction, with central
-differences. `gfem.release_memory()` before each evaluation keeps one solve's
-memory from piling on the last, as in {doc}`s-parameter-gradient`.
+Compare the arm-length gradient (SAX's alone) and the design gradient along a
+random direction with central differences, calling `gfem.release_memory()`
+before each evaluation ({doc}`s-parameter-gradient`).
 
 ```python
 step = 1e-3
@@ -452,9 +341,8 @@ print(f"{slope:.3e} {(values[0] - values[1]) / (2 * h):.3e}")
 -1.813e-04 -1.813e-04
 ```
 
-The component at a band frequency is the solve's own S, and the two outputs
-together carry no more power than goes in, since the couplers are lossless and
-the bends lose some:
+The component at a band frequency is the solve's own S, and the outputs carry
+no more power than goes in:
 
 ```python
 direct = gfem.solve(
@@ -477,9 +365,8 @@ True
 0.6900
 ```
 
-Between band frequencies, solve a few frequencies directly and compare: the
-difference is the interpolation error above. For the RF circuit, the same
-two-port in scikit-rf's cascade gives the same reflection:
+Between band frequencies a direct solve differs by the interpolation error. The
+RF circuit's reflection matches scikit-rf's cascade:
 
 ```python
 import skrf
@@ -500,24 +387,14 @@ How gfem itself is checked: {doc}`../verification`.
 
 ## Limits
 
-- The frequency of a solve is not differentiable, only the interpolant's.
-- No forward-mode derivative (`jax.jvp`) with respect to a design setting.
-  `jax.vmap` over designs is sequential.
-- Build the circuit outside `jax.jit`.
-- A design that touches a wave port's face raises `gfem.PortGeometryError` at
-  the first gradient. A fixed block is fine.
-- RF components need a 3D model and one reference impedance for the whole
-  netlist.
-- Distributed (MPI) solves and Floquet ports inside a component are not tested.
-- gfem has no group index on a port mode: take it from the effective index at
-  neighbouring wavelengths, as above.
+- **Frequency.** Only the interpolant's derivative exists, not the solve's.
+- **Design settings.** No `jax.jvp`; `jax.vmap` is sequential.
+- **Circuit.** Build it outside `jax.jit`; RF components need a 3D model.
+- **Port faces.** A design touching a wave port's face raises
+  `gfem.PortGeometryError` at the first gradient.
 
 ## Next
 
-- {py:obj}`gfem.SaxComponent`, {py:obj}`gfem.NetworkParameters.to_sdict` and
-  {py:obj}`gfem.WavePort` in the reference.
-- {doc}`s-parameter-gradient`, {doc}`adaptive-sweep-gradient` and
-  {doc}`save-and-export`.
-- {doc}`../conventions` for what a circuit receives.
-- [SAX](https://github.com/flaport/sax) for the analytic models.
-- {term}`SAX component` in the glossary.
+{py:obj}`gfem.SaxComponent`, {py:obj}`gfem.NetworkParameters.to_sdict`,
+{doc}`s-parameter-gradient`, {doc}`adaptive-sweep-gradient`,
+{doc}`save-and-export`, {doc}`../conventions`, {term}`SAX component`.
