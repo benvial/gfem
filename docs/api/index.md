@@ -24,6 +24,7 @@ gfem/thermal/index
 gfem/thermo_optic/index
 gfem/electro_optic/index
 gfem/acousto_optic/index
+gfem/optomechanics/index
 gfem/kerr/index
 gfem/three_wave/index
 gfem/photon_pairs/index

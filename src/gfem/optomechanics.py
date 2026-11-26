@@ -392,7 +392,7 @@ def optomechanical_overlap(
     Args:
         model: The optical model: a 3D slab (`gfem.Mesh.from_gmsh_cross_section`)
             with a lossless section.
-        displacement: A displacement `gfem.FieldMap` with the components
+        displacement: A displacement ``FieldMap`` with the components
             ``x``, ``y``, ``z`` (m) at :math:`q = 0`, on a native 2D mesh with
             the same global :math:`(x, y)` as the optical section (translate a
             mesh to align them).
@@ -407,7 +407,7 @@ def optomechanical_overlap(
 
     Raises:
         TypeError: ``model`` is not a `gfem.Model`, or ``displacement`` is not
-            a `gfem.FieldMap`.
+            a ``FieldMap``.
         ValueError: ``port`` is not a wave port of the model, a sequence of
             frequencies is given, ``displacement`` lacks a component, is not
             on a 2D mesh or has an axial wavenumber other than 0, the port's
