@@ -45,9 +45,9 @@ complex scalars, 64-bit indices, MUMPS, METIS, ScaLAPACK and PT-Scotch.
 - An eigenmode solve across ranks uses SLEPc from this stack.
 - The script's MUMPS orders with PT-Scotch on at most 32 processes;
   `MUMPS_PARAORD_MAX` sets another cap (2 or more, `0` for none). A stack
-  built before the cap logs once, at INFO on `gfem.solver`, how many ranks a
+  built before the cap logs once, at INFO on `"gfem.solver"`, how many ranks a
   rebuilt one would use.
-- A stack runs under the Open MPI it was built on. The no-MPI stack under a
+- A stack runs under its build's Open MPI. The no-MPI stack under a
   launcher serves {term}`rank copies` only; a {term}`distributed solve`
   naming PETSc raises `gfem.SolverUnavailableError`.
 - `--mpi --with-parmetis` adds ParMETIS, which may not be redistributed.
@@ -187,7 +187,7 @@ How gfem itself is checked on PETSc and SLEPc:
   gradient through a mode's field raises `gfem.NonDifferentiableError`: use
   `"direct"` ({doc}`eigenmode-gradient`).
 - `"petsc"` ignores `SolverOptions.threads`: set `OPENBLAS_NUM_THREADS`.
-- Do not call PETSc from another thread during a gfem solve.
+- Never call PETSc from another thread during a gfem solve.
 
 ## Next
 
