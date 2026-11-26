@@ -66,6 +66,9 @@ MESHES = {
     MESH_URL.replace("data/line.msh", "aom_section.py"): DOCS
     / "tutorials"
     / "aom_section.py",
+    MESH_URL.replace("tutorials/data/line.msh", "recipes/wire_section.py"): DOCS
+    / "recipes"
+    / "wire_section.py",
 }
 
 _FENCE = re.compile(

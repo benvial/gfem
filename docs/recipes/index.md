@@ -49,6 +49,7 @@ orphan: true
 - {doc}`thermo-optic-phase`
 - {doc}`electro-optic-phase`
 - {doc}`acousto-optic-shift`
+- {doc}`optomechanical-coupling`
 - {doc}`piezoelectric-admittance`
 - {doc}`mechanical-modes`
 - {doc}`thermal-step-response`

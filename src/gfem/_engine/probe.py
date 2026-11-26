@@ -47,6 +47,7 @@ __all__ = [
     "Layout",
     "Located",
     "Probe",
+    "covered",
     "face_points",
     "in_support",
     "locate",
@@ -151,6 +152,31 @@ def locate(mesh: Mesh, layout: Layout, points: np.ndarray, comm: Any = None) -> 
         k = int(np.flatnonzero(~inside)[0])
         raise _mpi.agreed(outside_support(mesh, layout, int(tets[k]), points[k]))
     return Located(tets, bary)
+
+
+def covered(mesh: Mesh, layout: Layout, points: np.ndarray) -> np.ndarray:
+    """Which of ``points`` (``(n, dim)``, m) a field of ``layout`` is defined at.
+
+    The test `locate` applies, answered instead of raised: a point is covered
+    when the mesh holds it (to the tolerance of `locate`, so a point on the
+    mesh's boundary counts) and the tetrahedron settled for it is in the
+    support. Not collective: for a mesh every rank holds.
+    """
+    from gfem._engine.cache import discretization
+
+    built = discretization(mesh, (), None).built
+    points = np.asarray(points, float).reshape(-1, mesh.dim)
+    p = points / built.scale
+    z = p[:, 2].copy() if mesh.dim == 3 else np.zeros(len(p))
+    nr = np.asarray(built.mesh(p[:, 0].copy(), p[:, 1].copy(), z)["nr"], np.int64)
+    held = nr >= 0
+    out = np.zeros(len(p), bool)
+    if held.any():
+        tets = np.asarray(built.cell_order)[nr[held]]
+        support = in_support(mesh, layout)
+        settled, _ = _settle(mesh, support, tets, points[held])
+        out[held] = support[settled]
+    return out
 
 
 def outside_support(

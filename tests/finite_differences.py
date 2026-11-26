@@ -57,6 +57,7 @@ from gfem._engine import cache
 __all__ = [
     "RTOL",
     "assert_gradient_matches",
+    "assert_jacobian_matches_by_group",
     "assert_taylor_second_order",
     "derivative",
     "unit_directions",
@@ -147,6 +148,47 @@ def assert_gradient_matches(
                 f"step {step:g}, second-order difference {fd2:.12e})"
             )
             raise AssertionError(msg)
+
+
+def assert_jacobian_matches_by_group(
+    objective: Objective,
+    p,
+    directions: Iterable,
+    step: float,
+    groups: dict[str, Sequence[int]],
+    *,
+    inert: Sequence[int] = (),
+) -> None:
+    """``jacobian . d`` equals the fourth-order difference of every output.
+
+    For a vector ``objective`` whose outputs fall in ``groups`` (a label to the
+    output indices that share a floor): an output whose derivative is under
+    :math:`10^{-3}` of the largest of its group is read against that floor,
+    so round-off on a zero derivative (the imaginary part of a quantity that
+    is real to round-off) is not a failure. ``inert`` outputs do not read the
+    input at all and must have exactly no derivative.
+    """
+    jacobian = np.asarray(_alone(jax.jacrev(objective), p))
+    n = jacobian.shape[0]
+    for d in directions:
+        samples = np.array(
+            [np.asarray(_alone(objective, p + k * step * d)) for k in (-2, -1, 1, 2)]
+        )
+        difference = (8 * (samples[2] - samples[1]) - (samples[3] - samples[0])) / (
+            12 * step
+        )
+        derivative = jacobian.reshape(n, -1) @ np.reshape(d, -1)
+        assert np.abs(derivative).max() > 0
+        assert all(derivative[i] == 0 for i in inert)
+        for label, indices in groups.items():
+            floor = 1e-3 * np.abs(derivative[list(indices)]).max()
+            for i in indices:
+                scale = max(abs(difference[i]), floor)
+                error = abs(derivative[i] - difference[i]) / scale
+                assert error < RTOL, (
+                    f"{label}[{i}]: gradient {derivative[i]:.12e} vs difference "
+                    f"{difference[i]:.12e} (relative error {error:.2e})"
+                )
 
 
 def assert_taylor_second_order(

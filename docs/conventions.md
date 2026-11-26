@@ -859,6 +859,36 @@ photoelastic and electro-optic terms are counted, not the moving boundaries or
 the crystal's rotation. {doc}`recipes/acousto-optic-shift` has the whole
 calculation.
 
+## Optomechanical coupling
+
+{py:obj}`gfem.optomechanical_coupling` reads the modes of a
+{py:class}`gfem.MechanicalEigenmode` solve at $q = 0$, each normalized to 1 J per
+metre of guide, against the mode of a wave port. A displacement $\alpha u$ of
+dimensionless amplitude $\alpha$ changes the effective index at the fixed optical
+frequency $\omega$ by $\partial n_\mathrm{eff}/\partial\alpha$, the sum of a
+moving-boundary and a photoelastic part
+({py:obj}`gfem.optomechanical_overlap`); the coupling per root length is
+
+$$
+\tilde g_0 = \frac{\omega}{n_g}\,\frac{\partial n_\mathrm{eff}}{\partial\alpha}\,
+\sqrt{\frac{\hbar\,\mathrm{Re}\,\Omega}{4}},
+\qquad g_0(L) = \frac{\tilde g_0}{\sqrt{L}},
+$$
+
+with $\Omega$ the mechanical and $\omega$ the optical angular frequency and $n_g$
+the port mode's group index. **Units are angular**: $\tilde g_0$ in
+rad s$^{-1}$ m$^{1/2}$, $g_0$ in rad/s; divide by $2\pi$ for hertz.
+**The sign** is that of $-\partial\omega_c/\partial\alpha$: positive when the
+displacement raises the effective index, and it follows the mechanical mode's
+phase convention (its largest displacement coefficient real and positive), so
+read $|g_0|$; the two parts of one mode keep their relative sign. The values are
+complex for a lossy mode and real to round-off otherwise. The forward
+intramodal Brillouin gain of a guide is
+$G_\mathrm{B} = 4 Q_m \tilde g_0^2/(\hbar\omega\,v_g^2\,\mathrm{Re}\,\Omega)$
+with $v_g = c/n_g$ (Van Laer et al., Phys. Rev. A 93, 053828 (2016)). The
+rotation of the crystal by the displacement is not counted.
+{doc}`recipes/optomechanical-coupling` has the whole calculation.
+
 ## Piezoelectric problems
 
 A {py:class}`gfem.Piezoelectric` problem solves linear piezoelectricity on a

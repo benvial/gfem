@@ -27,10 +27,18 @@ Hermitian :math:`\hat K` and a real :math:`M`), :math:`x` at :math:`q = 0` (a
 complex symmetric pencil), and otherwise comes from inverse iteration on the
 transposed LU of :math:`A` at a nearby shift. The group velocity is
 :math:`\mathrm{Re}\,[y^T (\partial_q \hat K) x / (2\omega\,y^T M x)]`.
+
+Gradients reach the pencil's pieces through field pairs of the
+piezoelectric kernel: :math:`\omega` through :math:`y` and :math:`x` with no
+solve, a mode's field (displacement and potential, as normalized and gauged)
+through one bordered solve with :math:`A(\lambda)^T` at the converged
+eigenvalue (`MechanicalSystem.field_adjoint`).
 """
 
 from __future__ import annotations
 
+import dataclasses
+import functools
 from collections.abc import Callable
 from typing import Any
 
@@ -119,7 +127,9 @@ class MechanicalEigenmodeRule:
         }
     )
     #: Outputs whose cotangents the backward pass handles.
-    differentiable_outputs: frozenset[str] = frozenset({"omega", "cluster"})
+    differentiable_outputs: frozenset[str] = frozenset(
+        {"omega", "cluster", "displacement", "potential"}
+    )
 
     def __init__(
         self,
@@ -308,14 +318,12 @@ class MechanicalEigenmodeRule:
         why = {
             "group_velocity": "it is read from the modes and their derivative in q",
             "error": "it is the backward error of the solve",
-            "displacement": "the mode fields need a bordered eigenvector adjoint",
-            "potential": "the mode fields need a bordered eigenvector adjoint",
         }[name]
         return (
             f"gfem does not differentiate the MechanicalEigenmode output {name!r}: "
-            f"{why}. The eigenfrequencies (omega, so frequency and Q) keep their "
-            "gradients; wrap the value in jax.lax.stop_gradient to use it without "
-            "its derivative."
+            f"{why}. The eigenfrequencies (omega, so frequency and Q) and the "
+            "mode fields keep their gradients; wrap the value in "
+            "jax.lax.stop_gradient to use it without its derivative."
         )
 
     def backward(
@@ -326,33 +334,40 @@ class MechanicalEigenmodeRule:
         *,
         wanted: frozenset | None = None,  # noqa: ARG002
     ) -> list[FieldPair]:
-        r"""Fold the ``omega`` cotangents into field pairs, one per mode: no solve.
+        r"""Fold the cotangents of ``omega`` and the mode fields into field pairs.
 
         With :math:`\lambda = \omega^2`, the left vector :math:`y`, the right
         one :math:`x` and :math:`g = y^T M x`, :math:`d\lambda = y^T (d\hat K -
         \lambda\,dM)\,x / g` and :math:`d\omega = d\lambda / (2\omega)`: for a
-        cotangent :math:`\bar\omega` the pair is left :math:`y`, right
+        cotangent :math:`\bar\omega` alone the pair is left :math:`y`, right
         :math:`x\,\bar\omega / (2\omega g)`, with the weights of every piece of
-        :math:`\hat K` at :math:`q` and :math:`-\lambda` on the mass. The left
-        field is the test side of each form (`_terms`, `tensors`).
+        :math:`\hat K` at :math:`q` and :math:`-\lambda` on the mass, and no
+        solve. A cotangent on a mode's displacement or potential adds one
+        solve at the converged eigenvalue (`MechanicalSystem.field_adjoint`).
+        The left field
+        is the test side of each form (`_terms`, `tensors`).
 
         Raises:
             NonDifferentiableError: A mode with a cotangent shares its cluster
                 (its vectors depend on a choice of basis).
         """
-        ct = cotangents.get("omega")
-        if ct is None or not np.any(ct):
-            return []
         fields = entry.fields
-        ct = np.asarray(ct, dtype=complex)
-        problem = self.problem
-        for i in np.flatnonzero(ct):
+        n = len(fields["lambda"])
+        omega_ct = np.zeros(n, complex)
+        if cotangents.get("omega") is not None:
+            omega_ct += np.asarray(cotangents["omega"])
+        field_ct = _field_cotangent(cotangents, n, len(fields["x"]))
+        has_field = np.any(field_ct != 0, axis=1)
+        live = np.flatnonzero((omega_ct != 0) | has_field)
+        if not len(live):
+            return []
+        for i in live:
             if fields["shared"][i]:
                 omega = np.sqrt(fields["lambda"][i])
                 raise NonDifferentiableError(
-                    f"gfem cannot differentiate the frequency {omega / (2 * np.pi):.6g}"
-                    " Hz of the MechanicalEigenmode mode "
-                    f"{i}: it is degenerate with another mode (to "
+                    "gfem cannot differentiate the frequency or the field of the "
+                    f"MechanicalEigenmode mode {i} at {omega / (2 * np.pi):.6g} Hz: "
+                    "it is degenerate with another mode (to "
                     "SolverOptions.cluster_rtol), so its eigenvector, and its "
                     "derivative, depend on an arbitrary choice of basis. Break the "
                     "symmetry of the section, or wrap the value in "
@@ -360,26 +375,52 @@ class MechanicalEigenmodeRule:
                 )
         pairs: list[FieldPair] = []
         with task_manager(self.options.threads, self.comm):
+            # the field adjoint solves on the assembled pencil; omega alone reads
+            # nothing of it
             system = MechanicalSystem(
-                model, problem, self.options, self, assemble=False
+                model, self.problem, self.options, self, assemble=bool(has_field.any())
             )
-            built = system.built
-            domain = em_region(model, built, "em")
-            q = system.q
-            for i in np.flatnonzero(ct):
-                lam = fields["lambda"][i]
-                omega = np.sqrt(lam)
-                scale = ct[i] / (2 * omega * fields["gram"][i])
-                pairs.append(
-                    FieldPair(
-                        space=system.space,
-                        left=fields["y"][:, i : i + 1],
-                        right=fields["x"][:, i : i + 1] * scale,
-                        weights=_weights(q, lam, coupled=self.coupled),
-                        order=self.options.order,
-                        domain=domain,
+            try:
+                domain = em_region(model, system.built, "em")
+                weights = functools.partial(_weights, system.q, coupled=self.coupled)
+                for i in live:
+                    lam = fields["lambda"][i]
+                    omega = np.sqrt(lam)
+                    x = fields["x"][:, i]
+                    y = fields["y"][:, i]
+                    left = y * (omega_ct[i] / (2 * omega * fields["gram"][i]))
+                    if has_field[i]:
+                        adjoint = system.field_adjoint(
+                            lam,
+                            x,
+                            y,
+                            fields["gram"][i],
+                            field_ct[i],
+                            gauge=int(fields["gauge"][i]),
+                        )
+                        left = left + adjoint.left
+                        pairs.append(
+                            FieldPair(
+                                space=system.space,
+                                left=np.conj(x)[:, None],
+                                right=x[:, None] * adjoint.mass,
+                                weights={"mass": 1.0},
+                                order=self.options.order,
+                                domain=domain,
+                            )
+                        )
+                    pairs.append(
+                        FieldPair(
+                            space=system.space,
+                            left=left[:, None],
+                            right=x[:, None],
+                            weights=weights(lam),
+                            order=self.options.order,
+                            domain=domain,
+                        )
                     )
-                )
+            finally:
+                system.release()
         return pairs
 
     def terms(self, model: Model, *, nodes: bool) -> list[Term]:  # noqa: ARG002
@@ -395,6 +436,27 @@ class MechanicalEigenmodeRule:
             wavenumber=self.problem.wavenumber * discretization(model.mesh).built.scale,
             coupled=self.coupled,
         )
+
+
+def _field_cotangent(
+    cotangents: dict[str, np.ndarray], n: int, ndof: int
+) -> np.ndarray:
+    """The cotangents of the ``n`` modes' displacement and potential, ``(n, ndof)``.
+
+    In the order of the whole space: the three displacement blocks, then the
+    potential's. An output without a cotangent is zero.
+    """
+    blocks = [
+        None if cotangents.get(name) is None else np.reshape(cotangents[name], (n, -1))
+        for name in ("displacement", "potential")
+    ]
+    sizes = [0 if b is None else b.shape[1] for b in blocks]
+    out = np.zeros((n, ndof), complex)
+    if blocks[0] is not None:
+        out[:, : sizes[0]] = blocks[0]
+    if blocks[1] is not None and sizes[1]:
+        out[:, ndof - sizes[1] :] = blocks[1]
+    return out
 
 
 def _weights(q: float, lam: complex, *, coupled: bool) -> dict[str, complex]:
@@ -493,6 +555,20 @@ def _coupled(model: Model) -> bool:
         if is_traced(tensor) or np.any(np.asarray(tensor) != 0):
             return True
     return False
+
+
+@dataclasses.dataclass(frozen=True)
+class FieldAdjoint:
+    """What a cotangent of a mode's field adds to the backward pass.
+
+    Attributes:
+        left: The left field of the pair on the pieces of the pencil (right
+            the mode), on the whole space.
+        mass: The factor of the pair (conjugate mode, mode) on the mass.
+    """
+
+    left: np.ndarray
+    mass: float
 
 
 class _Operator(spla.LinearOperator):
@@ -710,11 +786,14 @@ class MechanicalSystem:
 
     # --- solves --------------------------------------------------------------------
 
-    def _factor(self, shift: complex, *, own: bool = False) -> DirectHandle:
+    def _factor(
+        self, shift: complex, *, own: bool = False, free: np.ndarray | None = None
+    ) -> DirectHandle:
         r"""The factorization of :math:`A = \hat K - \text{shift}\,M`.
 
         With ``own`` the handle gets a matrix of its own, to outlive the next
-        factorization.
+        factorization; ``free`` replaces the free DOFs (a mask of the whole
+        space).
         """
         assert self.matrix is not None  # noqa: S101
         matrix = self.matrix.CreateMatrix() if own else self.matrix
@@ -722,7 +801,7 @@ class MechanicalSystem:
         symmetric = self.q == 0
         return DirectHandle(
             matrix,
-            self.free_bits,
+            self.free_bits if free is None else ngs.BitArray(free.tolist()),
             "complex_symmetric" if symmetric else "general",
             is_complex=True,
             cholesky=symmetric,
@@ -843,7 +922,7 @@ class MechanicalSystem:
         try:
             if handle is not None and self.coupled:
                 x = self._refined(handle, x)
-            v = self._normalized(x, omega)
+            v, _ = self._normalized(x, omega)
             return v, self._left(lam, v, tolerance, handle, mode)
         finally:
             if handle is not None:
@@ -907,6 +986,7 @@ class MechanicalSystem:
         right = np.zeros((self.ndof, want), complex)
         left = np.zeros((self.ndof, want), complex)
         gram = np.zeros(want, complex)
+        gauge = np.zeros(want, int)
         lams = np.zeros(want, complex)
         for i, (lam, x, error) in enumerate(found[:want]):
             v, y = self._vectors(lam, x, omega_all[i], tolerance, i)
@@ -918,7 +998,7 @@ class MechanicalSystem:
                 # section has a real frequency, so its quality factor is inf
                 lams[i] = lams[i].real
             omega = np.sqrt(lams[i])
-            v = self._normalized(v, omega)
+            v, gauge[i] = self._normalized(v, omega)
             right[self.index, i], left[self.index, i] = v, y
             gram[i] = y @ (self.mass @ v)
             out["omega"][i] = omega
@@ -934,19 +1014,105 @@ class MechanicalSystem:
             "x": right,
             "y": left,
             "gram": gram,
+            "gauge": gauge,
             "lambda": lams,
             "shared": shared,
         }
         return out
 
-    def _normalized(self, x: np.ndarray, omega: complex) -> np.ndarray:
+    # --- the eigenvector adjoint -----------------------------------------------------
+
+    def field_adjoint(
+        self,
+        lam: complex,
+        x: np.ndarray,
+        y: np.ndarray,
+        gram: complex,
+        x_bar: np.ndarray,
+        *,
+        gauge: int,
+    ) -> FieldAdjoint:
+        r"""Carry a cotangent of a normalized mode to the pencil.
+
+        ``x`` is the mode as returned (`_normalized`), ``y`` its left vector,
+        ``gram`` :math:`= y^T M x`, ``x_bar`` the cotangent of ``x``, all on
+        the whole space, in the convention :math:`dL = \mathrm{Re}\,\bar
+        x^T dx`, and ``gauge`` the position (among the free coefficients) of
+        the coefficient `_normalized` made real. With :math:`A = \hat K -
+        \lambda M`, a perturbation of the pencil moves the mode as
+        :math:`dx = w + \beta x`, :math:`A w = -P\,dA\,x`,
+        :math:`P = I - M x\,y^T/g` and :math:`dA = d\hat K - \lambda\,dM`;
+        the complex :math:`\beta` holds the normalization
+        :math:`\tfrac12 (\mathrm{Re}\,\omega)^2 x^H M x = 1` and the phase
+        gauge :math:`\mathrm{Im}\,x_j = 0` at the coefficient :math:`j` =
+        ``gauge``, the largest displacement coefficient. With
+        :math:`c = \bar x^T x` and :math:`E = x^H M x`, eliminating :math:`\beta` gives
+
+        .. math::
+
+            dL = \mathrm{Re}\,\Big[\Big(\frac{\bar\omega_x\,y}{2\omega g}
+            - P^T z\Big)^T dA\,x\Big] - \frac{\mathrm{Re}\,c}{2E}\,
+            \mathrm{Re}\,(x^H dM\,x),
+
+        with :math:`\bar\omega_x = -\mathrm{Re}\,c / \mathrm{Re}\,\omega`
+        and :math:`A^T z = r`, :math:`r = \bar x - (\mathrm{Re}\,c/E)\,M\bar
+        x^{*} - i\,(\mathrm{Im}\,c/x_j)\,e_j` (:math:`\bar x^{*}` the
+        conjugate of the mode :math:`x`). That :math:`r^T x = 0` makes the
+        singular system consistent, and :math:`P^T z` does not depend on the
+        null vector :math:`y` added to :math:`z`: `_bordered` solves it.
+
+        Returns:
+            The left field of the pair on the pieces of :math:`dA` (right
+            :math:`x`), and the factor of the pair :math:`(x^{*}, x)` on the
+            mass alone.
+        """
+        i = self.index
+        v, w, v_bar = x[i], y[i], x_bar[i]
+        m = self.mass
+        energy = float(np.real(np.vdot(v, m @ v)))
+        c = complex(v_bar @ v)
+        j = gauge
+        r = v_bar - (c.real / energy) * (m @ np.conj(v))
+        r[j] -= 1j * c.imag / v[j].real
+        z = self._bordered(lam, v, w, r)
+        z = z - w * ((v @ (m @ z)) / gram)
+        omega = np.sqrt(lam)
+        left = w * (-c.real / omega.real / (2 * omega * gram)) - z
+        return FieldAdjoint(left=self._embed(left), mass=-c.real / (2 * energy))
+
+    def _bordered(
+        self, lam: complex, x: np.ndarray, y: np.ndarray, r: np.ndarray
+    ) -> np.ndarray:
+        r"""A solution of :math:`A(\lambda)^T z = r` for :math:`r^T x = 0`, free DOFs.
+
+        The bordered system :math:`[A^T, e_k; e_k^T, 0]` is regular when
+        :math:`x_k y_k \ne 0`: :math:`k` maximizes :math:`|x_k y_k|`, and the
+        border holds :math:`z_k = 0` and drops row :math:`k`, whose equation
+        holds by :math:`r^T x = 0` (its multiplier is :math:`x^T r / x_k`).
+        One factorization of :math:`A` on the other free DOFs.
+        """
+        k = int(np.argmax(np.abs(x) * np.abs(y)))
+        free = self.free.copy()
+        free[self.index[k]] = False
+        handle = self._factor(lam, own=True, free=free)
+        try:
+            return handle.solve(self._embed(r), transpose=True)[self.index]
+        finally:
+            handle.free()
+
+    def _normalized(self, x: np.ndarray, omega: complex) -> tuple[np.ndarray, int]:
         r"""``x`` scaled to :math:`\tfrac12 (\mathrm{Re}\,\omega)^2 x^H M x = 1`.
 
         The largest displacement coefficient is real and positive; the
-        potential is scaled with it.
+        potential is scaled with it. Returns the vector and the position of
+        that coefficient (the phase gauge's), which the eigenvector adjoint
+        reads rather than seek it again: on a symmetric section mirror
+        coefficients tie to round-off, and another search could pick the
+        other one.
         """
         energy = np.real(np.vdot(x, self.mass @ x))
         x = x * np.sqrt(2 / (omega.real**2 * energy))
         shown = np.flatnonzero(self.index < 3 * self.nu)
-        largest = x[shown[np.argmax(np.abs(x[shown]))]]
-        return x * (np.conj(largest) / abs(largest))
+        j = int(shown[np.argmax(np.abs(x[shown]))])
+        largest = x[j]
+        return x * (np.conj(largest) / abs(largest)), j

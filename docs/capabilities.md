@@ -157,6 +157,15 @@ v0.1.
   and an `electro_optic_tensor`; photoelastic and electro-optic parts, $V_\pi L$
   per arm and push-pull; differentiable in the tensors, the acoustic inputs and
   the windows' `offset`) ({doc}`recipes/acousto-optic-shift`).
+- **Optomechanical coupling**: {py:obj}`gfem.optomechanical_coupling` (the vacuum
+  coupling $\tilde g_0$ of the mechanical modes of a section to a wave port's
+  mode, with one optical mode for all of them, with its moving-boundary and
+  photoelastic parts;
+  $g_0(L)$ of a length; the forward Brillouin gain follows) and
+  {py:obj}`gfem.optomechanical_overlap` (the change of $n_\mathrm{eff}$ per unit
+  amplitude of any displacement); differentiable in every input of the mechanical
+  solve and the `photoelastic_tensor`, the optical mode held constant
+  ({doc}`recipes/optomechanical-coupling`).
 - **Kerr nonlinearity**: {py:obj}`gfem.kerr_nonlinearity` (a port mode's
   $\gamma_\mathrm{NL}$ and two-photon loss at every row of its grid) and
   {py:obj}`gfem.kerr_coupling` (the tensor between its waves, for self- and
@@ -195,7 +204,8 @@ v0.1.
   any stiffness, the piezoelectric coupling with grounded electrodes,
   mechanical loss through a quality factor and
   {term}`damping frames <damping frame>`, clamped lines or components;
-  `omega` differentiates in the material constants and node coordinates)
+  `omega` and the mode fields differentiate in the material constants and node
+  coordinates)
   ({doc}`recipes/mechanical-modes`).
 
 ## Solvers
@@ -494,7 +504,7 @@ returning a wrong value:
   {doc}`recipes/piezoelectric-admittance`.
 - **Mechanical eigenmodes**: 2D sections only; one process and the direct
   solver; `gfem.Absorbing` on a solid's edge raises (use a damping frame);
-  gradients of `omega` only (the fields, `group_velocity` and `error` raise
+  gradients of `omega` and the fields only (`group_velocity` and `error` raise
   `gfem.NonDifferentiableError`, and so does a mode in a cluster). Details:
   {doc}`recipes/mechanical-modes`.
 - **Layer patterns**: width and spacing only (no minimum area), and a pre-check, not

@@ -1270,6 +1270,46 @@ parts have opposite signs, the second 0.30 of the first.
 Tests: [unit checks](https://github.com/benvial/gfem/blob/main/tests/unit/test_acousto_optic.py),
 [materials](https://github.com/benvial/gfem/blob/main/tests/unit/test_photoelastic_material.py).
 
+(verification-optomechanics)=
+## Optomechanical coupling
+
+The coupling of a mechanical mode to a guided mode
+({py:obj}`gfem.optomechanical_coupling`, {py:obj}`gfem.optomechanical_overlap`)
+is checked against a closed form, against itself and against a published
+device:
+
+- **Closed form.** A uniform dilation of a slab section changes the effective
+  index by the slab's closed-form derivative, in both polarizations; the error
+  of each part falls at least fivefold when the edge length halves.
+- **Identities.** A dilation of the whole nondispersive section, walls
+  included, moves $n_\mathrm{eff}$ by $n_g - n_\mathrm{eff}$; the overlap is
+  linear in the displacement; the moving-boundary part equals the gradient of
+  the effective index through the node map of the same displacement; a
+  displacement of the cladding alone moves the boundary and strains nothing;
+  $\tilde g_0$ is the overlap times the zero-point factor, and one set of
+  optical solves serves every mode.
+- **Meshes that do not share nodes.** An elliptic rod meshed on its own for the
+  mechanics, at edge lengths 1.5 and 0.75 times the optical one, gives the
+  moving-boundary part of the mechanical mesh cut from the optical one within
+  0.53 % and 0.13 % (the gap falls as the square of the mechanical edge).
+- **Gradients.** The gradients of the mode fields in the mechanical solve's
+  inputs (stiffness, density, quality factor, piezoelectric tensor,
+  permittivity, node coordinates), and those of the coupling in the stiffness,
+  density, quality factor, mechanical node coordinates and photoelastic
+  tensor, match fourth-order central differences.
+- **A published device.** The suspended silicon wire of 315 by 283.5 nm at
+  1.552 µm (Qiu et al., Opt. Express 21, 22544 (2013)) gives, for its
+  lowest in-plane mode even under both mirrors, the published Brillouin gain
+  parts and total of 4400, 4200 and 17200 1/(W m) within 6 % on the test mesh
+  (measured -1.6 %, -3.0 % and -2.3 %; 0.4 %, -0.6 % and -0.1 % on a mesh twice as fine) and its frequency
+  within 1 % (12.561 GHz on the test mesh; the 300 by 280 nm wire of Rakich et
+  al., Phys. Rev. X 2, 011008 (2012), gives 12.995 GHz against 13.0 GHz). The
+  mode is identified by symmetry, not by index.
+
+Tests: [unit checks](https://github.com/benvial/gfem/blob/main/tests/unit/test_optomechanics.py),
+[coupling](https://github.com/benvial/gfem/blob/main/tests/unit/test_optomechanical_coupling.py),
+[published wire](https://github.com/benvial/gfem/blob/main/tests/verification/test_optomechanical_wire.py).
+
 (verification-mesh-refinement)=
 ## Mesh refinement error estimates
 
