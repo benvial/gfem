@@ -29,6 +29,7 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.constants
 
+from gfem._checks import is_traced
 from gfem._materials import Material, MaterialField, PermittivityLaw
 from gfem._mode_overlap import (
     _COLUMNS,
@@ -48,7 +49,14 @@ if TYPE_CHECKING:
     from gfem._engine.kerr_columns import Columns as _Columns
     from gfem.model import Model
 
-__all__ = ["KerrCoupling", "KerrNonlinearity", "kerr_coupling", "kerr_nonlinearity"]
+__all__ = [
+    "FreeCarriers",
+    "KerrCoupling",
+    "KerrNonlinearity",
+    "free_carriers",
+    "kerr_coupling",
+    "kerr_nonlinearity",
+]
 
 _C = scipy.constants.c
 _EPS0 = scipy.constants.epsilon_0
@@ -184,6 +192,73 @@ class KerrCoupling:
 register_fields(KerrCoupling, ("gamma_nl",))
 
 
+@dataclasses.dataclass(frozen=True, eq=False)
+class FreeCarriers:
+    r"""The free-carrier figures of a port mode over frequency.
+
+    Free carriers are made by two-photon absorption in the regions :math:`R`
+    and spread uniformly over them; :math:`N` is their density (pairs per
+    m³). For the mode :math:`E` at 1 W, :math:`n = \sqrt{\mathrm{Re}\,
+    \varepsilon_r}` of each element and :math:`k_0 = \omega/c`:
+
+    .. math::
+
+        \Gamma_R = \frac{c\varepsilon_0}{2} \int_R n\,|E|^2\,\mathrm{d}A,
+        \qquad
+        \theta = \frac{\mathrm{Im}\,\gamma_{\mathrm{NL},R}}{\hbar\omega A_R},
+
+    with :math:`\mathrm{Im}\,\gamma_{\mathrm{NL},R} = \frac{c^2\varepsilon_0^2}{24}
+    \int_R n^2 \beta_\mathrm{TPA} [2|E|^4 + |E\cdot E|^2]\,\mathrm{d}A`, the
+    imaginary part of `KerrNonlinearity`'s integral restricted to :math:`R`
+    (so with its :math:`\rho` and :math:`N` forms). A uniform index change
+    :math:`\Delta\tilde n = \Delta n_\mathrm{FC} - i\sigma N/(2k_0)` in
+    :math:`R` gives :math:`\delta n_\mathrm{eff} = \Gamma_R\Delta\tilde n`: a
+    propagation-constant change :math:`\delta\beta = k_0 \Gamma_R
+    \Delta n_\mathrm{FC}` and a power loss :math:`2\delta\alpha = \Gamma_R
+    \sigma N`. :math:`\Gamma_R` can exceed 1; :math:`\sum_R n_R \Gamma_R = n_g`
+    for nondispersive constant materials. In a birefringent region
+    :math:`n|E|^2` reads :math:`E^\mathsf{H} N E`. The carrier density follows
+    :math:`\mathrm{d}N/\mathrm{d}t = \theta P^2 - N/\tau` for the power
+    :math:`P` in the guide, one pair per two photons absorbed.
+
+    Attributes:
+        port: The wave port's name.
+        mode: Which mode (1 = the most propagating).
+        frequency: ``(n_freq,)`` Hz.
+        regions: The names of the carrier regions :math:`R`.
+        overlap: :math:`\Gamma_R` at each frequency, ``(n_freq,)``, dimensionless.
+        area: :math:`A_R`, the cross-section of :math:`R` outside any perfectly
+            matched layer, m² (m on a line port).
+        generation: :math:`\theta` at each frequency, ``(n_freq,)``,
+            1/(W² m³ s); 1/(W² m s) on a line port of a 2D mesh, where the
+            power per length is in W/m.
+    """
+
+    port: str
+    mode: int
+    frequency: np.ndarray
+    regions: tuple[str, ...]
+    overlap: jax.Array
+    area: float
+    generation: jax.Array
+
+    def __repr__(self) -> str:
+        n_f = np.shape(self.frequency)[-1]
+        head = (
+            f"FreeCarriers(port {self.port!r}, mode {self.mode}, {n_f} frequencies, "
+            f"regions {self.regions}"
+        )
+        try:
+            g = np.asarray(self.overlap)
+            t = np.asarray(self.generation)
+        except (TypeError, jax.errors.TracerArrayConversionError):
+            return head + ")"
+        return f"{head}, overlap {_range(g)}, generation {_range(t)} 1/(W^2 m^3 s))"
+
+
+register_fields(FreeCarriers, ("overlap", "generation"))
+
+
 def _range(a: np.ndarray) -> str:
     lo, hi = float(a.min()), float(a.max())
     return f"{lo:.4g}" if lo == hi else f"{lo:.4g}-{hi:.4g}"
@@ -211,6 +286,8 @@ class _Kerr:
     the real symmetric matrix :math:`N = \sum_k n_k a_k a_k^\mathsf{T}` of each
     element at each wave's frequency, ``None`` unless a region has a
     birefringent ``eps_r``; it replaces ``eps`` (and excludes ``rho``).
+    ``member`` ``(n_el,)`` marks the elements of the carrier regions of
+    `free_carriers`, ``None`` for the Kerr functions.
     """
 
     n2: jax.Array
@@ -220,6 +297,7 @@ class _Kerr:
     rho: jax.Array | None = None
     axes: np.ndarray | None = None
     index: jax.Array | None = None
+    member: np.ndarray | None = None
 
 
 def _birefringent(material: Material | MaterialField) -> bool:
@@ -315,9 +393,18 @@ def _no_carrier_message(owner: str, port: str, names: Any, tags: np.ndarray) -> 
 
 
 def _kerr_materials(
-    model: Model, section: Any, frequency: np.ndarray, port: str, owner: str
+    model: Model,
+    section: Any,
+    frequency: np.ndarray,
+    port: str,
+    owner: str,
+    *,
+    also: Sequence[str] = (),
 ) -> _Kerr:
     """Read the Kerr properties of the elements of ``section`` by owner element.
+
+    The permittivity of the regions named in ``also`` is read whether they
+    carry a Kerr property or not (the free carriers' overlap needs it).
 
     Raises:
         ValueError: No element outside a perfectly matched layer carries a
@@ -355,7 +442,7 @@ def _kerr_materials(
                     "Give the elements beside the port a region of their own with "
                     "a constant gfem.Material."
                 )
-        if all(v is None for v in given.values()):
+        if region not in also and all(v is None for v in given.values()):
             continue
         if isinstance(material, MaterialField) and material.axes is not None:
             raise NotImplementedError(
@@ -367,7 +454,7 @@ def _kerr_materials(
             )
         rows = np.flatnonzero(tags == tag)
         pos = np.searchsorted(mesh.elements(region), cells[rows])
-        carries[rows] = True
+        carries[rows] = any(v is not None for v in given.values())
         if isinstance(material, Material):
             if material.axes is not None:
                 frames[rows] = np.asarray(material.axes)
@@ -452,6 +539,53 @@ def _birefringent_tensor(
     )
 
 
+def _quartic_overlaps(waves: Any) -> tuple[jax.Array, jax.Array]:
+    r"""The Kerr integrand of each element: ``(n_wave, n_el)`` each.
+
+    Returns :math:`\int_e [2|E|^4 + |E\cdot E|^2]\,\mathrm{d}A` (or its
+    :math:`\rho` and :math:`N` forms) and the factor :math:`n^2` that goes with it
+    (ones where the index matrix holds it already).
+    """
+    weights = waves.weights
+    kerr = waves.materials
+    rho = None if kerr.rho is None else kerr.rho[:, None]
+    frames = None if kerr.axes is None else jnp.asarray(kerr.axes)[:, None]
+
+    index = kerr.index
+
+    @jax.checkpoint
+    def integral(vector: jax.Array, matrix: jax.Array | None) -> jax.Array:
+        e = waves.row(vector)
+        re, im = jnp.real(e), jnp.imag(e)
+        if matrix is not None:
+            # 2 (E^H N E)^2 + |E^T N E|^2 with N real symmetric, n^2 S for N = n I
+            if e.shape[-1] == 1:  # an Ez line port: the zz entry of N
+                matrix = matrix[:, 2:, 2:]
+            ne = jnp.einsum("eij,eqj->eqi", matrix, e)
+            hh = jnp.sum(re * jnp.real(ne) + im * jnp.imag(ne), axis=-1)
+            tt = jnp.sum(e * ne, axis=-1)
+            quartic = 2 * hh * hh + jnp.real(tt) ** 2 + jnp.imag(tt) ** 2
+            return jnp.sum(weights * quartic, axis=-1)
+        e2 = jnp.sum(re * re + im * im, axis=-1)
+        ee = jnp.sum(e * e, axis=-1)
+        quartic = 2 * e2 * e2 + jnp.real(ee) ** 2 + jnp.imag(ee) ** 2
+        if rho is not None and frames is not None:
+            # S_rho: the cubic part sums |a_s . E|^4 over the crystal axes
+            p = _crystal_components(e, frames)
+            cubic = jnp.sum(jnp.real(p * jnp.conj(p)) ** 2, axis=-1)
+            quartic = rho * quartic + 3 * (1 - rho) * cubic
+        return jnp.sum(weights * quartic, axis=-1)
+
+    # one row at a time: the point values of a row are (n_el, n_q, 3) complex
+    if index is None:
+        per_element = jax.lax.map(lambda v: integral(v, None), waves.vectors)
+    else:
+        per_element = jax.lax.map(lambda a: integral(*a), (waves.vectors, index))
+    # the index matrix holds n^2 already
+    eps = kerr.eps if index is None else jnp.ones_like(kerr.eps)
+    return per_element, eps
+
+
 # --- public functions ------------------------------------------------------------
 
 
@@ -515,43 +649,8 @@ def kerr_nonlinearity(model: Model, mode: PortModeResult) -> KerrNonlinearity:
             "(gfem.kerr_coupling takes several)."
         )
     waves = _waves(model, mode, owner, _kerr_materials, _kerr_columns)
-    weights = waves.weights
+    per_element, eps = _quartic_overlaps(waves)
     kerr = waves.materials
-    rho = None if kerr.rho is None else kerr.rho[:, None]
-    frames = None if kerr.axes is None else jnp.asarray(kerr.axes)[:, None]
-
-    index = kerr.index
-
-    @jax.checkpoint
-    def integral(vector: jax.Array, matrix: jax.Array | None) -> jax.Array:
-        e = waves.row(vector)
-        re, im = jnp.real(e), jnp.imag(e)
-        if matrix is not None:
-            # 2 (E^H N E)^2 + |E^T N E|^2 with N real symmetric, n^2 S for N = n I
-            if e.shape[-1] == 1:  # an Ez line port: the zz entry of N
-                matrix = matrix[:, 2:, 2:]
-            ne = jnp.einsum("eij,eqj->eqi", matrix, e)
-            hh = jnp.sum(re * jnp.real(ne) + im * jnp.imag(ne), axis=-1)
-            tt = jnp.sum(e * ne, axis=-1)
-            quartic = 2 * hh * hh + jnp.real(tt) ** 2 + jnp.imag(tt) ** 2
-            return jnp.sum(weights * quartic, axis=-1)
-        e2 = jnp.sum(re * re + im * im, axis=-1)
-        ee = jnp.sum(e * e, axis=-1)
-        quartic = 2 * e2 * e2 + jnp.real(ee) ** 2 + jnp.imag(ee) ** 2
-        if rho is not None and frames is not None:
-            # S_rho: the cubic part sums |a_s . E|^4 over the crystal axes
-            p = _crystal_components(e, frames)
-            cubic = jnp.sum(jnp.real(p * jnp.conj(p)) ** 2, axis=-1)
-            quartic = rho * quartic + 3 * (1 - rho) * cubic
-        return jnp.sum(weights * quartic, axis=-1)
-
-    # one row at a time: the point values of a row are (n_el, n_q, 3) complex
-    if index is None:
-        per_element = jax.lax.map(lambda v: integral(v, None), waves.vectors)
-    else:
-        per_element = jax.lax.map(lambda a: integral(*a), (waves.vectors, index))
-    # (n_wave, n_el); the index matrix holds n^2 already
-    eps = kerr.eps if index is None else jnp.ones_like(kerr.eps)
     k0 = jnp.asarray(2 * np.pi * waves.frequency / _C)[:, None]
     # conjugate of n2 - i beta / (2 k0): the e^{-i omega t} convention
     n2 = kerr.n2[None] + 1j * kerr.beta[None] / (2 * k0)
@@ -563,6 +662,180 @@ def kerr_nonlinearity(model: Model, mode: PortModeResult) -> KerrNonlinearity:
         mode=int(mode.mode),
         frequency=np.asarray(waves.frequency),
         gamma_nl=gamma,
+    )
+
+
+def _linear_overlaps(waves: Any) -> jax.Array:
+    r""":math:`\int_e E^\mathsf{H} N E\,\mathrm{d}A` per element, ``(n_wave, n_el)``.
+
+    With the index matrix :math:`N` of a birefringent region; :math:`|E|^2`
+    otherwise, which the caller multiplies by :math:`n`.
+    """
+    weights = waves.weights
+    index = waves.materials.index
+
+    @jax.checkpoint
+    def integral(vector: jax.Array, matrix: jax.Array | None) -> jax.Array:
+        e = waves.row(vector)
+        if matrix is None:
+            density = jnp.sum(jnp.real(e * jnp.conj(e)), axis=-1)
+        else:
+            if e.shape[-1] == 1:  # an Ez line port: the zz entry of N
+                matrix = matrix[:, 2:, 2:]
+            ne = jnp.einsum("eij,eqj->eqi", matrix, e)
+            density = jnp.sum(jnp.real(jnp.conj(e) * ne), axis=-1)
+        return jnp.sum(weights * density, axis=-1)
+
+    if index is None:
+        return jax.lax.map(lambda v: integral(v, None), waves.vectors)
+    return jax.lax.map(lambda a: integral(*a), (waves.vectors, index))
+
+
+def _carrier_regions(
+    model: Model, section: Any, regions: Any, owner: str, port: str
+) -> tuple[tuple[str, ...], np.ndarray]:
+    """The carrier regions and the mask of their elements outside a layer."""
+    mesh = model.mesh
+    cells, tags = _elements(model, section)
+    names = mesh._region_names()  # noqa: SLF001
+    present = [names[int(t)] for t in np.unique(tags)]
+    tag_of = {name: tag for tag, name in names.items()}
+    layer = layer_tetrahedra(mesh, model.pml) if len(section.normal) == 3 else None
+    keep = np.ones(len(cells), bool) if layer is None else ~layer[cells]
+
+    def tpa(region: str) -> bool:
+        return (
+            getattr(model.materials[region], "two_photon_absorption", None) is not None
+        )
+
+    def outside(region: str) -> bool:
+        return bool(keep[tags == tag_of[region]].any())
+
+    if regions is None:
+        chosen = tuple(r for r in present if tpa(r) and outside(r))
+        if not chosen:
+            raise ValueError(
+                f"{owner}: no region of wave port {port!r}'s section outside a "
+                "perfectly matched layer has a two_photon_absorption (its regions "
+                f"are {present}), so no carriers are generated. Set one on the "
+                "core's material, or name the regions."
+            )
+    else:
+        chosen = (regions,) if isinstance(regions, str) else tuple(regions)
+        if not chosen or not all(isinstance(r, str) for r in chosen):
+            raise TypeError(
+                f"{owner}: regions is a region name or a sequence of names, got "
+                f"{regions!r}."
+            )
+        if len(set(chosen)) != len(chosen):
+            raise ValueError(f"{owner}: the regions {list(chosen)} repeat a name.")
+        missing = [r for r in chosen if r not in present]
+        if missing:
+            raise ValueError(
+                f"{owner}: region {missing[0]!r} is not in wave port {port!r}'s "
+                f"section, whose regions are {present}."
+            )
+        inside = [r for r in chosen if not outside(r)]
+        if inside:
+            raise ValueError(
+                f"{owner}: region {inside[0]!r} lies wholly in a perfectly matched "
+                "layer, whose triangles are skipped."
+            )
+        if not any(tpa(r) for r in chosen):
+            raise ValueError(
+                f"{owner}: the regions {list(chosen)} have no two_photon_absorption, "
+                "so no carriers are generated and the generation is zero. Set one "
+                "on the material of the region the carriers are made in."
+            )
+    mask = np.isin(tags, [tag_of[r] for r in chosen]) & keep
+    return chosen, mask
+
+
+def free_carriers(
+    model: Model, mode: PortModeResult, *, regions: str | Sequence[str] | None = None
+) -> FreeCarriers:
+    r"""The free-carrier overlap and generation of a port mode.
+
+    Reads the electric field of ``mode`` (the 1 W mode of a `gfem.PortMode`
+    solve) on every row of its frequency grid, reduced rows included, and the
+    ``two_photon_absorption`` of ``model``'s materials, as `kerr_nonlinearity`
+    does: the same quadrature, the same layer and lossy-section behaviour. See
+    `FreeCarriers` for the formulas and units.
+
+    The carrier law is yours: gfem returns the modal overlap
+    :math:`\Gamma_R` that turns a carrier density into a loss and an index
+    change, and the generation coefficient :math:`\theta`; the cross-section
+    :math:`\sigma`, the dispersion coefficient and the lifetime
+    :math:`\tau` belong to the pulse tool (``N = theta * tau * P**2`` is the
+    continuous-wave density). Differentiable through the materials and the
+    traced mode field, not the node coordinates; exactly linear in
+    ``two_photon_absorption``.
+
+    Args:
+        model: The model the mode was solved on.
+        mode: The result of ``gfem.solve(model, gfem.PortMode(...))``,
+            concrete or traced.
+        regions: The name or names of the regions the carriers spread
+            uniformly over (the silicon core). Defaults to every region of
+            the section outside a perfectly matched layer that carries a
+            ``two_photon_absorption``.
+
+    Returns:
+        The figures on every row of ``mode``'s grid.
+
+    Raises:
+        ValueError: A named region is not in the section or lies wholly in a
+            perfectly matched layer; the regions carry no
+            ``two_photon_absorption``; no region does, by default.
+        NotImplementedError: A region is an anisotropic `gfem.MaterialField` or
+            a density blend without a per-element permittivity; an Hz line port.
+        TypeError: ``mode`` is not a `gfem.PortModeResult`, or has no electric
+            field; ``regions`` is not names.
+        NonDifferentiableError: The node coordinates are traced by `jax.grad`.
+    """
+    owner = "gfem.free_carriers"
+    if not isinstance(mode, PortModeResult):
+        raise TypeError(
+            f"{owner} takes one gfem.PortModeResult, got {type(mode).__name__}: "
+            "solve gfem.solve(model, gfem.PortMode(...)) and pass that result."
+        )
+    chosen: list[tuple[str, ...]] = []
+
+    def read(
+        model: Model, section: Any, frequency: np.ndarray, port: str, owner: str
+    ) -> _Kerr:
+        names, member = _carrier_regions(model, section, regions, owner, port)
+        chosen.append(names)
+        kerr = _kerr_materials(model, section, frequency, port, owner, also=names)
+        if not is_traced(kerr.beta) and not np.any(np.asarray(kerr.beta)[member]):
+            raise ValueError(
+                f"{owner}: the regions {list(names)} of wave port {port!r} have a "
+                "two_photon_absorption of zero, so the generation is zero."
+            )
+        return dataclasses.replace(kerr, member=member)
+
+    waves = _waves(model, mode, owner, read, _kerr_columns)
+    kerr = waves.materials
+    member = jnp.asarray(kerr.member)
+    quartic, eps = _quartic_overlaps(waves)
+    linear = _linear_overlaps(waves)
+    # the index matrix holds n already; |E|^2 is weighted by n = sqrt(Re eps)
+    n = jnp.sqrt(eps) if kerr.index is None else jnp.ones_like(eps)
+    overlap = (_C * _EPS0 / 2) * jnp.sum(member * n * linear, axis=-1)
+    area = float(np.sum(np.asarray(waves.weights)[kerr.member]))
+    # Im of gamma_NL's integral over R: k0 c^2 eps0^2/12 * beta/(2 k0)
+    absorbed = (_C**2 * _EPS0**2 / 24) * jnp.sum(
+        member * eps * kerr.beta[None] * quartic, axis=-1
+    )
+    energy = scipy.constants.hbar * 2 * np.pi * jnp.asarray(waves.frequency) * area
+    return FreeCarriers(
+        port=waves.port,
+        mode=int(mode.mode),
+        frequency=np.asarray(waves.frequency),
+        regions=chosen[0],
+        overlap=overlap,
+        area=area,
+        generation=absorbed / energy,
     )
 
 

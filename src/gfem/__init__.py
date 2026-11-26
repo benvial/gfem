@@ -86,8 +86,10 @@ from gfem.errors import (  # noqa: E402
 )
 from gfem.job import Job, load_result  # noqa: E402
 from gfem.kerr import (  # noqa: E402
+    FreeCarriers,
     KerrCoupling,
     KerrNonlinearity,
+    free_carriers,
     kerr_coupling,
     kerr_nonlinearity,
 )
@@ -265,6 +267,7 @@ __all__ = [
     "FixedTemperature",
     "FloquetOrderCapWarning",
     "FloquetPort",
+    "FreeCarriers",
     "GaussianBeam",
     "HeatFlux",
     "HeatSource",
@@ -377,6 +380,7 @@ __all__ = [
     "error_estimate",
     "far_field",
     "fit_permittivity",
+    "free_carriers",
     "heat_flow",
     "heat_flow_per_length",
     "interface_participation",
