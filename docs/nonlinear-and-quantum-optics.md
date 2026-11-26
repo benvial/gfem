@@ -8,6 +8,7 @@ gfem's own phasors ({doc}`conventions`). The rules are one entry each there;
 this page gives the closed forms. The modes they integrate are port modes
 ({doc}`modes-and-ports`).
 
+(theory-nonlinear-and-quantum-optics-kerr-nonlinearity)=
 ## Kerr nonlinearity
 
 A material's `nonlinear_index` $n_2$ (m²/W) and `two_photon_absorption`
@@ -74,6 +75,7 @@ The {term}`clearance` $c$ from the core to a side
 $10^{-2} e^{-2\gamma_t c}$, with $\gamma_t$ the mode's transverse decay rate,
 and the {term}`group-velocity dispersion` far more.
 
+(theory-nonlinear-and-quantum-optics-second-order-nonlinearity)=
 ## Second-order nonlinearity
 
 A material's `second_order_nonlinear_tensor` is the contracted tensor
@@ -157,6 +159,7 @@ poling at duty cycle $D$ keeps $|G_1|^2 = 4/\pi^2$ at $D = 1/2$, and the
 third order has $|G_3|^2 = 4/(9\pi^2)$ there, a ninth of the overlap at a
 period three times longer.
 
+(theory-nonlinear-and-quantum-optics-photon-pairs)=
 ## Photon pairs
 
 A pair source is described in the low-gain regime, at most a pair per mode and

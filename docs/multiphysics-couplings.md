@@ -8,6 +8,7 @@ each there; this page derives them and checks the thermal and electro-optic
 ones on a solve. The sign of loss and the S convention are those of
 {doc}`phasors-and-power-waves`.
 
+(theory-multiphysics-couplings-temperature-and-thermo-optic-phase)=
 ## Temperature and thermo-optic phase
 
 A thermal solve's temperatures are absolute, in kelvin, and its rise is the
@@ -160,6 +161,7 @@ The {doc}`recipes/thermo-optic-phase` recipe turns the phase into $P_\pi$, and
 the {py:obj}`gfem.conventions` module, "Temperature and thermo-optic phase",
 gives the first-order formula.
 
+(theory-multiphysics-couplings-electro-optic-shift)=
 ## Electro-optic shift
 
 A crystal's `electro_optic_tensor` is the contracted tensor $r_{Ik}$ in m/V,
@@ -263,6 +265,7 @@ The {py:obj}`gfem.conventions` module, "Electro-optic
 shift", gives the formulas, and {doc}`recipes/electro-optic-phase` the
 whole calculation.
 
+(theory-multiphysics-couplings-photoelastic-tensor)=
 ## Photoelastic tensor
 
 A crystal's `photoelastic_tensor` is the contracted tensor $p^E_{IJ}$, a
@@ -291,6 +294,7 @@ photoelastic and electro-optic terms are counted, not the moving boundaries or
 the crystal's rotation. {doc}`recipes/acousto-optic-shift` has the whole
 calculation.
 
+(theory-multiphysics-couplings-optomechanical-coupling)=
 ## Optomechanical coupling
 
 {py:obj}`gfem.optomechanical_coupling` reads the modes of a
@@ -321,6 +325,7 @@ with $v_g = c/n_g$ (Van Laer et al., Phys. Rev. A 93, 053828 (2016)). The
 rotation of the crystal by the displacement is not counted.
 {doc}`recipes/optomechanical-coupling` has the whole calculation.
 
+(theory-multiphysics-couplings-piezoelectric-problems)=
 ## Piezoelectric problems
 
 A {py:class}`gfem.Piezoelectric` problem solves linear piezoelectricity on a
@@ -404,6 +409,7 @@ factor. The {doc}`recipes/piezoelectric-admittance` recipe and the
 {doc}`transducer tutorial <tutorials/transducer>` use these conventions; the
 {py:obj}`gfem.conventions` module, "Piezoelectric problems", states them.
 
+(theory-multiphysics-couplings-mechanical-eigenmodes)=
 ## Mechanical eigenmodes
 
 A {py:class}`gfem.MechanicalEigenmode` problem finds the source-free solutions

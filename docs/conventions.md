@@ -46,26 +46,26 @@ Temperatures are in kelvin.
 | `delta_n_eff_per_volt`, `phase_per_length_per_volt`, `v_pi_l` | 1/V, rad/(V m), V m |
 | a port mode's `n_g`, `beta_2`, `beta_3`, `D` | 1, s²/m, s³/m, s/m² |
 
-Derivation and a check on a solve: {doc}`phasors-and-power-waves`, "Units".
+Derivation and a check on a solve: {ref}`Units <theory-phasors-and-power-waves-units>`.
 
 ## Time dependence
 
 The physical field is $\mathrm{Re}(E\, e^{+i\omega t})$, the electrical engineering
-convention (`TIME_DEPENDENCE`): write $j$ for $i$ and a circuit textbook's
+convention ({py:data}`~gfem.conventions.TIME_DEPENDENCE`): write $j$ for $i$ and a circuit textbook's
 formulas apply. A wave along $+x$ is $e^{-i\beta x}$, so the phase of a
 transmission falls with distance and with frequency. A code that uses
 $e^{-i\omega t}$ gives the complex conjugate of every S entry and every field.
-Derivation and a check on a solve: {doc}`phasors-and-power-waves`, "Time dependence".
+Derivation and a check on a solve: {ref}`Time dependence <theory-phasors-and-power-waves-time-dependence>`.
 
 ## S-parameters and power
 
-S relates {term}`pseudo-waves` (`WAVES`), normalized to each port's
+S relates {term}`pseudo-waves` ({py:data}`~gfem.conventions.WAVES`), normalized to each port's
 {term}`reference impedance`; on a real reference they are the
 {term}`power waves`, and $|a|^2$ is a power in W. Phasors are peak values
-(`PHASOR`), so a time-averaged power carries a factor $\tfrac{1}{2}$. A kept
-driven field is the field for `INCIDENT_POWER`, 1 W, sent into the excited
+({py:data}`~gfem.conventions.PHASOR`), so a time-averaged power carries a factor $\tfrac{1}{2}$. A kept
+driven field is the field for {py:data}`~gfem.conventions.INCIDENT_POWER`, 1 W, sent into the excited
 port with every other port matched.
-Derivation and a check on a solve: {doc}`phasors-and-power-waves`, "S-parameters and power".
+Derivation and a check on a solve: {ref}`S-parameters and power <theory-phasors-and-power-waves-s-parameters-and-power>`.
 
 ## SAX circuits
 
@@ -77,7 +77,7 @@ $\overline{S}$, because SAX's photonic models are $e^{-i\omega t}$, with `wl` in
 by default), with `f` in Hz. Keys are `(input, output)`, so `sd["o1", "o2"]`
 is $S_{21}$. The sign of a wave port's row and column follows its
 {term}`polarity reference`, not the mesh. Recipe: {doc}`recipes/sax-circuit`.
-Derivation and a check on a solve: {doc}`phasors-and-power-waves`, "SAX circuits".
+Derivation and a check on a solve: {ref}`SAX circuits <theory-phasors-and-power-waves-sax-circuits>`.
 
 ## Sign of loss
 
@@ -86,7 +86,7 @@ $\varepsilon = \varepsilon' (1 - i \tan\delta)$, and a mode that decays has
 $\mathrm{Im}\,\omega > 0$. Its quality factor is
 $Q = |\omega| / (2 |\mathrm{Im}\,\omega|)$, with the {term}`loss tangent`
 $\tan\delta$.
-Derivation and a check on a solve: {doc}`phasors-and-power-waves`, "Sign of loss".
+Derivation and a check on a solve: {ref}`Sign of loss <theory-phasors-and-power-waves-sign-of-loss>`.
 
 ## Dispersive materials
 
@@ -100,22 +100,22 @@ electrostatic problem, and a mode's energy weighs a law region with the
 {term}`extinction coefficient` $k \ge 0$, so $\varepsilon = (n - ik)^2$, as
 {py:obj}`gfem.fit_permittivity` takes them. Writing a law:
 {doc}`recipes/dispersive-materials`.
-Derivation and a check on a solve: {doc}`phasors-and-power-waves`, "Dispersive materials".
+Derivation and a check on a solve: {ref}`Dispersive materials <theory-phasors-and-power-waves-dispersive-materials>`.
 
 ## Eigenmode fields
 
 A mode has no source to set its amplitude, so gfem scales every mode field to
-store `MODE_ENERGY`, 1 J, of electric energy: the volume term
+store {py:data}`~gfem.conventions.MODE_ENERGY`, 1 J, of electric energy: the volume term
 $\tfrac{1}{2} \mathrm{Re} \int \mathbf{D}^* \cdot \mathbf{E}\, dV$ plus the
 capacitive terms of lumped ports and {py:obj}`gfem.Impedance` sheets. For a
 lossless mode that is its total energy, and participation ratios are shares
 of it.
-Derivation and a check on a solve: {doc}`phasors-and-power-waves`, "Eigenmode fields".
+Derivation and a check on a solve: {ref}`Eigenmode fields <theory-phasors-and-power-waves-eigenmode-fields>`.
 
 ## Periodic cells
 
 Across a periodic pair of translation $\mathbf{a}$, a Bloch wave vector
-$\mathbf{k}$ sets `BLOCH_PHASE`: `E(r + a) = exp(-i k·a) E(r)`, so the phase
+$\mathbf{k}$ sets {py:data}`~gfem.conventions.BLOCH_PHASE`: `E(r + a) = exp(-i k·a) E(r)`, so the phase
 travels along $+\mathbf{k}$ ({doc}`recipes/periodic-cell`). Wave vectors are
 Cartesian, in rad/m. The named points of a {py:func}`gfem.wave_vector_path` are
 in reduced coordinates of `Model.reciprocal_lattice`,
@@ -134,7 +134,7 @@ $|S|^2$ is the {term}`diffraction efficiency`. A flat interface reflects
 $(n_1 - n_2) / (n_1 + n_2)$, the opposite sign of the Fresnel $r_p$ of many
 optics texts. Right-handed circular light (IEEE) from the top face is
 $(S[:, \mathrm{TM}] + i\, S[:, \mathrm{TE}]) / \sqrt{2}$.
-Derivation and a check on a solve: {doc}`plane-waves-and-floquet-orders`, "Floquet ports".
+Derivation and a check on a solve: {ref}`Floquet ports <theory-plane-waves-and-floquet-orders-floquet-ports>`.
 
 ## Aperture fields
 
@@ -144,7 +144,7 @@ measured from the aperture centre along $\hat{\mathbf{e}}_1$ with the pitch $a_1
 and likewise along $\hat{\mathbf{e}}_2$. The values are power waves relative to
 the incident plane wave, with components along $\hat{\mathbf{e}}_1$ (TM) and
 $\hat{\mathbf{e}}_2$ (TE).
-Derivation and a check on a solve: {doc}`plane-waves-and-floquet-orders`, "Aperture fields".
+Derivation and a check on a solve: {ref}`Aperture fields <theory-plane-waves-and-floquet-orders-aperture-fields>`.
 
 ## Temperature and thermo-optic phase
 
@@ -157,7 +157,7 @@ cross-section every extensive quantity is per metre of guide. A material's
 a delay, so a transmission's argument moves by minus it. Recipes:
 {doc}`recipes/heater-temperature`, {doc}`recipes/thermal-step-response` and
 {doc}`recipes/thermo-optic-phase`.
-Derivation and a check on a solve: {doc}`multiphysics-couplings`, "Temperature and thermo-optic phase".
+Derivation and a check on a solve: {ref}`Temperature and thermo-optic phase <theory-multiphysics-couplings-temperature-and-thermo-optic-phase>`.
 
 ## Electro-optic shift
 
@@ -169,7 +169,7 @@ $\Delta\varepsilon_r = -\varepsilon_r (r \cdot E_\mathrm{s}) \varepsilon_r$, and
 phase per volt is a delay, like the thermo-optic one. Solve each arm's mode on
 an optical window that reaches the electrodes' inner edges.
 {doc}`recipes/electro-optic-phase`.
-Derivation and a check on a solve: {doc}`multiphysics-couplings`, "Electro-optic shift".
+Derivation and a check on a solve: {ref}`Electro-optic shift <theory-multiphysics-couplings-electro-optic-shift>`.
 
 ## Photoelastic tensor
 
@@ -179,7 +179,7 @@ frame of the material's `axes`, with the engineering shear strain:
 $\Delta(\varepsilon_r^{-1})_I = \sum_J p_{IJ} S_J$. It is the tensor at constant
 electric field. The shift is a phasor of the drive at $e^{+i\Omega t}$
 ({doc}`recipes/acousto-optic-shift`).
-Derivation and a check on a solve: {doc}`multiphysics-couplings`, "Photoelastic tensor".
+Derivation and a check on a solve: {ref}`Photoelastic tensor <theory-multiphysics-couplings-photoelastic-tensor>`.
 
 ## Optomechanical coupling
 
@@ -189,7 +189,7 @@ is that of $-\partial\omega_c/\partial\alpha$, positive when the displacement
 raises the effective index, and follows the mechanical mode's phase (largest
 displacement coefficient real and positive), so read $|g_0|$.
 {doc}`recipes/optomechanical-coupling`.
-Derivation and a check on a solve: {doc}`multiphysics-couplings`, "Optomechanical coupling".
+Derivation and a check on a solve: {ref}`Optomechanical coupling <theory-multiphysics-couplings-optomechanical-coupling>`.
 
 ## Piezoelectric problems
 
@@ -201,7 +201,7 @@ right-handed set). Strain is in Voigt order $xx, yy, zz, yz, xz, xy$ with
 engineering shear. Loss is a complex stiffness $c^E (1 + i/Q_m)$: its imaginary
 part is positive, the opposite of a permittivity's. Totals are per metre along
 $z$, and `admittance_per_length` is indexed `[frequency, i, j]`, response first.
-Derivation and a check on a solve: {doc}`multiphysics-couplings`, "Piezoelectric problems".
+Derivation and a check on a solve: {ref}`Piezoelectric problems <theory-multiphysics-couplings-piezoelectric-problems>`.
 
 ## Mechanical eigenmodes
 
@@ -212,7 +212,7 @@ loss is the piezoelectric problem's, so a decaying mode has
 $\mathrm{Im}\,\omega > 0$ and $Q = \mathrm{Re}\,\omega / (2\,\mathrm{Im}\,\omega)$.
 Each mode carries 1 J per metre along $z$, with its largest coefficient real and
 positive.
-Derivation and a check on a solve: {doc}`multiphysics-couplings`, "Mechanical eigenmodes".
+Derivation and a check on a solve: {ref}`Mechanical eigenmodes <theory-multiphysics-couplings-mechanical-eigenmodes>`.
 
 ## Group index and dispersion
 
@@ -237,7 +237,7 @@ $e^{-i\omega t}$, so $\mathrm{Im}\,\gamma_\mathrm{NL} \ge 0$ is the loss of two-
 absorption and its sign does not follow `n_eff`'s $n' - in''$. It is in
 1/(W m) on a 3D section and 1/W on a line port of a 2D model.
 {doc}`recipes/waveguide-nonlinearity`.
-Derivation and a check on a solve: {doc}`nonlinear-and-quantum-optics`, "Kerr nonlinearity".
+Derivation and a check on a solve: {ref}`Kerr nonlinearity <theory-nonlinear-and-quantum-optics-kerr-nonlinearity>`.
 
 ## Second-order nonlinearity
 
@@ -248,7 +248,7 @@ reversed polarization carries $-d$. The coupling $\kappa_{abc}$ is reported in
 the convention $e^{-i\omega t}$, the complex conjugate of the integral in gfem's
 phasors, in 1/(W$^{1/2}$ m), and $\eta_\mathrm{norm} = |\kappa|^2$ in 1/(W m²).
 {doc}`recipes/second-harmonic-generation`.
-Derivation and a check on a solve: {doc}`nonlinear-and-quantum-optics`, "Second-order nonlinearity".
+Derivation and a check on a solve: {ref}`Second-order nonlinearity <theory-nonlinear-and-quantum-optics-second-order-nonlinearity>`.
 
 ## Photon pairs
 
@@ -258,16 +258,16 @@ is in pairs per second and hertz, and `gfem.JointSpectrum.jsa` is $f = 2\pi F$ i
 one mode family carries both photons the count is $\tfrac{1}{2}\iint|F|^2$ over the
 whole plane. The bands of a source act as ideal filters. Recipe:
 {doc}`recipes/photon-pair-sources`.
-Derivation and a check on a solve: {doc}`nonlinear-and-quantum-optics`, "Photon pairs".
+Derivation and a check on a solve: {ref}`Photon pairs <theory-nonlinear-and-quantum-optics-photon-pairs>`.
 
 ## Thin metals
 
 A {py:obj}`gfem.Conductor` with a thickness describes one face of a film. On
 a surface inside the mesh a film much thinner than its skin depth is
-therefore a sheet of admittance `INTERIOR_SHEET_ADMITTANCE` times $\sigma t$, half
+therefore a sheet of admittance {py:data}`~gfem.conventions.INTERIOR_SHEET_ADMITTANCE` times $\sigma t$, half
 the film's conductance: give `thickness=2 * t` for the whole film. On the
 outer surface of the mesh the thickness already counts
-`EXTERIOR_THICKNESS_FACTOR` times, and the film is $\sigma t$.
+{py:data}`~gfem.conventions.EXTERIOR_THICKNESS_FACTOR` times, and the film is $\sigma t$.
 
 ## 2D models
 
@@ -313,7 +313,7 @@ $(\hat{\mathbf{E}}_\mathrm{TM} + i\hat{\mathbf{E}}_\mathrm{TE})/\sqrt2$ of the R
 $-(\hat{\boldsymbol\theta} - i\hat{\boldsymbol\phi})/\sqrt2$: the same right-handed
 wave as `"RCP"`, with the opposite phase. A plane wave's `amplitude` is a peak
 value in V/m (`PHASOR`).
-Derivation and a check on a solve: {doc}`plane-waves-and-floquet-orders`, "Incident fields".
+Derivation and a check on a solve: {ref}`Incident fields <theory-plane-waves-and-floquet-orders-incident-fields>`.
 
 ## Point dipoles
 
@@ -350,7 +350,7 @@ dimensionless and power-normalized: the partial scattering cross section of the
 electric (magnetic) multipole of degree $l$ is $k^{-2}\sum_m|\alpha_{lm}|^2$
 ($k^{-2}\sum_m|\beta_{lm}|^2$), in m². They are stored $l$-major, $m$ ascending,
 flat index $j = l^2 + l + m - 1$.
-Derivation and a check on a solve: {doc}`plane-waves-and-floquet-orders`, "Multipoles".
+Derivation and a check on a solve: {ref}`Multipoles <theory-plane-waves-and-floquet-orders-multipoles>`.
 
 ## Optical force
 
@@ -381,4 +381,4 @@ $f_k = k\,\Delta f$ the record lasts $1/\Delta f$, negative times included. An
 isolated reflection $\Gamma$ peaks at $\Gamma$, and the step ends at $S(0)$. Data
 from a code that writes $e^{-i\omega t}$ are the complex conjugate of gfem's:
 conjugate them first. Recipe: {doc}`recipes/time-responses`.
-Derivation and a check on a solve: {doc}`phasors-and-power-waves`, "Time responses".
+Derivation and a check on a solve: {ref}`Time responses <theory-phasors-and-power-waves-time-responses>`.

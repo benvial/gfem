@@ -8,6 +8,7 @@ outgoing wave is $e^{-ikr}/r$ and a delay is $e^{-i\beta L}$
 them and checks the Floquet ones on a solved cell. The sign of loss and the S
 convention are those of {doc}`phasors-and-power-waves`.
 
+(theory-plane-waves-and-floquet-orders-floquet-ports)=
 ## Floquet ports
 
 A {py:obj}`gfem.FloquetPort` is one diffraction order in one polarization of
@@ -301,6 +302,7 @@ one leaves towards $-\hat{\boldsymbol{\kappa}}$, so the absorptance of the incid
 $(\theta, \varphi)$ is the emissivity towards $(\theta, \varphi + \pi)$, and
 `gfem.diffraction.emissivity` labels its rows so.
 
+(theory-plane-waves-and-floquet-orders-aperture-fields)=
 ## Aperture fields
 
 `gfem.diffraction.aperture_field` samples a metasurface once per cell, with the
@@ -312,6 +314,7 @@ $k_z = -i\sqrt{q^2 - k^2}$ where it is evanescent, so that evanescent waves
 decay under $e^{+i\omega t}$. The centring of the cells and the two components
 are on {doc}`conventions`.
 
+(theory-plane-waves-and-floquet-orders-incident-fields)=
 ## Incident fields
 
 A plane wave's `amplitude` $E_0$ is the peak field in V/m in the layer it
@@ -331,6 +334,7 @@ In a source column every port is terminated, and `DrivenResult.port_waves` holds
 the outgoing wave $b$ at each port in √W: $|b|^2$ is the power the source sends
 into the port.
 
+(theory-plane-waves-and-floquet-orders-multipoles)=
 ## Multipoles
 
 A sphere at the origin under $E_0\hat{x}e^{-ikz}$, with $\bar a_l, \bar b_l$ the
