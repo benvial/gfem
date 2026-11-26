@@ -96,7 +96,10 @@ class ShapeForm:
         self._form = ngs.LinearForm(self._w_space)
         self._empty = True
         section = space.section
-        self._position = section.stretch is not None and section.layer is not None
+        # a layer's or a bend's coefficients move with the position
+        self._position = (
+            section.stretch is not None and section.layer is not None
+        ) or section.bend is not None
 
     # --- fields ------------------------------------------------------------------
 

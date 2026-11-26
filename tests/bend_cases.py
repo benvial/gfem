@@ -241,6 +241,16 @@ def slab_bend(radius_um: float) -> gfem.Bend:
     return gfem.Bend(radius_um * 1e-6, outward="+x", at=(0.0, 0.0, 0.0))
 
 
+def wr90_bend_m(radius: float) -> gfem.Bend:
+    """`wr90_bend` with the radius in m (a value JAX may trace)."""
+    return gfem.Bend(radius, outward="+x", at=(WR90_A / 2 * 1e-3, 0.0, 0.0))
+
+
+def slab_bend_m(radius: float) -> gfem.Bend:
+    """`slab_bend` with the radius in m (a value JAX may trace)."""
+    return gfem.Bend(radius, outward="+x", at=(0.0, 0.0, 0.0))
+
+
 def solve_mode(model, frequency, bend=None, *, order=3, **kwargs):
     """``gfem.solve`` of one bent (or straight) port mode, 1 thread, warnings kept."""
     options = gfem.SolverOptions(order=order, threads=1)

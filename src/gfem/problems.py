@@ -796,8 +796,10 @@ class PortMode:
     the material field values of the regions on its line, in Ez and Hz
     (``Z_PV`` is NaN there: a line port has no voltage path); its node
     coordinates and law parameters raise `gfem.NonDifferentiableError`. A
-    port mode with a ``bend`` is not differentiable in this version: the
-    gradient raises `gfem.NonDifferentiableError`.
+    port mode with a ``bend`` differentiates in the same inputs and in
+    ``bend.radius`` (the derivative of the 2D forms by the inverse radius, one
+    2D solve more for a field or ``Z_PV`` objective); its ``outward`` and
+    ``at`` are fixed numbers.
     """
 
     port: str

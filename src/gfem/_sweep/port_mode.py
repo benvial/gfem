@@ -82,7 +82,7 @@ from gfem._engine.port_mode_normalization import normalize_rows
 from gfem._engine.port_mode_sensitivity import section_inputs
 from gfem._engine.port_mode_shape import chain_to_nodes
 from gfem._engine.runtime import task_manager
-from gfem._engine.sensitivity import Term, is_thermal_value
+from gfem._engine.sensitivity import BEND_RADIUS_KIND, Term, is_thermal_value
 from gfem._engine.solve_request import SolveRequest
 from gfem._linalg import report
 from gfem._linalg.superlu import (
@@ -360,6 +360,7 @@ class PortModeRule:
             self._index = 0
         self._model = model
         self._explicit: dict[tuple, Any] = {}
+        self._radius: float | None = None
         self._nodes: np.ndarray | None = None
         dispersion.warn_fitted_range(
             model,
@@ -426,8 +427,6 @@ class PortModeRule:
         values are refused. A wave port's face is differentiated by the
         section's shape kernel.
         """
-        if self.problem.bend is not None:
-            return _BEND_NO_GRADIENTS
         if self._model.mesh.dim == 2:
             from gfem._engine.driven2d import _NO_GRADIENTS
 
@@ -557,11 +556,15 @@ class PortModeRule:
         """
         self._explicit = {}
         self._nodes = None
+        self._radius = None
         pairs: list = []
         nodes = ("nodes",) in wanted
+        radius = BEND_RADIUS_KIND in wanted
 
         def compute() -> dict[str, np.ndarray]:
-            pairs.extend(self._pass(model, entry, cotangents, nodes=nodes))
+            pairs.extend(
+                self._pass(model, entry, cotangents, nodes=nodes, radius=radius)
+            )
             return {}
 
         _mpi.on_root(self.comm, compute, results=(PortModeError,))
@@ -574,6 +577,7 @@ class PortModeRule:
         cotangents: dict[str, np.ndarray],
         *,
         nodes: bool = False,
+        radius: bool = False,
     ) -> list:
         sweeps = entry.sweeps  # ty: ignore[unresolved-attribute]
         sweep = sweeps[self._index]
@@ -607,7 +611,10 @@ class PortModeRule:
             who=f"WavePort {self.port.name!r}",
             nodes=nodes,
             voltage_rule=rule,
+            radius=radius,
         )
+        if radius:
+            self._radius = done.radius
         if isinstance(space, LineModeSpace):
             self._explicit = {}
             return [
@@ -632,6 +639,12 @@ class PortModeRule:
     def explicit_inputs(self) -> dict[tuple, Any]:
         """The gradients by input kind the section computed itself."""
         return self._explicit
+
+    def explicit_problem(self) -> dict[tuple, np.ndarray]:
+        """The gradient by the bend's radius, from the 2D forms (rank 0 only)."""
+        if self._radius is None:
+            return {}
+        return {BEND_RADIUS_KIND: np.asarray(self._radius)}
 
     def explicit_nodes(self) -> np.ndarray | None:
         """The node cotangent of the port face, ``(n_nodes, 3)`` per metre.
@@ -751,10 +764,6 @@ _AT_NODES = (
     "node coordinates: the derivative of a point value on a moving section is not "
     "available in this version. Differentiate gamma, n_eff or Z_PV, or wrap the "
     "node coordinates in jax.lax.stop_gradient."
-)
-_BEND_NO_GRADIENTS = (
-    "the port mode of a bent guide (PortMode(bend=...)) is not differentiable in "
-    "this version; wrap its result in jax.lax.stop_gradient"
 )
 _AT_STAGED = (
     "PortModeResult.e_field.at needs concrete node coordinates to locate the "
