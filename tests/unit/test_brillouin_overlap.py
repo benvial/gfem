@@ -108,12 +108,28 @@ def _exact_tm():
     return mb, diag, shear
 
 
-#: Gates: the moving boundary's relative error, and the photoelastic part's error
-#: over the size of its shear term (the part that cancels the diagonal one:
-#: the sum is 0.17 of the diagonal 1.8 and the shear -1.97, so an error of the
-#: parts would show in the sum). Measured, factor 2 then 1: moving boundary
-#: MB_C MB_F, photoelastic PE_C PE_F; the gates are 3x.
-_GATES = {COARSE: {"mb": 1.5e-2}, FINE: {"mb": 1.4e-3}}
+#: Gates, 3x the errors measured on these meshes (factor 2, then factor 1).
+#: "mb" is the moving boundary's relative error (measured 5.0e-3, 4.6e-4).
+#: "pe" is the photoelastic part's error over |shear| (the shear term cancels
+#: the diagonal one: the sum, -0.17, is a tenth of either), measured 1.12e-2,
+#: 3.43e-3. "diag" is the diagonal part's error over |shear|, measured
+#: 9.7e-5, 7.7e-6. The photoelastic error is the shear term's: the strain
+#: S_yz = -i q (y - y_c) varies linearly across the film, but the strain
+#: enters as one element mean (shared with the forward path) times the
+#: element's integral of E E^H, a midpoint pairing of a linear function with
+#: a weight whose first moment is not the element's centre: an O(h^2) error
+#: (asymptotic ratio 4 per halving, measured 3.3), not the O(h^3) of the mode.
+#: The diagonal part (a constant strain) has no such pairing and converges
+#: with the mode (measured ratio 12.5).
+_GATES = {
+    COARSE: {"mb": 1.5e-2, "pe": 3.4e-2, "diag": 3.0e-4},
+    FINE: {"mb": 1.4e-3, "pe": 1.0e-2, "diag": 2.4e-5},
+}
+#: Halving the edge: the least ratio of each error (about half the smallest
+#: measured: 11 moving boundary, 3.3 photoelastic, 13 diagonal).
+_RATES = {"mb": 5, "pe": 2.5, "diag": 5}
+#: The second wavenumber of the diagonal extraction, inside the backward window.
+_SECOND = 1.01
 
 
 @pytest.fixture(scope="module")
@@ -123,35 +139,45 @@ def tm(slabs, dilate):
     def get(factor):
         if factor not in made:
             model = oc.model(slabs(factor), _film(), pec=False)
-            made[factor] = _overlap(model, dilate(_Q), mode=2)
+            first = _overlap(model, dilate(_Q), mode=2)
+            second = _overlap(model, dilate(_SECOND * _Q), mode=2)
+            made[factor] = first, second
         return made[factor]
 
     return get
 
 
-def _tm_errors(got):
+def _tm_errors(pair):
+    got, second = pair
     mb, diag, shear = _exact_tm()
-    del diag, shear
-    return {"mb": abs(got.moving_boundary / mb - 1)}
+    # the shear term is exactly linear in q, so two backward wavenumbers split
+    # the part into its constant (diagonal) and its slope (shear): round-off
+    # amplified by 1 / (_SECOND - 1) = 100, ~1e-14
+    q1, q2 = got.wavenumber, second.wavenumber
+    diag_got = (q2 * got.photoelastic - q1 * second.photoelastic) / (q2 - q1)
+    return {
+        "mb": abs(got.moving_boundary / mb - 1),
+        "pe": abs(got.photoelastic - (diag + shear)) / abs(shear),
+        "diag": abs(diag_got - diag) / abs(shear),
+    }
 
 
 @pytest.mark.parametrize("factor", [COARSE, FINE], ids=["coarse", "fine"])
 def test_the_film_dilation_at_twice_beta_matches_the_slab_backward_closed_form(
     tm, factor
 ):
-    got = tm(factor)
+    got = tm(factor)[0]
     assert got.direction == "backward"
     assert got.wavenumber == _Q
-    errors = _tm_errors(got)
-    for name, error in errors.items():
+    for name, error in _tm_errors(tm(factor)).items():
         assert error < _GATES[factor][name], (factor, name, error)
     np.testing.assert_allclose(got.total, got.moving_boundary + got.photoelastic)
 
 
-def test_halving_the_edge_length_cuts_each_backward_error_fivefold(tm):
+def test_halving_the_edge_length_cuts_each_backward_error(tm):
     coarse, fine = _tm_errors(tm(COARSE)), _tm_errors(tm(FINE))
-    for name in coarse:
-        assert coarse[name] / fine[name] > 5, (name, coarse[name], fine[name])
+    for name, least in _RATES.items():
+        assert coarse[name] / fine[name] > least, (name, coarse[name], fine[name])
 
 
 # --- TE guard ------------------------------------------------------------------------
