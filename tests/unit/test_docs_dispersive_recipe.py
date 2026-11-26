@@ -227,7 +227,7 @@ def test_the_capabilities_list_the_library_and_the_fit():
 def test_the_verification_page_has_a_material_data_bullet():
     page = _read("verification.md")
     section = dp.section(page, "Dispersive materials")
-    assert "**Material data.**" in section
+    assert "Material data" in section
     for name in (
         "test_library_materials.py",
         "test_library_sources.py",

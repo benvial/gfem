@@ -49,6 +49,11 @@ formula holds while the attenuation is small against the phase constant.
 The {py:obj}`gfem.conventions` module, "Kerr nonlinearity", gives the same
 formulas, and {doc}`recipes/waveguide-nonlinearity` the calculation.
 
+The {term}`clearance` $c$ from the core to a side
+{term}`perfectly matched layer` perturbs $n_\text{eff}$ by about
+$10^{-2} e^{-2\gamma_t c}$, with $\gamma_t$ the mode's transverse decay rate,
+and the {term}`group-velocity dispersion` far more.
+
 ## Second-order nonlinearity
 
 A material's `second_order_nonlinear_tensor` is the contracted tensor
