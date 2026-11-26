@@ -309,8 +309,6 @@ def test_a_stretch_of_a_coupled_plate_matches_finite_differences(plate, axis):
     [
         ("group_velocity", "group_velocity.*read from the modes"),
         ("error", "error.*backward error"),
-        ("displacement", "displacement.*bordered eigenvector adjoint"),
-        ("potential", "potential.*bordered eigenvector adjoint"),
     ],
 )
 def test_an_output_the_backward_does_not_have_refuses_by_name(plate, output, match):
@@ -319,10 +317,6 @@ def test_an_output_the_backward_does_not_have_refuses_by_name(plate, output, mat
     def objective(rho):
         model = _edited(plate, ["pz"], mass_density=rho)
         result = gfem.solve(model, problem, options=PLATE_OPTIONS)
-        if output == "displacement":
-            return jnp.real(result.displacement(0)["z"].coefficients[0])
-        if output == "potential":
-            return jnp.real(result.potential_fields[0].coefficients[0])
         return getattr(result, output)[0]
 
     with pytest.raises(gfem.NonDifferentiableError, match=match):

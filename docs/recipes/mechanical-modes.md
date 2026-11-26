@@ -156,10 +156,10 @@ to the target, so the order differs between the two solves.
   process and the sparse direct solver.
 - A `gfem.Absorbing` line on a solid's edge: use a damping frame.
 - A region of the mechanical domain without a stiffness or a density.
-- A gradient of anything but `omega` (so frequency and Q): the fields,
-  `group_velocity` and `error` raise `gfem.NonDifferentiableError`, and so does
-  a mode in a cluster. `omega` differentiates in the materials and the node
-  coordinates.
+- A gradient of `group_velocity` or `error`, or of a mode in a cluster:
+  `gfem.NonDifferentiableError`. `omega` and the fields (`displacement`,
+  `potential`, and what reads them, such as `gfem.strain` or `Field.at`)
+  differentiate in the materials and the node coordinates.
 - Fewer than `n_modes` modes meeting `SolverOptions.eigen_tolerance`:
   {py:obj}`gfem.EigenmodeConvergenceError`.
 
