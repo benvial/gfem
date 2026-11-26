@@ -36,7 +36,7 @@ PETSc.
 | Cells between modes of a shared port surface | Fourth-order central differences | {gfem-test}`tests/verification/test_gradient_matrix.py` | Before release |
 | Calls that must raise, and exact zeros | The named error; zero | {gfem-test}`tests/verification/test_gradient_matrix_raise_table.py` | Every change |
 | Driven optimization reusing an earlier design's factorization | Factorizing every design | {gfem-test}`tests/verification/test_factor_reuse_gradient.py` | Every change |
-| Thermal and DC conduction designs reusing plans and factors | Fresh solves, bit for bit at one solve thread | {gfem-test}`tests/unit/test_thermal_gradients.py` | Every change |
+| Thermal and DC conduction designs reusing plans and factors | Fresh solves, bit for bit at one solve thread | {gfem-test}`tests/unit/test_thermal_plan_pool.py` | Every change |
 | PETSc and SLEPc cells of the matrix | Finite differences | {gfem-test}`tests/verification/test_gradient_matrix.py` | Twice a week |
 
 ## Wave ports and shared port surfaces
@@ -449,6 +449,7 @@ Participations, dressed modes and interface layers
 | One and two modes of the pyEPR tutorials | Their stored outputs | {gfem-test}`tests/unit/test_quantum.py` | Every change |
 | Gradient of the dressed modes | Fourth-order differences; direct differentiation of the eigenproblem | {gfem-test}`tests/unit/test_quantum.py` | Every change |
 | Dispersive shift through a solve, small two-mode model | Finite differences | {gfem-test}`tests/verification/test_transmon_chi.py` | Every change |
+| Dispersive-shift cells of the gradient matrix | Finite differences | {gfem-test}`tests/verification/test_gradient_matrix.py` | Every change |
 | Dispersive shift of the tutorial's transmon along its pad gap | Finite differences | {gfem-test}`tests/verification/test_transmon_chi.py` | Before release |
 | `"MA"` interface layer on a film in vacuum | Sum of its two faces read one at a time | {gfem-test}`tests/verification/test_interface_participation.py` | Every change |
 

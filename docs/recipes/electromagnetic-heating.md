@@ -251,6 +251,9 @@ The full table is on {doc}`../capabilities`.
   per length use {py:meth}`gfem.HeatSource.uniform` with `power_per_length=`.
 - **An adaptive sweep's** fields heat, but their gradients raise: use
   `sweep="uniform"`.
+- **The wrong result type** raises `TypeError`: an eigenmode result has no
+  drive, and {py:obj}`gfem.joule_heating` of a driven result names
+  `electromagnetic_heating`.
 - **Several MPI ranks**, **eigenmodes** and **mesh refinement** objectives raise, naming the call.
 - The heat does not change the loss: there is no electro-thermal iteration.
 
