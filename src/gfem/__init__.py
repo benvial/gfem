@@ -29,6 +29,7 @@ from gfem._materials import (  # noqa: E402
     Lorentz,
     PermittivityLaw,
 )
+from gfem._raman_spectrum import RamanSpectrum  # noqa: E402
 from gfem._tolerance import ToleranceReport, tolerance_report  # noqa: E402
 from gfem.acousto_optic import AcoustoOpticShift, acousto_optic_shift  # noqa: E402
 from gfem.bands import (  # noqa: E402
@@ -318,6 +319,7 @@ __all__ = [
     "PortModeResult",
     "PortModeTrackingWarning",
     "QuantityEstimator",
+    "RamanSpectrum",
     "RationalFitNotConvergedWarning",
     "RationalModel",
     "RefinementCycle",

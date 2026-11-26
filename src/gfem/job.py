@@ -69,6 +69,7 @@ from gfem._optical_shift import _Sampling
 from gfem._pml import PML
 from gfem._port_section import PortSection
 from gfem._pytree import register_fields
+from gfem._raman_spectrum import RamanSpectrum
 from gfem._sheet import SheetField
 from gfem._sources import (
     ElectricDipole,
@@ -996,6 +997,8 @@ for _cls in (Material, MaterialField):
             mechanical_quality_factor=None,
             photoelastic_tensor=None,
             second_order_nonlinear_tensor=None,
+            # only a Material carries a Raman spectrum
+            **({"raman_spectrum": None} if _cls is Material else {}),
         ),
         from_args=_renamed_density_from_args(_cls),
         # "density": the mass density as gfem 0.1 wrote it (a read alias)
@@ -1014,6 +1017,7 @@ for _cls in (
     Debye,
     DjordjevicSarkar,
     SheetField,
+    RamanSpectrum,
     PEC,
     PMC,
     Absorbing,

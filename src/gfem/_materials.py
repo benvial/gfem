@@ -15,6 +15,7 @@ import numpy as np
 
 from gfem._checks import is_traced
 from gfem._pytree import register_fields
+from gfem._raman_spectrum import RamanSpectrum
 from gfem.errors import NonDifferentiableError
 
 if TYPE_CHECKING:
@@ -1422,6 +1423,10 @@ class Material:
             :math:`\delta\alpha = \beta_\mathrm{TPA} I`, in m/W: one real
             number, :math:`\ge 0`. Read by `gfem.kerr_nonlinearity` and
             `gfem.kerr_coupling` only. ``None`` means none.
+        raman_spectrum: The bulk Raman gain, a `gfem.RamanSpectrum` (its
+            ``symmetry`` is ``"cubic"`` for silicon, on this material's
+            `axes`, or ``"isotropic"``). Read by `gfem.raman_gain` only,
+            never by a solve. ``None`` means no Raman gain.
         electro_optic_tensor: The linear electro-optic (Pockels) tensor
             :math:`r_{Ik}` in m/V, contracted to a 6x3 matrix: rows
             :math:`I` in the order xx, yy, zz, yz, xz, xy, columns
@@ -1509,6 +1514,9 @@ class Material:
             an entry above 1e-8 m/V (a value in pm/V), or sits beside a
             matrix property, left-handed `axes`, a `PermittivityLaw` or an
             `eps_r` of 1 (the crystal's optical permittivity left out); a
+            `raman_spectrum` that holds a
+            traced gain (`NonDifferentiableError`), sits beside an
+            anisotropic `eps_r`, or is cubic beside a `PermittivityLaw`; a
             `stiffness` that is not a real,
             finite, symmetric positive definite 6x6 matrix, or whose largest
             entry is below 1e5 Pa (a value in GPa); a `piezoelectric_tensor`
@@ -1529,7 +1537,8 @@ class Material:
             above 1e-8 m/V (a value in pm/V), or sits beside a `stiffness`
             or `piezoelectric_tensor`, a matrix property, left-handed `axes`
             or an `eps_r` of 1.
-        TypeError: `eps_r` is a bare dispersion term such as `Drude`; wrap
+        TypeError: A `raman_spectrum` that is not a `gfem.RamanSpectrum`;
+            `eps_r` is a bare dispersion term such as `Drude`; wrap
             it in a `PermittivityLaw`; ``density=`` beside ``mass_density=``.
         NonDifferentiableError: A constant value is computed inside
             `jax.grad`, `jax.jit` or `jax.vmap` from their arguments; pass a
@@ -1555,6 +1564,7 @@ class Material:
     mechanical_quality_factor: float | None = None
     photoelastic_tensor: tuple[tuple[float, ...], ...] | None = None
     second_order_nonlinear_tensor: tuple[tuple[float, ...], ...] | None = None
+    raman_spectrum: RamanSpectrum | None = None
     name: str | None = None
 
     density = property(_no_density_attribute)
@@ -1597,6 +1607,7 @@ class Material:
                 raise ValueError(_solid_law_message(owner, solid))
             for name, value in _law_material_values(self, owner).items():
                 object.__setattr__(self, name, value)
+            _check_raman(self, owner)
             return
         values = {
             p.name: _material_value(p, getattr(self, p.name), owner) for p in PROPERTIES
@@ -1626,6 +1637,7 @@ class Material:
             object.__setattr__(self, name, value)
         if axes is not None:
             object.__setattr__(self, "axes", _axes(axes, owner))
+        _check_raman(self, owner)
 
     def __repr__(self) -> str:
         parts = [
@@ -1647,6 +1659,37 @@ class Material:
             isinstance(getattr(self, p.name), tuple)
             for p in PROPERTIES
             if p.may_be_tensor
+        )
+
+
+def _check_raman(material: Material, owner: str) -> None:
+    """Raise if a `RamanSpectrum` cannot sit beside the rest of the material."""
+    spectrum = material.raman_spectrum
+    if spectrum is None:
+        return
+    if not isinstance(spectrum, RamanSpectrum):
+        raise TypeError(
+            f"{owner}: raman_spectrum must be a gfem.RamanSpectrum, got "
+            f"{type(spectrum).__name__}."
+        )
+    if is_traced(spectrum):
+        raise NonDifferentiableError(
+            f"{owner}: raman_spectrum holds a traced gain, but Material values "
+            f"are fixed constants. {_TRACED_REMEDY}"
+        )
+    if isinstance(material.eps_r, PermittivityLaw):
+        if spectrum.symmetry == "cubic":
+            raise ValueError(
+                f"{owner}: a cubic raman_spectrum needs a constant eps_r with "
+                "axes, but eps_r is a PermittivityLaw, which takes no axes, "
+                "so the crystal frame would be lost. Give the optical "
+                "permittivity at the wavelength as a constant eps_r, with axes."
+            )
+    elif isinstance(material.eps_r, tuple):
+        raise ValueError(  # noqa: TRY004
+            f"{owner}: a raman_spectrum needs an isotropic eps_r (one value): "
+            "the Raman selection rules are the spectrum's symmetry, not the "
+            "birefringence of the index."
         )
 
 
@@ -2718,12 +2761,20 @@ class MaterialField:
                 layer density or beside a law; one end only a solid (with a
                 `stiffness`) or with a `mechanical_quality_factor`; a solid
                 end under a layer density; one end only with a
-                `nonlinear_index` or a `two_photon_absorption`.
+                `nonlinear_index` or a `two_photon_absorption`; an end with a
+                `raman_spectrum`.
             NonDifferentiableError: An end's law is computed inside
                 `jax.grad`, `jax.jit` or `jax.vmap`: differentiate a law on a
                 `Material` region instead.
         """
         _check_kerr_ends(void, solid)
+        for end in (void, solid):
+            if end.raman_spectrum is not None:
+                raise ValueError(
+                    "MaterialField.interpolate: a raman_spectrum is a "
+                    "tabulated curve, not a number that blends; give the "
+                    "spectrum on a Material region instead."
+                )
         if scheme not in _ALL_SCHEMES:
             raise ValueError(
                 f"Unknown interpolation scheme {scheme!r}; use one of "
