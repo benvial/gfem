@@ -88,6 +88,9 @@ _STATIC = 1e-8
 #: The relative shift of a left vector's inverse iteration, and its step bound.
 _LEFT_SHIFT = 1e-8
 _LEFT_STEPS = 6
+#: A left-vector step that lowers the backward error by less than this factor has
+#: met the round-off floor of the factorization: the iteration stops there.
+_LEFT_STALL = 0.1
 #: The inverse-iteration steps that refine a coupled mode's right vector.
 _REFINE_STEPS = 2
 
@@ -882,10 +885,21 @@ class MechanicalSystem:
         ``handle`` is the factorization of `_shifted`, for a lossy section at a
         wavenumber.
 
+        The iteration runs to the round-off floor, not just to ``tolerance``:
+        the group velocity and the gradient of the mode are first order in the
+        left vector's error, and ``tolerance`` bounds a backward error relative
+        to the whole pencil, whose stiffness norm (set by the mesh's highest
+        modes) dwarfs :math:`|\lambda|\,|M|` at the mode. A vector at
+        ``tolerance`` can still hold a part of a neighbouring mode's left
+        vector that a gradient reads: a mode 1 % from its neighbours, stopped
+        after one step at a backward error of :math:`2 \cdot 10^{-12}`, left a
+        gradient :math:`5 \cdot 10^{-6}` off. Each step shrinks that part by
+        the shift's distance over the gap (here :math:`10^{-8} / 10^{-2}`), so
+        the next step removes it. The iteration stops once a step lowers the
+        error by less than `_LEFT_STALL`, or after `_LEFT_STEPS` steps.
+
         Raises:
-            EigenmodeConvergenceError: The iteration ends above ``tolerance``
-                (the group velocity and the gradient of the mode are first
-                order in that error).
+            EigenmodeConvergenceError: The iteration ends above ``tolerance``.
         """
         if self.lossless:
             return np.conj(x)
@@ -897,9 +911,11 @@ class MechanicalSystem:
         for _ in range(_LEFT_STEPS):
             y = handle.solve(self._embed(self.mass.T @ y), transpose=True)[self.index]
             y = y / np.linalg.norm(y)
-            error = self._backward_error(lam, y, left=True)
-            if error <= tolerance:
+            previous, error = error, self._backward_error(lam, y, left=True)
+            if error <= tolerance and error > _LEFT_STALL * previous:
                 return y
+        if error <= tolerance:
+            return y
         raise EigenmodeConvergenceError(
             f"MechanicalEigenmode: the left vector of mode {mode} did not reach "
             f"eigen_tolerance={tolerance:g} in {_LEFT_STEPS} steps (backward error "
