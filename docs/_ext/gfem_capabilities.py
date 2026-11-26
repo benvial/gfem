@@ -1715,6 +1715,7 @@ def setup(app):
     for name, directive in _directives().items():
         app.add_directive(name, directive)
     app.add_role("gfem-effectivity", _effectivity_role)
+    app.add_role("gfem-test", _test_role)
     return {"version": "1", "parallel_read_safe": True, "parallel_write_safe": True}
 
 
@@ -1739,6 +1740,52 @@ def _effectivity_role(_name, rawtext, text, lineno, inliner, *_args):
         )
         return [inliner.problematic(rawtext, rawtext, message)], [message]
     return [nodes.Text(data[name][end])], []
+
+
+def _test_role(_name, rawtext, text, lineno, inliner, *_args):
+    """``{gfem-test}`tests/unit/test_x.py```: a link to a test on GitHub.
+
+    The argument is a test file, a test node (``path::name``, where ``name``
+    is a function or class the file defines) or a directory, relative to the
+    repository root. The link text is the argument; the target is
+    ``gfem_capabilities_source_url`` plus the path. A target that does not
+    exist is an error, so a renamed or deleted test fails the strict build.
+    """
+    from docutils import nodes
+
+    path, _, node = text.strip().partition("::")
+    problem = _test_target_problem(path, node)
+    if problem:
+        message = inliner.reporter.error(
+            f"gfem-test target {text!r}: {problem}", line=lineno
+        )
+        return [inliner.problematic(rawtext, rawtext, message)], [message]
+    literal = nodes.literal(text.strip(), text.strip())
+    base = inliner.document.settings.env.config.gfem_capabilities_source_url
+    if not base:
+        return [literal], []
+    ref = nodes.reference(rawtext, "", refuri=f"{base}{path}", internal=False)
+    ref += literal
+    return [ref], []
+
+
+def _test_target_problem(path: str, node: str) -> str:
+    """Why ``path`` (and ``node``) is no test of the repository, or ``""``."""
+    target = (REPO / path).resolve()
+    if not path or not target.is_relative_to(REPO / "tests"):
+        return "not a path under tests/"
+    if not target.exists():
+        return "no such file or directory"
+    if not node:
+        return ""
+    # A parametrize id after "[" is not part of the defined name.
+    name = node.split("[", 1)[0].rsplit("::", maxsplit=1)[-1]
+    pattern = rf"^\s*(?:async\s+)?(?:def|class)\s+{re.escape(name)}\b"
+    if target.is_file() and re.search(
+        pattern, target.read_text(encoding="utf-8"), re.MULTILINE
+    ):
+        return ""
+    return f"no function or class {name!r} in that file"
 
 
 def _directives() -> dict:

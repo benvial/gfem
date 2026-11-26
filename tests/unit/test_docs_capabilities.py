@@ -970,13 +970,10 @@ def _build_test_role_page(tmp_path, body, *, markdown=False):
 
 
 def test_the_test_role_links_a_file_a_node_and_a_directory(tmp_path):
-    node = "tests/verification/test_gradient_matrix.py::test_every_cell_has_an_outcome"
-    source = (REPO / "tests/verification/test_gradient_matrix.py").read_text("utf-8")
-    name = node.split("::")[1]
-    if f"def {name}" not in source:  # any function the file really defines
-        name = source.split("\ndef test_", 1)[1].split("(", 1)[0]
-        name = f"test_{name}"
-        node = f"tests/verification/test_gradient_matrix.py::{name}"
+    node = (
+        "tests/verification/test_gradient_matrix.py"
+        "::test_gradient_matrix_matches_central_differences"
+    )
     status, page = _build_test_role_page(
         tmp_path,
         ":gfem-test:`tests/verification/test_gradient_matrix.py`, "
