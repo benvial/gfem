@@ -95,6 +95,7 @@ exclude_patterns += ["_templates"]  # upstream/ copies are for diffing, not page
 html_theme = "shibuya"
 templates_path = ["_templates"]
 html_static_path = ["_static"]
+html_extra_path = ["_redirects"]
 # icons: Lucide masks, painted by gfem.css
 html_css_files = ["gfem-icons.css", "gfem.css"]
 html_js_files = [("gfem.js", {"defer": "defer"})]

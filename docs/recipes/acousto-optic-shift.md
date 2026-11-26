@@ -5,19 +5,11 @@ of a waveguide that its sound wave crosses: the {term}`acousto-optic shift` of a
 guided mode per volt, as a complex phasor at each acoustic frequency, the
 voltage-length product $V_\pi L$ of one arm and of a push-pull pair, and the
 voltage of the wave that reaches the transducer.
-{py:obj}`gfem.acousto_optic_shift` reads a kept {py:class}`gfem.Piezoelectric`
-solve on the optical cross-section through the {term}`photoelastic tensor` and
-the electro-optic tensor, first order, with the mode held constant. The device is
-the {doc}`acousto-optic tutorial <../tutorials/acousto-optic>`'s, meshed by
-{download}`transducer_section.py <../tutorials/transducer_section.py>` and
-{download}`aom_section.py <../tutorials/aom_section.py>`.
 
 ## A crystal with a photoelastic tensor
 
 A material's `photoelastic_tensor` is the contracted $p^E_{IJ}$ (6 × 6) in the
-frame of its `axes` ({doc}`../conventions`, "Photoelastic tensor"). The optical
-crystal carries it; the acoustic model's material for the same crystal must
-share its `axes`, which the shift cannot check.
+frame of its `axes` ({doc}`../conventions`, "Photoelastic tensor").
 
 ```python
 import dataclasses
@@ -94,6 +86,15 @@ optical_ln = dataclasses.replace(
 )
 optical_oxide = gfem.materials.silica(frequency=frequency)
 ```
+
+{py:obj}`gfem.acousto_optic_shift` reads a kept {py:class}`gfem.Piezoelectric`
+solve on the optical cross-section through the {term}`photoelastic tensor` and
+the electro-optic tensor, first order, with the mode held constant. The device is
+the {doc}`acousto-optic tutorial <../tutorials/acousto-optic>`'s, meshed by
+{download}`transducer_section.py <../tutorials/transducer_section.py>` and
+{download}`aom_section.py <../tutorials/aom_section.py>`. The optical crystal
+carries the tensor; the acoustic model's material for the same crystal must
+share its `axes`, which the shift cannot check.
 
 - A material is either the optical crystal (with an `electro_optic_tensor`) or
   the acoustic one (with a `stiffness` or `piezoelectric_tensor`); giving both raises.

@@ -1,14 +1,56 @@
 # PETSc and SLEPc
 
-gfem can solve its linear systems with PETSc and find eigenmodes with SLEPc
-in place of its built-in solvers. `linear_solver="petsc"` gives driven,
-electrostatic and eigenmode problems an exact MUMPS factorization, or with
-`petsc_options` any PETSc Krylov method and preconditioner.
-`eigen_solver="slepc"` finds the modes near the target with Krylov-Schur
-instead of ARPACK; gfem refines, differentiates and gives Q as after ARPACK.
-Both need the {term}`PETSc stack`, built once from source: `"auto"` never
-picks either, and neither is a pip extra. This page builds the
-{term}`no-MPI PETSc stack`; for ranks see {ref}`petsc-with-mpi`.
+gfem can solve with PETSc and SLEPc in place of its built-in solvers:
+`linear_solver="petsc"` gives driven, electrostatic and eigenmode problems an
+exact MUMPS factorization or your own Krylov method; `eigen_solver="slepc"`
+finds modes near the target with Krylov-Schur instead of ARPACK. Both need a
+{term}`PETSc stack`, built once from source; neither is a pip extra.
+
+## Build the PETSc stack
+
+`petsc_wheelhouse.sh` ({download}`download it <../../tools/petsc_wheelhouse.sh>`,
+or read it below) compiles PETSc, SLEPc, petsc4py and slepc4py with complex
+scalars, MUMPS, METIS and OpenBLAS into four wheels, once per Python version,
+in about 22 minutes. Run it in gfem's environment:
+
+```bash
+bash petsc_wheelhouse.sh --check      # check the prerequisites and the target Python
+bash petsc_wheelhouse.sh wheelhouse   # build the four wheels into ./wheelhouse
+pip install --no-index --find-links wheelhouse petsc petsc4py slepc slepc4py
+```
+
+This page builds the {term}`no-MPI PETSc stack`; for ranks see
+{ref}`petsc-with-mpi`. `"auto"` never picks them. gfem refines the modes,
+differentiates them and gives Q as after ARPACK.
+
+- Needs Linux, uv, curl, make, cmake, gcc, g++, gfortran and a Python not
+  built by conda (conda-forge's PETSc depends on ParMETIS,
+  {doc}`../project/licence`).
+- `PYTHON=3.12` picks another target Python; `MAKE_NP` sets the compile jobs.
+- In a uv project use `uv pip install`; a plain `uv sync` removes the four
+  packages (use `--inexact`).
+- Rebuild for another Python, a newer PETSc, and a stack from gfem 0.1.0's
+  script, which gfem refuses ({doc}`../project/release-notes`): rerun the script
+  into a new folder, then the install line with `--force-reinstall`.
+
+(petsc-with-mpi)=
+### With MPI
+
+`bash petsc_wheelhouse.sh --mpi wheelhouse` builds the {term}`MPI PETSc stack`
+beside the no-MPI one, for {doc}`distributed-solve`, on the Open MPI whose
+`mpicc`, `mpicxx` and `mpifort` are on `PATH`; it also
+needs bison 3+, flex and cmake 3.26+ (`--check` names what is missing). It has
+complex scalars, 64-bit indices, MUMPS, METIS, ScaLAPACK and PT-Scotch.
+
+- An eigenmode solve across ranks uses SLEPc from this stack.
+- The script's MUMPS orders with PT-Scotch on at most 32 processes;
+  `MUMPS_PARAORD_MAX` sets another cap (2 or more, `0` for none). A stack
+  built before the cap logs once, at INFO on `gfem.solver`, how many ranks a
+  rebuilt one would use.
+- A stack runs under the Open MPI it was built on. The no-MPI stack under a
+  launcher serves {term}`rank copies` only; a {term}`distributed solve`
+  naming PETSc raises `gfem.SolverUnavailableError`.
+- `--mpi --with-parmetis` adds ParMETIS, which may not be redistributed.
 
 (petsc-when-to-choose)=
 ## When to choose PETSc
@@ -18,44 +60,6 @@ picks either, and neither is a pip extra. This page builds the
 - Choose `"petsc"` for MUMPS and its options, or your own Krylov method
   ({ref}`petsc-krylov-methods`); `"slepc"` for SLEPc's controls
   (`eps_ncv`, `eps_monitor`), not speed: modes and Q match ARPACK's.
-
-## Build the PETSc stack
-
-You need Linux, uv, curl, make, cmake, gcc, g++, gfortran and a Python not
-built by conda (conda-forge's PETSc depends on ParMETIS,
-{doc}`../project/licence`). `petsc_wheelhouse.sh`
-({download}`download it <../../tools/petsc_wheelhouse.sh>`, or read it below)
-compiles PETSc, SLEPc, petsc4py and slepc4py with complex scalars, MUMPS,
-METIS and OpenBLAS into four wheels, once per Python version, in about 22
-minutes. Run it with gfem's environment active:
-
-```bash
-bash petsc_wheelhouse.sh --check      # check the prerequisites and the target Python
-bash petsc_wheelhouse.sh wheelhouse   # build the four wheels into ./wheelhouse
-pip install --no-index --find-links wheelhouse petsc petsc4py slepc slepc4py
-```
-
-- `PYTHON=3.12` picks another target Python; `MAKE_NP` sets the compile jobs.
-- In a uv project use `uv pip install`; a plain `uv sync` removes the
-  packages (use `--inexact`).
-- Rebuild for another Python, a newer PETSc version, and a stack from gfem
-  0.1.0's script, which gfem refuses ({doc}`../project/release-notes`): rerun
-  the script into a new folder, then the install line with `--force-reinstall`.
-
-(petsc-with-mpi)=
-### With MPI
-
-`bash petsc_wheelhouse.sh --mpi wheelhouse` builds the {term}`MPI PETSc stack`
-beside the no-MPI one, for the {doc}`distributed solve recipe <distributed-solve>`,
-on the Open MPI whose `mpicc`, `mpicxx` and `mpifort` are on `PATH`; it also
-needs bison 3+, flex and cmake 3.26+ (`--check` names what is missing). It has
-complex scalars, 64-bit indices, MUMPS, METIS, ScaLAPACK and PT-Scotch.
-
-- An eigenmode solve across ranks uses SLEPc from this stack.
-- A stack runs under the Open MPI it was built on. The no-MPI stack under a
-  launcher serves {term}`rank copies` only; a {term}`distributed solve`
-  naming PETSc raises `gfem.SolverUnavailableError`.
-- `--mpi --with-parmetis` adds ParMETIS, which may not be redistributed.
 
 ## Check the build
 
@@ -68,8 +72,8 @@ np.dtype(PETSc.ScalarType)  # dtype('complex128')
 PETSc.Sys.hasExternalPackage("mumps")  # True
 ```
 
-A stack gfem cannot use raises `gfem.SolverUnavailableError` with the fix;
-gfem never falls back to another solver.
+A stack gfem cannot use raises `gfem.SolverUnavailableError` with the fix; gfem
+never falls back.
 
 ## Choose the solvers
 

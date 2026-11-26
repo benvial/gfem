@@ -156,7 +156,7 @@ def material(rho):
 - **Slab.** In Ez the same plane as a slab gives the same S; in Hz expect a few
   $10^{-3}$ ({doc}`../verification`).
 
-## What raises
+## Limits
 
 A 2D model raises `NotImplementedError` for these, naming the alternative,
 most often the slab:

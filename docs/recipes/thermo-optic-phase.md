@@ -7,8 +7,7 @@ map. {py:obj}`gfem.thermo_optic_shift` turns a temperature ({doc}`heater-tempera
 and {py:obj}`gfem.route_phase` along a route through a 3D device.
 
 The device is the {doc}`heater tutorial <../tutorials/heater>`'s section at
-$\lambda$ = 1.55 µm. The {term}`thermo-optic phase` is a delay ({doc}`../conventions`,
-"Temperature and thermo-optic phase").
+$\lambda$ = 1.55 µm.
 
 ## The phase per watt on a cross-section
 
@@ -73,6 +72,8 @@ phase per watt: 139.3 rad/W
 P_pi = 22.55 mW
 ```
 
+- The {term}`thermo-optic phase` is a delay ({doc}`../conventions`,
+  "Temperature and thermo-optic phase").
 - A heater of length $L$ dissipating $P$ gives $P' = P / L$ and the phase
   $\varphi = \varphi' L$, with $\varphi'$ = `shift.phase_per_length`. So
   $P_\pi = \pi P' / \varphi'$ for every length, and one solve at 1 W/m serves every drive.

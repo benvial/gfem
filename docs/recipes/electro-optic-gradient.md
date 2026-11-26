@@ -5,14 +5,7 @@ sets it: each entry of the {term}`electro-optic tensor`, the
 {term}`static permittivity` of every material, the drive, and the
 electrode gap. One `jax.grad` call through
 {py:obj}`gfem.Electrostatic` → {py:obj}`gfem.electro_optic_shift` gives the
-first three, for one adjoint electrostatic solve; the gap goes through a
-{py:func}`gfem.shape.boundary_morph` of the electrostatic mesh. The ridge's
-width is the exception: it moves the mode, which the shift holds constant,
-so it takes a difference over two remeshes.
-
-The device is the section of {doc}`electro-optic-phase`, built by
-{download}`tfln_section.py <../tutorials/tfln_section.py>` at twice its edge
-lengths; the phase is that of one arm over 2 mm at 1 V.
+first three, for one adjoint electrostatic solve.
 
 ## The phase as a function of its inputs
 
@@ -117,6 +110,13 @@ print(f"phase at 1 V: {float(value):.5f} rad")
 ```text
 phase at 1 V: -0.19565 rad
 ```
+
+The gap goes through a {py:func}`gfem.shape.boundary_morph` of the
+electrostatic mesh. The ridge's width is the exception: it moves the mode,
+which the shift holds constant, so it takes a difference over two remeshes.
+The device is the section of {doc}`electro-optic-phase`, built by
+{download}`tfln_section.py <../tutorials/tfln_section.py>` at twice its edge
+lengths; the phase is that of one arm over 2 mm at 1 V.
 
 - The phase is negative on arm a: the static field points from the signal to
   the ground, along the crystal's $+z$, and lowers the index by about
