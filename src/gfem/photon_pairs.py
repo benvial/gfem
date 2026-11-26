@@ -124,7 +124,8 @@ class JointSpectrum:
         decomposition, whose derivative is singular at degenerate weights, so
         it differentiates everywhere. It is 1 for a separable amplitude. For
         identical photons whose bands overlap it is the purity of the
-        symmetric amplitude as sampled.
+        symmetric amplitude as sampled. NaN for an empty spectrum (a zero
+        length).
         """
         return pp.trace_purity(self.jsa)
 
@@ -198,9 +199,8 @@ class PhotonPairSource:
         process: ``"spdc"`` or ``"sfwm"``.
         port: The wave port's name.
         modes: The pump's, signal's and idler's mode numbers.
-        identical: Whether signal and idler are one mode family over
-            overlapping bands: the pairs are indistinguishable and counted
-            once.
+        identical: Whether signal and idler are one mode family over the
+            same bands: the pairs are indistinguishable and counted once.
         signal_frequency: ``(Ns,)`` Hz, uniform over the signal rows' span.
         idler_frequency: ``(Ni,)`` Hz, uniform over the idler rows' span.
         bands: The ``(lowest, highest)`` row frequency of the pump, signal and
@@ -213,6 +213,8 @@ class PhotonPairSource:
         fit: Each arm's polynomial coefficients of ``gamma`` in the scaled
             frequency, 1/m.
         fit_residual: ``(3,)`` the largest row residual of each arm's fit, 1/m.
+        coupling_frequency: The pump's, signal's and idler's row frequency the
+            coupling was taken at, Hz; ``None`` for the bands' centres.
     """
 
     process: str
@@ -226,6 +228,7 @@ class PhotonPairSource:
     kerr_phase: jax.Array | None
     fit: tuple[jax.Array, jax.Array, jax.Array]
     fit_residual: jax.Array
+    coupling_frequency: tuple[float, float, float] | None = None
 
     # --- geometry of the bands ---
 
@@ -236,6 +239,28 @@ class PhotonPairSource:
         fi0 = 0.5 * sum(self.bands[2])
         pump = fs0 + fi0 if self.process == "spdc" else 0.5 * (fs0 + fi0)
         return fs0, fi0, pump
+
+    @property
+    def _coupling_omegas(self) -> tuple[float, float, float]:
+        """Angular frequencies the coupling was evaluated at: pump, signal, idler."""
+        if self.coupling_frequency is not None:
+            fp, fs, fi = self.coupling_frequency
+        else:
+            fs, fi, fp = self._centres
+        return 2 * np.pi * fp, 2 * np.pi * fs, 2 * np.pi * fi
+
+    def _pair_coupling(self, ws: Any, wi: Any) -> Any:
+        r"""The coupling's frequency prefactor on the grid: :math:`g_{si}` or :math:`\Gamma_{si}`.
+
+        :math:`\kappa_{psi}` scales as :math:`\omega_p` and :math:`\gamma_{sppi}`
+        as :math:`\omega_s`: each is divided by the frequency it was taken at, so
+        the grid carries the whole frequency dependence of the prefactor.
+        """
+        wp0, ws0, wi0 = self._coupling_omegas
+        if self.process == "spdc":
+            return 2 * np.sqrt(ws * wi) / wp0 * self.coupling
+        s, i = self.coupling[0], self.coupling[1]
+        return 0.5 * np.sqrt(ws * wi) * (s / ws0 + i / wi0)
 
     def _pump_frequency(self, fs: Any, fi: Any) -> Any:
         """The pump frequency that energy conservation pairs with ``fs`` and ``fi``."""
@@ -262,7 +287,16 @@ class PhotonPairSource:
         have = self.bands[0]
         slack = _RANGE_TOL * (have[1] - have[0])
         if lo < have[0] - slack or hi > have[1] + slack:
-            raise ValueError(_missing(owner, "pump", have, (lo, hi), self.process))
+            raise ValueError(
+                _missing(
+                    owner,
+                    "pump",
+                    have,
+                    (lo, hi),
+                    self.process,
+                    _pump_half_width(self.process, self.bands),
+                )
+            )
 
     @property
     def delta_beta(self) -> jax.Array:
@@ -349,7 +383,13 @@ class PhotonPairSource:
         """Raise when an arm's fit leaves a phase above the limit over ``length``."""
         if is_traced(length) or is_traced(self.fit_residual):
             return
-        phase = np.asarray(self.fit_residual) * float(np.max(np.asarray(length)))
+        # four-wave mixing's mismatch carries the pump's beta twice
+        weight = np.array(
+            [1.0, 1.0, 1.0] if self.process == "spdc" else [2.0, 1.0, 1.0]
+        )
+        phase = (
+            weight * np.asarray(self.fit_residual) * float(np.max(np.asarray(length)))
+        )
         worst = int(np.argmax(phase))
         if phase[worst] > _FIT_PHASE_LIMIT:
             raise ValueError(
@@ -406,17 +446,14 @@ class PhotonPairSource:
             gain, shift = self._poling_terms(
                 period, duty_cycle, order, self._centre_mismatch()
             )
-            coupling = 2 * np.sqrt(ws * wi) / (ws + wi) * jnp.abs(self.coupling)
-            strength = (gain * coupling) ** 2 * power
+            strength = (gain * jnp.abs(self._pair_coupling(ws, wi))) ** 2 * power
             a_pump = jnp.real(gp)
             mismatch = db - shift
         else:
             if self.kerr_phase is None:
                 raise TypeError("a four-wave mixing source carries its Kerr phase.")
             db = 2 * jnp.imag(gp) - jnp.imag(gs) - jnp.imag(gi)
-            s, i = self.coupling[0], self.coupling[1]
-            gamma_si = 0.5 * (np.sqrt(wi / ws) * s + np.sqrt(ws / wi) * i)
-            strength = jnp.abs(gamma_si) ** 2 * power**2
+            strength = jnp.abs(self._pair_coupling(ws, wi)) ** 2 * power**2
             pp_, ss, ii = self.kerr_phase
             mismatch = db + 2 * jnp.real(pp_ - ss - ii) * power
             a_pump = 2 * jnp.real(gp)
@@ -426,6 +463,7 @@ class PhotonPairSource:
         h = (a_pair + a_pump) * length / 2
         density = strength * length**2 * _decayed_sinhc_sinc(u, v, h) * inside
         _warn_gain(owner, density)
+        _warn_cw_resolution(density, inside)
         return density
 
     def spectral_brightness(
@@ -457,7 +495,8 @@ class PhotonPairSource:
         \gamma_{sspp} - \gamma_{iipp})P`. For identical photons it is the
         density of photons, each pair being two of them. Divide by ``power``
         (squared for four-wave mixing) for a brightness per watt; multiply by
-        :math:`c/\lambda^2` for per nm.
+        :math:`c/\lambda^2` times :math:`10^{-9}` m/nm for per nm (124.8 GHz
+        per nm at 1550 nm).
 
         Args:
             length: The guide's length, m, :math:`\ge 0`.
@@ -483,6 +522,8 @@ class PhotonPairSource:
 
         Warns:
             HighGainWarning: The density exceeds 0.1 pairs/(s Hz).
+            UnresolvedJointSpectrumWarning: The grid is too coarse for the
+                lobes of the density, or the bands cut it.
         """
         return self._density(
             "spectral_brightness",
@@ -516,6 +557,8 @@ class PhotonPairSource:
 
         Warns:
             HighGainWarning: The peak density exceeds 0.1 pairs/(s Hz).
+            UnresolvedJointSpectrumWarning: As `spectral_brightness`: the
+                integral is then not converged.
         """
         density = self._density(
             "rate", length, power, period=period, duty_cycle=duty_cycle, order=order
@@ -548,7 +591,8 @@ class PhotonPairSource:
 
         Args:
             length: The guide's length, m, :math:`\ge 0`.
-            pulse_energy: The pulse's energy, J, :math:`\ge 0`.
+            pulse_energy: The pulse's energy, J, > 0 (the purity of an empty
+                spectrum is undefined).
             pulse_duration: The pulse's intensity FWHM, s, > 0.
             period: Poling period, m, > 0; ``None`` unpoled. Down-conversion
                 only.
@@ -566,14 +610,15 @@ class PhotonPairSource:
                 the pump rows do not cover the sums of the grid.
 
         Warns:
-            HighGainWarning: ``pairs_per_pulse * sqrt(purity)`` exceeds 0.1.
+            HighGainWarning: ``pairs_per_pulse * sqrt(purity)`` (twice that
+                for identical photons) exceeds 0.1.
             UnresolvedJointSpectrumWarning: The grid is too coarse for the
                 lobes of the amplitude, or the bands cut it.
         """
         owner = "joint_spectrum"
         period, duty_cycle, order = self._poling(owner, period, duty_cycle, order)
         _check_range(owner, "length", length, lo=0.0)
-        _check_range(owner, "pulse_energy", pulse_energy, lo=0.0)
+        _check_range(owner, "pulse_energy", pulse_energy, lo=0.0, strict=True)
         _check_range(owner, "pulse_duration", pulse_duration, lo=0.0, strict=True)
         for name, x in (
             ("length", length),
@@ -604,13 +649,16 @@ class PhotonPairSource:
             gain, shift = self._poling_terms(
                 period, duty_cycle, order, self._centre_mismatch()
             )
-            g = 2 * np.sqrt(ws * wi) / (ws + wi) * self.coupling
-            envelope = g * gain * pp.pump_spectrum(offset, energy, duration)
+            envelope = (
+                self._pair_coupling(ws, wi)
+                * gain
+                * pp.pump_spectrum(offset, energy, duration)
+            )
             mismatch, a_pump = db - shift, a_p
         else:
-            s, i = self.coupling[0], self.coupling[1]
-            gamma_si = 0.5 * (np.sqrt(wi / ws) * s + np.sqrt(ws / wi) * i)
-            envelope = gamma_si * pp.pump_square_spectrum(offset, energy, duration)
+            envelope = self._pair_coupling(ws, wi) * pp.pump_square_spectrum(
+                offset, energy, duration
+            )
             mismatch, a_pump = db, 2 * a_p
         amplitude = pp.pair_amplitude(length, mismatch, a_s + a_i, a_pump)
         jsa = 2 * np.pi * pp.identical_scale(self.identical) * envelope * amplitude
@@ -618,10 +666,14 @@ class PhotonPairSource:
         _warn_resolution(jsa)
         if not is_traced(jsa):
             n, p = float(out.pairs_per_pulse), float(out.purity)
-            if n * math.sqrt(p) > _OCCUPATION_LIMIT:
+            # identical photons: the occupation of a mode is that of photons,
+            # two per pair (the symmetric amplitude's Takagi values squared)
+            worst = (2 if self.identical else 1) * n * math.sqrt(p)
+            if worst > _OCCUPATION_LIMIT:
                 warnings.warn(
                     f"gfem.{self.process}: {n:.3g} pairs per pulse at purity "
-                    f"{p:.3g} put up to {n * math.sqrt(p):.3g} pairs in the "
+                    f"{p:.3g} put up to {worst:.3g} "
+                    f"{'photons' if self.identical else 'pairs'} in the "
                     f"strongest mode, above {_OCCUPATION_LIMIT}: the low-gain "
                     "result under-counts and multi-pair emission matters. Lower "
                     "the pump.",
@@ -696,8 +748,12 @@ def _missing(
     have: tuple[float, float],
     need: tuple[float, float],
     process: str,
+    half_width: float,
 ) -> str:
     lo, hi = need
+    if lo == hi:
+        # a point is not a solvable band: suggest the span a pulsed figure needs
+        lo, hi = lo - half_width, hi + half_width
     n = 9
     return (
         f"{owner}: the {arm} rows span {have[0]:.12g} to {have[1]:.12g} Hz but "
@@ -705,6 +761,12 @@ def _missing(
         "(an arm is never extrapolated): solve it with "
         f"np.linspace({lo:.12g}, {hi:.12g}, {n})."
     )
+
+
+def _pump_half_width(process: str, bands: Any) -> float:
+    """Half the pump span the grid's sums cover (the half-sums for four-wave mixing)."""
+    width = (bands[1][1] - bands[1][0]) + (bands[2][1] - bands[2][0])
+    return width / 2 if process == "spdc" else width / 4
 
 
 def _warn_gain(owner: str, density: jax.Array) -> None:
@@ -722,6 +784,26 @@ def _warn_gain(owner: str, density: jax.Array) -> None:
         )
 
 
+def _warn_unresolved(what: str, jump: float, edge: float, *, stacklevel: int) -> None:
+    """Warn on a ``jump`` or ``edge`` ratio (to the peak) above its limit."""
+    if jump > _JUMP_LIMIT:
+        warnings.warn(
+            f"gfem.photon_pairs: the {what} jumps by {jump:.2f} of its peak "
+            f"between grid neighbours (limit {_JUMP_LIMIT}): fewer than about 11 "
+            "points per lobe. Use more points, or a shorter guide.",
+            UnresolvedJointSpectrumWarning,
+            stacklevel=stacklevel,
+        )
+    if edge > _EDGE_LIMIT:
+        warnings.warn(
+            f"gfem.photon_pairs: the {what} is {edge:.2f} of its peak on a band "
+            f"edge (limit {_EDGE_LIMIT}): the bands filter the pairs; widen them "
+            "to count all.",
+            UnresolvedJointSpectrumWarning,
+            stacklevel=stacklevel,
+        )
+
+
 def _warn_resolution(jsa: jax.Array) -> None:
     if is_traced(jsa):
         return
@@ -731,22 +813,23 @@ def _warn_resolution(jsa: jax.Array) -> None:
         return
     jump = max(np.abs(np.diff(a, axis=0)).max(), np.abs(np.diff(a, axis=1)).max())
     edge = max(a[0].max(), a[-1].max(), a[:, 0].max(), a[:, -1].max())
-    if jump > _JUMP_LIMIT * peak:
-        warnings.warn(
-            f"gfem.photon_pairs: the joint spectrum jumps by {jump / peak:.2f} of "
-            f"its peak between grid neighbours (limit {_JUMP_LIMIT}): fewer than "
-            "about 11 points per lobe. Use more points, or a shorter guide.",
-            UnresolvedJointSpectrumWarning,
-            stacklevel=4,
-        )
-    if edge > _EDGE_LIMIT * peak:
-        warnings.warn(
-            f"gfem.photon_pairs: the joint spectrum is {edge / peak:.2f} of its "
-            f"peak on a band edge (limit {_EDGE_LIMIT}): the bands filter the "
-            "pairs; widen them to count all.",
-            UnresolvedJointSpectrumWarning,
-            stacklevel=4,
-        )
+    _warn_unresolved("joint spectrum", jump / peak, edge / peak, stacklevel=3)
+
+
+def _warn_cw_resolution(density: jax.Array, inside: np.ndarray) -> None:
+    r"""The joint spectrum's two checks on :math:`\sqrt{n_s}`, in band, per batch entry."""
+    if is_traced(density) or inside.sum() < 2:
+        return
+    a = np.sqrt(np.asarray(density)[..., inside])
+    peak = a.max(axis=-1)
+    live = peak > 0.0
+    if not live.any():
+        return
+    jump = np.abs(np.diff(a, axis=-1)).max(axis=-1)[live] / peak[live]
+    edge = np.maximum(a[..., 0], a[..., -1])[live] / peak[live]
+    _warn_unresolved(
+        "spectral density", float(jump.max()), float(edge.max()), stacklevel=4
+    )
 
 
 # --- construction ------------------------------------------------------------------
@@ -842,10 +925,33 @@ def _build(
     f_pump = fs0 + fi0 if process == "spdc" else 0.5 * (fs0 + fi0)
     slack = _RANGE_TOL * (bands[0][1] - bands[0][0])
     if not bands[0][0] - slack <= f_pump <= bands[0][1] + slack:
-        raise ValueError(_missing(owner, "pump", bands[0], (f_pump, f_pump), process))
+        raise ValueError(
+            _missing(
+                owner,
+                "pump",
+                bands[0],
+                (f_pump, f_pump),
+                process,
+                _pump_half_width(process, bands),
+            )
+        )
     same_mode = signal.port == idler.port and int(signal.mode) == int(idler.mode)
-    overlap = max(bands[1][0], bands[2][0]) <= min(bands[1][1], bands[2][1])
-    identical = signal is idler or (same_mode and overlap)
+    identical = signal is idler
+    if same_mode and not identical:
+        # one mode family: equal spans are one photon species, disjoint spans
+        # are frequency-separated; anything between has no sound count
+        tol = _RANGE_TOL * max(b[1] - b[0] for b in bands[1:])
+        equal = all(abs(x - y) <= tol for x, y in zip(*bands[1:], strict=True))
+        overlap = max(bands[1][0], bands[2][0]) < min(bands[1][1], bands[2][1]) - tol
+        if overlap and not equal:
+            raise ValueError(
+                f"{owner}: the signal rows ({bands[1][0]:.12g} to "
+                f"{bands[1][1]:.12g} Hz) and the idler rows ({bands[2][0]:.12g} "
+                f"to {bands[2][1]:.12g} Hz) of one mode partly overlap: split or "
+                "merge the bands (equal spans are identical photons, disjoint "
+                "spans distinguishable)."
+            )
+        identical = equal
     near = [
         int(np.argmin(np.abs(f - c)))
         for f, c in zip(freqs, (f_pump, fs0, fi0), strict=True)
@@ -873,6 +979,7 @@ def _build(
         kerr_phase=kerr_phase,
         fit=tuple(fits),
         fit_residual=jnp.stack(residuals),
+        coupling_frequency=tuple(float(freqs[k][near[k]]) for k in range(3)),
     )
 
 
@@ -894,8 +1001,9 @@ def spdc(
     extrapolated. The pump must cover the sums of the signal and idler bands
     for a pulsed figure and the sum of their centres for a continuous one.
     Pass the same result as ``signal`` and ``idler`` (or one mode family over
-    overlapping bands) for identical photons: type-0 or type-I degenerate
-    emission, counted once.
+    equal bands) for identical photons: type-0 or type-I degenerate emission,
+    counted once. One mode family over disjoint bands is distinguishable, and
+    over partly overlapping bands is refused.
 
     The coupling is one `gfem.three_wave_coupling` overlap on the rows nearest
     the centres of the bands, as :math:`\overline{\kappa_{psi}}`; the
@@ -920,7 +1028,8 @@ def spdc(
     Raises:
         NotImplementedError: A line port (a 2D mesh).
         ValueError: ``points < 3``; an arm has fewer than 4 rows; the pump
-            rows miss the sum of the band centres; otherwise as
+            rows miss the sum of the band centres; one mode's signal and
+            idler rows partly overlap; otherwise as
             `gfem.three_wave_coupling`.
         TypeError: An arm is not a `gfem.PortModeResult`, or has no electric
             field.
@@ -957,7 +1066,8 @@ def sfwm(
     Raises:
         NotImplementedError: A line port (a 2D mesh).
         ValueError: ``points < 3``; an arm has fewer than 4 rows; the pump
-            rows miss the half-sum of the band centres; otherwise as
+            rows miss the half-sum of the band centres; one mode's signal and
+            idler rows partly overlap; otherwise as
             `gfem.kerr_coupling`.
         TypeError: An arm is not a `gfem.PortModeResult`, or has no electric
             field.

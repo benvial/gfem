@@ -211,9 +211,10 @@ class HighGainWarning(UserWarning):
     `gfem.PhotonPairSource` computes the first order of the parametric gain:
     the exact density is :math:`\sinh^2(gL)` against :math:`(gL)^2`, and a mean
     number of pairs :math:`\bar n` per mode also means a multi-pair
-    probability near :math:`\\bar n`. The warning fires when the strongest mode
-    may hold more than 0.1 pairs: for a pulse, ``pairs_per_pulse *
-    sqrt(purity)``; for a continuous pump, the peak spectral density in
+    probability near :math:`\bar n`. The warning fires when the strongest mode
+    may hold more than 0.1 pairs (photons, for identical photons): for a pulse,
+    ``pairs_per_pulse * sqrt(purity)`` (twice that for identical photons); for a
+    continuous pump, the peak spectral density in
     pairs/(s Hz). The figure then under-counts: lower the pump or the length.
     Filter it with Python's `warnings` module.
     """
@@ -222,7 +223,9 @@ class HighGainWarning(UserWarning):
 class UnresolvedJointSpectrumWarning(UserWarning):
     """A joint spectral amplitude is under-sampled or cut by its bands.
 
-    Raised by `gfem.PhotonPairSource.joint_spectrum` when the amplitude jumps
+    Raised by `gfem.PhotonPairSource.joint_spectrum` (and, on the square root
+    of the spectral density, by `gfem.PhotonPairSource.spectral_brightness` and
+    `gfem.PhotonPairSource.rate`) when the amplitude jumps
     by more than 0.25 of its peak between grid neighbours (fewer than about 11
     points per lobe of the phase-matching function), or reaches more than 0.1
     of its peak on a band edge (the bands act as ideal filters, so the pairs
