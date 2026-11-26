@@ -303,7 +303,9 @@ clearance 1.5 um: gamma 177.04 /(W m)
 - **Gradients.** $\gamma_\mathrm{NL}$ differentiates with respect to the
   materials and to the node coordinates of a planar port (a width, a height).
   Line ports, the three-wave and photon-pair overlaps and `jax.jit` over the
-  nodes do not; an objective that depends on a mode's phase raises.
+  nodes do not. Solve the mode on the same model inside the differentiated
+  function; an objective that depends on a mode's phase raises
+  `jax.errors.JaxRuntimeError` with gfem's message.
 
 ## Next
 

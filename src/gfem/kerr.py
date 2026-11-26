@@ -654,8 +654,12 @@ def kerr_nonlinearity(model: Model, mode: PortModeResult) -> KerrNonlinearity:
     overlap is read on the moved triangles. A `gfem.MaterialField`'s values
     belong to their elements and move with them, in the overlap as in the mode
     solve: the node derivative holds each element's material, not the material
-    at a fixed point. A line port of a 2D model has no node derivative. A mode's
-    phase is free, so an objective that depends on it raises.
+    at a fixed point. A line port of a 2D model has no node derivative. For a
+    node derivative, solve ``mode`` on ``model`` inside the differentiated
+    function. A mode's phase is free: under node gradients an objective that
+    depends on it raises `gfem.NonDifferentiableError` in the backward pass,
+    which reaches the caller as ``jax.errors.JaxRuntimeError`` carrying its
+    message.
 
     Args:
         model: The model the mode was solved on, with the Kerr properties.
@@ -805,7 +809,7 @@ def free_carriers(
     :math:`\Gamma_R` that turns a carrier density into a loss and an index
     change, and the generation coefficient :math:`\theta`; the cross-section
     :math:`\sigma`, the dispersion coefficient and the lifetime
-    :math:`\tau` belong to the pulse tool (``N = theta * tau * P**2`` is the
+    :math:`\tau` belong to the pulse tool (:math:`N = \theta\tau P^2` is the
     continuous-wave density). Differentiable through the materials, the traced
     mode field and the node coordinates of a planar port (as
     `kerr_nonlinearity`); exactly linear in
@@ -912,7 +916,9 @@ def kerr_coupling(
     Everything else is as `kerr_nonlinearity`: material values, the layer,
     lossy sections, and the gradient through the mode fields, materials and node
     coordinates (a modulus such as :math:`|\gamma_{abcd}|^2` is free of the rows'
-    phases; an entry whose phases do not cancel is not, and raises).
+    phases; under node gradients an entry whose phases do not cancel is not,
+    and raises ``jax.errors.JaxRuntimeError`` carrying the
+    `gfem.NonDifferentiableError` message from the backward pass).
 
     Args:
         model: The model the modes were solved on, with the Kerr properties.
