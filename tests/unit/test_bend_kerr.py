@@ -137,6 +137,8 @@ def test_the_coupling_refuses_two_radii(model, bent):
         ("second_harmonic", lambda m, r: gfem.second_harmonic(m, r, r)),
         ("spdc", lambda m, r: gfem.spdc(m, r, r, r)),
         ("sfwm", lambda m, r: gfem.sfwm(m, r, r, r)),
+        ("raman_gain", gfem.raman_gain),
+        ("free_carriers", gfem.free_carriers),
     ],
 )
 def test_the_overlaps_without_a_bend_metric_refuse_a_bent_mode(model, bent, name, call):
@@ -180,3 +182,26 @@ def test_jit_agrees_with_eager_for_its_radius_gradient(model):
     np.testing.assert_allclose(
         jax.jit(jax.grad(gamma))(30e-3), jax.grad(gamma)(30e-3), rtol=JIT_RTOL
     )
+
+
+def test_the_node_derivative_of_a_bent_overlap_is_refused(model, bent):
+    import jax.numpy as jnp
+
+    nodes = jnp.asarray(model.mesh.nodes)
+
+    def objective(n):
+        moved = model.replace(mesh=model.mesh.with_nodes(n))
+        return jnp.real(gfem.kerr_nonlinearity(moved, bent).gamma_nl[0])
+
+    with pytest.raises(gfem.NonDifferentiableError, match="bent"):
+        jax.grad(objective)(nodes)
+
+
+def test_a_bent_mode_in_an_anisotropic_kerr_material_is_refused(tmp_path):
+    path = bc.wr90_mesh(tmp_path / "wr90.msh")
+    air = gfem.Material(nonlinear_index=N2, nonlinear_anisotropy=0.5)
+    base = bc.wr90_model(path)
+    model = base.replace(materials={"air": air})
+    result = bc.solve_mode(model, bc.WR90_F, bc.wr90_bend_m(30e-3), order=2)
+    with pytest.raises(NotImplementedError, match="nonlinear_anisotropy"):
+        gfem.kerr_nonlinearity(model, result)
