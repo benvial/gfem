@@ -414,6 +414,9 @@ html.light, html.dark {
 .gfem-search { display: flex; align-items: center; }
 .gfem-search:has(pagefind-modal-trigger:defined) > form.searchbox { display: none; }
 .gfem-search > pagefind-modal-trigger:not(:defined) { display: none; }
+/* Without the Pagefind index the modal never upgrades; the script has moved it to <body>, so
+   hide it there too, or its footer link shows as bare text at the top of the page. */
+pagefind-modal:not(:defined) { display: none; }
 .gfem-search > pagefind-modal-trigger { min-width: 220px; color-scheme: inherit; }
 .gfem-search .pf-trigger-btn {
   font: var(--t-label) !important; text-transform: uppercase !important; letter-spacing: .08em !important;
