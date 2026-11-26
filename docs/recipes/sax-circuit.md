@@ -266,6 +266,8 @@ $1.6 \times 10^{10}$ per farad of capacitance.
 
 - `f` (Hz) and `z0` (Ω, 50 by default) are settings; a new `z0` costs no
   solve. Set `z0` once for the whole circuit so SAX passes it to every model.
+- A lumped port with only an inductance or a capacitance stays inside the
+  device as an {term}`internal lumped load`: leave it out of `ports`.
 - SAX's RF `coplanar_waveguide`, `microstrip` and `admittance` ignore `z0`;
   beside a gfem block use `transmission_line_s_params(..., z_ref=z0)` and
   `impedance(z=1 / y, z0=z0)`. gfem cannot check the netlist.
