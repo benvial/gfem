@@ -1,4 +1,4 @@
-"""The "Watch a solve run" recipe shows the log lines its code writes.
+"""The "Solver progress and logs" recipe shows the log lines its code writes.
 
 docs/recipes/watch-a-solve.md runs nothing at docs build time. This runs its
 Python blocks in order, as a reader does, on the repository's own

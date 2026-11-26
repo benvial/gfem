@@ -1,4 +1,4 @@
-# Find the phase a heater puts on a waveguide
+# Thermo-optic phase shift
 
 Find how much a heater shifts the phase of the light in a waveguide: the
 phase per watt, the power for a $\pi$ shift ($P_\pi$), how much of it a neighbouring

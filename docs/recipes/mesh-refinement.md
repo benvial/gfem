@@ -1,4 +1,4 @@
-# Refine the mesh where the error is
+# Adaptive mesh refinement
 
 Get a converged capacitance, S-parameter, resonance, Q, or the value of your
 optimization objective without meshing the whole device finely. {py:obj}`gfem.refine_mesh` solves, estimates the error

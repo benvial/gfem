@@ -1,4 +1,4 @@
-# Measure the optical force and torque on a body
+# Optical force and torque
 
 Find how hard light pushes and twists a body: {py:obj}`gfem.optical_force`
 gives the time-averaged {term}`optical force` and torque on a body from a

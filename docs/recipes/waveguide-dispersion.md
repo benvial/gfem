@@ -1,4 +1,4 @@
-# Find the group index and dispersion of a waveguide
+# Waveguide dispersion
 
 Find how fast a pulse travels along a waveguide and how it spreads: the
 {term}`group index` $n_g$, the {term}`group-velocity dispersion` $\beta_2$

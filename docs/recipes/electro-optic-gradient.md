@@ -1,4 +1,4 @@
-# Differentiate an electro-optic phase
+# Electro-optic phase gradients
 
 Find how the phase a voltage puts on a crystal waveguide depends on what
 sets it: each entry of the {term}`electro-optic tensor`, the

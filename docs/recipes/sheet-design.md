@@ -1,4 +1,4 @@
-# Design a patterned metal sheet
+# Patterned metal sheets
 
 Optimize the pattern of a thin metal film on a dielectric stack (an RF film,
 a superconducting chip layer), pixel by pixel, with `jax.grad`. The film is a
