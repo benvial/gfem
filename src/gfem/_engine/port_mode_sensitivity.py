@@ -413,11 +413,14 @@ class BendDerivative:
     """
 
     def __init__(self, space: PortModeSpace) -> None:
-        if space.bend_u is None:
+        u, bend = space.bend_u, space.section.bend
+        if u is None or bend is None:
             msg = "BendDerivative needs the space of a bent section."
             raise ValueError(msg)
         self.space = space
-        u = space.bend_u
+        self._u = u
+        #: The radius of the bend, m.
+        self.radius = float(bend.radius)
         n = len(space.pencil.a)
         forms: dict[str, list[list[Any]]] = {
             side: [[] for _ in range(n)] for side in ("A", "B")
@@ -460,7 +463,7 @@ class BendDerivative:
         space = self.space
         (et, en), (vt, vn) = space.space.TnT()
         nu = space._coef["nu_tt"]  # noqa: SLF001
-        dnu = nu.Diff(space.bend_u)
+        dnu = nu.Diff(self._u)
         dx = space._dx()  # noqa: SLF001
         if name.startswith("power"):
             # u is real, so the conjugate of the derivative is the derivative

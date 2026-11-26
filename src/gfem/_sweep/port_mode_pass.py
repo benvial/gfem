@@ -253,7 +253,11 @@ def mode_pass(  # noqa: PLR0912, PLR0915
 
     kernel, total = _kernel_and_total(space, float(k0[0]))
     laws: dict[tuple, float] = {}
-    derivative = BendDerivative(space) if radius and bent is not None else None
+    derivative = (
+        BendDerivative(space)
+        if radius and bent is not None and isinstance(space, PortModeSpace)
+        else None
+    )
     d_u = 0.0  # d L / d u, with u = scale / R
     for i in range(n):
         if lam_bar[i] == 0 and not np.any(x_bar[i]):
@@ -284,7 +288,7 @@ def mode_pass(  # noqa: PLR0912, PLR0915
         if derivative is not None:
             d_u += sum(derivative.pair(pair) for pair in pairs_forms).real
     # u = scale / R in metres: d u / d R = -u^2 / scale
-    d_r = 0.0 if derivative is None else -d_u * scale / bent.radius**2
+    d_r = 0.0 if derivative is None else -d_u * scale / derivative.radius**2
     if shape is None:
         return ModePass(total, laws, radius=d_r)
     for pair in pairs_forms:
