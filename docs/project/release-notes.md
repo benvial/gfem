@@ -9,6 +9,7 @@ Get started:
 
 Integrated photonics:
 
+- **Bent port modes.** `gfem.PortMode(..., bend=gfem.Bend(radius, outward=..., at=...))` gives a guide's loss per 90° and `gfem.junction_coupling` its coupling to a straight guide ({doc}`../recipes/waveguide-bends`).
 - **Behaviour change: a `PortMode` solve costs more.** It takes about 15 to 30 %
   longer and its result holds three more arrays, so gfem 0.2.0 cannot load a saved
   one. Upgrade before you load it ({doc}`../recipes/waveguide-dispersion`).

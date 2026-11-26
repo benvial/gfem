@@ -17,8 +17,8 @@ from typing import Any, ClassVar, Literal, get_args
 import jax
 import numpy as np
 
-from gfem._boundaries import LumpedPort, _temperature
-from gfem._checks import check_fixed, static_float
+from gfem._boundaries import LumpedPort, _direction, _temperature
+from gfem._checks import check_fixed, is_traced, static_float
 from gfem._pytree import register_fields
 from gfem._sources import (
     DIPOLES,
@@ -636,8 +636,83 @@ _POLARIZATIONS = get_args(Polarization)
 
 
 @dataclasses.dataclass(frozen=True, init=False)
+class Bend:
+    r"""A bend of a wave port's guide: the port mode of the curved guide.
+
+    The guide bends in the plane spanned by its propagation direction (the
+    port's normal) and ``outward``, about the axis parallel to the port plane
+    and perpendicular to ``outward`` that lies a distance ``radius`` behind
+    the reference arc. A `PortMode` with a bend solves the bent guide
+    exactly (the body of revolution about that axis, at the real frequency):
+    the section's materials are multiplied by the metric
+    :math:`\mathrm{diag}(h, h, 1/h)` with :math:`h = 1 + \xi/R`, where
+    :math:`\xi = (\mathbf{p} - \mathbf{at})\cdot\mathbf{outward}` is the
+    distance from the reference arc along ``outward`` of a point
+    :math:`\mathbf{p}` of the section. The propagation constant
+    :math:`\gamma`, the effective index, the group index and the dispersion of
+    the result are per unit length of the reference arc, and
+    :math:`\nu = -i\gamma R` is the constant per radian. Changing
+    ``radius`` moves the axis and leaves the guide where it is.
+
+    Args:
+        radius: The radius :math:`R` of the reference arc, m: positive and
+            finite. The only differentiable value of a bend.
+        outward: The direction from the axis of the bend through the guide,
+            an axis (``"+x"``, ``"-y"``, ``"z"``; no sign means ``+``) or a
+            3-vector, stored as a unit vector. It lies in the plane of the
+            port.
+        at: A point of the reference arc, a 3-vector in m, in the port plane
+            (only its coordinate along ``outward`` counts); the arc is the
+            line :math:`h = 1` of the section. For a guide, its centre.
+
+    Raises:
+        ValueError: ``radius`` is not positive and finite, ``outward`` is not
+            an axis or a non-zero 3-vector, or ``at`` is not a finite
+            3-vector.
+        NonDifferentiableError: ``outward`` or ``at`` is traced by JAX; only
+            ``radius`` differentiates.
+    """
+
+    radius: Any
+    outward: tuple[float, float, float]
+    at: tuple[float, float, float]
+
+    def __init__(self, radius: Any, *, outward: Any, at: Any) -> None:
+        """Validate and normalize (see the class docstring)."""
+        if not is_traced(radius):
+            try:
+                value = float(radius)
+            except (TypeError, ValueError):
+                value = math.nan
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(
+                    f"Bend.radius must be positive and finite, in m; got {radius!r}."
+                )
+            radius = value
+        outward = _direction(outward, "Bend.outward")
+        check_fixed(at, "Bend.at must be fixed numbers")
+        try:
+            point = np.asarray(at, dtype=float)
+        except (TypeError, ValueError):
+            point = np.empty(0)
+        if point.shape != (3,) or not np.isfinite(point).all():
+            raise ValueError(f"Bend.at must be a finite 3-vector, in m; got {at!r}.")
+        object.__setattr__(self, "radius", radius)
+        object.__setattr__(self, "outward", outward)
+        x, y, z = (float(v) for v in point)
+        object.__setattr__(self, "at", (x, y, z))
+
+    def __repr__(self) -> str:
+        r = "traced" if is_traced(self.radius) else f"{float(self.radius):.6g} m"
+        return f"Bend(radius={r}, outward={self.outward}, at={self.at})"
+
+
+register_fields(Bend, ("radius",))
+
+
+@dataclasses.dataclass(frozen=True, init=False)
 class PortMode:
-    """The 2D port mode problem of a wave port over a frequency grid.
+    r"""The 2D port mode problem of a wave port over a frequency grid.
 
     Solves the port's cross-section for its propagating mode at each
     frequency: propagation constant, effective index, mode field and the
@@ -676,14 +751,22 @@ class PortMode:
         mode: Which propagating mode at the lowest frequency, in rank
             order: by decreasing effective index for lossless modes (1 = the
             most confined), with strongly attenuated modes ranked lower.
-            ``None``: the wave port's own ``mode``.
+            ``None``: the wave port's own ``mode``. On a bent port, mode
+            :math:`m` is the bent continuation of the closed straight
+            section's mode :math:`m`.
         polarization: On a 2D mesh, the field normal to the plane that the
             line port's mode carries: ``"Ez"`` (its field is
             `PortModeResult.e_field`) or ``"Hz"`` (`PortModeResult.h_field`).
             Required there, and ``None`` on a 3D mesh, as for `Driven`.
+        bend: A `Bend` to solve the mode of the bent guide (3D meshes):
+            ``gamma``, ``n_eff``, ``n_g`` and ``beta_k`` of the result are
+            per unit length of the reference arc, and
+            `PortModeResult.bend_loss` is the loss per :math:`90^\circ` of
+            it. A bent mode runs its own sweep, also on a shared port
+            surface. ``None``: the straight guide.
 
     Raises:
-        TypeError: ``port`` is not a name.
+        TypeError: ``port`` is not a name, or ``bend`` is not a `Bend`.
         ValueError: A frequency is not finite and positive, ``mode`` is
             not an integer >= 1, or ``polarization`` is not ``"Ez"``, ``"Hz"``
             or ``None``. `gfem.solve` raises it for no ``polarization`` on a
@@ -714,13 +797,18 @@ class PortMode:
     frequency. A line port's mode (a 2D mesh) differentiates with respect to
     the material field values of the regions on its line, in Ez and Hz
     (``Z_PV`` is NaN there: a line port has no voltage path); its node
-    coordinates and law parameters raise `gfem.NonDifferentiableError`.
+    coordinates and law parameters raise `gfem.NonDifferentiableError`. A
+    port mode with a ``bend`` differentiates in the same inputs and in
+    ``bend.radius`` (the derivative of the 2D forms by the inverse radius, one
+    2D solve more for a field or ``Z_PV`` objective); its ``outward`` and
+    ``at`` are fixed numbers.
     """
 
     port: str
     frequency: tuple[float, ...]
     mode: int | None
     polarization: Polarization | None = None
+    bend: Bend | None = None
     _rule: ClassVar[str] = "gfem._sweep.port_mode:PortModeRule"
 
     def __init__(
@@ -730,9 +818,12 @@ class PortMode:
         *,
         mode: int | None = None,
         polarization: Polarization | None = None,
+        bend: Bend | None = None,
     ) -> None:
         """Validate and normalize (see the class docstring)."""
         _polarization(polarization, "PortMode")
+        if bend is not None and not isinstance(bend, Bend):
+            raise TypeError(f"PortMode.bend must be a gfem.Bend or None, got {bend!r}.")
         if not isinstance(port, str):
             raise TypeError(
                 f"PortMode.port must be the name of a WavePort, got {port!r}."
@@ -749,9 +840,10 @@ class PortMode:
         object.__setattr__(self, "frequency", _frequencies(frequency))
         object.__setattr__(self, "mode", None if mode is None else int(mode))
         object.__setattr__(self, "polarization", polarization)
+        object.__setattr__(self, "bend", bend)
 
 
-jax.tree_util.register_static(PortMode)
+register_fields(PortMode, ("bend",))
 
 
 Sweep = Literal["uniform", "adaptive"]

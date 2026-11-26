@@ -176,6 +176,12 @@ def test_get_started_next_steps_pick_pages_of_the_site_tree():
 # -- The user glossary --------------------------------------------------------
 
 USER_TERMS = (
+    "Bent port mode",
+    "Bend loss",
+    "Junction coupling",
+    "Reference radius",
+    "Caustic",
+    "Kerr shift per photon",
     "Group index",
     "Group-velocity dispersion",
     "Dispersion parameter",

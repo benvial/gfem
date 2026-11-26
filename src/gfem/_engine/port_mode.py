@@ -305,11 +305,11 @@ class FormItem:
         input: What the coefficient reads: ``("eps",)``, ``("sigma",)``,
             ``("nu",)``, ``("absorbing",)`` (the admittance, which reads both
             :math:`\varepsilon` and :math:`\nu`), ``("law", g)`` and
-            ``("absorbing_law", g)`` (the indicator of law ``g``, and the
-            admittance beside it), ``("fill", g)`` (a conductor group's edge
-            fill) and ``("impedance", g, name)`` (the weight of an
-            `Impedance` group's ``"resistance"``, ``"inductance"`` or
-            ``"capacitance"``).
+            ``("absorbing_law", g)`` (the indicator of law ``g``, times the
+            bend's metric on a bent section, and the admittance beside it),
+            ``("fill", g)`` (a conductor group's edge fill) and
+            ``("impedance", g, name)`` (the weight of an `Impedance` group's
+            ``"resistance"``, ``"inductance"`` or ``"capacitance"``).
         weight: A real factor of the item (``None``: none): the conductivity's
             :math:`\eta_0 s`, an impedance value's weight.
     """
@@ -371,7 +371,14 @@ class PortModeSpace:
         self.free = np.flatnonzero(free_mask(self.space.FreeDofs(), self.space.ndof))
         if geometry:
             return
-        self._coef = _coefficients(self.mesh, section)
+        # u = s / R, the bend's inverse radius per local unit: a parameter so
+        # that the forms can be differentiated in it
+        self.bend_u = (
+            None
+            if section.bend is None
+            else ngs.Parameter(section.scale / section.bend.radius)
+        )
+        self._coef = _coefficients(self.mesh, section, self.bend_u)
         self.pencil = self._assemble()
 
     def __reduce__(self) -> tuple[type[PortModeSpace], tuple[PortSection, int]]:
@@ -446,9 +453,17 @@ class PortModeSpace:
         for g, (_, law) in enumerate(self.section.laws):
             slot = 3 + len(extra)
             inside = _p0(self.mesh, (np.asarray(index) == g).astype(float))
+            # a bend's metric scales the susceptibility as it scales eps
+            # (`_coefficients`); a straight section's law sees none: a layer's
+            # background is never a law, so its metric is the identity there
+            tt, nn = (
+                (inside * c["law_tt"], inside * c["law_nn"])
+                if "law_tt" in c
+                else (inside, inside)
+            )
             items += [
-                FormItem(slot, "A", "value_t", inside, "dx", ("law", g)),
-                FormItem(slot, "B", "value_n", inside, "dx", ("law", g)),
+                FormItem(slot, "A", "value_t", tt, "dx", ("law", g)),
+                FormItem(slot, "B", "value_n", nn, "dx", ("law", g)),
             ]
             extra.append(LawScalar(law, self.section.scale))
             slopes.append(law_slope(law, self.section.scale))
@@ -1093,7 +1108,9 @@ def _p0(mesh: ngs.Mesh, values: np.ndarray) -> ngs.CoefficientFunction:
     return gf
 
 
-def _coefficients(mesh: ngs.Mesh, s: PortSection) -> dict[str, ngs.CoefficientFunction]:
+def _coefficients(
+    mesh: ngs.Mesh, s: PortSection, bend_u: ngs.Parameter | None = None
+) -> dict[str, ngs.CoefficientFunction]:
     def matrix(t: np.ndarray) -> ngs.CoefficientFunction:
         parts = [_p0(mesh, t[:, i, j]) for i in (0, 1) for j in (0, 1)]
         return ngs.CF(tuple(parts), dims=(2, 2))
@@ -1117,19 +1134,24 @@ def _coefficients(mesh: ngs.Mesh, s: PortSection) -> dict[str, ngs.CoefficientFu
         "Y_n": y_n,
         "physical": ngs.CF(1.0),
     }
-    if s.stretch is None or s.layer is None:
+    layered = s.stretch is not None and s.layer is not None
+    if layered:
+        layer = np.asarray(s.layer).astype(float)
+        out["physical"] = _p0(mesh, 1.0 - layer)
+        out["layer"] = _p0(mesh, layer)
+        out["eps_bg_tt"] = matrix(s.eps_tt.real.astype(complex))
+        out["eps_bg_nn"] = _p0(mesh, s.eps_nn.real.astype(complex))
+    elif s.bend is None:
         return out
-    layer = s.layer.astype(float)
-    out["physical"] = _p0(mesh, 1.0 - layer)
-    out["layer"] = _p0(mesh, layer)
-    out["eps_bg_tt"] = matrix(s.eps_tt.real.astype(complex))
-    out["eps_bg_nn"] = _p0(mesh, s.eps_nn.real.astype(complex))
-    lam_tt, lam_nn = _section_stretch(s)
+    lam_tt, lam_nn = _section_stretch(s, bend_u)
     det = lam_tt[0, 0] * lam_tt[1, 1] - lam_tt[0, 1] * lam_tt[1, 0]
     for name in ("eps_tt", "sigma_tt"):
         out[name] = out[name] * lam_tt
     for name in ("eps_nn", "sigma_nn"):
         out[name] = out[name] * lam_nn
+    if s.bend is not None:
+        # the metric of a law's susceptibility, the same as of eps
+        out["law_tt"], out["law_nn"] = lam_tt, lam_nn
     # n x H of the stretched medium:
     # $R^\mathsf{T}(\mu_{tt}\Lambda_{tt})^{-1}R$ with $Ra = a\times n$ is
     # $(R^\mathsf{T}\Lambda_{tt}^{-1}R)\,\nu_{tt}
@@ -1139,16 +1161,66 @@ def _coefficients(mesh: ngs.Mesh, s: PortSection) -> dict[str, ngs.CoefficientFu
     return out
 
 
-def _section_stretch(s: PortSection) -> tuple[ngs.CoefficientFunction, ...]:
-    r"""The PML tensor in the port frame: :math:`\Lambda_{tt}` and :math:`\Lambda_{nn}`.
+def _section_stretch(
+    s: PortSection, bend_u: ngs.Parameter | None = None
+) -> tuple[ngs.CoefficientFunction, ...]:
+    r"""The section's metric, port frame: :math:`\Lambda_{tt}`, :math:`\Lambda_{nn}`.
 
-    :math:`F \Lambda F^\mathsf{T}` with :math:`F` the frame's rows, the 3D
-    tensor evaluated at the global position of each plane point. A port
-    normal across every stretch axis it meets (checked when the model is
-    built) leaves no tangential-normal block.
+    The PML tensor :math:`F \Lambda F^\mathsf{T}` with :math:`F` the frame's
+    rows, the 3D tensor evaluated at the global position of each plane
+    point (the identity without a layer), times the bend's metric
+    :math:`\mathrm{diag}(h, h, 1/h)`: :math:`\Lambda_{tt}\to h\Lambda_{tt}`,
+    :math:`\Lambda_{nn}\to\Lambda_{nn}/h` (:math:`h` from the stretched
+    coordinate inside the layer, `_bend_factor`). A port normal across every
+    stretch axis it meets (checked when the model is built) leaves no
+    tangential-normal block. ``bend_u`` is the parameter :math:`1/R` of
+    the bend, per local unit.
     """
     stretch, f = s.stretch, s.frame
-    assert stretch is not None  # noqa: S101 - callers check
+    if stretch is None or s.layer is None:
+        tt = ngs.CF((1, 0, 0, 1), dims=(2, 2))
+        nn = ngs.CF(1.0)
+    else:
+        tt, nn = _pml_metric(s, stretch, f)
+    if s.bend is None:
+        return tt, nn
+    h = _bend_factor(s, bend_u)
+    return h * tt, nn / h
+
+
+def _bend_factor(
+    s: PortSection, bend_u: ngs.Parameter | None
+) -> ngs.CoefficientFunction:
+    r"""The bend's :math:`h = 1 + \tilde\xi/R` on the section's plane points.
+
+    :math:`\tilde\xi` is the distance from the reference arc along
+    ``outward`` in the stretched coordinate: a layer's complex shift along a
+    stretch axis enters through that axis' component of ``outward``, so a
+    guided mode sees the real :math:`h` and the layer a complex one that
+    keeps :math:`\mathrm{Re}\,h` the physical value.
+    """
+    bend, f = s.bend, s.frame
+    assert bend is not None  # noqa: S101 - callers check
+    u = ngs.Parameter(s.scale / bend.radius) if bend_u is None else bend_u
+    xi = bend.outward[0] * ngs.x + bend.outward[1] * ngs.y - bend.offset
+    if s.stretch is not None and s.layer is not None:
+        glob = tuple(s.origin[k] + ngs.x * f[0, k] + ngs.y * f[1, k] for k in range(3))
+        outward = np.asarray(bend.outward) @ f[:2]
+        for side in s.stretch.layers.sides:
+            if abs(outward[side.axis]) < 1e-12:
+                continue
+            smax = s.stretch.stretch_maximum(side)
+            d = side.thickness / s.scale
+            depth = side.sign * (glob[side.axis] - side.face / s.scale)
+            shift = ngs.IfPos(depth, smax * d / 3 * (depth / d) ** 3, 0.0)
+            xi = xi - 1j * float(outward[side.axis]) * side.sign * shift
+    return 1 + xi * u
+
+
+def _pml_metric(
+    s: PortSection, stretch: Any, f: np.ndarray
+) -> tuple[ngs.CoefficientFunction, ngs.CoefficientFunction]:
+    r"""The PML's :math:`\Lambda_{tt}` and :math:`\Lambda_{nn}` in the port frame."""
     glob = tuple(s.origin[k] + ngs.x * f[0, k] + ngs.y * f[1, k] for k in range(3))
     sx, sy, sz = stretch_factors(stretch, s.scale, coords=glob)
     diag = (sy * sz / sx, sx * sz / sy, sx * sy / sz)

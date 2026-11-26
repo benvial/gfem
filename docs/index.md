@@ -25,6 +25,7 @@ tutorials/bend3d
 tutorials/metal-bend
 tutorials/grating
 recipes/waveguide-dispersion
+recipes/waveguide-bends
 recipes/port-mode-gradient
 recipes/shared-port-surface
 recipes/sax-circuit

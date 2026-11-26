@@ -243,10 +243,8 @@ FSR 1137.1 GHz, D2/2pi 359.02 MHz
 g0/2pi 293 Hz, threshold 10.27 mW at Q_i = 1e+05
 ```
 
-A straight guide approximates the ring's mode: $D_1$ is good to about
-$10^{-3}$ and $D_2$ to 5 to 15 % at a 10 µm silicon ring, and not at all for a
-ring of 1 THz free spectral range. gfem has no bent port mode; the estimates
-are on {doc}`../nonlinear-and-quantum-optics`.
+These are the straight guide's values; {doc}`waveguide-bends` solves the bent
+mode of the ring itself and says how far they are off.
 
 ## Check your results
 

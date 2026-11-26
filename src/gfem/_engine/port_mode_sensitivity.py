@@ -55,6 +55,7 @@ from gfem._engine.sensitivity import Integrated
 from gfem._port_section import PortSection, _edge_keys
 
 __all__ = [
+    "BendDerivative",
     "FormPair",
     "SectionCotangents",
     "SectionKernel",
@@ -186,7 +187,10 @@ class SectionKernel:
         section = space.section
         self.theta = space.pencil.theta(self.k0)
         self._dx = space._dx()  # noqa: SLF001
-        stretched = section.stretch is not None and section.layer is not None
+        # the metric of a layer or a bend (the masks stay layer-only)
+        stretched = (
+            section.stretch is not None and section.layer is not None
+        ) or section.bend is not None
         if stretched:
             lam_tt, lam_nn = _section_stretch(section)
             self._lam_tt = lam_tt
@@ -391,6 +395,87 @@ class SectionKernel:
         phys = self._physical if form.startswith("power") else 1.0
         cfs = [phys * pt[i] * field[j] for i in (0, 1) for j in (0, 1)]
         return cfs, form.startswith("power"), 1.0
+
+
+class BendDerivative:
+    r"""The derivative of a bent section's forms by the inverse radius :math:`u`.
+
+    The pencil pieces and the power and gauge forms are differentiated as
+    forms, with :math:`u` the section's ``ngs.Parameter`` (`PortModeSpace.bend_u`):
+    the coefficient's derivative enters the same integrand the forward
+    assembles, so the metric's dependence on :math:`u` through the layer's
+    complex coordinate is inside it. A per-triangle chain through the
+    coefficient values would miss the part of :math:`h` that varies inside a
+    triangle.
+
+    Args:
+        space: The port mode problem of a bent section.
+    """
+
+    def __init__(self, space: PortModeSpace) -> None:
+        u, bend = space.bend_u, space.section.bend
+        if u is None or bend is None:
+            msg = "BendDerivative needs the space of a bent section."
+            raise ValueError(msg)
+        self.space = space
+        self._u = u
+        #: The radius of the bend, m.
+        self.radius = float(bend.radius)
+        n = len(space.pencil.a)
+        forms: dict[str, list[list[Any]]] = {
+            side: [[] for _ in range(n)] for side in ("A", "B")
+        }
+        for item in space.form_items:
+            # a law's susceptibility carries the bend's metric as eps does
+            if item.input[0] not in ("eps", "sigma", "nu", "law"):
+                continue
+            moved = dataclasses.replace(item, coefficient=item.coefficient.Diff(u))
+            forms[item.side][item.slot].append(space._integrand(moved))  # noqa: SLF001
+        self.a = tuple(space._matrix(f) for f in forms["A"])  # noqa: SLF001
+        self.b = tuple(space._matrix(f) for f in forms["B"])  # noqa: SLF001
+        self._pairs: dict[str, Any] = {}
+
+    def pencil(
+        self, theta: Sequence[complex], lam: complex, q: np.ndarray, x: np.ndarray
+    ) -> complex:
+        r"""The complex :math:`q^T(\partial_u A - \lambda\,\partial_u B)\,x`.
+
+        ``theta`` is the pencil's scalar of each slot at the pair's wavenumber.
+        """
+        return sum(
+            th * (q @ (da @ x) - lam * (q @ (db @ x)))
+            for th, da, db in zip(theta, self.a, self.b, strict=True)
+        )
+
+    def pair(self, pair: FormPair) -> complex:
+        r"""The complex :math:`w\,\ell^T\,\partial_u F\,r` of a power or gauge form."""
+        if pair.form not in ("power_g", "power_t", "gauge_n", "gauge_t"):
+            msg = f"The form {pair.form!r} has no derivative by the bend radius."
+            raise ValueError(msg)
+        if pair.form not in self._pairs:
+            self._pairs[pair.form] = self._form(pair.form)
+        form = self._pairs[pair.form]
+        if pair.left is None:
+            return complex(pair.weight * (form @ pair.right))
+        return complex(pair.weight * (pair.left @ (form @ pair.right)))
+
+    def _form(self, name: str) -> Any:
+        r"""The matrix (power) or vector (gauge) of a form, :math:`\partial_u`."""
+        space = self.space
+        (et, en), (vt, vn) = space.space.TnT()
+        nu = space._coef["nu_tt"]  # noqa: SLF001
+        dnu = nu.Diff(self._u)
+        dx = space._dx()  # noqa: SLF001
+        if name.startswith("power"):
+            # u is real, so the conjugate of the derivative is the derivative
+            # of the conjugate (`Conj` has no `Diff`)
+            c = space._coef["physical"] * ngs.Conj(dnu)  # noqa: SLF001
+            field = ngs.grad(en) if name.endswith("_g") else et
+            return space._matrix([(c * field) * vt * dx])  # noqa: SLF001
+        weight = space._quadrant() * dnu  # noqa: SLF001
+        t = space._gauge_direction()  # noqa: SLF001
+        field = ngs.grad(vn) if name.endswith("_n") else vt
+        return space._vector((t * (weight * field)) * dx)  # noqa: SLF001
 
 
 def _conj(m: Any) -> Any:

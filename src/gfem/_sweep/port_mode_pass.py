@@ -41,6 +41,7 @@ from gfem._engine.port_mode_adjoint import (
 )
 from gfem._engine.port_mode_normalization import normalize_rows, normalize_vjp
 from gfem._engine.port_mode_sensitivity import (
+    BendDerivative,
     SectionCotangents,
     SectionKernel,
     law_cotangents,
@@ -69,11 +70,14 @@ class ModePass:
         laws: The gradient by each permittivity-law parameter, by input kind.
         points: The cotangent of the section's points, ``(n_points, 2)`` per
             local unit, or ``None`` when the node coordinates are not wanted.
+        radius: The derivative by the bend's radius, in 1/m (zero without a
+            bend, or when it is not wanted).
     """
 
     section: SectionCotangents | LineCotangents
     laws: dict[tuple, float]
     points: np.ndarray | None = None
+    radius: float = 0.0
 
 
 def mode_pass(  # noqa: PLR0912, PLR0915
@@ -93,6 +97,7 @@ def mode_pass(  # noqa: PLR0912, PLR0915
     who: str,
     nodes: bool = False,
     voltage_rule: tuple[np.ndarray, np.ndarray] | None = None,
+    radius: bool = False,
 ) -> ModePass:
     r"""The section cotangents of a mode's outputs.
 
@@ -119,6 +124,8 @@ def mode_pass(  # noqa: PLR0912, PLR0915
         voltage_rule: The voltage path's plane points and weights
             (`gfem._sweep.port_mode._voltage_rule`), for its Eulerian node
             derivative; ``None`` without a path.
+        radius: Whether to also return the derivative by the bend's radius
+            (`ModePass.radius`) of a bent section.
 
     Raises:
         PortModeError: An adjoint solve missed (`gfem._engine.port_mode_adjoint`).
@@ -140,13 +147,17 @@ def mode_pass(  # noqa: PLR0912, PLR0915
     k0 = np.array([w[0] for w in waves])
     shift = np.array([w[2] for w in waves])
     exact = np.flatnonzero(solved_s)
+    bent = getattr(space.section, "bend", None)
     factors: dict[int, Any] = {}
 
     def factor_of(i: int) -> Any:
         j = int(exact[np.argmin(np.abs(f[exact] - f[i]))])
         if j not in factors:
             a, b = space.pencil.at(k0[j])
-            factors[j] = shift_invert_factor(a, b, shift[j])
+            # on a bent section the layer modes crowd the sweep's shift: the
+            # row's own eigenvalue is the one that separates the pair
+            at = shift[j] if bent is None else float(lam_s[j].real)
+            factors[j] = shift_invert_factor(a, b, at)
         return factors[j]
 
     x = np.array([v @ yi for yi in y_s], complex)
@@ -242,6 +253,12 @@ def mode_pass(  # noqa: PLR0912, PLR0915
 
     kernel, total = _kernel_and_total(space, float(k0[0]))
     laws: dict[tuple, float] = {}
+    derivative = (
+        BendDerivative(space)
+        if radius and bent is not None and isinstance(space, PortModeSpace)
+        else None
+    )
+    d_u = 0.0  # d L / d u, with u = scale / R
     for i in range(n):
         if lam_bar[i] == 0 and not np.any(x_bar[i]):
             continue
@@ -257,6 +274,9 @@ def mode_pass(  # noqa: PLR0912, PLR0915
             who=who,
         )
         row = kernel.at(k0[i]).cotangents([(q, x[i], lam_r[i])])
+        if derivative is not None:
+            theta = space.pencil.theta(k0[i])
+            d_u += derivative.pencil(theta, lam_r[i], q, x[i]).real
         if shape is not None:
             shape.add_pencil(q, x[i], lam_r[i], space.pencil.theta(k0[i]))
         if isinstance(space, PortModeSpace):
@@ -265,11 +285,15 @@ def mode_pass(  # noqa: PLR0912, PLR0915
         total.add(row)
     if pairs_forms:
         total.add(kernel.explicit(pairs_forms))
+        if derivative is not None:
+            d_u += sum(derivative.pair(pair) for pair in pairs_forms).real
+    # u = scale / R in metres: d u / d R = -u^2 / scale
+    d_r = 0.0 if derivative is None else -d_u * scale / derivative.radius**2
     if shape is None:
-        return ModePass(total, laws)
+        return ModePass(total, laws, radius=d_r)
     for pair in pairs_forms:
         shape.add_pair(pair)
-    return ModePass(total, laws, shape.result() + shape_points)
+    return ModePass(total, laws, shape.result() + shape_points, d_r)
 
 
 def _refuse_phase(z: np.ndarray, z_bar: np.ndarray, who: str) -> None:

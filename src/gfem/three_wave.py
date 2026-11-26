@@ -33,7 +33,7 @@ import scipy.constants
 from gfem import _chi2
 from gfem._checks import is_traced
 from gfem._materials import Material
-from gfem._mode_overlap import _elements, _waves
+from gfem._mode_overlap import _elements, _waves, refuse_bend
 from gfem._pml import layer_tetrahedra
 from gfem._pytree import register_fields
 from gfem.results import PortModeResult
@@ -494,12 +494,13 @@ def three_wave_coupling(
         ValueError: The results are of different ports, element orders or
             section geometries; the model is of another mesh or section; no
             element outside a perfectly matched layer carries the tensor.
-        NotImplementedError: An Hz line port.
+        NotImplementedError: An Hz line port; a bent mode (`gfem.Bend`).
         TypeError: An entry is not a `gfem.PortModeResult`, or has no electric
             field.
         NonDifferentiableError: The node coordinates of ``model``, or of a
             mode's solve, are traced by `jax.grad`.
     """
+    refuse_bend("gfem.three_wave_coupling", modes)
     waves = _waves(model, modes, "gfem.three_wave_coupling", _chi2_materials)
     e = _three_components(waves.field())
     d = waves.materials.d[:, None]
@@ -555,13 +556,14 @@ def second_harmonic(
         ValueError: The row counts differ or a harmonic's frequency is not
             twice the pump's (relative :math:`10^{-9}`); otherwise as
             `three_wave_coupling`.
-        NotImplementedError: An Hz line port.
+        NotImplementedError: An Hz line port; a bent mode (`gfem.Bend`).
         TypeError: An entry is not a `gfem.PortModeResult`, or has no electric
             field.
         NonDifferentiableError: The node coordinates of ``model``, or of a
             mode's solve, are traced by `jax.grad`.
     """
     owner = "gfem.second_harmonic"
+    refuse_bend(owner, pump, harmonic)
     for name, r in (("pump", pump), ("harmonic", harmonic)):
         if not isinstance(r, PortModeResult):
             raise TypeError(

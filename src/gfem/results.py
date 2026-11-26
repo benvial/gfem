@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from gfem._pml import PML
     from gfem._port_section import PortSection
     from gfem.broadband import RationalModel, TimeResponse
-    from gfem.problems import Polarization
+    from gfem.problems import Bend, Polarization
 
 __all__ = [
     "DCConductionResult",
@@ -622,8 +622,15 @@ class PortModeField:
     quantity = "E"
     unit = "V/m"
 
-    def __init__(self, space: ModeSpace, basis: np.ndarray, coords: np.ndarray) -> None:
+    def __init__(
+        self,
+        space: ModeSpace,
+        basis: np.ndarray,
+        coords: np.ndarray,
+        bend: Bend | None = None,
+    ) -> None:
         """Internal: built by `gfem.solve` (field ``i`` is ``basis @ coords[i]``)."""
+        self._bend = bend
         self._parts: tuple[ModeSpace, np.ndarray, np.ndarray] | None = (
             space,
             basis,
@@ -650,6 +657,7 @@ class PortModeField:
         quantity: str = "E",
         unit: str = "V/m",
         traced_nodes: bool = False,
+        bend: Bend | None = None,
     ) -> PortModeField:
         """Internal: the field as a JAX array of its full DOF vector, per frequency.
 
@@ -666,6 +674,7 @@ class PortModeField:
         field._build = None
         field._vector = vector
         field._locate = locate
+        field._bend = bend
         field._port = port
         field._traced_nodes = traced_nodes
         field.quantity, field.unit = quantity, unit
@@ -679,6 +688,7 @@ class PortModeField:
         *,
         quantity: str = "E",
         unit: str = "V/m",
+        bend: Bend | None = None,
     ) -> PortModeField:
         """Internal: a field built by ``build()`` on first use.
 
@@ -689,6 +699,7 @@ class PortModeField:
         field = object.__new__(cls)
         field._parts = None
         field._build = build
+        field._bend = bend
         field._vector = None
         field._locate = None
         field._port = port
@@ -748,7 +759,11 @@ class PortModeField:
         Points off the cross-section's elements (inside metal holes or outside
         the port) give zero. On a line port of a 2D mesh, the scalar field at
         ``(n_points, 2)`` points: ``(n_freq, n_points)``. Points inside a
-        perfectly matched layer give the stretched field, not a physical one.
+        perfectly matched layer give the stretched field, not a physical one. On a
+        bent mode (`gfem.Bend`) the field is the physical one: the component
+        along the port normal, the one the bend stretches, is divided by the
+        metric factor :math:`h` of the bend at the point (in a layer, the factor
+        of the physical point, not of the stretched coordinate).
 
         Args:
             points: ``(n_points, 3)`` (or one ``(3,)``) global coordinates, m,
@@ -777,8 +792,13 @@ class PortModeField:
             raise ValueError(f"points must be 3-vectors in m, got shape {p.shape}.")
         local = self._local(p)
         columns = self._space.evaluate(self._basis.T, local)
-        e = np.einsum("fk,kpc->fpc", self._coords, columns) @ self._section.frame
-        return jnp.asarray(e[:, 0] if single else e)
+        e = np.einsum("fk,kpc->fpc", self._coords, columns)
+        if self._bend is None:
+            e = e @ self._section.frame
+            return jnp.asarray(e[:, 0] if single else e)
+        e = jnp.asarray(e) * self._unstretch(p)[None, :, :]
+        e = e @ jnp.asarray(self._section.frame)
+        return e[:, 0] if single else e
 
     def _at_vector(self, points: Any) -> jax.Array:
         """`at` on the traced DOF vector: host-built columns times the vector."""
@@ -804,8 +824,25 @@ class PortModeField:
         dofs, weights = space.point_columns(local)
         picked = jnp.asarray(self._vector)[:, dofs]
         e = jnp.einsum("pcl,fpl->fpc", jnp.asarray(weights), picked)
+        if self._bend is not None:
+            e = e * self._unstretch(p)[None, :, :]
         e = e @ jnp.asarray(section.frame)
         return e[:, 0] if single else e
+
+    def _unstretch(self, p: np.ndarray) -> jax.Array:
+        r"""``(n_points, 3)`` factors taking the solved field to the physical one.
+
+        :math:`(1, 1, 1/h)` with
+        :math:`h = 1 + (\mathbf{p} - \mathbf{at})\cdot\mathbf{outward}/R` at the
+        real point :math:`\mathbf{p}`; :math:`R` is the result's, so traced when
+        the solve is.
+        """
+        bend = self._bend
+        assert bend is not None  # noqa: S101 - callers check
+        xi = (p - np.asarray(bend.at)) @ np.asarray(bend.outward)
+        h = 1 + jnp.asarray(xi) / bend.radius
+        one = jnp.ones_like(h)
+        return jnp.stack([one, one, 1 / h], axis=-1)
 
     def _local(self, p: np.ndarray) -> np.ndarray:
         return _local_points(self._section, p)
@@ -909,6 +946,11 @@ class PortModeResult:
         beta_3: Third-order dispersion
             :math:`(1/i)\,\mathrm{d}^3\gamma/\mathrm{d}\omega^3`,
             ``(n_freq,)``, s³/m. ``None`` on a driven result's port modes.
+        bend: The `gfem.Bend` the mode was solved with, or ``None`` for a
+            straight guide. With a bend, ``gamma``, ``n_eff``, ``n_g``,
+            ``beta_2``, ``beta_3`` and ``D`` are per unit length of the
+            reference arc of radius :math:`R`, and :math:`\nu = -i\gamma R`
+            is the propagation constant per radian.
     """
 
     port: str
@@ -924,6 +966,7 @@ class PortModeResult:
     n_g: jax.Array | None = None
     beta_2: jax.Array | None = None
     beta_3: jax.Array | None = None
+    bend: Bend | None = None
 
     @property
     def n_eff(self) -> jax.Array:
@@ -944,14 +987,30 @@ class PortModeResult:
         c = scipy.constants.c
         return -(2 * math.pi * self.frequency**2 / c) * self.beta_2
 
+    @property
+    def bend_loss(self) -> jax.Array | None:
+        r"""Bend loss per quarter turn, ``(n_freq,)``, dB.
+
+        :math:`L_{90} = (10\pi/\ln 10)\,R\,\mathrm{Re}\,\gamma`, the power
+        the mode loses over :math:`90^\circ` of the reference arc of radius
+        :math:`R`, equal to :math:`-(10\pi/\ln 10)\,\mathrm{Im}\,\nu` with
+        :math:`\nu = -i\gamma R`: the power decays as
+        :math:`e^{-2\,\mathrm{Re}\,\gamma\,s}` along the arc length
+        :math:`s = \pi R/2`. ``None`` for a straight guide.
+        """
+        if self.bend is None:
+            return None
+        return (10 * math.pi / math.log(10)) * self.bend.radius * self.gamma.real
+
     def to_xarray(self) -> xarray.Dataset:
         """The mode's per-frequency values as an `xarray.Dataset`.
 
         ``gamma`` (1/m), ``n_eff``, ``Z_PV`` (ohm), ``residual`` and
         ``solved`` over the dimension ``frequency`` (Hz), then, where the
         result carries them, ``n_g``, ``beta_2`` (s^2/m), ``beta_3``
-        (s^3/m) and ``D`` (s/m^2); the attributes ``port`` and ``mode`` name
-        the mode. The field is not exported.
+        (s^3/m) and ``D`` (s/m^2), and, for a bent mode, ``bend_loss`` (dB)
+        with the attribute ``bend_radius`` (m); the attributes ``port`` and
+        ``mode`` name the mode. The field is not exported.
         Needs the ``xarray`` extra: ``pip install "gfem[xarray]"``.
 
         Raises:
@@ -974,15 +1033,22 @@ class PortModeResult:
             data["D"] = _variable(f, self.D, "s/m^2")
         if self.beta_3 is not None:
             data["beta_3"] = _variable(f, self.beta_3, "s^3/m")
+        attrs: dict[str, Any] = {"port": self.port, "mode": self.mode}
+        if self.bend is not None:
+            data["bend_loss"] = _variable(f, self.bend_loss, "dB")
+            attrs["bend_radius"] = float(self.bend.radius)
         return xr.Dataset(
             data,
             coords={"frequency": _variable(f, self.frequency, "Hz")},
-            attrs={"port": self.port, "mode": self.mode},
+            attrs=attrs,
         )
 
     def __repr__(self) -> str:
         n_f = np.shape(self.frequency)[-1]
         head = f"PortModeResult(port {self.port!r}, mode {self.mode}, {n_f} frequencies"
+        bent = ""
+        if self.bend is not None and not is_traced(self.bend.radius):
+            bent = f", bend radius {float(self.bend.radius):.6g} m"
         try:
             f = np.asarray(self.frequency)
             n = np.asarray(self.n_eff)
@@ -991,7 +1057,9 @@ class PortModeResult:
             solved = np.asarray(self.solved).reshape(-1, n_f).any(axis=0)
             n_g = None if self.n_g is None else np.asarray(self.n_g)
         except (TypeError, jax.errors.TracerArrayConversionError):
-            return head + ")"
+            return head + bent + ")"
+        # the comma separates the bend from the band that follows
+        head += bent + ("," if bent else "")
         span = hertz_band(f.min(), f.max(), 4)
         zs = (
             "no voltage_path"
@@ -1016,6 +1084,7 @@ register_fields(
         "n_g",
         "beta_2",
         "beta_3",
+        "bend",
     ),
 )
 

@@ -77,6 +77,28 @@ silicon wire's group index with a measured one and its $\beta_2$ with a
 published simulation. Not checked: a fabricated guide's measured dispersion;
 modes at an exact degeneracy (refused).
 
+## Bent port modes
+
+The mode of a bent guide, its loss per 90°, its junction to a straight guide
+and its Kerr coefficient ({doc}`recipes/waveguide-bends`).
+
+| Case | Compared with | Test | Runs |
+|---|---|---|---|
+| H-plane bend of a WR-90 guide; E-in-plane bent parallel-plate line | Bessel roots with $n_g$ and $\beta_2$; error falls from $p = 2$ to 5 | {gfem-test}`tests/verification/test_bend.py` | Every change |
+| Leaky bent slab, both polarizations | Complex Hankel roots (the loss) and its dispersion | {gfem-test}`tests/verification/test_bend.py` | Every change |
+| Refusals, the metric, the layer's coordinate, the warnings | Closed forms and the named errors | {gfem-test}`tests/unit/test_bend.py` | Every change |
+| The pick of the bent mode on a 50k-DOF layered strip | The closed straight guide's mode; cost against straight | {gfem-test}`tests/verification/test_bend_solve.py`, {gfem-test}`tests/unit/test_bend_solve.py` | Before release |
+| Gradient in $R$, the materials and the section, of $\gamma$, `bend_loss` and $\lvert E\rvert^2$ | The slab's exact $\mathrm{d}\gamma/\mathrm{d}R$; central differences | {gfem-test}`tests/verification/test_bend_gradients.py`, {gfem-test}`tests/unit/test_bend_gradients.py` | Every change |
+| Junction coupling of the slab modes | Exact overlaps of the Bessel and Hankel modes | {gfem-test}`tests/verification/test_bend_junction.py`, {gfem-test}`tests/unit/test_bend_junction.py` | Every change |
+| $\gamma_\mathrm{NL}$ of the WR-90 bend and the line; the physical field | Quadrature of the exact mode with the volume element $h$; the Hankel ratio | {gfem-test}`tests/verification/test_bend_kerr.py`, {gfem-test}`tests/unit/test_bend_kerr.py` | Every change |
+| Bent port mode on two ranks | One process | {gfem-test}`tests/mpi/test_wave_ports.py` | Twice a week |
+| Recipe's printed values | Its source | {gfem-test}`tests/unit/test_docs_waveguide_bends_recipe.py` | Before release |
+
+Observations, not checks: {doc}`recipes/waveguide-bends` gives a silicon
+strip's loss per 90° of 0.07 dB at a radius of 1 µm; published data for such
+bends include their junctions, which the bend loss does not. Not checked: a
+fabricated bend's measured loss.
+
 ## SAX circuits
 
 | Case | Compared with | Test | Runs |

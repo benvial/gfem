@@ -43,6 +43,7 @@ from gfem._mode_overlap import (
     _vector,  # noqa: F401  (the tests read it from here)
     _Waves,  # noqa: F401  (the tests build one)
     _waves,
+    refuse_bend,
 )
 from gfem._pml import layer_tetrahedra
 from gfem._pytree import register_fields
@@ -570,6 +571,23 @@ def _birefringent_tensor(
     )
 
 
+def _refuse_bent_anisotropy(waves: Any, owner: str) -> None:
+    """Refuse a bent mode in an anisotropic Kerr material.
+
+    A crystal's axes are fixed in the global frame, so the material is not
+    invariant about the bend's axis and the metric does not carry over.
+    """
+    kerr = waves.materials
+    if getattr(waves, "bend", None) is not None and (
+        kerr.rho is not None or kerr.index is not None
+    ):
+        raise NotImplementedError(
+            f"{owner}: a bent port mode in a material with nonlinear_anisotropy "
+            "or a birefringent index is not supported: the crystal's axes do "
+            "not turn with the bend."
+        )
+
+
 def _quartic_overlaps(waves: Any) -> tuple[jax.Array, jax.Array]:
     r"""The Kerr integrand of each element: ``(n_wave, n_el)`` each.
 
@@ -646,6 +664,11 @@ def kerr_nonlinearity(model: Model, mode: PortModeResult) -> KerrNonlinearity:
     direction in the crystal; ``nonlinear_index`` and ``two_photon_absorption``
     then refer to light polarized along a cube axis. See `KerrNonlinearity`.
 
+    On a bent mode (`gfem.Bend`) the integrand is that of the physical field,
+    :math:`E_s = e_n/h`, weighted by the metric factor :math:`h` (the physical
+    volume element), per unit length of the reference arc; it also
+    differentiates with respect to the bend's radius.
+
     Exactly linear in ``nonlinear_index`` and ``two_photon_absorption``;
     under `jax.grad` the traced mode field makes it differentiable with
     respect to the section's ``eps_r``, laws, losses and density blends (one 2D
@@ -676,7 +699,8 @@ def kerr_nonlinearity(model: Model, mode: PortModeResult) -> KerrNonlinearity:
             `gfem.MaterialField`, a `gfem.Material` with a tensor property
             other than ``eps_r``, or a density blend without a per-element
             permittivity; a section with both a birefringent region and a
-            `Material.nonlinear_anisotropy`; an Hz line port.
+            `Material.nonlinear_anisotropy`; an Hz line port; a bent mode
+            (`gfem.Bend`) in a birefringent or anisotropic Kerr material.
         TypeError: ``mode`` is not a `gfem.PortModeResult`, or has no electric
             field.
         NonDifferentiableError: The node coordinates are traced by `jax.grad`
@@ -692,6 +716,7 @@ def kerr_nonlinearity(model: Model, mode: PortModeResult) -> KerrNonlinearity:
             "(gfem.kerr_coupling takes several)."
         )
     waves = _waves(model, mode, owner, _kerr_materials, _kerr_columns, shape=True)
+    _refuse_bent_anisotropy(waves, owner)
     per_element, eps = _quartic_overlaps(waves)
     kerr = waves.materials
     k0 = jnp.asarray(2 * np.pi * waves.frequency / _C)[:, None]
@@ -834,7 +859,7 @@ def free_carriers(
         NotImplementedError: A region is an anisotropic `gfem.MaterialField`,
             a `gfem.Material` with a tensor property other than ``eps_r``, or
             a density blend without a per-element permittivity; an Hz line
-            port.
+            port; a bent mode (`gfem.Bend`).
         TypeError: ``mode`` is not a `gfem.PortModeResult`, or has no electric
             field; ``regions`` is not names.
         NonDifferentiableError: The node coordinates are traced by `jax.grad`
@@ -843,6 +868,7 @@ def free_carriers(
         TypeError: The node coordinates are traced by `jax.jit`.
     """
     owner = "gfem.free_carriers"
+    refuse_bend(owner, mode)
     if not isinstance(mode, PortModeResult):
         raise TypeError(
             f"{owner} takes one gfem.PortModeResult, got {type(mode).__name__}: "
@@ -910,7 +936,8 @@ def kerr_coupling(
     - \beta_s - \beta_i`, is one line on the results' exact ``gamma``.
 
     All waves must share one port, element order and cross-section (solve them
-    with one `gfem.SolverOptions` on one model). The cost is
+    with one `gfem.SolverOptions` on one model); on a bent port, one
+    `gfem.Bend`. The cost is
     :math:`K^4` per quadrature point, so pass the few waves of a process, not
     a whole frequency grid (that is `kerr_nonlinearity`'s diagonal).
     Everything else is as `kerr_nonlinearity`: material values, the layer,
@@ -928,9 +955,9 @@ def kerr_coupling(
         The ``(K, K, K, K)`` tensor for the :math:`K` waves.
 
     Raises:
-        ValueError: The results are of different ports, element orders or
-            section geometries; no element outside a perfectly matched layer
-            carries a Kerr property.
+        ValueError: The results are of different ports, element orders,
+            section geometries or bends (a straight and a bent mode); no
+            element outside a perfectly matched layer carries a Kerr property.
         NotImplementedError: As `kerr_nonlinearity`.
         TypeError: An entry is not a `gfem.PortModeResult`, or has no electric
             field.
@@ -947,6 +974,7 @@ def kerr_coupling(
         _kerr_columns,
         shape=True,
     )
+    _refuse_bent_anisotropy(waves, "gfem.kerr_coupling")
     e = waves.field()
     n_wave, n_el, n_q, n_c = e.shape
     points = e.reshape(n_wave, n_el * n_q, n_c)

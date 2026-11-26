@@ -43,7 +43,8 @@ import itertools
 import math
 import warnings
 from collections.abc import Callable, Sequence
-from typing import Any, cast
+from fractions import Fraction
+from typing import Any, NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
@@ -82,7 +83,7 @@ from gfem._engine.port_mode_normalization import normalize_rows
 from gfem._engine.port_mode_sensitivity import section_inputs
 from gfem._engine.port_mode_shape import chain_to_nodes
 from gfem._engine.runtime import task_manager
-from gfem._engine.sensitivity import Term, is_thermal_value
+from gfem._engine.sensitivity import BEND_RADIUS_KIND, Term, is_thermal_value
 from gfem._engine.solve_request import SolveRequest
 from gfem._linalg import report
 from gfem._linalg.superlu import (
@@ -95,6 +96,8 @@ from gfem._port_section import (
     PLANE_RTOL,
     PortSection,
     anisotropic_absorbing,
+    outer_edges_conduct,
+    outer_sides,
     port_geometry,
     port_section,
 )
@@ -105,6 +108,7 @@ from gfem.errors import (
     NonDifferentiableError,
     PortModeError,
     PortModeTrackingWarning,
+    UnabsorbedBendWarning,
 )
 from gfem.model import Model
 from gfem.options import SolverOptions
@@ -156,6 +160,18 @@ _PML_SHARE = 0.5
 _CLEARANCE = 1e-2
 # With at most this many frequencies every one is solved exactly.
 _EXACT_ONLY = 3
+# A bent mode is the candidate of the bent pencil that overlaps the straight
+# guide's closed mode most, when that overlap is at least `_BEND_OVERLAP` and
+# leads the runner-up by `_BEND_MARGIN`; otherwise the radius is reached in
+# 2, 4, ... equal steps of 1/R, up to `_BEND_STEPS`. All three are fitted:
+# a single step lands the guided cases (overlap 0.53-0.97, runner-up 0.1 at
+# most), while a whispering-gallery mode's best overlap falls to 0.43 against
+# 0.39 for its neighbour, and the steps of a 2-step walk reach 0.59 and 0.92.
+_BEND_OVERLAP = 0.5
+_BEND_MARGIN = 0.1
+_BEND_STEPS = 32
+# Two eigenvalues this close (relative) are one mode found twice.
+_SAME_MODE = 1e-6
 # A mode derivative is solved to the eigensolver's own tolerance: the mode is
 # good to no better, so a tighter solve buys nothing. A mode at the
 # low-frequency floor is good only to its backward error, so its derivative
@@ -331,14 +347,20 @@ class PortModeRule:
         if not isinstance(problem, PortMode):
             raise TypeError(f"Expected gfem.PortMode, got {problem!r}.")
         refuse_anisotropic(model)
+        if problem.bend is not None and model.mesh.dim == 2:
+            raise NotImplementedError(
+                f"PortMode({problem.port!r}): a bend is a 3D port mode problem; a "
+                "line port on a 2D mesh has none in this version."
+            )
         self.problem = problem
         self.options = options
         self.comm = comm
         self.port = _wave_port(model, problem.port)
         self.mode = self.port.mode if problem.mode is None else problem.mode
         # its own mode: the surface's joint sweep, with the surface's wave
-        # ports in model order, as a driven problem runs it
-        if problem.mode is None:
+        # ports in model order, as a driven problem runs it; a bent mode has
+        # its own section, whatever the surface's other ports see
+        if problem.mode is None and problem.bend is None:
             self._ports = list(wave_port_surfaces(model.ports)[self.port.surface])
             self._index = self._ports.index(self.port)
         else:
@@ -351,6 +373,7 @@ class PortModeRule:
             self._index = 0
         self._model = model
         self._explicit: dict[tuple, Any] = {}
+        self._radius: float | None = None
         self._nodes: np.ndarray | None = None
         dispersion.warn_fitted_range(
             model,
@@ -486,7 +509,9 @@ class PortModeRule:
         stretch = _pml.stretch(model, self.problem.frequency)
         if stretch is not None:
             stretch.warn_thin()
-        section = port_section(model, lead, stretch)
+        section = port_section(model, lead, stretch, self.problem.bend)
+        if isinstance(section, PortSection) and section.bend is not None:
+            self._warn_unabsorbed(section)
         with task_manager(self.options.threads, self.comm):
             space = mode_space(section, self.options.order, self.problem.polarization)
             sweeps, _ = swept_once(
@@ -512,6 +537,21 @@ class PortModeRule:
         entry = PortModeEntry("em", sweeps=sweeps) if keep else None
         return outputs, entry
 
+    def _warn_unabsorbed(self, section: PortSection) -> None:
+        """Warn `UnabsorbedBendWarning` for a bent section with no absorber."""
+        if outer_sides(section) or outer_edges_conduct(section):
+            return
+        warnings.warn(
+            f"WavePort {self.port.name!r}: the bent port mode has no perfectly "
+            "matched layer on its outer side (along outward) and its outer edge "
+            "is not a perfect conductor, so the field the bend radiates "
+            "reflects from that edge: gamma and bend_loss are those of the "
+            "closed cavity, not of the open bend. Add a gfem.PML beyond the "
+            "caustic on the outer side.",
+            UnabsorbedBendWarning,
+            stacklevel=_mpi.outside_gfem(),
+        )
+
     def backward(
         self,
         model: Model,
@@ -531,9 +571,14 @@ class PortModeRule:
         self._nodes = None
         pairs: list = []
         nodes = ("nodes",) in wanted
+        radius = BEND_RADIUS_KIND in wanted
+        # the other ranks hold an exact zero: every rank returns the kind
+        self._radius = 0.0 if radius else None
 
         def compute() -> dict[str, np.ndarray]:
-            pairs.extend(self._pass(model, entry, cotangents, nodes=nodes))
+            pairs.extend(
+                self._pass(model, entry, cotangents, nodes=nodes, radius=radius)
+            )
             return {}
 
         _mpi.on_root(self.comm, compute, results=(PortModeError,))
@@ -546,6 +591,7 @@ class PortModeRule:
         cotangents: dict[str, np.ndarray],
         *,
         nodes: bool = False,
+        radius: bool = False,
     ) -> list:
         sweeps = entry.sweeps  # ty: ignore[unresolved-attribute]
         sweep = sweeps[self._index]
@@ -579,7 +625,10 @@ class PortModeRule:
             who=f"WavePort {self.port.name!r}",
             nodes=nodes,
             voltage_rule=rule,
+            radius=radius,
         )
+        if radius:
+            self._radius = done.radius
         if isinstance(space, LineModeSpace):
             self._explicit = {}
             return [
@@ -604,6 +653,12 @@ class PortModeRule:
     def explicit_inputs(self) -> dict[tuple, Any]:
         """The gradients by input kind the section computed itself."""
         return self._explicit
+
+    def explicit_problem(self) -> dict[tuple, np.ndarray]:
+        """The gradient by the bend's radius, from the 2D forms (rank 0 only)."""
+        if self._radius is None:
+            return {}
+        return {BEND_RADIUS_KIND: np.asarray(self._radius)}
 
     def explicit_nodes(self) -> np.ndarray | None:
         """The node cotangent of the port face, ``(n_nodes, 3)`` per metre.
@@ -661,7 +716,9 @@ class PortModeRule:
         polarization = self.problem.polarization
         quantity, unit = _FIELD_NAMES[polarization]
         if sweep is not None:
-            field = PortModeField(sweep.space, sweep.basis, sweep.coords)
+            field = PortModeField(
+                sweep.space, sweep.basis, sweep.coords, self.problem.bend
+            )
         else:
             field = PortModeField._on_vector(  # noqa: SLF001
                 self.port.name,
@@ -670,6 +727,7 @@ class PortModeRule:
                 quantity=quantity,
                 unit=unit,
                 traced_nodes=is_traced(self._model.mesh.nodes),
+                bend=self.problem.bend,
             )
         hz = polarization == "Hz"
         return PortModeResult(
@@ -683,6 +741,7 @@ class PortModeRule:
             e_field=None if hz else field,
             h_field=field if hz else None,
             pml=self._model.pml,
+            bend=self.problem.bend,
             n_g=jnp.asarray(outputs["n_g"]),
             beta_2=jnp.asarray(outputs["beta_2"]),
             beta_3=jnp.asarray(outputs["beta_3"]),
@@ -1013,6 +1072,30 @@ class _Candidates:
     factor: ShiftInvert | None = None
 
 
+class _Scan(NamedTuple):
+    """One ARPACK call's eigenpairs, their backward errors and layer shares."""
+
+    lam: np.ndarray
+    vecs: np.ndarray
+    res: np.ndarray
+    share: np.ndarray
+    #: Which eigenpairs are candidates (propagating, converged, off the layer).
+    ok: np.ndarray
+
+    def pick(self, i: int) -> _Pick:
+        """Eigenpair ``i``."""
+        return _Pick(self.lam[i], self.vecs[:, i], self.res[i], self.share[i])
+
+
+class _Pick(NamedTuple):
+    """One picked eigenpair."""
+
+    lam: Any
+    vec: np.ndarray
+    res: Any
+    share: Any
+
+
 @dataclasses.dataclass(frozen=True)
 class _DerivativeRow:
     r"""A reduced row's mode, mode derivative and the residuals that guard them.
@@ -1081,6 +1164,9 @@ class _Greedy:
         for i, fi in enumerate(f):
             self.k0[i], self.k_max[i], self.shift[i] = _wavenumbers(space.section, fi)
         self.reduced = _Reduced(space)
+        self.bent = getattr(space.section, "bend", None) is not None
+        # a bent section's closed straight predictor, built on first use
+        self._closed: PortModeSpace | None = None
         #: Each mode's pencil vectors in the reduced basis, set by `normalized`.
         self.rows: list[np.ndarray] = [np.zeros((n, 0)) for _ in self.modes]
         self.lam = np.zeros((n_modes, n), complex)
@@ -1160,8 +1246,31 @@ class _Greedy:
         """The exact solve's candidates at grid index ``j``, in rank order."""
         return self._solve(j)
 
-    def _solve(self, j: int) -> _Candidates:
+    def _solve(self, j: int, tracked: np.ndarray | None = None) -> _Candidates:
+        """The exact solve at ``j``.
+
+        On a bent section the closed straight mode predicts the bent one
+        (`_predicted`), unless ``tracked`` gives the modes' eigenvalue
+        estimates at ``j`` (one per mode, NaN for a mode not wanted): the
+        solve then shifts at the lowest wanted mode's estimate.
+        """
         space, mode = self.space, max(self.modes)
+        bent = self.bent
+        covers = None
+        if bent and tracked is None:
+            predicted = self._predicted(j)
+            if predicted is not None:
+                return predicted
+        elif bent:
+            assert tracked is not None  # noqa: S101 - narrowing
+            wanted = [
+                k
+                for k in np.argsort(self.modes, kind="stable")
+                if tracked[k] == tracked[k]
+            ]
+            if wanted:
+                self.shift[j] = tracked[wanted[0]].real
+                covers = tracked[wanted]
         a, b = space.pencil.at(self.k0[j])
         n = a.shape[0]
         factor = ShiftInvert.factor(a, b, self.shift[j])
@@ -1171,24 +1280,19 @@ class _Greedy:
         wants = itertools.count() if layered else range(2)
         for step in wants:
             want = first * (2**step if layered else 4**step)
-            lam, vecs = factor.eigs(min(want, n - 2))
-            beta = np.sqrt(-lam + 0j)
-            res = np.array(
-                [backward_error(a, b, lam[i], vecs[:, i]) for i in range(len(lam))]
+            scan = self._scan(
+                space, j, pencil=(a, b), factor=factor, want=min(want, n - 2)
             )
-            share = space.layer_share(vecs, lam)
-            k_max = self.k_max[j]
-            ok = (
-                _propagates(beta, k_max)
-                & (beta.real <= k_max * (1 + 1e-6))
-                & (res < _UNCONVERGED)
-                & (share <= _PML_SHARE)
-            )
+            lam, vecs, res, share, ok = scan
             # Order: largest Re of the shift-inverted eigenvalue
             rank = (1 / (lam - self.shift[j])).real
             ranked = np.flatnonzero(ok)[np.argsort(-rank[ok], kind="stable")]
-            if len(ranked) >= mode or want >= n - 2:
+            if (len(ranked) >= mode and _covers(lam[ranked], covers)) or want >= n - 2:
                 break
+        if covers is not None:
+            # a shift at the tracked mode is no rank: order by decreasing Re beta
+            # as a shift above every mode does
+            ranked = ranked[np.argsort(-np.sqrt(-lam[ranked] + 0j).real, kind="stable")]
         return _Candidates(
             lam=lam[ranked],
             vecs=vecs[:, ranked],
@@ -1197,9 +1301,236 @@ class _Greedy:
             factor=factor if self.dispersive_modes else None,
         )
 
+    def _scan(
+        self,
+        space: ModeSpace,
+        j: int,
+        *,
+        pencil: tuple[Any, Any],
+        factor: ShiftInvert,
+        want: int,
+        k_max: float | None = None,
+    ) -> _Scan:
+        """The ``want`` eigenpairs nearest ``factor``'s shift, and which are candidates.
+
+        A candidate propagates, is converged and holds at most `_PML_SHARE`
+        of its energy in the layer. ``k_max`` (the sweep's at ``j``) bounds the
+        propagation constants.
+        """
+        a, b = pencil
+        lam, vecs = factor.eigs(want)
+        beta = np.sqrt(-lam + 0j)
+        res = np.array(
+            [backward_error(a, b, lam[i], vecs[:, i]) for i in range(len(lam))]
+        )
+        share = space.layer_share(vecs, lam)
+        k_max = self.k_max[j] if k_max is None else k_max
+        ok = (
+            _propagates(beta, k_max)
+            & (beta.real <= k_max * (1 + 1e-6))
+            & (res < _UNCONVERGED)
+            & (share <= _PML_SHARE)
+        )
+        return _Scan(lam, vecs, res, share, ok)
+
+    # --- bent sections: the closed straight mode ------------------------------------
+
+    def _closed_space(self) -> PortModeSpace:
+        """The bent section with no bend and no layer: its closed straight guide."""
+        if self._closed is None:
+            section = self.space.section
+            assert isinstance(section, PortSection)  # noqa: S101 - bent ports only
+            straight = dataclasses.replace(section, stretch=None, layer=None, bend=None)
+            self._closed = PortModeSpace(straight, self.space.order)
+        return self._closed
+
+    def _predicted(self, j: int) -> _Candidates | None:
+        r"""The bent modes continued from the closed straight modes, at ``j``.
+
+        Mode :math:`m` of a bent port is the bent continuation of the closed
+        straight guide's mode :math:`m`: the candidate of the bent pencil
+        that overlaps it most. One shift-invert factor at the straight
+        fundamental's eigenvalue serves every requested mode; a mode that
+        fails the acceptance rule (`_pick`) gets a factor of its own, and, if
+        still unclear, is continued in :math:`1/R` (`_continued`). The
+        candidates come in rank order, with mode :math:`m` at position
+        :math:`m - 1`; ``None`` when the straight guide has fewer modes than
+        requested (the usual search then reports the cutoff).
+        """
+        closed = self._closed_space()
+        straight = _Greedy(closed, self.f[j : j + 1], self.modes, 1.0, [])
+        pred = straight.candidates_at(0)
+        if len(pred.lam) < max(self.modes):
+            return None
+        space = self.space
+        a, b = space.pencil.at(self.k0[j])
+        mass = closed.pencil.at(self.k0[j])[1]
+        first = max(6, 2 * max(self.modes) + 4)
+        kmin = int(np.argmin(self.modes))
+        shared = pred.lam[self.modes[kmin] - 1].real
+        factor = ShiftInvert.factor(a, b, shared)
+        n = a.shape[0]
+        want = min(first, n - 2)
+        while True:
+            scan = self._scan(space, j, pencil=(a, b), factor=factor, want=want)
+            # the picks and the candidates between them need this many
+            if scan.ok.sum() >= max(self.modes) or want >= n - 2:
+                break
+            want = min(2 * want, n - 2)
+        chosen = [_pick(mass, pred.vecs[:, mode - 1], scan) for mode in self.modes]
+        # two modes on one candidate are neither clear
+        picks: list[_Pick | None] = [
+            None if p is None or chosen.count(p) > 1 else scan.pick(p) for p in chosen
+        ]
+        scans, shifts = [scan], [shared]
+        for k, mode in enumerate(self.modes):
+            if picks[k] is not None:
+                continue
+            x = pred.vecs[:, mode - 1]
+            lam_s = pred.lam[mode - 1]
+            if lam_s.real != shared:
+                own = ShiftInvert.factor(a, b, lam_s.real)
+                alone = self._scan(
+                    space, j, pencil=(a, b), factor=own, want=min(first, n - 2)
+                )
+                p = _pick(mass, x, alone)
+                if p is not None:
+                    picks[k] = alone.pick(p)
+                    scans.append(alone)
+                    shifts.append(lam_s.real)
+                    if k == kmin:
+                        factor, shared = own, lam_s.real
+                    continue
+            last, picks[k], used, own = self._continued(j, lam_s, x, mass, first)
+            scans.append(last)
+            shifts.append(used)
+            if k == kmin:
+                factor, shared = own, used
+        self.shift[j] = shared
+        return self._assemble_candidates(picks, scans, shifts, factor)
+
+    def _assemble_candidates(
+        self,
+        picks: list[_Pick | None],
+        scans: list[_Scan],
+        shifts: list[float],
+        factor: ShiftInvert,
+    ) -> _Candidates:
+        """The picked bent modes at their mode slots, other candidates between."""
+        entries: list[_Pick] = [p for p in picks if p is not None]
+        slots: dict[int, _Pick] = {
+            mode - 1: p
+            for mode, p in zip(self.modes, picks, strict=True)
+            if p is not None
+        }
+        fill: list[_Pick] = []
+        for scan, shift in zip(scans, shifts, strict=True):
+            rank = (1 / (scan.lam - shift)).real
+            for i in np.flatnonzero(scan.ok)[np.argsort(-rank[scan.ok], kind="stable")]:
+                lam = scan.lam[i]
+                if any(
+                    abs(lam - e.lam) <= _SAME_MODE * abs(e.lam) for e in entries + fill
+                ):
+                    continue
+                fill.append(scan.pick(i))
+        ordered: list[_Pick] = []
+        spare = iter(fill)
+        for position in range(max(max(slots) + 1, len(slots) + len(fill))):
+            if position in slots:
+                ordered.append(slots[position])
+            elif (extra := next(spare, None)) is not None:
+                ordered.append(extra)
+        return _Candidates(
+            lam=np.array([e.lam for e in ordered]),
+            vecs=np.column_stack([e.vec for e in ordered]),
+            residual=np.array([e.res for e in ordered]),
+            share=np.array([e.share for e in ordered]),
+            factor=factor if self.dispersive_modes else None,
+        )
+
+    def _continued(
+        self,
+        j: int,
+        lam_s: complex,
+        x_s: np.ndarray,
+        mass: Any,
+        first: int,
+    ) -> tuple[_Scan, _Pick, float, ShiftInvert]:
+        r"""A bent mode continued from the closed straight mode in :math:`u = 1/R`.
+
+        :math:`K = 2, 4, \dots` equal steps from :math:`u = 0`; each step
+        shifts at the linear extrapolation of the previous two eigenvalues
+        and picks the candidate that overlaps the previous step's mode most,
+        by the acceptance rule of `_pick`. The first :math:`K` whose steps all
+        pass gives the mode; the last step is the section's own radius.
+
+        Returns:
+            The last step's scan, the picked mode, and the shift and factor of
+            the scan.
+
+        Raises:
+            PortModeError: No step count up to `_BEND_STEPS` is accepted.
+        """
+        section = self.space.section
+        assert isinstance(section, PortSection)  # noqa: S101 - bent ports only
+        assert section.bend is not None  # noqa: S101
+        bend = section.bend
+        spaces: dict[Fraction, ModeSpace] = {Fraction(1): self.space}
+        steps = 2
+        while steps <= _BEND_STEPS:
+            x_prev, lams, us = x_s, [lam_s], [0.0]
+            last: _Pick | None = None
+            for step in range(1, steps + 1):
+                frac = Fraction(step, steps)
+                if frac not in spaces:
+                    stepped = dataclasses.replace(
+                        section,
+                        bend=dataclasses.replace(bend, radius=bend.radius / frac),
+                    )
+                    spaces[frac] = PortModeSpace(stepped, self.space.order)
+                space = spaces[frac]
+                guess = lams[-1]
+                if len(lams) > 1:
+                    guess = guess + (guess - lams[-2]) / (us[-1] - us[-2]) * (
+                        float(frac) - us[-1]
+                    )
+                a, b = space.pencil.at(self.k0[j])
+                k_max = _wavenumbers(space.section, self.f[j])[1]
+                shift = complex(guess).real
+                factor = ShiftInvert.factor(a, b, shift)
+                scan = self._scan(
+                    space,
+                    j,
+                    pencil=(a, b),
+                    factor=factor,
+                    want=min(first, a.shape[0] - 2),
+                    k_max=k_max,
+                )
+                p = _pick(mass, x_prev, scan)
+                if p is None:
+                    break
+                x_prev = scan.vecs[:, p]
+                lams.append(scan.lam[p])
+                us.append(float(frac))
+                last = scan.pick(p)
+            else:
+                assert last is not None  # noqa: S101 - the loop ran
+                return scan, last, shift, factor
+            steps *= 2
+        raise PortModeError(
+            f"{self._who(0)}: the bent mode could not be followed from the "
+            f"straight guide at {hertz(self.f[j])}: its overlap with the "
+            f"previous step's mode stayed unclear down to steps of "
+            f"1/(R {_BEND_STEPS}). Use a larger radius, or solve the guide "
+            "straight."
+        )
+
     def _warn_clearance(self, first: _Candidates) -> None:
         """Warn for each picked mode with a layer energy share above `_CLEARANCE`."""
         if first.share is None:
+            return
+        if getattr(self.space.section, "bend", None) is not None:
+            self._warn_caustic(first)
             return
         for k, mode in enumerate(self.modes):
             share = float(first.share[mode - 1])
@@ -1216,6 +1547,46 @@ class _Greedy:
                 LayerClearanceWarning,
                 stacklevel=_mpi.outside_gfem(),
             )
+
+    def _warn_caustic(self, first: _Candidates) -> None:
+        r"""Warn for each picked mode whose outer layer starts before its caustic.
+
+        The mode radiates beyond :math:`x_c = R\,(\mathrm{Re}\,n_\mathrm{eff}
+        / n_\mathrm{cl} - 1)`, the distance from the reference arc where the
+        local wavenumber :math:`k_0 n_\mathrm{cl}(R + x)/R` falls to
+        :math:`\mathrm{Re}\,\beta`; a layer that starts before it sits on the
+        guided field.
+        """
+        section = self.space.section
+        assert isinstance(section, PortSection)  # noqa: S101 - checked by the caller
+        bend = section.bend
+        assert bend is not None  # noqa: S101 - checked by the caller
+        sides = outer_sides(section)
+        if not sides or section.layer is None:
+            return
+        n_cl = math.sqrt(float(section.eps_nn[section.layer].real.max()))
+        outward = np.asarray(bend.outward) @ section.frame[:2]
+        for k, mode in enumerate(self.modes):
+            beta = np.sqrt(-first.lam[mode - 1] + 0j)
+            x_c = bend.radius * (beta.real / self.k0[0] / n_cl - 1)
+            for side in sides:
+                c = outward[side.axis]
+                if abs(abs(c) - 1) > 1e-6:
+                    continue
+                t = (side.face / section.scale - section.origin[side.axis]) / c
+                face = (t - bend.offset) * section.scale
+                if face >= x_c:
+                    continue
+                warnings.warn(
+                    f"{self._who(k)}: the perfectly matched layer on the outer "
+                    f"side starts {face:.4g} m from the reference arc, before "
+                    f"the caustic x_c = {x_c:.4g} m of mode {mode} at "
+                    f"{hertz(self.f[0])}: the layer sits on the guided field and "
+                    "perturbs the mode itself. Move the layer's inner face "
+                    "beyond x_c.",
+                    LayerClearanceWarning,
+                    stacklevel=_mpi.outside_gfem(),
+                )
 
     def _keep(self, j: int, cand: _Candidates, picks: list[int]) -> None:
         """Make candidate ``picks[k]`` of the exact solve at ``j`` mode ``k`` there.
@@ -1385,7 +1756,12 @@ class _Greedy:
         solves, and its eigenvalue and field are discarded.
         """
         self.fallback_solves += 1
-        cand = self._solve(i)
+        if self.bent:  # shift at the mode's estimate at the row
+            tracked = np.full(len(self.modes), np.nan + 0j)
+            tracked[k] = self.lam[k, i]
+            cand = self._solve(i, tracked)
+        else:
+            cand = self._solve(i)
         x_ref = self.reduced.lift(self.coords_at(i, k))
         p = int(np.argmax(_overlaps(self.space.mass, x_ref, cand.vecs)))
         return self._mode_derivative(i, cand, p, self._factor_of(i, cand))
@@ -1400,7 +1776,11 @@ class _Greedy:
                 so an ambiguous choice is an error.
         """
         self.exact_solves += 1
-        cand = self._solve(j)
+        if self.bent:  # shift at the modes' eigenvalues at ``ref``, scaled as k0^2
+            tracked = self.lam[:, ref] * (self.k0[j] / self.k0[ref]) ** 2
+            cand = self._solve(j, tracked)
+        else:
+            cand = self._solve(j)
         if len(cand.lam) < len(self.modes):
             # too few candidates for distinct modes
             raise self._evanescent_error(j, self._lost(cand, ref, certain=certain))
@@ -2054,13 +2434,51 @@ def _propagates(beta: np.ndarray, k_max: float | np.ndarray) -> np.ndarray:
 
 
 def _overlaps(mass, x_ref: np.ndarray, vecs: np.ndarray) -> np.ndarray:
-    """``|<x_ref, v>| / (|x_ref| |v|)`` in the mass inner product, per column."""
+    """``|<x_ref, v>| / (|x_ref| |v|)`` in the mass inner product, per column.
+
+    A column of negative norm in an indefinite ``mass`` (a pencil's ``B``) has
+    no overlap: 0.
+    """
     mv = mass @ vecs
     num = np.abs(x_ref.conj() @ mv)
-    den = np.sqrt(
-        (x_ref.conj() @ (mass @ x_ref)).real * np.sum(vecs.conj() * mv, 0).real
-    )
-    return num / den
+    with np.errstate(invalid="ignore"):
+        den = np.sqrt(
+            (x_ref.conj() @ (mass @ x_ref)).real * np.sum(vecs.conj() * mv, 0).real
+        )
+    return np.nan_to_num(num / den, nan=0.0, posinf=0.0)
+
+
+def _pick(mass, x_ref: np.ndarray, scan: _Scan) -> int | None:
+    """The candidate of ``scan`` that continues ``x_ref``, if the choice is clear.
+
+    The largest overlap in ``mass``, when at least `_BEND_OVERLAP` and ahead of
+    the next candidate's by `_BEND_MARGIN`.
+    """
+    candidates = np.flatnonzero(scan.ok)
+    if not len(candidates):
+        return None
+    overlap = _overlaps(mass, x_ref, scan.vecs[:, candidates])
+    order = np.argsort(-overlap, kind="stable")
+    best = overlap[order[0]]
+    runner = overlap[order[1]] if len(order) > 1 else 0.0
+    if best < _BEND_OVERLAP or best - runner < _BEND_MARGIN:
+        return None
+    return int(candidates[order[0]])
+
+
+def _covers(lam: np.ndarray, estimates: np.ndarray | None) -> bool:
+    """Whether each tracked estimate has a candidate within half its gap.
+
+    The gap is the distance to the nearest other estimate; one estimate, or
+    none, is always covered.
+    """
+    if estimates is None or len(estimates) < 2:
+        return True
+    for i, e in enumerate(estimates):
+        gap = np.min(np.abs(np.delete(estimates, i) - e))
+        if not len(lam) or np.min(np.abs(lam - e)) >= gap / 2:
+            return False
+    return True
 
 
 def _wavenumbers(
@@ -2081,6 +2499,10 @@ def _wavenumbers(
     k_max = math.sqrt(n2_max) * k0
     if len(section.impedance_terms):
         k_max *= _SLOW_WAVE
+    if isinstance(section, PortSection) and section.bend is not None:
+        # a bent mode's wavenumber per unit length of the reference arc is at
+        # most the bulk one times the largest h of the physical section
+        k_max *= section.bend_h_range(physical=True)[1]
     return k0, k_max, -_TARGET * n2_shift * k0**2
 
 

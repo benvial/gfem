@@ -96,7 +96,10 @@ class ShapeForm:
         self._form = ngs.LinearForm(self._w_space)
         self._empty = True
         section = space.section
-        self._position = section.stretch is not None and section.layer is not None
+        # a layer's or a bend's coefficients move with the position
+        self._position = (
+            section.stretch is not None and section.layer is not None
+        ) or section.bend is not None
 
     # --- fields ------------------------------------------------------------------
 
@@ -248,7 +251,10 @@ class ShapeForm:
             if weight == 0:
                 continue
             if item.region == "dx":
-                stretched = item.input[0] in ("eps", "sigma", "nu")
+                # a bent law's susceptibility carries the metric as eps does
+                stretched = item.input[0] in ("eps", "sigma", "nu") or (
+                    item.input[0] == "law" and self.space.section.bend is not None
+                )
                 self.add_value(
                     item.coefficient,
                     complex(weight),

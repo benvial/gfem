@@ -88,12 +88,38 @@ class _Waves:
     columns: _Columns
     materials: Any
     moved: tuple[jax.Array, jax.Array] | None = None
+    bend: Any = None
+
+    def metric(self) -> jax.Array | None:
+        r"""``(n_el, n_q)`` the bend's :math:`h = 1 + \xi/R` at the points, or ``None``.
+
+        :math:`R` is the results' (traced when the solve is), :math:`\xi` the
+        distance of the real point from the reference arc.
+        """
+        if self.bend is None:
+            return None
+        bend, cols = self.bend, self.columns
+        # the section of a traced result carries no bend: the real point is
+        # read from the plane coordinates, the arc from the result's bend
+        points = cols.points
+        assert points is not None  # noqa: S101 - a planar section's columns
+        shape = points.shape[:2]
+        real = self.section.to_global(np.reshape(points, (-1, 2)))
+        xi = (real - np.asarray(bend.at)) @ np.asarray(bend.outward)
+        xi = jnp.asarray(xi.reshape(shape))
+        return 1 + xi / self.bend.radius
 
     @property
     def weights(self) -> jax.Array:
-        """``(n_el, n_q)`` quadrature weights, m² (m), zero on a layer."""
-        weights = jnp.asarray(self.columns.measure * self.materials.keep[:, None])
-        return weights if self.moved is None else weights * self.moved[1][:, None]
+        r"""``(n_el, n_q)`` quadrature weights, m² (m), zero on a layer.
+
+        A bent section's carry the physical volume element, the factor :math:`h`.
+        """
+        w = jnp.asarray(self.columns.measure * self.materials.keep[:, None])
+        if self.moved is not None:
+            w = w * self.moved[1][:, None]
+        h = self.metric()
+        return w if h is None else w * h
 
     def row(self, vector: jax.Array) -> jax.Array:
         """``(n_el, n_q, n_c)`` the mode of one DOF vector, in the global frame."""
@@ -105,6 +131,9 @@ class _Waves:
         if cols.normal_weights is None:
             return e
         e_n = jnp.einsum("eqk,ek->eq", cols.normal_weights, vector[cols.normal_dofs])
+        h = self.metric()
+        if h is not None:
+            e_n = e_n / h  # the physical field, not the transformed one
         full = jnp.concatenate([e, e_n[..., None]], axis=-1)
         return full @ jnp.asarray(self.section.frame)
 
@@ -126,6 +155,50 @@ def _same_section(a: Any, b: Any) -> bool:
         return False
     names = ("points", "triangles") if len(a.normal) == 3 else ("points", "segments")
     return all(np.array_equal(getattr(a, n), getattr(b, n)) for n in names)
+
+
+def refuse_bend(owner: str, *modes: Any) -> None:
+    """Raise `NotImplementedError` if any of ``modes`` is a bent port mode.
+
+    For the effects whose overlaps carry no bend metric.
+    """
+    flat = [
+        m
+        for entry in modes
+        for m in (entry if isinstance(entry, Sequence) else (entry,))
+    ]
+    if any(getattr(m, "bend", None) is not None for m in flat):
+        raise NotImplementedError(
+            f"{owner}: a bent port mode (gfem.Bend) is not supported: the "
+            "bend-weighted overlaps of this effect are not available in this "
+            "version. gfem.kerr_nonlinearity and gfem.kerr_coupling take it."
+        )
+
+
+def _same_bend(a: Any, b: Any) -> bool:
+    """Whether two results were solved on the same bend (or both on none).
+
+    A radius compares by value when both are concrete and by identity when
+    one is traced: two traced radii are known equal only when they are the
+    same value of the transformation.
+    """
+    if a is None or b is None:
+        return a is b
+    if a.outward != b.outward or a.at != b.at:
+        return False
+    if is_traced(a.radius) or is_traced(b.radius):
+        return a.radius is b.radius
+    return float(a.radius) == float(b.radius)
+
+
+def _check_bends(owner: str, results: Sequence[Any]) -> None:
+    """Raise if the results are not all of one guide (one bend, or none)."""
+    if not all(_same_bend(r.bend, results[0].bend) for r in results):
+        raise ValueError(
+            f"{owner}: the waves are of different guides: a straight mode "
+            "and a bent one, or two different bends, share no section "
+            "metric. Solve every wave with the same gfem.Bend."
+        )
 
 
 def _waves(
@@ -189,6 +262,16 @@ def _waves(
                 "field (a driven result's port modes do not): solve "
                 "gfem.solve(model, gfem.PortMode(...)) and pass that result."
             )
+    if any(r.bend is not None for r in results) and (
+        is_traced(model.mesh.nodes) or any(r.e_field._traced_nodes for r in results)  # noqa: SLF001
+    ):
+        raise NonDifferentiableError(
+            f"{owner}: the derivative of an overlap of a bent port mode with "
+            "respect to the node coordinates is not available in this version "
+            "(its metric reads the points); differentiate with respect to the "
+            "bend's radius or the materials, or wrap the node coordinates in "
+            "jax.lax.stop_gradient."
+        )
     traced, refusal = _node_state(model, results, owner, shape=shape)
     host = _at_host_nodes(model, owner) if traced else model
     spaces = []
@@ -210,6 +293,7 @@ def _waves(
                 f"{first.order}) and port {r.port!r} (order {space.order}). Solve "
                 "them with the same SolverOptions on the same model."
             )
+    _check_bends(owner, results)
     section = first.section
     frequency = np.concatenate(
         [np.atleast_1d(np.asarray(r.frequency, float)) for r in results]
@@ -234,6 +318,7 @@ def _waves(
         columns,
         materials,
         moved,
+        results[0].bend,
     )
 
 

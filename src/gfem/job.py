@@ -66,8 +66,8 @@ from gfem._materials import (
     PixelGeometry,
 )
 from gfem._optical_shift import _Sampling
-from gfem._pml import PML
-from gfem._port_section import PortSection
+from gfem._pml import PML, Layers, Side, Stretch
+from gfem._port_section import PortSection, SectionBend
 from gfem._pytree import register_fields
 from gfem._raman_spectrum import RamanSpectrum
 from gfem._sheet import SheetField
@@ -95,6 +95,7 @@ from gfem.mesh import (
 from gfem.model import EnclosedBy, Model
 from gfem.options import SolverOptions
 from gfem.problems import (
+    Bend,
     DampingFrame,
     DCConduction,
     Driven,
@@ -855,19 +856,25 @@ def _port_mode_field_args(field: PortModeField, _: _codec.Context) -> dict[str, 
     space = field._space  # noqa: SLF001
     # a line port's polarization; a planar port's field is written as before
     polarization = getattr(space, "polarization", None)
-    return {
-        "section": space.section,
-        "order": space.order,
-        "basis": field._basis,  # noqa: SLF001
-        "coords": field._coords,  # noqa: SLF001
-    } | ({} if polarization is None else {"polarization": polarization})
+    return (
+        {
+            "section": space.section,
+            "order": space.order,
+            "basis": field._basis,  # noqa: SLF001
+            "coords": field._coords,  # noqa: SLF001
+        }
+        | ({} if polarization is None else {"polarization": polarization})
+        | (
+            {} if field._bend is None else {"bend": field._bend}  # noqa: SLF001
+        )
+    )
 
 
 def _port_mode_field_from_args(args: dict[str, Any], _: _codec.Context) -> Any:
     from gfem._engine.line_mode import mode_space
 
     space = mode_space(args["section"], args["order"], args.get("polarization"))
-    return PortModeField(space, args["basis"], args["coords"])
+    return PortModeField(space, args["basis"], args["coords"], args.get("bend"))
 
 
 def _port_section_from_args(args: dict[str, Any], _: _codec.Context) -> PortSection:
@@ -1069,11 +1076,21 @@ _codec.register(
     Driven,
     to_args=_unset_omitted(Driven, polarization=None, sources=(), source_fields=True),
 )
-_codec.register(PortMode, to_args=_unset_omitted(PortMode, polarization=None))
+# a bend only when set, so a straight port mode is written as before
+_codec.register(Bend)
+_codec.register(
+    PortMode, to_args=_unset_omitted(PortMode, polarization=None, bend=None)
+)
 _codec.register(
     PortModeResult,
     to_args=_unset_omitted(
-        PortModeResult, h_field=None, pml=None, n_g=None, beta_2=None, beta_3=None
+        PortModeResult,
+        h_field=None,
+        pml=None,
+        n_g=None,
+        beta_2=None,
+        beta_3=None,
+        bend=None,
     ),
 )
 _codec.register(
@@ -1123,12 +1140,18 @@ _codec.register(
 _codec.register(
     ElectrostaticResult, to_args=_unset_omitted(ElectrostaticResult, _thickness=None)
 )
+# a bend only when set, so a straight section is written as before
 _codec.register(
     PortSection,
+    to_args=_unset_omitted(PortSection, bend=None),
     from_args=_port_section_from_args,
     # "sigma": the scalar conductivity of sections saved by 0.1.0
     names=[f.name for f in dataclasses.fields(PortSection) if f.init] + ["sigma"],
 )
+# a section's perfectly matched layer and bend, written with it (a result's
+# mode field holds its section)
+for _cls in (Side, Layers, Stretch, SectionBend):
+    _codec.register(_cls)
 _codec.register(Piezoelectric, to_args=_piezoelectric_args)
 _codec.register(DampingFrame)
 _codec.register(PiezoelectricResult)
@@ -1165,7 +1188,7 @@ _codec.register(
     PortModeField,
     to_args=_port_mode_field_args,
     from_args=_port_mode_field_from_args,
-    names=("section", "order", "basis", "coords", "polarization"),
+    names=("section", "order", "basis", "coords", "polarization", "bend"),
 )
 _codec.register(LineSection)
 _codec.register(Job, from_args=_job_from_args, names=("model", "problem", "options"))

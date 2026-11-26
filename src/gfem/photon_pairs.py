@@ -36,7 +36,7 @@ import numpy as np
 
 from gfem import _photon_pairs as pp
 from gfem._checks import is_traced
-from gfem._mode_overlap import _NODES, _vector
+from gfem._mode_overlap import _NODES, _vector, refuse_bend
 from gfem._pytree import readonly, register_fields
 from gfem.errors import (
     HighGainWarning,
@@ -852,6 +852,7 @@ def _row(result: PortModeResult, i: int) -> PortModeResult:
         quantity=field.quantity,
         unit=field.unit,
         traced_nodes=field._traced_nodes,  # noqa: SLF001
+        bend=field._bend,  # noqa: SLF001
     )
     parts = {
         name: getattr(result, name)[i : i + 1]
@@ -1041,7 +1042,7 @@ def spdc(
         The `PhotonPairSource`.
 
     Raises:
-        NotImplementedError: A line port (a 2D mesh).
+        NotImplementedError: A line port (a 2D mesh); a bent mode (`gfem.Bend`).
         ValueError: ``points < 3``; an arm has fewer than 4 rows; the pump
             rows miss the sum of the band centres; one mode's signal and
             idler rows partly overlap; otherwise as
@@ -1051,6 +1052,7 @@ def spdc(
         NonDifferentiableError: The node coordinates of ``model``, or of a
             mode's solve, are traced by `jax.grad`.
     """
+    refuse_bend("gfem.spdc", pump, signal, idler)
     return _build("spdc", model, pump, signal, idler, points=points)
 
 
@@ -1080,7 +1082,7 @@ def sfwm(
         The `PhotonPairSource`.
 
     Raises:
-        NotImplementedError: A line port (a 2D mesh).
+        NotImplementedError: A line port (a 2D mesh); a bent mode (`gfem.Bend`).
         ValueError: ``points < 3``; an arm has fewer than 4 rows; the pump
             rows miss the half-sum of the band centres; one mode's signal and
             idler rows partly overlap; otherwise as
@@ -1090,4 +1092,5 @@ def sfwm(
         NonDifferentiableError: The node coordinates of ``model``, or of a
             mode's solve, are traced by `jax.grad`.
     """
+    refuse_bend("gfem.sfwm", pump, signal, idler)
     return _build("sfwm", model, pump, signal, idler, points=points)

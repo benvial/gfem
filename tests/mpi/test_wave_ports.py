@@ -10,6 +10,7 @@ import dataclasses
 import warnings
 from pathlib import Path
 
+import bend_cases as bc
 import gradient_cases as cases
 import jax
 import mpi_cases
@@ -574,6 +575,44 @@ def test_a_port_mode_under_jax_is_as_on_one_process():
     assert abs(value - value_one).max() < 1e-8 * abs(value_one).max()
     assert grad == pytest.approx(grad_one, rel=1e-9)
     assert field == pytest.approx(field_one, rel=1e-9)
+
+
+def _bent_port_mode(mesh_path):
+    mesh = Mesh.from_gmsh(Path(mesh_path), length_unit="mm")
+    # a lossy filling, so that bend_loss and Re gamma carry a signal to compare
+    model = gfem.Model(
+        mesh,
+        materials={"air": gfem.Material(eps_r=1.2, tan_delta=0.02)},
+        boundaries=[gfem.PEC("walls")],
+        ports=[gfem.WavePort("p1", "p1")],
+    )
+    options = gfem.SolverOptions(order=3, threads=1)
+
+    def solved(radius):
+        problem = gfem.PortMode("p1", bc.WR90_F, bend=bc.wr90_bend_m(radius))
+        return gfem.solve(model, problem, options=options)
+
+    result = solved(30e-3)
+    # the 2D adjoint of the radius runs on rank 0 alone, and the ranks' sum
+    # counts it once
+    slope = jax.grad(lambda r: jax.numpy.real(solved(r).gamma[0]))(
+        jax.numpy.asarray(30e-3)
+    )
+    return (
+        complex(np.asarray(result.gamma)[0]),
+        float(np.asarray(result.bend_loss)[0]),
+        float(slope),
+    )
+
+
+def test_a_bent_port_mode_agrees_with_one_process(tmp_path):
+    path = bc.wr90_mesh(tmp_path / "wr90.msh")
+    one = np.array(_bent_port_mode(path))
+    row, *_ = on_ranks(_bent_port_mode, path, ranks=2, limit=180)
+    # the 2D section is solved on the same data whatever the ranks; only the
+    # order of a reduction differs, a few ulps of the solve (1e-13), so 1e-10
+    # holds with three orders to spare. gamma, bend_loss and d Re gamma / dR
+    np.testing.assert_allclose(np.array(row), one, rtol=1e-10, atol=0)
 
 
 def _named_solver(directory):

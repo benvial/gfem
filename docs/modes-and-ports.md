@@ -92,6 +92,43 @@ These derivatives have no gradient: under `jax.grad` they raise
 {py:obj}`gfem.NonDifferentiableError`, while $\gamma$ of the same result
 follows a design at the port's face ({doc}`recipes/port-mode-gradient`).
 
+## Bent port modes
+
+A {term}`bent port mode` of {py:obj}`gfem.Bend` solves the bent guide exactly,
+as the body of revolution about the bend's axis at the real frequency, on the
+straight cross-section: the bend multiplies $\varepsilon$ and $\mu$ by
+$\mathrm{diag}(h, h, 1/h)$ with $h = 1 + \xi/R$, where $\xi$ is the distance
+from the {term}`reference radius` $R$'s arc along `outward`. In a perfectly
+matched layer $h$ takes the stretched coordinate. The mode varies as
+$e^{-\nu\varphi}$ with $\nu = -i\gamma R$, and $\gamma$, $n_\mathrm{eff}$,
+$n_g$ and $\beta_k$ are per unit length of the arc. Moving $R$ moves the axis
+and leaves the guide where it is.
+
+- **Loss.** The {term}`bend loss` over 90° is
+  $L_{90} = (10\pi/\ln 10)\,R\,\mathrm{Re}\,\gamma$ dB: radiation into the
+  cladding plus absorption. The mode radiates beyond the {term}`caustic`
+  $x_c = \mathrm{Re}\,\nu/(k_0 n_\mathrm{cl}) - R$, so the outer layer must
+  start past it and a wavelength thick; gfem warns when it does not, or when
+  an outer edge that is not a perfect conductor has no layer.
+- **Junction.** Where a straight guide meets a bent one, the power the
+  {term}`junction coupling` $\tau^2$ passes is
+  $\big(\tfrac12(\langle s, b\rangle + \langle b, s\rangle)\big)^2 /
+  (\langle s, s\rangle\langle b, b\rangle)$, with the reciprocity pairing of the
+  port mode problem, unconjugated, so that it is 1 for a mode with itself. It
+  neglects the reflection, and with unequal impedances $|\tau^2|$ can exceed 1
+  by a little: 1.0047 for a WR-90 guide at $R = 30$ mm.
+- **Fields.** The solve works with a field $e_n$ normal to the section; the
+  physical normal component is $E_s = e_n/h$, which is what
+  {py:obj}`gfem.PortModeField` and the plots return, for 1 W through the
+  section.
+- **Nonlinearity and rings.** The Kerr overlap weights the volume by $h$ and
+  uses $E_s$. A ring of radius $R$ has resonances spaced by
+  $D_1 = c/(n_g R)$ and $D_2 = -(c/n_g)\,D_1^2\,\beta_2$ with the bent $n_g$
+  and $\beta_2$, and a radiation limit
+  $Q_\mathrm{rad} = k_0\,\mathrm{Re}\,n_g/(2\,\mathrm{Re}\,\gamma)$.
+
+The calculation, with its checks and limits: {doc}`recipes/waveguide-bends`.
+
 ## Resonant modes: closed and open
 
 An {term}`eigenmode problem` finds the frequencies at which a source-free field

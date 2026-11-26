@@ -172,6 +172,32 @@ Port mode problem
   A 2D cross-section eigenmode analysis that supplies the field profile and
   propagation constant of a wave port. See {doc}`tutorials/metal-bend`.
 
+Bent port mode
+  The {term}`port mode` of a guide bent about an axis, found on its straight
+  section with the bend as a coordinate metric; $\gamma$, $n_\mathrm{eff}$ and
+  $n_g$ are per unit length of the {term}`reference radius`'s arc. See
+  {doc}`modes-and-ports`.
+
+Reference radius
+  The radius $R$ of the arc, normally the guide's centre line, along which a
+  {term}`bent port mode` is measured. The loss per 90°, the ring's $D_k$ and the
+  Kerr shift per photon do not depend on the choice. See {doc}`modes-and-ports`.
+
+Bend loss
+  The power a {term}`bent port mode` loses over a 90° turn, in dB, by radiation
+  and absorption; the junction to a straight guide is not in it. It is
+  `bend_loss` of the result. See {doc}`recipes/waveguide-bends`.
+
+Junction coupling
+  The power coupling $\tau^2$ between two port modes of one cross-section, for
+  example a straight guide and a bent one; $-10\log_{10}|\tau^2|$ is the
+  junction loss, reflection neglected. See {doc}`recipes/waveguide-bends`.
+
+Caustic
+  The radius at which a {term}`bent port mode`'s field turns from evanescent
+  to radiating in the cladding. Put the outer perfectly matched layer beyond it.
+  See {doc}`modes-and-ports`.
+
 Group index
   $n_g = c\,\mathrm{d}\beta/\mathrm{d}\omega$ of a {term}`port mode`: a
   pulse's envelope travels along the guide at $c/n_g$. It holds the dispersion
@@ -259,6 +285,11 @@ Kerr nonlinear coefficient
   its propagation constant by $\mathrm{Re}\,\gamma_\mathrm{NL}\,P$ and its
   field attenuation by $\mathrm{Im}\,\gamma_\mathrm{NL}\,P$ (two-photon
   loss). Short form: nonlinear coefficient. See {doc}`recipes/waveguide-nonlinearity`.
+
+Kerr shift per photon
+  $g_0 = \hbar\omega_0 c^2\,\mathrm{Re}\,\gamma_\mathrm{NL}/(n_g^2 L)$ of a ring of
+  length $L$: the shift of a resonance by one photon in it. See
+  {doc}`recipes/waveguide-bends`.
 
 Free-carrier overlap
   The confinement $\Gamma_R$ of a {term}`port mode` in the regions that hold

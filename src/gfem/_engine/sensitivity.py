@@ -587,6 +587,9 @@ LOAD_FORMS = frozenset({"steady_thermal", "transient_thermal"})
 LOAD_KIND = ("problem", ".density")
 #: The input kind of a load form's power density per triangle (W/m^2).
 FACE_LOAD_KIND = ("problem", ".face_density")
+#: The input kind of a bent port mode's radius (`gfem.Bend.radius`): the port
+#: mode rule differentiates it itself, as a derivative of its 2D forms.
+BEND_RADIUS_KIND = ("problem", ".bend.radius")
 #: The lumped values that are design inputs, by owner.
 _LUMPED = {
     "port": ("inductance", "capacitance"),
@@ -660,6 +663,8 @@ def unsupported(form: str, kind: tuple) -> str | None:  # noqa: PLR0911
             "(shape gradients) are not available in this version of gfem"
         )
     if kind[0] == "problem" and form in LOAD_FORMS:
+        return None
+    if kind == BEND_RADIUS_KIND and form == "port mode":
         return None
     return "this version of gfem has no gradient for this input"
 

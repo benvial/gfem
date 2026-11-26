@@ -42,9 +42,35 @@ from gfem.conventions import EXTERIOR_THICKNESS_FACTOR
 from gfem.errors import PortGeometryError
 from gfem.mesh import LENGTH_UNITS
 from gfem.model import Model
+from gfem.problems import Bend
 
 # Relative distance from the port plane (in port diameters) still on the plane.
 PLANE_RTOL = 1e-6
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class SectionBend:
+    r"""A `gfem.Bend` in the frame of a port section.
+
+    The metric factor is :math:`h = 1 + \xi/R` with
+    :math:`\xi = s\,(\mathbf{x}\cdot\mathrm{outward} - \mathrm{offset})` the
+    in-plane distance from the reference arc in m, :math:`\mathbf{x}` a point
+    in local units and :math:`s` the section's ``scale``.
+
+    Attributes:
+        radius: The radius :math:`R` of the reference arc, m, as given.
+        outward: Unit vector along ``outward`` in the local ``(u, v)`` basis.
+        offset: The reference arc's coordinate along ``outward``, local units.
+    """
+
+    radius: float
+    outward: tuple[float, float]
+    offset: float
+
+    @property
+    def inverse_radius(self) -> float:
+        """:math:`1/R` in 1/m."""
+        return 1.0 / self.radius
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -136,6 +162,7 @@ class PortSection:
     absorbing_law: np.ndarray | None = None
     stretch: Stretch | None = None
     layer: np.ndarray | None = None
+    bend: SectionBend | None = None
 
     @property
     def normal(self) -> np.ndarray:
@@ -146,6 +173,29 @@ class PortSection:
     def diameter(self) -> float:
         """Largest extent of the cross-section, local units."""
         return float(np.ptp(self.points, axis=0).max())
+
+    def bend_distance(self, points: np.ndarray | None = None) -> np.ndarray:
+        r"""The distance :math:`\xi` of ``points`` (default the nodes) from the arc, m.
+
+        Along the bend's ``outward``; requires a bend.
+        """
+        bend = self.bend
+        assert bend is not None  # noqa: S101 - callers check
+        pts = self.points if points is None else points
+        return (pts @ np.asarray(bend.outward) - bend.offset) * self.scale
+
+    def bend_h_range(self, *, physical: bool = False) -> tuple[float, float]:
+        r"""The extremes of :math:`\mathrm{Re}\,h = 1 + \xi/R` over the section.
+
+        With ``physical`` over the triangles off the layer only.
+        """
+        bend = self.bend
+        assert bend is not None  # noqa: S101 - callers check
+        tris = self.triangles
+        if physical and self.layer is not None:
+            tris = tris[~self.layer]
+        xi = self.bend_distance()[np.unique(tris)]
+        return 1.0 + float(xi.min()) / bend.radius, 1.0 + float(xi.max()) / bend.radius
 
     @property
     def max_conductivity(self) -> float:
@@ -465,7 +515,10 @@ def anisotropic_absorbing(
 
 
 def port_section(
-    model: Model, port: WavePort, stretch: Stretch | None = None
+    model: Model,
+    port: WavePort,
+    stretch: Stretch | None = None,
+    bend: Bend | None = None,
 ) -> PortSection | LineSection:
     """Extract the cross-section of ``port`` from ``model``.
 
@@ -473,16 +526,24 @@ def port_section(
 
     ``stretch`` is the layer's stretch of the solve (`gfem._pml.stretch`),
     at its reference frequency; the section keeps it and marks its layer
-    triangles.
+    triangles. ``bend`` is the guide's `gfem.Bend`, kept in the section's
+    frame once its section passes the checks of `check_bend`.
 
     Raises:
         PortGeometryError: The port surface is not planar (on a 2D mesh: the
             line is not straight and connected).
         ValueError: An anisotropic material beside the port has no principal
-            axis along the port normal.
+            axis along the port normal; or, with a ``bend``, as `check_bend`.
+        NotImplementedError: A ``bend`` on a 2D mesh or beside an absorbing,
+            impedance or conductor edge.
     """
     mesh = model.mesh
     if mesh.dim == 2:
+        if bend is not None:
+            raise NotImplementedError(
+                f"WavePort {port.name!r}: a bend is a 3D port mode problem; a "
+                "line port on a 2D mesh has none in this version."
+            )
         return line_section(model, port)
     plane = _plane(model, port, np.asarray(mesh.nodes, float))
     scale, sel, tets, tris, used = (
@@ -520,7 +581,7 @@ def port_section(
     if layer is not None and not layer.any():
         # a port clear of the layer: the stretch is the identity on its face
         layer = None
-    return PortSection(
+    section = PortSection(
         port=port,
         scale=scale,
         origin=origin,
@@ -546,7 +607,13 @@ def port_section(
         absorbing_law=absorbing_law if laws else None,
         stretch=None if layer is None else stretch,
         layer=layer,
+        bend=None if bend is None else _section_bend(bend, port, plane),
     )
+    if bend is not None:
+        names = mesh._region_names()  # noqa: SLF001
+        regions = np.array([names[int(t)] for t in mesh.tetrahedron_tags[tets]])
+        check_bend(section, regions)
+    return section
 
 
 #: The material properties the port mode problem reads (never the thermal ones).
@@ -554,7 +621,10 @@ _PORT_PROPERTIES = ("eps_r", "mu_r", "tan_delta", "conductivity")
 
 
 def port_section_key(
-    model: Model, port: WavePort, stretch: Stretch | None = None
+    model: Model,
+    port: WavePort,
+    stretch: Stretch | None = None,
+    bend: Bend | None = None,
 ) -> str:
     """A digest of what `port_section` reads of ``model`` beyond its mesh.
 
@@ -566,8 +636,9 @@ def port_section_key(
     each surface is to the section's edges), the electromagnetic material
     values (eps_r, mu_r, tan_delta, conductivity, principal axes) of the
     solve-domain tetrahedra beside the port's faces, and the sheet fill of the
-    faces sharing an edge with them, and a layer's ``stretch`` (its sides,
-    target reflection and reference frequency). It builds no section: no
+    faces sharing an edge with them, a layer's ``stretch`` (its sides,
+    target reflection and reference frequency) and a ``bend``'s radius,
+    direction and point. It builds no section: no
     plane fit and no edge classification, so it costs a fraction of
     `port_section`. On a 2D mesh, `line_section_key`.
     """
@@ -583,6 +654,14 @@ def port_section_key(
     add(mesh.length_unit, domain.excluded, port, model.ports)
     if stretch is not None:
         add(stretch.key)
+    if bend is not None:
+        # exact: the repr rounds the radius to 6 digits and hides a traced one
+        if is_traced(bend.radius):
+            raise TypeError(
+                "port_section_key: a traced bend radius has no key; build the "
+                "section uncached."
+            )
+        add("bend", float(bend.radius).hex(), bend.outward, tuple(bend.at))
     # a sheet field's repr is not its values: its fill enters below
     add(
         tuple(
@@ -628,6 +707,157 @@ def port_section_key(
         add(i, np.flatnonzero(beside).tobytes())
         digest.update(np.asarray(sheet.fill, float)[beside].tobytes())
     return digest.hexdigest()
+
+
+#: ``outward`` must lie in the port plane to this (the sine of its angle).
+_BEND_PLANE_TOL = 1e-6
+#: Relative tolerance of the rotation invariance of a bent section's materials
+#: (round-off of a tensor rotated into the port frame is about 1e-16).
+_BEND_INVARIANCE_RTOL = 1e-12
+
+
+def _section_bend(bend: Bend, port: WavePort, plane: _Plane) -> SectionBend:
+    """The bend in the port plane's frame.
+
+    Raises:
+        ValueError: ``outward`` is not in the plane of the port, or ``at`` is
+            off it.
+    """
+    frame, scale = plane.frame, plane.scale
+    outward = np.asarray(bend.outward, float)
+    if abs(outward @ frame[2]) > _BEND_PLANE_TOL:
+        raise ValueError(
+            f"WavePort {port.name!r}: Bend.outward {bend.outward} is not in the "
+            f"plane of the port: it has a component {outward @ frame[2]:.3g} along "
+            f"the port normal {tuple(float(x) for x in frame[2])}. A bend turns "
+            "the guide within its cross-section's plane; give an in-plane "
+            "direction."
+        )
+    rel = np.asarray(bend.at, float) / scale - plane.origin
+    diameter = float(np.ptp(plane.points, axis=0).max())
+    if abs(rel @ frame[2]) > PLANE_RTOL * diameter:
+        raise ValueError(
+            f"WavePort {port.name!r}: Bend.at {bend.at} is "
+            f"{abs(rel @ frame[2]) * scale:.3g} m off the plane of the port; give "
+            "a point of the reference arc in that plane."
+        )
+    local = frame[:2] @ outward
+    local = local / np.linalg.norm(local)
+    return SectionBend(
+        radius=float(bend.radius),
+        outward=(float(local[0]), float(local[1])),
+        offset=float(local @ (frame[:2] @ rel)),
+    )
+
+
+def check_bend(section: PortSection, regions: np.ndarray) -> None:
+    r"""Refuse a bent section that the metric cannot represent.
+
+    Args:
+        section: A section with a ``bend``.
+        regions: ``(n_tri,)`` the volume region name of each triangle.
+
+    Raises:
+        NotImplementedError: An absorbing, impedance or conductor edge (their
+            edge terms carry no bend metric).
+        ValueError: :math:`\mathrm{Re}\,h = 1 + \xi/R` is not positive
+            everywhere, or a region's material is not invariant about the
+            bend's axis.
+    """
+    bend, port = section.bend, section.port
+    assert bend is not None  # noqa: S101 - callers check
+    if len(section.absorbing_edges) or len(section.impedance_edges):
+        raise NotImplementedError(
+            f"WavePort {port.name!r}: a bent port mode has no Absorbing, "
+            "Impedance or Conductor edge (or sheet) in this version; its "
+            "edges are PEC, PMC (natural) or the layer's. Absorb the "
+            "radiated field with a gfem.PML."
+        )
+    h_min, _ = section.bend_h_range()
+    if h_min <= 0:
+        lowest = float(section.bend_distance().min())
+        raise ValueError(
+            f"WavePort {port.name!r}: the bend of radius {bend.radius:.6g} m "
+            f"reaches its own axis: the section extends {lowest:.6g} m from "
+            f"the reference arc along outward and the axis lies at "
+            f"{-bend.radius:.6g} m, so the minimum of h = 1 + xi/R is "
+            f"{h_min:.3g} <= 0. Use a radius larger than the section's extent "
+            "on the inner side."
+        )
+    o = np.asarray(bend.outward)
+    across = np.array([-o[1], o[0]])
+    # about the bend's axis (along `across`) the section must be a body of
+    # revolution: the (outward, normal) block of each tensor a scalar. For
+    # eps and sigma that is tt @ outward == nn * outward; nu is
+    # R^T mu_tt^-1 R, whose block along `across` is the mu block along outward
+    checks = (
+        ("eps_r", section.eps_tt, section.eps_nn, o),
+        ("sigma", section.sigma_tt, section.sigma_nn, o),
+        ("mu_r", section.nu_tt, section.nu_nn, across),
+    )
+    for name, tt, nn, vec in checks:
+        lhs = tt @ vec
+        rhs = nn[:, None] * vec
+        size = np.maximum(np.linalg.norm(tt, axis=(1, 2)), np.abs(nn))
+        bad = np.linalg.norm(lhs - rhs, axis=1) > _BEND_INVARIANCE_RTOL * size
+        if bad.any():
+            names = sorted({str(r) for r in regions[bad]})
+            raise ValueError(
+                f"WavePort {port.name!r}: region(s) {names} "
+                f"have a {name} that is not invariant about the bend's axis: "
+                "the permittivity (conductivity, permeability) along outward "
+                "must equal that along the propagation direction, with no "
+                "cross term, as for an isotropic material or a uniaxial one "
+                "whose axis is along the in-plane direction perpendicular to "
+                "outward. Rotate the crystal axes or use a straight port mode."
+            )
+
+
+def outer_sides(section: PortSection) -> list:
+    """The layer sides on the outer side of a bent section (along ``outward``).
+
+    The sides of the section's layer whose outward normal has a positive
+    component along the bend's ``outward``; empty without a layer.
+    """
+    bend, stretch = section.bend, section.stretch
+    assert bend is not None  # noqa: S101 - callers check
+    if stretch is None or section.layer is None:
+        return []
+    outward = np.asarray(bend.outward) @ section.frame[:2]
+    return [
+        side
+        for side in stretch.layers.sides
+        if side.sign * outward[side.axis] > _BEND_PLANE_TOL
+    ]
+
+
+def outer_edges_conduct(section: PortSection) -> bool:
+    """Whether the outer wall of a bent section is perfectly conducting.
+
+    The wall is the boundary edges with both nodes at the largest distance
+    along the bend's ``outward``.
+    """
+    bend = section.bend
+    assert bend is not None  # noqa: S101 - callers check
+    tris = section.triangles
+    edges = _edge_keys(tris)
+    keys, counts = np.unique(
+        edges @ np.array([len(section.points), 1]), return_counts=True
+    )
+    boundary = np.isin(edges @ np.array([len(section.points), 1]), keys[counts == 1])
+    edges = edges[boundary]
+    xi = section.points @ np.asarray(bend.outward)
+    # the outer wall: both nodes within round-off of the section's extreme
+    tol = 1e-9 * section.diameter
+    outer = (xi[edges] >= xi.max() - tol).all(axis=1)
+    if not outer.any():
+        return False
+    pec = np.asarray(section.pec_edges, np.int64).reshape(-1, 2)
+    wall = edges[outer]
+    n = len(section.points)
+    return bool(
+        np.isin(wall @ np.array([n, 1]), np.sort(pec, axis=1) @ np.array([n, 1])).all()
+    )
 
 
 def _materials(model: Model, port: WavePort, tets: np.ndarray, frame: np.ndarray):
