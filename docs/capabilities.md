@@ -35,7 +35,10 @@ feature also runs in 2D.
 
 | Feature | Calls | 3D only | Gradient | Page |
 |---|---|---|---|---|
-| Kerr nonlinearity | {py:obj}`gfem.kerr_nonlinearity`, {py:obj}`gfem.kerr_coupling` | No | Partial: materials, not nodes | {doc}`recipes/waveguide-nonlinearity` |
+| Kerr nonlinearity | {py:obj}`gfem.kerr_nonlinearity`, {py:obj}`gfem.kerr_coupling` | No | Partial: materials, planar-port nodes | {doc}`recipes/waveguide-nonlinearity` |
+| Crystal Kerr effect | `nonlinear_anisotropy` of a {py:obj}`gfem.Material` | No | Partial: materials, planar-port nodes | {doc}`recipes/crystal-kerr` |
+| Raman gain | {py:obj}`gfem.raman_gain`, {py:obj}`gfem.RamanSpectrum` | No | Partial: materials, planar-port nodes | {doc}`recipes/raman-gain` |
+| Free carriers | {py:obj}`gfem.free_carriers` | No | Partial: materials, planar-port nodes | {doc}`recipes/free-carriers` |
 | Second-harmonic and three-wave coupling | {py:obj}`gfem.second_harmonic`, {py:obj}`gfem.three_wave_coupling` | No | Partial: materials, not nodes | {doc}`recipes/second-harmonic-generation` |
 | Photon pairs | {py:obj}`gfem.spdc`, {py:obj}`gfem.sfwm` | No | Partial: materials, not nodes | {doc}`recipes/photon-pair-sources` |
 

@@ -851,6 +851,7 @@ def _row(result: PortModeResult, i: int) -> PortModeResult:
         _vector(field)[i : i + 1],
         quantity=field.quantity,
         unit=field.unit,
+        traced_nodes=field._traced_nodes,  # noqa: SLF001
     )
     parts = {
         name: getattr(result, name)[i : i + 1]
@@ -916,13 +917,15 @@ def _build(
         or points < 3
     ):
         raise ValueError(f"{owner}: points must be an integer >= 3, got {points!r}.")
+    # the overlaps do not move with the nodes yet, neither the model's nor those a
+    # mode was solved on
+    moving = [getattr(r.e_field, "_traced_nodes", False) for r in arms]
+    if is_traced(model.mesh.nodes) or any(moving):
+        raise NonDifferentiableError(_NODES.format(owner=owner))
     for r in arms:
-        try:
-            line = r.h_field is not None or (
-                r.e_field is not None and len(r.e_field._space.section.normal) != 3  # noqa: SLF001
-            )
-        except NonDifferentiableError as err:
-            raise NonDifferentiableError(_NODES.format(owner=owner)) from err
+        line = r.h_field is not None or (
+            r.e_field is not None and len(r.e_field._space.section.normal) != 3  # noqa: SLF001
+        )
         if line:
             raise NotImplementedError(
                 f"{owner}: wave port {r.port!r} is a line port (a 2D mesh): a pair "
@@ -1045,7 +1048,8 @@ def spdc(
             `gfem.three_wave_coupling`.
         TypeError: An arm is not a `gfem.PortModeResult`, or has no electric
             field.
-        NonDifferentiableError: The node coordinates are traced by `jax.grad`.
+        NonDifferentiableError: The node coordinates of ``model``, or of a
+            mode's solve, are traced by `jax.grad`.
     """
     return _build("spdc", model, pump, signal, idler, points=points)
 
@@ -1083,6 +1087,7 @@ def sfwm(
             `gfem.kerr_coupling`.
         TypeError: An arm is not a `gfem.PortModeResult`, or has no electric
             field.
-        NonDifferentiableError: The node coordinates are traced by `jax.grad`.
+        NonDifferentiableError: The node coordinates of ``model``, or of a
+            mode's solve, are traced by `jax.grad`.
     """
     return _build("sfwm", model, pump, signal, idler, points=points)

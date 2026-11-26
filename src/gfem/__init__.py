@@ -29,6 +29,7 @@ from gfem._materials import (  # noqa: E402
     Lorentz,
     PermittivityLaw,
 )
+from gfem._raman_spectrum import RamanSpectrum  # noqa: E402
 from gfem._tolerance import ToleranceReport, tolerance_report  # noqa: E402
 from gfem.acousto_optic import AcoustoOpticShift, acousto_optic_shift  # noqa: E402
 from gfem.bands import (  # noqa: E402
@@ -85,8 +86,10 @@ from gfem.errors import (  # noqa: E402
 )
 from gfem.job import Job, load_result  # noqa: E402
 from gfem.kerr import (  # noqa: E402
+    FreeCarriers,
     KerrCoupling,
     KerrNonlinearity,
+    free_carriers,
     kerr_coupling,
     kerr_nonlinearity,
 )
@@ -172,6 +175,7 @@ from gfem.problems import (  # noqa: E402
     SteadyThermal,
     TransientThermal,
 )
+from gfem.raman import RamanGain, raman_gain  # noqa: E402
 from gfem.refinement import (  # noqa: E402
     ErrorEstimate,
     FieldEstimator,
@@ -263,6 +267,7 @@ __all__ = [
     "FixedTemperature",
     "FloquetOrderCapWarning",
     "FloquetPort",
+    "FreeCarriers",
     "GaussianBeam",
     "HeatFlux",
     "HeatSource",
@@ -318,6 +323,8 @@ __all__ = [
     "PortModeResult",
     "PortModeTrackingWarning",
     "QuantityEstimator",
+    "RamanGain",
+    "RamanSpectrum",
     "RationalFitNotConvergedWarning",
     "RationalModel",
     "RefinementCycle",
@@ -373,6 +380,7 @@ __all__ = [
     "error_estimate",
     "far_field",
     "fit_permittivity",
+    "free_carriers",
     "heat_flow",
     "heat_flow_per_length",
     "interface_participation",
@@ -390,6 +398,7 @@ __all__ = [
     "power_flow",
     "purcell_factor",
     "quantum",
+    "raman_gain",
     "refine_mesh",
     "region_mean",
     "release_memory",

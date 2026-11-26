@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.interpreters import partial_eval
 
 from gfem._checks import is_traced
 from gfem.errors import NonDifferentiableError
@@ -33,6 +34,17 @@ _NODES = (
     "the node coordinates: the derivative of an overlap on a moving section is "
     "not available in this version. Differentiate with respect to the materials, "
     "or wrap the node coordinates in jax.lax.stop_gradient."
+)
+_SOLVED_CONSTANT = (
+    "{owner} differentiates the model's node coordinates, but the mode was solved "
+    "where they were constants (outside the differentiated function, or on another "
+    "model): its field carries no node derivative and the gradient would miss it. "
+    "Solve the mode with gfem.solve on the model passed here, inside the function."
+)
+_SOLVED_TRACED = (
+    "{owner}: the mode was solved with node coordinates traced by jax.grad, but "
+    "the model passed here has constant ones: the overlap would miss the motion of "
+    "its section. Pass the model the mode was solved on."
 )
 
 
@@ -75,16 +87,21 @@ class _Waves:
     section: Any
     columns: _Columns
     materials: Any
+    moved: tuple[jax.Array, jax.Array] | None = None
 
     @property
     def weights(self) -> jax.Array:
         """``(n_el, n_q)`` quadrature weights, m² (m), zero on a layer."""
-        return jnp.asarray(self.columns.measure * self.materials.keep[:, None])
+        weights = jnp.asarray(self.columns.measure * self.materials.keep[:, None])
+        return weights if self.moved is None else weights * self.moved[1][:, None]
 
     def row(self, vector: jax.Array) -> jax.Array:
         """``(n_el, n_q, n_c)`` the mode of one DOF vector, in the global frame."""
         cols = self.columns
         e = jnp.einsum("eqck,ek->eqc", cols.weights, vector[cols.dofs])
+        if self.moved is not None:
+            # covariant (Nedelec) transport of the tangential components
+            e = jnp.einsum("eij,eqj->eqi", self.moved[0], e)
         if cols.normal_weights is None:
             return e
         e_n = jnp.einsum("eqk,ek->eq", cols.normal_weights, vector[cols.normal_dofs])
@@ -117,6 +134,8 @@ def _waves(
     owner: str,
     read_materials: Callable[[Model, Any, np.ndarray, str, str], Any],
     cached_columns: Callable[[Model, Any, str, Any], _Columns] | None = None,
+    *,
+    shape: bool = False,
 ) -> _Waves:
     """Gather the waves of ``modes`` on one section.
 
@@ -124,13 +143,24 @@ def _waves(
     material values of the section's elements the effect needs (and raises the
     effect's own refusals); ``cached_columns`` defaults to `_cached_columns`.
 
+    With ``shape`` the node coordinates may be traced by `jax.grad`: the
+    section, the columns and the materials are read at their values and the
+    waves carry the map of each section triangle from there to the moved one
+    (`_moved`), so the overlaps differentiate the moving cross-section. The
+    materials are read by owner element, so a `gfem.MaterialField`'s values
+    move with their elements, as the mode's own node derivative holds them.
+
     Raises:
         TypeError: An entry is not a `gfem.PortModeResult`, or has no electric
             field.
         NotImplementedError: An Hz line port.
         ValueError: The results are of different ports or discretizations, or
             the model is not the one they were solved on.
-        NonDifferentiableError: The node coordinates are traced.
+        NonDifferentiableError: The node coordinates are traced (without
+            ``shape``, or on a line port), here or in a mode's solve; or the
+            model's are traced and a mode's solve's were not, or the reverse.
+        TypeError: With ``shape``, the node coordinates are traced by
+            `jax.jit`.
     """
     from gfem.model import Model
 
@@ -159,8 +189,8 @@ def _waves(
                 "field (a driven result's port modes do not): solve "
                 "gfem.solve(model, gfem.PortMode(...)) and pass that result."
             )
-    if is_traced(model.mesh.nodes):
-        raise NonDifferentiableError(_NODES.format(owner=owner))
+    traced, refusal = _node_state(model, results, owner, shape=shape)
+    host = _at_host_nodes(model, owner) if traced else model
     spaces = []
     for r in results:
         try:
@@ -189,14 +219,101 @@ def _waves(
         int(r.mode) for r, n in zip(results, counts, strict=True) for _ in range(n)
     )
     vectors = jnp.concatenate([_vector(r.e_field) for r in results], axis=0)
-    _check_model(model, section, results[0].port, owner)
-    materials = read_materials(model, section, frequency, results[0].port, owner)
-    columns = (cached_columns or _cached_columns)(
-        model, section, results[0].port, first
-    )
+    _check_model(host, section, results[0].port, owner)
+    materials = read_materials(host, section, frequency, results[0].port, owner)
+    columns = (cached_columns or _cached_columns)(host, section, results[0].port, first)
+    moved = None if host is model else _moved(model, section, owner)
+    if refusal is not None:  # after the line port's own refusal
+        raise NonDifferentiableError(refusal)
     return _Waves(
-        results[0].port, modes_of, frequency, vectors, section, columns, materials
+        results[0].port,
+        modes_of,
+        frequency,
+        vectors,
+        section,
+        columns,
+        materials,
+        moved,
     )
+
+
+def _node_state(
+    model: Model, results: Sequence[Any], owner: str, *, shape: bool
+) -> tuple[bool, str | None]:
+    """Whether the model's node coordinates are traced, and a refusal to raise.
+
+    Each solve records whether its node coordinates were traced. The concrete
+    field of a solve outside the gradient holds no tracer to compare with the
+    model's by identity, so tracedness, not the tracer, is the signal: the
+    overlap's node derivative needs the mode's and the model's both traced, or
+    neither.
+
+    Raises:
+        NonDifferentiableError: Without ``shape``, the model's or a solve's
+            node coordinates are traced.
+    """
+    traced = is_traced(model.mesh.nodes)
+    solved = [r.e_field._traced_nodes for r in results]  # noqa: SLF001
+    if not shape and (traced or any(solved)):
+        raise NonDifferentiableError(_NODES.format(owner=owner))
+    if all(s == traced for s in solved):
+        return traced, None
+    return traced, (_SOLVED_CONSTANT if traced else _SOLVED_TRACED).format(owner=owner)
+
+
+def _at_host_nodes(model: Model, owner: str) -> Model:
+    """``model`` with its traced node coordinates replaced by their values."""
+    from gfem.optomechanics import _host_nodes
+
+    staged = partial_eval.DynamicJaxprTracer
+    if any(isinstance(x, staged) for x in jax.tree.leaves(model.mesh.nodes)):
+        raise TypeError(
+            f"{owner}: the node coordinates are computed inside jax.jit, but the "
+            "section's elements are read at their values. Differentiate with "
+            "jax.grad outside jax.jit, or wrap the node coordinates in "
+            "jax.lax.stop_gradient."
+        )
+    return model.replace(mesh=model.mesh.with_nodes(_host_nodes(model.mesh)))
+
+
+def _moved(model: Model, section: Any, owner: str) -> tuple[jax.Array, jax.Array]:
+    r"""Each section triangle's map from its read shape to its moved one.
+
+    The columns are built on the triangles at the node values the mode was
+    read at, :math:`X_0`. With :math:`A_e = J_e(X) J_e(X_0)^{-1}`, the
+    Jacobians of the straight triangles at the moved nodes :math:`X` and at
+    :math:`X_0`, the physical tangential columns map as
+    :math:`W_t(X) = A_e^{-\mathsf{T}} W_t(X_0)` (the covariant Piola
+    transport, the DOFs held) and the weights as
+    :math:`w_q(X) = w_q(X_0)\,|\det A_e|`; the normal component is
+    :math:`H^1` and stays. The section's points are
+    :math:`(X/s - o)F_2^\mathsf{T}` with the frame, origin and scale held, as
+    `chain_to_nodes` holds them.
+
+    Returns:
+        ``(n_el, 2, 2)`` the matrices :math:`A_e^{-\mathsf{T}}` and ``(n_el,)``
+        the :math:`|\det A_e|`.
+
+    Raises:
+        NonDifferentiableError: A line port (the 2D solve refuses node
+            coordinates too).
+    """
+    if len(section.normal) != 3:
+        raise NonDifferentiableError(_NODES.format(owner=owner))
+    used = np.unique(np.asarray(model.mesh.triangles)[section.faces])
+    frame = jnp.asarray(section.frame[:2])
+    points = (jnp.asarray(model.mesh.nodes)[used] / section.scale - section.origin) @ (
+        frame.T
+    )
+    triangles = np.asarray(section.triangles)
+
+    def jacobian(p: Any) -> Any:
+        a = p[triangles]
+        return jnp.stack([a[:, 1] - a[:, 0], a[:, 2] - a[:, 0]], axis=-1)
+
+    read = np.linalg.inv(np.asarray(jacobian(np.asarray(section.points))))
+    a = jacobian(points) @ read
+    return jnp.swapaxes(jnp.linalg.inv(a), -1, -2), jnp.abs(jnp.linalg.det(a))
 
 
 def _check_model(model: Model, section: Any, port: str, owner: str) -> None:

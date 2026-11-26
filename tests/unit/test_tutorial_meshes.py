@@ -13,7 +13,9 @@ heater_straight.msh) are gmsh-built by tools/heater_section_mesh.py
 (`just nanosphere-mesh`), meta_atom.msh by tools/meta_atom_mesh.py
 (`just meta-atom-mesh`); grating.msh is gmsh-built by tools/grating_mesh.py
 (`just grating-mesh`) and pinned by test_grating_mesh.py; the photonic-crystal
-meshes are gmsh-built by tools/rods_mesh.py (`just rods-mesh`).
+meshes are gmsh-built by tools/rods_mesh.py (`just rods-mesh`); wr90_guide.msh
+is a copy of the gmsh-built tests/unit/data/waveguide.msh
+(tools/make_port_fixtures.py), pinned below.
 """
 
 from pathlib import Path
@@ -40,6 +42,7 @@ GMSH_BUILT = (
     | grating_mesh.MESHES
     | rods_mesh.MESHES
     | {"sphere.msh": None, "nanosphere.msh": None, "meta_atom.msh": None}
+    | {"wr90_guide.msh": None}
 )
 COMMITTED = sorted(
     path.name for path in DATA.glob("*.msh") if path.name not in GMSH_BUILT
@@ -62,6 +65,11 @@ def test_a_committed_mesh_is_the_generators_output(generated, name):
         f"docs/tutorials/data/{name} differs from what tools/make_tutorial_meshes.py "
         "writes: rerun `python tools/make_tutorial_meshes.py docs/tutorials/data`"
     )
+
+
+def test_the_wr90_guide_is_the_port_fixture():
+    fixture = Path(__file__).parent / "data" / "waveguide.msh"
+    assert (DATA / "wr90_guide.msh").read_bytes() == fixture.read_bytes()
 
 
 # each triangle-only mesh is the z = 0 face of a slab mesh (one cell thick),

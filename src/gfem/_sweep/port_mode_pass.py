@@ -46,12 +46,17 @@ from gfem._engine.port_mode_sensitivity import (
     law_cotangents,
 )
 from gfem._engine.port_mode_shape import ShapeForm, voltage_eulerian
+from gfem.errors import NonDifferentiableError
 
 __all__ = ["ModePass", "mode_pass"]
 
 # A new direction joins the extended basis unless it is below this fraction of
 # the vector it came from (rounding noise).
 _NEW_DIRECTION = 1e-12
+#: The relative imaginary part of $\bar z^\mathsf{T}z$ above which a field
+#: cotangent is phase-dependent (the sum's round-off is $\sim10^{-14}$ of its
+#: terms).
+PHASE_RTOL = 1e-10
 
 
 @dataclasses.dataclass(eq=False)
@@ -179,6 +184,8 @@ def mode_pass(  # noqa: PLR0912, PLR0915
         z_bar = np.zeros(norm_rows.z.shape, complex)
         if ct_field is not None:
             z_bar = np.asarray(ct_field, complex)[order][:, space.free]
+            if shape is not None:
+                _refuse_phase(norm_rows.z, z_bar, who)
         v_bar = np.zeros(n, complex)
         p_bar = np.zeros(n, complex)
         if has_path and ct_z_pv is not None:
@@ -263,6 +270,33 @@ def mode_pass(  # noqa: PLR0912, PLR0915
     for pair in pairs_forms:
         shape.add_pair(pair)
     return ModePass(total, laws, shape.result() + shape_points)
+
+
+def _refuse_phase(z: np.ndarray, z_bar: np.ndarray, who: str) -> None:
+    r"""Refuse a field cotangent that depends on a mode's phase.
+
+    The phase of a mode's field is a gauge that the node derivative does not
+    carry (the quadrant, the overlap through the mass matrix and the polarity
+    have no node term): a phase-dependent objective would get a silently wrong
+    gradient. Under a phase $z\to e^{i\varphi}z$ the objective is stationary
+    when $\operatorname{Im}\bar z^\mathsf{T}z = 0$, which holds to the
+    round-off of the sum of the terms.
+
+    Raises:
+        NonDifferentiableError: The cotangent of a row has an imaginary part
+            beyond $10^{-10}$ of its terms' magnitude.
+    """
+    drift = np.abs(np.imag(np.sum(z_bar * z, axis=-1)))
+    scale = np.sum(np.abs(z_bar) * np.abs(z), axis=-1)
+    if np.any(drift > PHASE_RTOL * scale):
+        raise NonDifferentiableError(
+            f"gfem cannot differentiate {who} through the field's phase while "
+            "the node coordinates are differentiated: the objective changes "
+            "under a phase factor on a mode's field, and the gauge has no node "
+            "derivative in this version. Use a phase-invariant objective (an "
+            "intensity, gamma_NL or |gamma_abcd|^2), or wrap the node "
+            "coordinates in jax.lax.stop_gradient."
+        )
 
 
 def _kernel_and_total(

@@ -2647,13 +2647,12 @@ def test_a_port_mode_field_under_batched_nodes_is_refused():
         jax.vmap(field)(nodes[None])
 
 
-def test_a_field_cotangent_under_wanted_nodes_has_the_same_refusal():
+def test_a_field_cotangent_under_wanted_nodes_is_not_refused_by_the_rule():
     from gfem._sweep.port_mode import PortModeRule
 
     _, model = _plate_mode(4.0)
     rule = PortModeRule(model, gfem.PortMode("p1", 10e9), gfem.SolverOptions())
-    text = rule.nondifferentiable_output("field", {("nodes",)})
-    assert "PortModeField.at reads the mode at fixed points" in text
+    assert rule.nondifferentiable_output("field", {("nodes",)}) is None
     assert (
         rule.nondifferentiable_output("field", {("material", "fill", "eps_r")}) is None
     )

@@ -290,8 +290,11 @@ class PortModeRule:
     the full DOF vector of each frequency, read through
     `gfem.results.PortModeField.at`) differentiate with respect to the
     material, law, sheet and `Impedance` inputs of the section and the face's
-    node coordinates (`gfem._sweep.port_mode_pass`; not through ``at``; a line
-    port's mode differentiates material field values only); ``residual`` and
+    node coordinates (`gfem._sweep.port_mode_pass`; a line port's mode
+    differentiates material field values only). The field's node derivative
+    is the Lagrangian one, at fixed DOFs, and an objective that depends on the
+    phase of a mode's field raises; a point read (``at``) does not
+    differentiate with respect to the nodes. ``residual`` and
     the group index and dispersion (``n_g``, ``beta_2``, ``beta_3``) raise
     `gfem.NonDifferentiableError` and a thermal property gets an exact zero.
     """
@@ -431,10 +434,9 @@ class PortModeRule:
 
         ``residual`` is a diagnostic. The group index and dispersion have no
         backward pass: their gradient reads the mode derivative, which the
-        pass of ``gamma`` does not differentiate. The field's vector cannot
-        carry a cotangent while the node coordinates are wanted, as
-        `gfem.results.PortModeField.at` cannot.
+        pass of ``gamma`` does not differentiate.
         """
+        del kinds  # the field's node derivative exists: no input refuses it
         if name == "residual":
             return (
                 f"gfem cannot differentiate the port mode output {name!r} of wave "
@@ -447,11 +449,12 @@ class PortModeRule:
                 f"gfem cannot differentiate the port mode output {name!r} of wave "
                 f"port {self.port.name!r}: the group index and dispersion (n_g, "
                 "beta_2, beta_3 and D) are not differentiable in this version; "
-                "gamma, n_eff and Z_PV are. Wrap it in jax.lax.stop_gradient to "
-                "use its value without its derivative."
+                "gamma, n_eff and Z_PV are, and a central difference in "
+                "frequency of the gamma rows of one PortMode gives n_g and beta_2 "
+                "that differentiate (the 'Shape gradients of mode figures' "
+                "recipe). Wrap it in jax.lax.stop_gradient to use its value "
+                "without its derivative."
             )
-        if name == "field" and ("nodes",) in set(kinds):
-            return _AT_NODES
         if name in self.differentiable_outputs:
             return None
         return (
@@ -666,6 +669,7 @@ class PortModeRule:
                 jnp.asarray(outputs["field"]),
                 quantity=quantity,
                 unit=unit,
+                traced_nodes=is_traced(self._model.mesh.nodes),
             )
         hz = polarization == "Hz"
         return PortModeResult(
@@ -684,22 +688,33 @@ class PortModeRule:
             beta_3=jnp.asarray(outputs["beta_3"]),
         )
 
-    def _locate(self) -> PortModeSpace | LineModeSpace:
-        """The port's space from the mesh, for a point read on a traced field.
+    def _locate(self, *, point_read: bool = False) -> PortModeSpace | LineModeSpace:
+        """The port's space from the mesh, for the traced field.
+
+        With the node coordinates traced by differentiation the space is built
+        at their values: a field's DOF vector moves with them at fixed DOFs.
+
+        Args:
+            point_read: The space is for a point read (`PortModeField.at`).
 
         Raises:
-            NonDifferentiableError: The node coordinates are traced by
-                differentiation: a point value on a moving section is not
-                available.
+            NonDifferentiableError: A point is read while the node coordinates
+                are traced by differentiation: a point value on a moving
+                section is not available.
             TypeError: They are traced by `jax.jit`.
         """
-        nodes = self._model.mesh.nodes
+        model = self._model
+        nodes = model.mesh.nodes
         if is_traced(nodes):
             staged = partial_eval.DynamicJaxprTracer
             if any(isinstance(x, staged) for x in jax.tree.leaves(nodes)):
                 raise TypeError(_AT_STAGED)
-            raise NonDifferentiableError(_AT_NODES)
-        return self._geometry(self._model)
+            if point_read:
+                raise NonDifferentiableError(_AT_NODES)
+            from gfem.optomechanics import _host_nodes
+
+            model = model.replace(mesh=model.mesh.with_nodes(_host_nodes(model.mesh)))
+        return self._geometry(model)
 
 
 _AT_NODES = (

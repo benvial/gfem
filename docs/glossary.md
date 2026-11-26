@@ -260,6 +260,20 @@ Kerr nonlinear coefficient
   field attenuation by $\mathrm{Im}\,\gamma_\mathrm{NL}\,P$ (two-photon
   loss). Short form: nonlinear coefficient. See {doc}`recipes/waveguide-nonlinearity`.
 
+Free-carrier overlap
+  The confinement $\Gamma_R$ of a {term}`port mode` in the regions that hold
+  free carriers, and the pair generation rate $\theta$ per squared power, from
+  `gfem.free_carriers`. See {doc}`recipes/free-carriers`.
+
+Nonlinear anisotropy
+  The ratio $\rho = 3\chi_{1122}/\chi_{1111}$ of a cubic crystal's Kerr tensor, the
+  material field `nonlinear_anisotropy`; $\rho = 1$ is isotropic. See {doc}`recipes/crystal-kerr`.
+
+Raman gain
+  The modal gain $g_{ab}$ in 1/(W m) of a Stokes mode pumped by another
+  {term}`port mode`, from the material's `raman_spectrum`, given by
+  `gfem.raman_gain`. See {doc}`recipes/raman-gain`.
+
 Joint spectral amplitude
   The two-photon amplitude $f(f_s, f_i)$ of a photon pair:
   the pump's envelope times the phase-matching function, with

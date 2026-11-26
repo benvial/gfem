@@ -34,6 +34,10 @@ recipes/sax-circuit
 :caption: Nonlinear and quantum optics
 
 recipes/waveguide-nonlinearity
+recipes/crystal-kerr
+recipes/raman-gain
+recipes/free-carriers
+recipes/mode-shape-gradients
 recipes/second-harmonic-generation
 recipes/photon-pair-sources
 ```
