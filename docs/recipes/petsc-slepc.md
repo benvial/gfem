@@ -110,7 +110,7 @@ options = gfem.SolverOptions(
 
 - `{"ksp_view": None}` prints the linear solver PETSc set up;
   `{"eps_ncv": 40, "eps_monitor": None}` enlarges SLEPc's subspace and prints
-  its progress.
+  its progress; `{"eps_view": None}` prints the eigensolver SLEPc ran.
 - Write no options prefix; command-line and petsc4py options do not reach
   gfem.
 - An option the solver does not read, or that PETSc or SLEPc refuses, raises
