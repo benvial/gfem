@@ -301,9 +301,10 @@ clearance 1.5 um: gamma 177.04 /(W m)
   below the phase constant.
 - **2D.** A line port gives the slab's value in 1/W; the Hz polarization and a
   `Blend.pixels` density carrying a Kerr property are refused.
-- **Gradients.** $\gamma_\mathrm{NL}$ differentiates with respect to
-  materials, not node coordinates: vary the width by finite differences over a
-  remesh.
+- **Gradients.** $\gamma_\mathrm{NL}$ differentiates with respect to the
+  materials and to the node coordinates of a planar port (a width, a height).
+  Line ports, the three-wave and photon-pair overlaps and `jax.jit` over the
+  nodes do not; an objective that depends on a mode's phase raises.
 
 ## Next
 

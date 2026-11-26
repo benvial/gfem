@@ -243,8 +243,8 @@ def raman_gain(
     Exactly linear in the spectrum's gain (so there is no gradient with
     respect to it: the spectrum is a fixed value of the material). Under
     `jax.grad` the traced mode field makes it differentiable with respect to
-    the section's ``eps_r`` (through the solve and the index), not to the node
-    coordinates.
+    the section's ``eps_r`` (through the solve and the index) and to the node
+    coordinates of a planar port (as `kerr_nonlinearity`).
 
     Args:
         model: The model the modes were solved on, with a ``raman_spectrum``.
@@ -261,9 +261,11 @@ def raman_gain(
             Hz line port.
         TypeError: An entry is not a `gfem.PortModeResult`, or has no electric
             field.
-        NonDifferentiableError: The node coordinates are traced by `jax.grad`.
+        NonDifferentiableError: The node coordinates are traced by `jax.grad`
+            on a line port of a 2D model.
+        TypeError: The node coordinates are traced by `jax.jit`.
     """
-    waves = _waves(model, modes, "gfem.raman_gain", _raman_materials)
+    waves = _waves(model, modes, "gfem.raman_gain", _raman_materials, shape=True)
     raman = waves.materials
     has = raman.index > 0
     n = jnp.sqrt(jnp.where(jnp.asarray(has)[None], raman.eps, 1.0))

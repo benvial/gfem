@@ -15,7 +15,8 @@ grid (reduced rows included), so a curve over frequency costs no extra solve:
 Both integrate the mode at 1 W on the port's cross-section. They run on
 lossy and leaky sections, where they hold while :math:`\alpha \ll \beta`.
 Under `jax.grad` they read the traced mode field, so they differentiate with
-respect to the section's materials (not the node coordinates).
+respect to the section's materials and to the node coordinates of a planar
+port (the section's elements move with them, the mode's DOFs held).
 """
 
 from __future__ import annotations
@@ -239,7 +240,7 @@ class FreeCarriers:
     frequency: np.ndarray
     regions: tuple[str, ...]
     overlap: jax.Array
-    area: float
+    area: float | jax.Array
     generation: jax.Array
 
     def __repr__(self) -> str:
@@ -618,9 +619,11 @@ def kerr_nonlinearity(model: Model, mode: PortModeResult) -> KerrNonlinearity:
     Exactly linear in ``nonlinear_index`` and ``two_photon_absorption``;
     under `jax.grad` the traced mode field makes it differentiable with
     respect to the section's ``eps_r``, laws, losses and density blends (one 2D
-    adjoint per row), not to the node coordinates (width is co-designed by
-    finite differences over a remesh). The inputs of the solve can still be
-    differentiated through the exact :math:`\gamma` of the same rows.
+    adjoint per row) and to the node coordinates of a planar port: the section's
+    elements move, the mode's field with them (its own shape adjoint), and the
+    overlap is read on the moved triangles. A line port of a 2D model has no
+    node derivative. A mode's phase is free, so an objective that depends on it
+    raises.
 
     Args:
         model: The model the mode was solved on, with the Kerr properties.
@@ -639,7 +642,9 @@ def kerr_nonlinearity(model: Model, mode: PortModeResult) -> KerrNonlinearity:
             `Material.nonlinear_anisotropy`; an Hz line port.
         TypeError: ``mode`` is not a `gfem.PortModeResult`, or has no electric
             field.
-        NonDifferentiableError: The node coordinates are traced by `jax.grad`.
+        NonDifferentiableError: The node coordinates are traced by `jax.grad`
+            on a line port of a 2D model.
+        TypeError: The node coordinates are traced by `jax.jit`.
     """
     owner = "gfem.kerr_nonlinearity"
     if not isinstance(mode, PortModeResult):
@@ -648,7 +653,7 @@ def kerr_nonlinearity(model: Model, mode: PortModeResult) -> KerrNonlinearity:
             "solve gfem.solve(model, gfem.PortMode(...)) and pass that result "
             "(gfem.kerr_coupling takes several)."
         )
-    waves = _waves(model, mode, owner, _kerr_materials, _kerr_columns)
+    waves = _waves(model, mode, owner, _kerr_materials, _kerr_columns, shape=True)
     per_element, eps = _quartic_overlaps(waves)
     kerr = waves.materials
     k0 = jnp.asarray(2 * np.pi * waves.frequency / _C)[:, None]
@@ -767,8 +772,9 @@ def free_carriers(
     change, and the generation coefficient :math:`\theta`; the cross-section
     :math:`\sigma`, the dispersion coefficient and the lifetime
     :math:`\tau` belong to the pulse tool (``N = theta * tau * P**2`` is the
-    continuous-wave density). Differentiable through the materials and the
-    traced mode field, not the node coordinates; exactly linear in
+    continuous-wave density). Differentiable through the materials, the traced
+    mode field and the node coordinates of a planar port (as
+    `kerr_nonlinearity`); exactly linear in
     ``two_photon_absorption``.
 
     Args:
@@ -791,7 +797,9 @@ def free_carriers(
             a density blend without a per-element permittivity; an Hz line port.
         TypeError: ``mode`` is not a `gfem.PortModeResult`, or has no electric
             field; ``regions`` is not names.
-        NonDifferentiableError: The node coordinates are traced by `jax.grad`.
+        NonDifferentiableError: The node coordinates are traced by `jax.grad`
+            on a line port of a 2D model.
+        TypeError: The node coordinates are traced by `jax.jit`.
     """
     owner = "gfem.free_carriers"
     if not isinstance(mode, PortModeResult):
@@ -814,7 +822,7 @@ def free_carriers(
             )
         return dataclasses.replace(kerr, member=member)
 
-    waves = _waves(model, mode, owner, read, _kerr_columns)
+    waves = _waves(model, mode, owner, read, _kerr_columns, shape=True)
     kerr = waves.materials
     member = jnp.asarray(kerr.member)
     quartic, eps = _quartic_overlaps(waves)
@@ -822,7 +830,10 @@ def free_carriers(
     # the index matrix holds n already; |E|^2 is weighted by n = sqrt(Re eps)
     n = jnp.sqrt(eps) if kerr.index is None else jnp.ones_like(eps)
     overlap = (_C * _EPS0 / 2) * jnp.sum(member * n * linear, axis=-1)
-    area = float(np.sum(np.asarray(waves.weights)[kerr.member]))
+    if waves.moved is None:
+        area = float(np.sum(np.asarray(waves.weights)[kerr.member]))
+    else:  # the moving section's area, traced
+        area = jnp.sum(waves.weights[jnp.asarray(kerr.member)])
     # Im of gamma_NL's integral over R: k0 c^2 eps0^2/12 * beta/(2 k0)
     absorbed = (_C**2 * _EPS0**2 / 24) * jnp.sum(
         member * eps * kerr.beta[None] * quartic, axis=-1
@@ -862,7 +873,9 @@ def kerr_coupling(
     :math:`K^4` per quadrature point, so pass the few waves of a process, not
     a whole frequency grid (that is `kerr_nonlinearity`'s diagonal).
     Everything else is as `kerr_nonlinearity`: material values, the layer,
-    lossy sections, and the gradient through the mode fields and materials.
+    lossy sections, and the gradient through the mode fields, materials and node
+    coordinates (a modulus such as :math:`|\gamma_{abcd}|^2` is free of the rows'
+    phases; an entry whose phases do not cancel is not, and raises).
 
     Args:
         model: The model the modes were solved on, with the Kerr properties.
@@ -878,9 +891,18 @@ def kerr_coupling(
         NotImplementedError: As `kerr_nonlinearity`.
         TypeError: An entry is not a `gfem.PortModeResult`, or has no electric
             field.
-        NonDifferentiableError: The node coordinates are traced by `jax.grad`.
+        NonDifferentiableError: The node coordinates are traced by `jax.grad`
+            on a line port of a 2D model.
+        TypeError: The node coordinates are traced by `jax.jit`.
     """
-    waves = _waves(model, modes, "gfem.kerr_coupling", _kerr_materials, _kerr_columns)
+    waves = _waves(
+        model,
+        modes,
+        "gfem.kerr_coupling",
+        _kerr_materials,
+        _kerr_columns,
+        shape=True,
+    )
     e = waves.field()
     n_wave, n_el, n_q, n_c = e.shape
     points = e.reshape(n_wave, n_el * n_q, n_c)
