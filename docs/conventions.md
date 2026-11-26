@@ -1107,6 +1107,89 @@ depleted. The {py:obj}`gfem.conventions` module, "Second-order nonlinearity",
 gives the same formulas, and {doc}`recipes/second-harmonic-generation` the
 calculation.
 
+## Photon pairs
+
+A pair source is described in the low-gain regime, at most a pair per mode and
+pulse. The one quantization step: the amplitude of a wave, with $|A|^2$ a
+power, becomes $\tilde A(\omega) \to \sqrt{\hbar\omega/2\pi}\,b(\omega)$ with
+$[b(\omega), b^\dagger(\omega')] = \delta(\omega - \omega')$, so the classical
+coupled-mode equations of {py:obj}`gfem.three_wave_coupling` and
+{py:obj}`gfem.kerr_coupling` are the equations of the operators and a
+stationary $\langle b^\dagger(\omega)b(\omega')\rangle = n(\omega)\,
+\delta(\omega - \omega')$ is a flux $\int n\,\mathrm{d}\omega/2\pi$: $n$ is
+in pairs per second and hertz, and is also the occupation of a
+spectral-temporal mode.
+
+The two-photon amplitude of a pump $\tilde A_p$ (the published
+$e^{-i\omega t}$ convention, $\omega = 2\pi f$) is, for spontaneous
+parametric down-conversion into a signal $s$ and an idler $i$ with
+$\omega_p = \omega_s + \omega_i$,
+
+$$
+F(\omega_s, \omega_i) = g_{si}\,G_m\,\tilde A_p(\omega_s + \omega_i)\,L\,
+e^{i\delta L/2}\,\mathrm{sinc}\frac{\delta L}{2},\qquad
+g_{si} = \frac{2\sqrt{\omega_s\omega_i}}{\omega_p}\,\overline{\kappa_{psi}},
+$$
+
+with $\kappa_{psi}$ the entry of the coupling of
+{doc}`recipes/second-harmonic-generation`, $\Delta\beta = \beta_p - \beta_s -
+\beta_i$, and, poled with period $\Lambda$, duty cycle $D$ and order $m$,
+$\delta = \Delta\beta - \mathrm{sign}(\Delta\beta_0)\,2\pi m/\Lambda$,
+$|G_m| = 2|\sin(\pi mD)|/(\pi m)$ (unpoled: $G = 1$, $\delta = \Delta\beta$). The
+coupling is the difference-frequency rule of that page and needs a $d$ with
+Kleinman symmetry. For spontaneous four-wave mixing of a degenerate pump with
+$2\omega_p = \omega_s + \omega_i$,
+
+$$
+F(\omega_s, \omega_i) = \Gamma_{si}\,[\tilde A_p \ast \tilde A_p](\omega_s +
+\omega_i)\,L\,e^{i\delta L/2}\,\mathrm{sinc}\frac{\delta L}{2},\qquad
+\Gamma_{si} = \tfrac12\Big(\sqrt{\tfrac{\omega_i}{\omega_s}}\,\gamma_{sppi} +
+\sqrt{\tfrac{\omega_s}{\omega_i}}\,\gamma_{ipps}\Big),
+$$
+
+$\Delta\beta = 2\beta_p - \beta_s - \beta_i$, with $\beta_p$ at
+$(\omega_s + \omega_i)/2$, $\gamma_{abcd}$ the entries of
+{doc}`recipes/waveguide-nonlinearity`, and the pump's envelope replaced by the
+spectrum of $A_p(t)^2$. The symmetrized $\Gamma_{si}$ is what the commutators
+of the operators need: the stored tensor takes $n^2$ at the output wave, so
+$\gamma_{sppi}/\omega_s$ and $\gamma_{ipps}/\omega_i$ differ by the
+dispersion of the index. For a continuous pump of power $P$ the density of
+signal photons and the rate in the signal band are
+
+$$
+n_s(\omega_s) = g_{si}^2|G_m|^2PL^2\,\mathrm{sinc}^2\frac{\delta L}{2}
+\quad\Big(|\Gamma_{si}|^2P^2L^2\,\mathrm{sinc}^2\frac{\delta L}{2}\Big),\qquad
+R = \int n_s\,\mathrm{d}f_s,
+$$
+
+with the idler at $\omega_p - \omega_s$ ($2\omega_p - \omega_s$) and, for
+four-wave mixing, the Kerr shift $2\,\mathrm{Re}(\gamma_{pppp} - \gamma_{sspp} -
+\gamma_{iipp})P$ added to $\Delta\beta$. At degeneracy in one mode family
+$g_{si}^2 = \eta_\mathrm{norm}$ of {doc}`recipes/second-harmonic-generation`:
+the pair density is the stimulated conversion of a seed of one photon per
+second and hertz, with no free factor. A pulse of energy $U = 2\pi\int|\tilde
+A_p|^2\mathrm{d}\omega$ gives $N = \iint|F|^2\,\mathrm{d}\omega_s\mathrm{d}\omega_i$
+pairs; `gfem.JointSpectrum.jsa` is $f = 2\pi F$ in 1/Hz, so $\sum|f|^2\,\delta
+f_s\,\delta f_i$ is the number of pairs per pulse.
+
+When one mode family carries both photons (the same result as signal and
+idler) the amplitude is symmetric under the exchange of the frequencies and a
+pair is two photons of one field: the count is $\tfrac12\iint|F|^2$ over the
+whole plane, which is the half-plane $\omega_s > \omega_i$, and a rate is
+halved in the same way; the coupling is not. The bands of a source are the
+frequency grid and act as ideal filters: every figure counts the pairs
+inside them. Under loss $\alpha = \mathrm{Re}\,\gamma$ of each arm,
+$L\,e^{i\delta L/2}\mathrm{sinc}(\delta L/2)$ becomes the coherent
+$\int_0^L e^{-\alpha_pz - (\alpha_s + \alpha_i)(L - z) + i\delta z}\,\mathrm{d}z$
+($2\alpha_p$ for four-wave mixing): coincidences only. The heralded purity of
+one photon is $\sum_k\lambda_k^2$ over the Schmidt weights of the amplitude,
+computed as $\mathrm{Tr}[(MM^\dagger)^2]/\mathrm{Tr}[MM^\dagger]^2$ with $M$
+the amplitude on the grid, and the Schmidt number is its inverse. The
+formulas hold in the low-gain regime, for a lossless or weakly lossy
+section ($\alpha \ll \beta$) and a pump that is not depleted. The
+{py:obj}`gfem.conventions` module, "Photon pairs", gives the same formulas, and
+{doc}`recipes/photon-pair-sources` the calculation.
+
 ## Thin metals
 
 A {py:obj}`gfem.Conductor` with a thickness describes one face of a film. On

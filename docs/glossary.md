@@ -106,6 +106,16 @@ Kerr nonlinear coefficient
   field attenuation by $\mathrm{Im}\,\gamma_\mathrm{NL}\,P$ (two-photon
   loss). Short form: nonlinear coefficient.
 
+Joint spectral amplitude
+  The two-photon amplitude $f(f_s, f_i)$ of a photon pair:
+  the pump's envelope times the phase-matching function, with
+  $\sum|f|^2\,\delta f_s\,\delta f_i$ the pairs per pulse. Short form: JSA.
+
+Heralded purity
+  The purity $\sum_k\lambda_k^2$ of one photon of a pair once its partner is
+  detected, over the Schmidt weights of the {term}`joint spectral amplitude`;
+  the Schmidt number is $1/\sum_k\lambda_k^2$.
+
 Normalized efficiency
   $\eta_\mathrm{norm} = |\kappa|^2$ of a pump mode and its second harmonic, in
   1/(W m²): the harmonic power is $\eta_\mathrm{norm}P^2L^2$ for a pump of power

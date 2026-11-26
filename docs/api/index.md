@@ -26,6 +26,7 @@ gfem/electro_optic/index
 gfem/acousto_optic/index
 gfem/kerr/index
 gfem/three_wave/index
+gfem/photon_pairs/index
 gfem/quantum/index
 gfem/design/index
 gfem/shape/index
