@@ -1,4 +1,4 @@
-# Shine a plane wave on a periodic cell
+# Floquet ports
 
 Light a periodic structure (a grating, a metasurface, a frequency-selective
 surface, an antireflection stack) with a plane wave, and read how much power

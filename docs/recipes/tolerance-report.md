@@ -1,4 +1,4 @@
-# Estimate fabrication tolerances and yield
+# Fabrication tolerance and yield
 
 A foundry gives a width as "±0.3 µm" and a substrate as $\varepsilon_r \pm 0.2$. How much do
 the S-parameters you designed for move under those spreads, which spread

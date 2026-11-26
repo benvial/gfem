@@ -1,4 +1,4 @@
-# Solve with PETSc and SLEPc
+# PETSc and SLEPc
 
 gfem can solve its linear systems with PETSc and find eigenmodes with SLEPc
 in place of its built-in solvers. `linear_solver="petsc"` runs the linear
@@ -78,7 +78,7 @@ pip install --no-index --find-links wheelhouse petsc petsc4py slepc slepc4py
 
 `bash petsc_wheelhouse.sh --mpi wheelhouse` builds the {term}`MPI PETSc stack`
 beside the no-MPI one, on the Open MPI whose `mpicc`, `mpicxx` and `mpifort` are on
-`PATH`. {doc}`distributed-solve` is what it is for. It has complex scalars, 64-bit
+`PATH`. The {doc}`distributed solve recipe <distributed-solve>` is what it is for. It has complex scalars, 64-bit
 indices, MUMPS, METIS, ScaLAPACK and PT-Scotch, and no ParMETIS. It also needs
 bison 3 or newer, flex and cmake 3.26 or newer. `--check` names what is
 missing, and refuses an MPI other than Open MPI.
@@ -91,6 +91,10 @@ missing, and refuses an MPI other than Open MPI.
 - The script's MUMPS orders with PT-Scotch on at most 32 processes, so the fill of
   BDDC's coarse factorization does not grow with the ranks. A stack built by an
   earlier script lacks this: build it again to get it.
+  The environment variable `MUMPS_PARAORD_MAX` sets another cap for a run: 2 or
+  more (`1` counts as `2`), or `0` for none. On a stack built before the cap,
+  gfem logs once per process, at INFO level on the `"gfem.solver"` logger, how
+  many ranks a rebuilt stack would factor the coarse problem on.
 - A stack runs under the Open MPI it was built on: load the same one to use it.
 - The no-MPI stack under a launcher serves {term}`rank copies` only, and a
   {term}`distributed solve` naming PETSc refuses it, with

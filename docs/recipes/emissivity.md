@@ -1,4 +1,4 @@
-# Emissivity of a periodic surface
+# Thermal emissivity
 
 A patterned emitter at a uniform temperature radiates into the space above it
 with an {term}`emissivity` that depends on direction, polarization and

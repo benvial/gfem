@@ -1,4 +1,4 @@
-# Read a far field: patterns, directivity, gain and radar cross section
+# Far fields and directivity
 
 {py:func}`gfem.far_field` turns a solved field into its
 {term}`far-field amplitude`: the field far from every source, per direction,

@@ -1,4 +1,4 @@
-# Find the index change a sound wave puts on a waveguide
+# Acousto-optic index change
 
 Find how much a voltage on an interdigital transducer shifts the effective index
 of a waveguide that its sound wave crosses: the {term}`acousto-optic shift` of a

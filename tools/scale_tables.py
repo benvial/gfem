@@ -5,7 +5,7 @@
 
 Reads every ``*.json`` in ``RECORDS`` that ``scale_run.py`` and ``scale_bench.py`` wrote
 (superseded ones aside) and writes one Markdown snippet per table of a scaling set
-into ``OUT``, which ``docs/project/scaling.md`` includes. ``--set`` picks the set:
+into ``OUT``, which ``docs/project/scaling.md`` links. ``--set`` picks the set:
 `CAMPAIGN`, the default; `COARSE`, the second set, on its own commit and records; or
 `PMG`, ``pmg_gmres`` against ``direct`` on one node. One set never rewrites
 another's snippets. The docs build never runs this script,

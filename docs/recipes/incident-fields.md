@@ -1,4 +1,4 @@
-# Light a scatterer with an incident field
+# Incident fields
 
 An {term}`incident field` is the field a {term}`source` would have in the
 {term}`background stack` alone: a plane wave ({py:obj}`gfem.PlaneWave`), a

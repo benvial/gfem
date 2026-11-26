@@ -1,4 +1,4 @@
-# Find the Kerr nonlinearity of a waveguide
+# Kerr nonlinearity
 
 Find how a guided mode changes the phase and the loss of its own light, and
 how its waves exchange power: the {term}`Kerr nonlinear coefficient`

@@ -1,4 +1,4 @@
-# Solve a structure that does not vary along one axis
+# 2D models
 
 A waveguide bend seen from above in effective indices, a parallel-plate line, a
 metal grating's cross-section at normal incidence: when neither the structure nor
@@ -99,8 +99,8 @@ print(mode.n_eff)  # the effective index of the port's fundamental mode
   and the solve raises.
 - A line port carries 1 W/m and needs no reference impedance: a `voltage_path`
   raises, and the mode's $Z_{PV}$ is NaN.
-- Lumped ports raise on a 2D model: feed a line with a line port across it, as
-  {doc}`../tutorials/topology` does.
+- Lumped ports raise on a 2D model: feed a line with a line port across it, as the
+  {doc}`topology tutorial <../tutorials/topology>` does.
 
 ## Per metre along z
 
@@ -183,8 +183,8 @@ def material(rho):
 ## Check your results
 
 - **The port mode.** For a guide in a uniform cladding, compare
-  `PortMode(...).n_eff` with the symmetric slab guide's closed form, as
-  {doc}`../tutorials/bend` does.
+  `PortMode(...).n_eff` with the symmetric slab guide's closed form, as the
+  {doc}`bend tutorial <../tutorials/bend>` does.
 - **Power balance and reciprocity.** For lossless media, $|S_{11}|^2 + |S_{21}|^2 \le 1$
   and $S_{12} = S_{21}$.
 - **The element order.** Solve again with `gfem.SolverOptions(order=3)`; the

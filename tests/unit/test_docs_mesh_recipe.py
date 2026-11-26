@@ -1,4 +1,4 @@
-"""The "Prepare a mesh for gfem" recipe: its gmsh script and its gfem blocks.
+"""The "Mesh preparation" recipe: its gmsh script and its gfem blocks.
 
 docs/recipes/prepare-a-mesh.md runs nothing at docs build time, and gmsh is
 not a gfem dependency. The page's gmsh blocks are kept verbatim parts of

@@ -1,4 +1,4 @@
-# Export S as a SPICE or Verilog-A model
+# SPICE and Verilog-A export
 
 Hand a solved device to a circuit simulator, for a transient or an AC
 analysis beside the rest of a circuit. A Touchstone file holds S only at the

@@ -1,4 +1,4 @@
-# Request several modes on one port surface
+# Multimode ports
 
 Get one S-matrix with a row and a column for each guided mode at each end of
 a polarization rotator, a mode converter or a taper.
@@ -151,6 +151,11 @@ How gfem itself is checked on wave ports and shared port surfaces:
   the cross-section, and matches a lossy port line to its own mode. Give every
   wave port of the device a `voltage_path`, or none: on a lossy line the two
   kinds of waves differ, and S is symmetric only between ports of one kind.
+  With ports of one kind, $S$ is symmetric to round-off when the port faces are
+  meshed alike. Otherwise it is symmetric to the discretization error of the
+  two ports' modes, since $S_{12}/S_{21}$ is the ratio of the two discrete
+  modes' normalizations: about $10^{-5}$ on a coarse lossy microstrip, whatever
+  the device.
 - **Degenerate, crossing and cut-off modes.** The solve raises
   {py:obj}`gfem.PortModeError`, naming the port and the surface, in three
   cases. A requested mode degenerate with another (TE10 and TE01 of a square

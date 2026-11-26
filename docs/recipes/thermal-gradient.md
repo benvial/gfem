@@ -1,4 +1,4 @@
-# Differentiate a heater's phase
+# Heater phase gradients
 
 Find how a heater's phase depends on everything that sets it: the drive
 current, the heater's electrical conductivity, the thermal conductivity of

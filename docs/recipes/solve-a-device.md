@@ -1,4 +1,4 @@
-# Solve a device: S-parameters, modes and capacitance
+# First device solve
 
 Get the three answers gfem gives for one device: what it transmits between its
 ports, where it resonates and how fast each resonance decays, and the

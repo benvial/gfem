@@ -1,4 +1,4 @@
-# Model an anisotropic material
+# Anisotropic materials
 
 Model a crystal whose permittivity, permeability, loss tangent or
 conductivity depends on the direction of the field. Lithium niobate guides

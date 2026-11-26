@@ -1,4 +1,4 @@
-# Differentiate an adaptive frequency sweep
+# Adaptive-sweep gradients
 
 Optimize over a broadband response without a full solve at every frequency:
 differentiate an adaptive sweep with its samples frozen. An adaptive sweep
