@@ -436,8 +436,8 @@ class PortModeRule:
         backward pass: their gradient reads the mode derivative, which the
         pass of ``gamma`` does not differentiate.
         """
-        """
         del kinds  # the field's node derivative exists: no input refuses it
+        if name == "residual":
             return (
                 f"gfem cannot differentiate the port mode output {name!r} of wave "
                 f"port {self.port.name!r}: it is the backward error of the mode "
