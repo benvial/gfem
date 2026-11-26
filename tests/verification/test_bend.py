@@ -39,7 +39,6 @@ def _solve(model, frequency, bend, order):
 
 
 def _ladder(errors):
-    """The fall of the error from the first order to the last, floored at round-off."""
     """The fall of the error from the first order to the last (round-off floor)."""
     floor = 1e-15
     return errors[0] / max(errors[-1], floor)
