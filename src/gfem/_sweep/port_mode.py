@@ -449,8 +449,11 @@ class PortModeRule:
                 f"gfem cannot differentiate the port mode output {name!r} of wave "
                 f"port {self.port.name!r}: the group index and dispersion (n_g, "
                 "beta_2, beta_3 and D) are not differentiable in this version; "
-                "gamma, n_eff and Z_PV are. Wrap it in jax.lax.stop_gradient to "
-                "use its value without its derivative."
+                "gamma, n_eff and Z_PV are, and a central difference in "
+                "frequency of the gamma rows of one PortMode gives n_g and beta_2 "
+                "that differentiate (the 'Shape gradients of mode figures' "
+                "recipe). Wrap it in jax.lax.stop_gradient to use its value "
+                "without its derivative."
             )
         if name in self.differentiable_outputs:
             return None
