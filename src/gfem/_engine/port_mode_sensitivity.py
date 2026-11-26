@@ -426,7 +426,8 @@ class BendDerivative:
             side: [[] for _ in range(n)] for side in ("A", "B")
         }
         for item in space.form_items:
-            if item.input[0] not in ("eps", "sigma", "nu"):
+            # a law's susceptibility carries the bend's metric as eps does
+            if item.input[0] not in ("eps", "sigma", "nu", "law"):
                 continue
             moved = dataclasses.replace(item, coefficient=item.coefficient.Diff(u))
             forms[item.side][item.slot].append(space._integrand(moved))  # noqa: SLF001

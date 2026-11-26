@@ -305,11 +305,11 @@ class FormItem:
         input: What the coefficient reads: ``("eps",)``, ``("sigma",)``,
             ``("nu",)``, ``("absorbing",)`` (the admittance, which reads both
             :math:`\varepsilon` and :math:`\nu`), ``("law", g)`` and
-            ``("absorbing_law", g)`` (the indicator of law ``g``, and the
-            admittance beside it), ``("fill", g)`` (a conductor group's edge
-            fill) and ``("impedance", g, name)`` (the weight of an
-            `Impedance` group's ``"resistance"``, ``"inductance"`` or
-            ``"capacitance"``).
+            ``("absorbing_law", g)`` (the indicator of law ``g``, times the
+            bend's metric on a bent section, and the admittance beside it),
+            ``("fill", g)`` (a conductor group's edge fill) and
+            ``("impedance", g, name)`` (the weight of an `Impedance` group's
+            ``"resistance"``, ``"inductance"`` or ``"capacitance"``).
         weight: A real factor of the item (``None``: none): the conductivity's
             :math:`\eta_0 s`, an impedance value's weight.
     """
@@ -453,9 +453,17 @@ class PortModeSpace:
         for g, (_, law) in enumerate(self.section.laws):
             slot = 3 + len(extra)
             inside = _p0(self.mesh, (np.asarray(index) == g).astype(float))
+            # a bend's metric scales the susceptibility as it scales eps
+            # (`_coefficients`); a straight section's law sees none: a layer's
+            # background is never a law, so its metric is the identity there
+            tt, nn = (
+                (inside * c["law_tt"], inside * c["law_nn"])
+                if "law_tt" in c
+                else (inside, inside)
+            )
             items += [
-                FormItem(slot, "A", "value_t", inside, "dx", ("law", g)),
-                FormItem(slot, "B", "value_n", inside, "dx", ("law", g)),
+                FormItem(slot, "A", "value_t", tt, "dx", ("law", g)),
+                FormItem(slot, "B", "value_n", nn, "dx", ("law", g)),
             ]
             extra.append(LawScalar(law, self.section.scale))
             slopes.append(law_slope(law, self.section.scale))
@@ -1141,6 +1149,9 @@ def _coefficients(
         out[name] = out[name] * lam_tt
     for name in ("eps_nn", "sigma_nn"):
         out[name] = out[name] * lam_nn
+    if s.bend is not None:
+        # the metric of a law's susceptibility, the same as of eps
+        out["law_tt"], out["law_nn"] = lam_tt, lam_nn
     # n x H of the stretched medium:
     # $R^\mathsf{T}(\mu_{tt}\Lambda_{tt})^{-1}R$ with $Ra = a\times n$ is
     # $(R^\mathsf{T}\Lambda_{tt}^{-1}R)\,\nu_{tt}

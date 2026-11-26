@@ -251,7 +251,10 @@ class ShapeForm:
             if weight == 0:
                 continue
             if item.region == "dx":
-                stretched = item.input[0] in ("eps", "sigma", "nu")
+                # a bent law's susceptibility carries the metric as eps does
+                stretched = item.input[0] in ("eps", "sigma", "nu") or (
+                    item.input[0] == "law" and self.space.section.bend is not None
+                )
                 self.add_value(
                     item.coefficient,
                     complex(weight),
