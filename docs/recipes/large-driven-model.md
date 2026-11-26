@@ -5,22 +5,6 @@ A photonic device several wavelengths across, a guide inside a
 memory than the direct solver's factorization allows. An iterative solver
 trades that memory for iterations. This page picks one and checks it.
 
-## When the direct solver does not fit
-
-The default `linear_solver="auto"` leaves `"direct"` when its estimate, about
-48 KiB per unknown, passes half the memory the process may use, and says so on
-the `"gfem.solver"` logger. Two iterative solvers take over:
-
-- **`"pmg_gmres"`** for a driven problem in 3D at order 2 or 3, in one
-  process, on an operator equal to its transpose: no Bloch wave vector, no
-  periodic pair, no Floquet port.
-- **`"bddc_gmres"`** across MPI ranks, on periodic and Bloch models, and for
-  electrostatic, thermal and DC conduction problems.
-
-Pick `"pmg_gmres"` for a model several wavelengths across. Its iteration count
-stays near 10 as the model grows, where `"bddc_gmres"`'s grows with the size
-in wavelengths.
-
 ## Solve with the p-multigrid solver
 
 ```python
@@ -45,6 +29,22 @@ higher-order rest it smooths patch by patch, around
 each mesh vertex. Together these make the {term}`p-multigrid`, and GMRES runs
 on it. `tolerance` bounds the preconditioned residual, as for
 `"bddc_gmres"`: it is not the error of S (see {py:obj}`gfem.SolverOptions`).
+
+## When the direct solver does not fit
+
+The default `linear_solver="auto"` leaves `"direct"` when its estimate, about
+48 KiB per unknown, passes half the memory the process may use, and says so on
+the `"gfem.solver"` logger. Two iterative solvers take over:
+
+- **`"pmg_gmres"`** for a driven problem in 3D at order 2 or 3, in one
+  process, on an operator equal to its transpose: no Bloch wave vector, no
+  periodic pair, no Floquet port.
+- **`"bddc_gmres"`** across MPI ranks, on periodic and Bloch models, and for
+  electrostatic, thermal and DC conduction problems.
+
+Pick `"pmg_gmres"` for a model several wavelengths across. Its iteration count
+stays near 10 as the model grows, where `"bddc_gmres"`'s grows with the size
+in wavelengths.
 
 ## How much memory it needs
 

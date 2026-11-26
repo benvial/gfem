@@ -8,6 +8,7 @@ one frequency or on a grid of them. The rules are one entry each on
 parallel-plate line of {doc}`get-started`, whose printed numbers are those of
 the repository's own line mesh.
 
+(theory-phasors-and-power-waves-units)=
 ## Units
 
 The mesh file is the one length not in metres: you state its unit once when
@@ -33,6 +34,7 @@ mm
 [0.04  0.006 0.001]
 ```
 
+(theory-phasors-and-power-waves-time-dependence)=
 ## Time dependence
 
 The physical field is $\mathrm{Re}(E\, e^{+i\omega t})$, the electrical engineering convention
@@ -64,6 +66,7 @@ print(np.unwrap(np.angle(result.s["p2", "p1"])))  # the phase of S21, rad
 A code that uses $e^{-i\omega t}$ gives the complex conjugate of every S entry and
 every field.
 
+(theory-phasors-and-power-waves-s-parameters-and-power)=
 ## S-parameters and power
 
 S relates {term}`pseudo-waves` (`WAVES`), normalized to each port's
@@ -91,6 +94,7 @@ print(1 - abs(result.s["p1", "p1"][3]) ** 2)  # what port 1 does not reflect at 
 0.8124000081969966
 ```
 
+(theory-phasors-and-power-waves-sax-circuits)=
 ## SAX circuits
 
 A solved S can be a block of a [SAX](https://github.com/flaport/sax) circuit,
@@ -130,6 +134,7 @@ True
 The recipe {doc}`recipes/sax-circuit` builds a photonic and an RF circuit from
 these blocks.
 
+(theory-phasors-and-power-waves-sign-of-loss)=
 ## Sign of loss
 
 Under $e^{+i\omega t}$ a lossy permittivity has a negative imaginary part,
@@ -151,6 +156,7 @@ print(modes.q[0], abs(omega) / (2 * omega.imag))
 1251.6804868146692 1251.6804868146692
 ```
 
+(theory-phasors-and-power-waves-dispersive-materials)=
 ## Dispersive materials
 
 A {term}`permittivity law` follows the same sign of loss. Its parameters are
@@ -205,6 +211,7 @@ $8\pi\,(V / \lambda_m^3)\,|\mathrm{Im}\,\varepsilon| / \mathrm{Re}\,\varepsilon$
 and $\lambda_m$ the wavelength in it
 ({doc}`recipes/dispersive-materials`).
 
+(theory-phasors-and-power-waves-eigenmode-fields)=
 ## Eigenmode fields
 
 A mode has no source to set its amplitude, so gfem scales every mode field to
@@ -237,6 +244,7 @@ sheet's `sheet_participation` is $-2\, d\ln\omega / d\ln L_s$ on any mesh. A por
 `participation` is $-2\, d\ln\omega / d\ln L$ when the field is uniform across the
 port; otherwise it is read from the port's mean voltage and differs slightly.
 
+(theory-phasors-and-power-waves-time-responses)=
 ## Time responses
 
 `NetworkParameters.step_response` and `impulse_response` turn S into

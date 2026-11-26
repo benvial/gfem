@@ -8,6 +8,8 @@ docs/tutorials/data/line.msh (and heater and modulator sections): what they
 print is what the pages show, and is what each convention says it must be.
 """
 
+import re
+
 import docs_pages as dp
 import numpy as np
 import pytest
@@ -72,7 +74,9 @@ def test_the_page_states_every_constant_with_its_value(page, name):
         (shown,) = dp.numbers(table[name])
         assert shown == value
     # Beyond the table, a section says what the constant means on a solve.
-    assert f"`{name}`" in dp._FENCE.sub("", page.split("## Units")[1])
+    # (plain, or as the `{py:data}` link to the module's constant)
+    prose = dp._FENCE.sub("", page.split("## Units")[1])
+    assert re.search(rf"`(~?gfem\.conventions\.)?{name}`", prose)
 
 
 def test_the_table_has_no_constant_the_module_lacks(page):
