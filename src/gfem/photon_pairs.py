@@ -814,7 +814,7 @@ def _warn_resolution(jsa: jax.Array) -> None:
         return
     jump = max(np.abs(np.diff(a, axis=0)).max(), np.abs(np.diff(a, axis=1)).max())
     edge = max(a[0].max(), a[-1].max(), a[:, 0].max(), a[:, -1].max())
-    _warn_unresolved("joint spectrum", jump / peak, edge / peak, stacklevel=3)
+    _warn_unresolved("joint spectrum", jump / peak, edge / peak, stacklevel=4)
 
 
 def _warn_cw_resolution(density: jax.Array, inside: np.ndarray) -> None:
@@ -829,7 +829,7 @@ def _warn_cw_resolution(density: jax.Array, inside: np.ndarray) -> None:
     jump = np.abs(np.diff(a, axis=-1)).max(axis=-1)[live] / peak[live]
     edge = np.maximum(a[..., 0], a[..., -1])[live] / peak[live]
     _warn_unresolved(
-        "spectral density", float(jump.max()), float(edge.max()), stacklevel=4
+        "spectral density", float(jump.max()), float(edge.max()), stacklevel=5
     )
 
 
