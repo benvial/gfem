@@ -79,7 +79,7 @@ def test_a_degenerate_pair_grows_as_the_length_to_the_three_halves(ran):
 
 def test_a_detuned_period_loses_the_rate_and_not_alike_on_both_sides(ran):
     lines = _lines(ran, "The rate and the spectral brightness of a continuous pump", 1)
-    short, matched, long_ = (_number(line, 2) for line in lines[3:6])
+    short, matched, long_ = (_number(line, 1) for line in lines[3:6])
     assert matched == pytest.approx(1.0, abs=1e-3)
     # beta_2 > 0: only a longer period keeps matched frequencies +-Omega
     assert short < 0.1
@@ -91,7 +91,9 @@ def test_purity_is_the_inverse_of_the_schmidt_number(ran):
     assert "401 x 401" in first[0]
     n, purity, schmidt = (_number(first[0], k) for k in (2, 3, 4))
     assert schmidt * purity == pytest.approx(1.0, rel=2e-3)
-    assert n == pytest.approx(_number(first[3]) / 1e8, rel=1e-3)  # pairs/s at 100 MHz
+    assert n == pytest.approx(
+        _number(first[3], 1) / 1e8, rel=1e-3
+    )  # pairs/s at 100 MHz
     width, band = _number(first[1]), _number(first[1], 1)
     assert 0.2 * band < width < band  # the photons fill a part of the band
     rows = _lines(ran, "The joint spectrum of a pulse", 1)[1:]
@@ -124,7 +126,7 @@ def test_the_four_wave_mixing_density_is_quadratic_in_the_power(ran):
     density = _lines(ran, section, 1)
     peak = _number(density[0])
     rate = _number(density[0], 1)
-    assert 90 < _number(density[2]) < 110  # 10 mW against 1 mW: x100
+    assert 90 < _number(density[2], 2) < 110  # 10 mW against 1 mW: x100
     # |Gamma|^2 P^2 L^2 at 1 mW and 1 cm, with the ring's |Gamma|: the peak is
     # at the guard, where sinc^2 is within a percent of 1
     gamma = _number(_lines(ran, "A ring: an estimate")[0], 1)
@@ -154,7 +156,7 @@ def test_the_ring_follows_the_coupled_mode_formulas(ran):
     assert rate == pytest.approx(g**2 / (2 * kappa), rel=0.02)
     assert occupation == pytest.approx(4 * g**2 / (2 * kappa**2), rel=0.02)
     assert occupation < 0.1  # low gain
-    assert _number(lines[3]) == pytest.approx(8.0, abs=5e-3)  # Q^3
+    assert _number(lines[3]) == pytest.approx(8.0, abs=5e-3)  # Q^3: x8 per doubling
 
 
 def test_the_published_comparison_is_an_observation_of_the_order_of_the_scatter(ran):
@@ -165,7 +167,7 @@ def test_the_published_comparison_is_an_observation_of_the_order_of_the_scatter(
         ratio * 4.6e5, rel=1e-2
     )  # the same two numbers
     assert 1 < _number(javid) / 13 < 20
-    assert 1 < _number(si, 1) / 1.9e5 < 20
+    assert 1 < _number(si) / 1.9e5 < 20
 
 
 def test_the_rate_converges_with_the_grid(ran):

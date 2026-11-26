@@ -531,14 +531,14 @@ rate_r, enhancement, occupation = ring_rate(1e5)
 print(f"FSR {fsr * 1e-9:.0f} GHz, |Gamma| {gamma_si:.1f} /(W m)")
 print(f"circulating power {enhancement:.0f} x the bus's")
 print(f"pairs into the bus {rate_r:.4g} /s, occupation {occupation:.2g} per mode")
-print(f"Q doubled: x{ring_rate(2e5)[0] / rate_r:.2f} (Q cubed: 8)")
+print(f"Q doubled: factor {ring_rate(2e5)[0] / rate_r:.2f} (Q cubed: 8)")
 ```
 
 ```text
 FSR 1137 GHz, |Gamma| 181.8 /(W m)
 circulating power 187 x the bus's
 pairs into the bus 2.432e+06 /s, occupation 0.0008 per mode
-Q doubled: x8.00 (Q cubed: 8)
+Q doubled: factor 8.00 (Q cubed: 8)
 ```
 
 - The rate goes as $Q^3/L_\mathrm{ring}^2$ at a fixed power: a better
@@ -570,15 +570,15 @@ observation beside them:
 | Shi et al., Light Sci. Appl. 13, 282 (2024), table | silicon and nitride wires, 8 to 11 mm, SFWM | $1.9\times10^4$ to $1.9\times10^5$ Hz/nm/mW$^2$ | the silicon wire's brightness at 1 cm |
 
 ```python
-print(f"TFLN: gfem {per_ghz:.3g} against 4.6e5 pairs/s/GHz/mW, x{per_ghz / 4.6e5:.1f}")
+print(f"TFLN: gfem {per_ghz:.3g} against 4.6e5 pairs/s/GHz/mW, ratio {per_ghz / 4.6e5:.1f}")
 print(f"TFLN: total {rate / (power * 1e3) * 1e-9:.3g} GHz/mW in the bands (Javid: 13)")
-print(f"Si: gfem {per_nm_w:.3g} Hz/nm/mW^2, x{per_nm_w / 1.9e5:.1f} to {per_nm_w / 1.9e4:.1f}")
+print(f"Si: gfem {per_nm_w:.3g} Hz/nm/mW^2, ratio {per_nm_w / 1.9e5:.1f} to {per_nm_w / 1.9e4:.1f}")
 ```
 
 ```text
-TFLN: gfem 1.07e+07 against 4.6e5 pairs/s/GHz/mW, x23.4
+TFLN: gfem 1.07e+07 against 4.6e5 pairs/s/GHz/mW, ratio 23.4
 TFLN: total 40.5 GHz/mW in the bands (Javid: 13)
-Si: gfem 4.11e+05 Hz/nm/mW^2, x2.2 to 21.6
+Si: gfem 4.11e+05 Hz/nm/mW^2, ratio 2.2 to 21.6
 ```
 
 - The poling period agrees with the paper's 2.8 µm within a percent: the
