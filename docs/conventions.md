@@ -191,6 +191,20 @@ displacement coefficient real and positive), so read $|g_0|$.
 {doc}`recipes/optomechanical-coupling`.
 Derivation and a check on a solve: {ref}`Optomechanical coupling <theory-multiphysics-couplings-optomechanical-coupling>`.
 
+## Brillouin gain
+
+{py:obj}`gfem.brillouin_gain` gives the peak gain
+$G_\mathrm{B} = Q_m\omega\,|\delta n_{ps}|^2/c^2$ in 1/(W m), with
+$\pm\mathrm{d}P_s/\mathrm{d}z = G_\mathrm{B}P_pP_s$ (the sign along the Stokes
+direction). The pump has 1 W, the mechanical mode 1 J/m, and $\omega$ is the
+pump's. $Q_m = \mathrm{Re}\,\Omega/(2\,\mathrm{Im}\,\Omega)$ and the
+linewidth, full width at half maximum, is $2\,\mathrm{Im}\,\Omega$. The phonon
+travels with the pump, $q = 2\beta\,(\hat n\cdot\hat z)$, with $\hat n$ the
+port's normal; the shift $-\Omega n_g/c$ of the Stokes wave is dropped, and a
+$q$ within $10^{-2}$ of $2\beta$ (or of 0, forward) counts as phase matched.
+The gains of the two parts are not additive: their amplitudes add with sign.
+{doc}`recipes/brillouin-gain` has the whole calculation.
+
 ## Piezoelectric problems
 
 A {py:class}`gfem.Piezoelectric` problem is on a 2D section, $\partial_z = 0$,

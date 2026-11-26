@@ -271,7 +271,27 @@ measured $V_\pi L$ ({doc}`tutorials/acousto-optic`).
 | Dilation of the whole section; linearity; moving boundary against node-map gradient; cladding-only displacement | $n_g - n_\mathrm{eff}$; identities | {gfem-test}`tests/unit/test_optomechanics.py` | Every change |
 | Elliptic rod meshed separately for the mechanics | Same mesh cut from the optical one; gap falls with the square of the edge | {gfem-test}`tests/unit/test_optomechanical_coupling.py` | Every change |
 | Gradients of mode fields and of the coupling | Fourth-order central differences | {gfem-test}`tests/unit/test_optomechanics.py` | Every change |
-| Suspended silicon wire at 1.552 µm, Brillouin gain and frequency | Qiu et al., Opt. Express 21, 22544 (2013); Rakich et al., Phys. Rev. X 2, 011008 (2012) | {gfem-test}`tests/verification/test_optomechanical_wire.py` | Every change |
+| Suspended silicon wire at 1.552 µm, Brillouin gain and frequency | Qiu et al., Opt. Express 21, 31402 (2013); Rakich et al., Phys. Rev. X 2, 011008 (2012) | {gfem-test}`tests/verification/test_optomechanical_wire.py` | Every change |
+
+(verification-brillouin)=
+## Brillouin gain
+
+{py:obj}`gfem.brillouin_gain`, forward and backward, the peak gain
+$G_B = Q_m\omega|\delta n_{ps}|^2/c^2$ of a mechanical mode on a guided mode
+({doc}`recipes/brillouin-gain`).
+
+| Case | Compared with | Test | Runs |
+|---|---|---|---|
+| TM slab film dilation, phase matched at $q = 2k_0 n_\mathrm{exact}$: moving boundary, photoelastic diagonal and shear parts | Closed form; error of each part falls at least 2.5-fold (5-fold for the moving boundary and diagonal part) per halved edge; shear part $O(h^2)$ | {gfem-test}`tests/unit/test_brillouin_overlap.py` | Every change |
+| TE slab, $E_z = 0$ | Its forward closed form | {gfem-test}`tests/unit/test_brillouin_overlap.py` | Every change |
+| Forward gain, gains of the overlap parts, real part of the pair weights, wavenumber outside the phase-matching window | $4Q_m\lvert\tilde g_0\rvert^2/(\hbar\omega v_g^2\,\mathrm{Re}\,\Omega)$ of the coupling to $10^{-13}$; $Q_m\omega\lvert\delta n\rvert^2/c^2$; forward weights; raises at both edges | {gfem-test}`tests/unit/test_brillouin.py` | Every change |
+| Isotropic single material | $\mathrm{d}\ln G_B/\mathrm{d}\ln E = -1$ and $\mathrm{d}\ln G_B/\mathrm{d}\ln\rho = 0$ to $10^{-10}$ | {gfem-test}`tests/unit/test_brillouin.py` | Every change |
+| Gradients in the photoelastic tensor, quality factor and mechanical nodes | Two-sample central difference, exact for the quadratic tensor ($10^{-12}$); fourth-order central differences of relative step $10^{-3}$ to $10^{-6}$ | {gfem-test}`tests/unit/test_brillouin.py` | Every change |
+| Suspended silicon wire, 315 by 283.5 nm at 1.552 µm, backward modes E1 to E4 at $q = 2\beta$: frequencies, and the photoelastic, moving-boundary and total gains of E1, E2, E4 | Qiu et al., Opt. Express 21, 31402 (2013), Fig. 3(b); frequencies within 2 %, parts 10 %, totals 15 %; the moving boundary of E2 stays 7 % under the published bar on every mesh | {gfem-test}`tests/verification/test_brillouin_wire.py` | Every change |
+
+Observation, not a check: the moving boundary of E2 is 7 % under the published
+bar on every mesh and for either wavenumber. The figure read explains 3 % of
+it; the rest is not attributed.
 
 ## Free space
 

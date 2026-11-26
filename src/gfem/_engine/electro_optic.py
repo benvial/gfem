@@ -42,7 +42,7 @@ electro-optic shift.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
@@ -50,13 +50,22 @@ import ngsolve as ngs
 import numpy as np
 
 from gfem._engine import probe as _probe
-from gfem._engine.thermo_optic import ShiftWeightsRule
+from gfem._engine.thermo_optic import (
+    ShiftWeightsRule,
+    section_complex_tensor_weights,
+    section_ez_boundary_weights,
+)
+from gfem._sweep.port_mode import PortModeRule
 from gfem.mesh import Mesh
+
+if TYPE_CHECKING:
+    from gfem.model import Model
 
 __all__ = [
     "AcoustoOpticWeightsRule",
     "ElectroOpticWeightsRule",
     "GradientProbe",
+    "OptomechanicalPairWeightsRule",
     "StaticFieldKernel",
 ]
 
@@ -112,6 +121,54 @@ class AcoustoOpticWeightsRule(ElectroOpticWeightsRule):
             "of the shift. Wrap the input in jax.lax.stop_gradient to use its "
             "value without its derivative."
         )
+
+
+class OptomechanicalPairWeightsRule(AcoustoOpticWeightsRule):
+    r"""The port mode solve of a backward optomechanical pair.
+
+    Outputs ``gamma`` (``(1,)``), the complex Hermitian section weight
+    ``weights`` (``(n_tri, 3, 3)``, :math:`H_t`, global frame, in the order of
+    ``faces``) and ``ez`` (``(n_vertices, 2)``, 1/m), the node weights of the
+    normal field's moving-boundary correction, indexed like the unique nodes
+    of the section's mesh triangles.
+    """
+
+    def output_specs(self, model: Model) -> dict[str, jax.ShapeDtypeStruct]:
+        """The propagation constant, the complex weights and the correction."""
+        n_nodes = np.unique(np.asarray(model.mesh.triangles)[self.faces]).size
+        return {
+            "gamma": jax.ShapeDtypeStruct((1,), jnp.complex128),
+            "weights": jax.ShapeDtypeStruct((len(self.faces), 3, 3), jnp.complex128),
+            "ez": jax.ShapeDtypeStruct((n_nodes, 2), jnp.float64),
+        }
+
+    def forward(
+        self, model: Model, *, keep: bool, request: Any = None
+    ) -> tuple[dict, None]:
+        """Solve the mode and integrate its weights and the normal-field correction."""
+        outputs, _ = PortModeRule.forward(self, model, keep=keep, request=request)
+        sweep = outputs["sweep"]
+        coefficients = sweep.basis @ sweep.coords[0]
+        weights = section_complex_tensor_weights(sweep.space, coefficients)
+        ez = section_ez_boundary_weights(sweep.space, coefficients)
+        section = sweep.space.section
+        faces = np.asarray(section.faces)
+        order = np.argsort(faces)
+        where = order[np.searchsorted(faces, self.faces, sorter=order)]
+        if not np.array_equal(faces[where], self.faces):  # pragma: no cover
+            raise RuntimeError("the port section's triangles changed")
+        nodes = np.unique(np.asarray(model.mesh.triangles)[self.faces])
+        mesh_xyz = np.asarray(model.mesh.nodes, float)[nodes]
+        at = section.to_global(section.points)
+        # the plane's points are (u, v) coordinates; their global position must be
+        # the mesh nodes' for the correction to be indexed like them
+        tol = 1e-9 * section.diameter * section.scale
+        if len(at) != len(nodes) or np.abs(at - mesh_xyz).max() > tol:
+            raise RuntimeError(
+                "the port section's vertices are not the mesh nodes of its "
+                "triangles in the order the correction vector is indexed by"
+            )
+        return {"gamma": sweep.gamma, "weights": weights[where], "ez": ez}, None
 
 
 class GradientProbe(_probe.Probe):

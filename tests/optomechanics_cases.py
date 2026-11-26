@@ -9,6 +9,7 @@ displacement `gfem.FieldMap` from an analytic field on such a mesh.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import NamedTuple
 
 import acousto_optic_cases as ao
 import electro_optic_cases as eo
@@ -25,6 +26,7 @@ from gfem._field import FieldMap
 P11, P12, P44 = -0.09, 0.017, -0.051
 #: The film's permittivity (n = 3.48) and the oxide's.
 N_FILM = 3.48
+EPS_FILM = N_FILM**2
 
 
 def cubic_p(p11=P11, p12=P12, p44=P44) -> np.ndarray:
@@ -37,13 +39,16 @@ def cubic_p(p11=P11, p12=P12, p44=P44) -> np.ndarray:
     return out
 
 
-def displacement(mesh, support, gradients, offsets=(0.0, 0.0, 0.0), *, order=1):
+def displacement(
+    mesh, support, gradients, offsets=(0.0, 0.0, 0.0), *, order=1, wavenumber=0.0
+):
     """A displacement `gfem.FieldMap` ``u_c = offsets[c] + gradients[c] . (x, y)``.
 
     Built by the helper of the acousto-optic tests: exact fields on a 2D mesh at
     ``order`` 1 (an affine field is in the space), complex data allowed, in
-    metres, defined on the regions ``support``. ``gradients`` is ``(3, 2)`` (per
-    metre), ``offsets`` ``(3,)`` (metres). This is the test helper the
+    metres, defined on the regions ``support``, with the axial ``wavenumber``
+    (rad/m). ``gradients`` is ``(3, 2)`` (per metre), ``offsets`` ``(3,)``
+    (metres). This is the test helper the
     optomechanical overlap needs: a mechanical mode of a solve is a `FieldMap` of
     the same kind.
     """
@@ -59,7 +64,7 @@ def displacement(mesh, support, gradients, offsets=(0.0, 0.0, 0.0), *, order=1):
         )
         for i, c in enumerate("xyz")
     }
-    return FieldMap(parts, label="component")
+    return FieldMap(parts, label="component", wavenumber=wavenumber)
 
 
 #: The slab's half width and cladding thickness, um, the film's thickness: the
@@ -188,6 +193,59 @@ def thickness_derivative(eps, d, polarization, h=1e-9):
     The step is 1e-3 of the film: truncation :math:`(h/d)^4 \sim 10^{-12}`.
     """
     return central(lambda delta: slab_n_eff(eps, d + delta, polarization), 0.0, h)
+
+
+class SlabMoments(NamedTuple):
+    """The TM slab's film moments at 1 W (see `slab_tm_moments`)."""
+
+    n_eff: float
+    beta: float
+    corner: float
+    gamma_y: float
+    gamma_z: float
+    shear: complex
+
+
+def slab_tm_moments(eps=EPS_FILM, d=FILM * 1e-6) -> SlabMoments:
+    r"""The closed-form moments of the TM slab mode that a backward pair reads.
+
+    From :math:`H_x = \cos\kappa y'` in the film (:math:`y'` from its middle),
+    :math:`E_y = -\beta H_x/(\omega\varepsilon_0\varepsilon)` and
+    :math:`E_z = i H_x'/(\omega\varepsilon_0\varepsilon)`, at 1 W (the
+    power per unit width divides every moment, so the width drops out):
+
+    - ``corner`` :math:`C = \tfrac{c\varepsilon_0}{4}\,d\,(\varepsilon_f -
+      \varepsilon_c)|E_z(d/2)|^2`, the film's two interfaces, each of
+      half the dilation :math:`d/2`, in the moving-boundary correction
+      :math:`-2C`;
+    - ``gamma_y``, ``gamma_z`` :math:`\Gamma_{y,z} = \tfrac{c\varepsilon_0}{4}
+      \int_\mathrm{film}|E_{y,z}|^2`;
+    - ``shear`` :math:`M = \tfrac{c\varepsilon_0}{4}\int_\mathrm{film}
+      y' E_y E_z^*`, purely imaginary.
+    """
+    n = slab_n_eff((eps,) * 3, d, "TM")
+    k0 = 2 * np.pi / eo.WAVELENGTH
+    beta, omega = n * k0, 2 * np.pi * eo.FREQUENCY
+    ec = eo.N_OX**2
+    kap = k0 * np.sqrt(eps - n * n)
+    gam = k0 * np.sqrt(n * n - ec)
+    scale = scipy.constants.c * scipy.constants.epsilon_0 / 4
+    # power per unit width: (beta / (2 omega eps0)) int |H_x|^2 / eps dy
+    integral = (d / 2 + np.sin(kap * d) / (2 * kap)) / eps + (
+        2 * np.cos(kap * d / 2) ** 2 / (2 * gam) / ec
+    )
+    power = beta / (2 * omega * scipy.constants.epsilon_0) * integral
+    a = omega * scipy.constants.epsilon_0 * eps
+    ez_edge = kap * np.sin(kap * d / 2) / a
+    moment = np.sin(kap * d) / (4 * kap**2) - d * np.cos(kap * d) / (4 * kap)
+    return SlabMoments(
+        n_eff=n,
+        beta=beta,
+        corner=scale * d * (eps - ec) * ez_edge**2 / power,
+        gamma_y=scale / power * (beta / a) ** 2 * (d / 2 + np.sin(kap * d) / (2 * kap)),
+        gamma_z=scale / power * (kap / a) ** 2 * (d / 2 - np.sin(kap * d) / (2 * kap)),
+        shear=scale / power * (-1j * beta * kap / a**2) * moment,
+    )
 
 
 C = scipy.constants.c

@@ -125,6 +125,8 @@ Mechanics and acoustics:
   coupling of mechanical modes to a wave port's mode, and
   `gfem.optomechanical_overlap` the index change of any displacement, both
   differentiable ({doc}`../recipes/optomechanical-coupling`).
+- **Brillouin gain.** `gfem.brillouin_gain` gives the forward and backward gain of
+  a guide's mechanical modes, with its parts ({doc}`../recipes/brillouin-gain`).
 
 Free-space scattering:
 

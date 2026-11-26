@@ -22,7 +22,7 @@ it is given.
 from __future__ import annotations
 
 import dataclasses
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -31,13 +31,17 @@ import scipy.constants
 
 from gfem._checks import is_staging, is_traced
 from gfem._dim2 import refuse_entry
+from gfem._materials import Material
 from gfem._optical_shift import (
     _check_model,
+    _field_values,
     _frequency,
     _mode_weights,
+    _region_rows,
     _section,
     _wave_port,
 )
+from gfem._port_section import port_geometry
 from gfem._pytree import register_fields
 from gfem.acousto_optic import (
     _Caller,
@@ -60,8 +64,10 @@ if TYPE_CHECKING:
     from gfem.results import MechanicalEigenmodeResult
 
 __all__ = [
+    "BrillouinGain",
     "OptomechanicalCoupling",
     "OptomechanicalOverlap",
+    "brillouin_gain",
     "optomechanical_coupling",
     "optomechanical_overlap",
 ]
@@ -76,6 +82,13 @@ _OVERLAP = _Caller(
 _COUPLING = _Caller(
     "optomechanical_coupling",
     "the optomechanical coupling",
+    "the displacement",
+    "the mechanical model or the photoelastic_tensor",
+    "mechanical",
+)
+_GAIN = _Caller(
+    "brillouin_gain",
+    "the Brillouin gain",
     "the displacement",
     "the mechanical model or the photoelastic_tensor",
     "mechanical",
@@ -113,6 +126,22 @@ class OptomechanicalOverlap:
             part: a complex scalar, or ``(n,)`` over a coupling's modes.
         photoelastic: :math:`\delta n_\mathrm{PE}`, the photoelastic part:
             a complex scalar, or ``(n,)`` over a coupling's modes.
+        wavenumber: The displacement's axial wavenumber :math:`q`, rad/m
+            (static, 0 for a forward overlap).
+        direction: ``"forward"`` (:math:`q \approx 0`) or ``"backward"``
+            (:math:`q \approx 2\beta` along the pump).
+
+    A backward pair's parts are the transition element between the pump and
+    its counter-propagating twin :math:`E_s = DE_p`,
+    :math:`D = \mathrm{diag}(1, 1, -1)`, not a change of :math:`n_\mathrm{eff}`:
+
+    .. math::
+
+        \delta n_{ps} = \frac{c\varepsilon_0}{4}\int E_p^H\,
+        \delta\varepsilon_q[u]\,E_s\,dA
+
+    with :math:`q = 2\beta\,(\hat n\cdot\hat z)` along the pump. At
+    :math:`D = I`, :math:`q = 0` it is :math:`\partial n_\mathrm{eff}/\partial\alpha`.
     """
 
     port: str
@@ -122,6 +151,8 @@ class OptomechanicalOverlap:
     n_g: jax.Array
     moving_boundary: jax.Array
     photoelastic: jax.Array
+    wavenumber: float = 0.0
+    direction: Literal["forward", "backward"] = "forward"
 
     @property
     def total(self) -> jax.Array:
@@ -130,12 +161,17 @@ class OptomechanicalOverlap:
 
     def __repr__(self) -> str:
         head = f"OptomechanicalOverlap(port {self.port!r}, mode {self.mode}"
+        tail = (
+            f", backward q {self.wavenumber:.6g} rad/m"
+            if self.direction == "backward"
+            else ""
+        )
         try:
             n = complex(np.asarray(self.n_eff))
             if np.ndim(self.moving_boundary):
                 return (
                     f"{head}, {self.frequency:.6g} Hz, n_eff {n.real:.6f}, "
-                    f"{np.shape(self.moving_boundary)[0]} displacements)"
+                    f"{np.shape(self.moving_boundary)[0]} displacements{tail})"
                 )
             mb, pe = (
                 complex(np.asarray(v))
@@ -145,7 +181,7 @@ class OptomechanicalOverlap:
             return f"{head})"
         return (
             f"{head}, {self.frequency:.6g} Hz, n_eff {n.real:.6f}, "
-            f"moving_boundary {mb:.6g}, photoelastic {pe:.6g})"
+            f"moving_boundary {mb:.6g}, photoelastic {pe:.6g}{tail})"
         )
 
 
@@ -378,6 +414,7 @@ class _Setup(NamedTuple):
     section: _Section
     photoelastic_rows: np.ndarray
     nodes_xy: np.ndarray
+    sign: int
 
 
 def _refuse_jit(caller: _Caller) -> None:
@@ -401,7 +438,7 @@ def _setup(
     _refuse_jit(caller)
     refuse_entry(getattr(model, "mesh", None), caller.owner)
     _check_model(model, caller.owner)
-    _check_displacement(displacement, caller.owner)
+    _check_displacement(displacement, caller.owner, any_wavenumber=True)
     f = _frequency(frequency, caller.owner)
     faces, tets = _section(model, _wave_port(model, port))
     crystal = _crystal(model, port, tets, caller, electro_optic=False, require=False)
@@ -415,6 +452,7 @@ def _setup(
             "derivative."
         )
     _check_plane(model.mesh, faces, port, caller)
+    normal = port_geometry(model, _wave_port(model, port)).normal
     return _Setup(
         f,
         faces,
@@ -423,6 +461,7 @@ def _setup(
         _section_nodes(model, faces, tets),
         np.flatnonzero(crystal.has_p),
         np.asarray(model.mesh.nodes, float)[:, :2],
+        1 if normal[2] > 0 else -1,
     )
 
 
@@ -444,7 +483,8 @@ def _check_support(
     return inside, points
 
 
-class _Solved(NamedTuple):
+@dataclasses.dataclass(frozen=True, eq=False)
+class _Solved:
     """The optical mode's constants: the node gradient, indices and tensor weights."""
 
     grad: np.ndarray
@@ -452,28 +492,181 @@ class _Solved(NamedTuple):
     n_g: jax.Array
     mode: int
     weights: jax.Array
+    direction: Literal["forward", "backward"] = "forward"
+    ez: np.ndarray = dataclasses.field(default_factory=lambda: np.zeros((0, 2)))
 
 
-def _solve_optical(model: Model, setup: _Setup, port: str, mode: int | None) -> _Solved:
-    """The optical work, done once for every displacement.
+def _solve_gradient(
+    model: Model, setup: _Setup, port: str, mode: int | None
+) -> tuple[Model, np.ndarray, jax.Array, jax.Array, int]:
+    """The optical-only model, the node gradient, ``n_eff``, ``n_g`` and the mode.
 
-    Two port mode solves: one with its backward pass for the node gradient,
-    and, with a photoelastic element, one of the weights rule for its tensor
-    weights.
+    The first of the two port mode solves, with its backward pass.
     """
     optical = _optical_only(model)
     grad, n_eff, n_g, found = _node_gradient(optical, port, setup.frequency, mode)
-    weights = jnp.zeros((0, 3, 3))  # no photoelastic element reads them
-    if len(setup.photoelastic_rows):
-        _, _, weights, _ = _mode_weights(
-            optical,
-            port,
-            setup.frequency,
-            mode,
-            setup.faces,
-            tensor=True,
-            rule=_weights_rule(),
+    return optical, grad, n_eff, n_g, found
+
+
+def _solve_weights(
+    optical: Model, setup: _Setup, port: str, mode: int | None
+) -> jax.Array:
+    """The second port mode solve: the mode's tensor weights (none without ``p``)."""
+    if not len(setup.photoelastic_rows):  # no photoelastic element reads them
+        return jnp.zeros((0, 3, 3))
+    _, _, weights, _ = _mode_weights(
+        optical,
+        port,
+        setup.frequency,
+        mode,
+        setup.faces,
+        tensor=True,
+        rule=_weights_rule(),
+    )
+    return weights
+
+
+#: The phase-matching window, as a share of the pump's wavenumber
+#: :math:`\beta`: a displacement is a forward pair if
+#: :math:`|q| \le 2\tau\beta` and a backward pair if
+#: :math:`|q - 2\beta s| \le 2\tau\beta`. Its floor: the Stokes wave sits
+#: :math:`\Omega n_g/c` (at most 1e-3 of :math:`2\beta`) off the phase-matched
+#: wavenumber, which is dropped, and a phonon wavenumber taken from published
+#: effective indices differs from gfem's by 4.6e-3 of :math:`2\beta`: the half
+#: width :math:`2\tau\beta`, :math:`10^{-2}` of :math:`2\beta`, is twice that
+#: gap and ten times the Stokes envelope. Its ceiling: the smallest blunder that still
+#: reads a number (:math:`q = \beta`, :math:`k_0` for :math:`\beta`, :math:`n_g`
+#: for :math:`n_\mathrm{eff}`, another optical mode, um for m) is off by 5e-2 of
+#: :math:`2\beta`, five times the half width.
+_WINDOW = 1e-2
+
+
+def _check_nonmagnetic(model: Model, setup: _Setup, port: str, caller: _Caller) -> None:
+    r"""Raise `NotImplementedError` for a section element with :math:`\mu_r \ne 1`.
+
+    The magnetic moving-boundary term of a pair flips sign under the mirror
+    that takes the pump to its counter-propagating twin, and is not assembled.
+    """
+    for region, rows in _region_rows(model.mesh, setup.tets).items():
+        material = model.materials[region]
+        pos = np.searchsorted(model.mesh.elements(region), setup.tets[rows])
+        if isinstance(material, Material):
+            mu = np.asarray(material.mu_r)
+        else:
+            mu = _field_values(material, "mu_r", pos)
+        if mu is not None and np.any(np.asarray(mu) != 1):
+            raise NotImplementedError(
+                f"{caller.owner}: region {region!r} of wave port {port!r}'s "
+                "section has mu_r != 1: the magnetic moving-boundary term of a "
+                "backward pair is not assembled. Use mu_r = 1 in the section, or "
+                "a forward displacement (q = 0)."
+            )
+
+
+def _direction(
+    q: float,
+    n_eff: Any,
+    frequency: float,
+    sign: int,
+    caller: _Caller,
+    *,
+    port: str,
+) -> Literal["forward", "backward"]:
+    r"""Which pair a displacement of axial wavenumber ``q`` makes with the port's mode.
+
+    Forward at :math:`|q| \le 2\tau\beta`, backward at
+    :math:`|q - 2\beta s| \le 2\tau\beta` (:math:`s` = ``sign``, the sign of the
+    port normal's :math:`z` component, the direction the pump travels along
+    :math:`z`; :math:`\beta = 2\pi f\,\mathrm{Re}\,n_\mathrm{eff}/c`).
+
+    Raises:
+        ValueError: ``q`` is in neither window; the message names the expected
+            values.
+    """
+    beta = 2 * np.pi * frequency * float(np.real(np.asarray(n_eff))) / scipy.constants.c
+    half = 2 * _WINDOW * beta
+    q = float(q)
+    if abs(q) <= half:
+        return "forward"
+    if abs(q - 2 * beta * sign) <= half:
+        return "backward"
+    expected = (
+        f"expected q = 0 (forward) or q = {2 * beta * sign:+.4e} rad/m "
+        f"(backward, along the pump of port {port!r})"
+    )
+    head = (
+        f"{caller.owner}: the displacement has the axial wavenumber q = {q:.4e} rad/m"
+    )
+    if abs(q + 2 * beta * sign) <= half:
+        way = "+z" if sign > 0 else "-z"
+        raise ValueError(
+            f"{head}, a phonon that counter-propagates with the pump: wave port "
+            f"{port!r} guides the pump along {way}, so the phonon of a backward "
+            f"pair travels along {way} too (q of sign {'+' if sign > 0 else '-'}); "
+            f"{expected}."
         )
+    raise ValueError(
+        f"{head}, which makes neither a forward nor a backward pair of the "
+        "mode with itself: intermodal pairs (q = beta_p -/+ beta_s of two different "
+        f"modes) are not supported; {expected}."
+    )
+
+
+def _solve_pair_weights(
+    optical: Model, setup: _Setup, port: str, mode: int | None
+) -> tuple[jax.Array, np.ndarray]:
+    r"""The pair weights of a backward pair: :math:`B = \mathrm{sym}(DH)` and :math:`c`.
+
+    One port mode solve of `OptomechanicalPairWeightsRule`: the complex weight
+    :math:`H_t` of each section triangle and the moving-boundary correction's
+    node vector. :math:`D = \mathrm{diag}(1, 1, -1)` takes the pump
+    :math:`E_p` to its twin :math:`E_s = DE_p`, and the pair's weight is
+    :math:`B_t = \mathrm{sym}(D H_t)`: :math:`\mathrm{Re}\,H_{tt}` in the
+    plane, :math:`-H_{zz}`, and :math:`i\,\mathrm{Im}\,H_{tz}` across.
+    """
+    from gfem._engine.electro_optic import OptomechanicalPairWeightsRule
+    from gfem.options import SolverOptions
+    from gfem.problems import PortMode
+
+    made = OptomechanicalPairWeightsRule(
+        optical,
+        PortMode(port, setup.frequency, mode=mode),
+        SolverOptions(),
+        setup.faces,
+        tensor=True,
+    )
+    outputs, _ = made.forward(optical, keep=False)
+    h = np.asarray(outputs["weights"])
+    dh = h * np.array([1.0, 1.0, -1.0])[:, None]
+    b = (dh + np.swapaxes(dh, 1, 2)) / 2
+    return jnp.asarray(b), np.asarray(outputs["ez"])
+
+
+def _solve_optical(
+    model: Model,
+    setup: _Setup,
+    port: str,
+    mode: int | None,
+    *,
+    wavenumber: float,
+    caller: _Caller,
+) -> _Solved:
+    r"""The optical work, done once for every displacement.
+
+    Two port mode solves: one with its backward pass for the node gradient,
+    and, with a photoelastic element, one of the weights rule for its tensor
+    weights. The displacement's ``wavenumber`` is classified between them
+    (it needs :math:`\beta`, so the node gradient's solve comes first).
+    """
+    optical, grad, n_eff, n_g, found = _solve_gradient(model, setup, port, mode)
+    direction = _direction(
+        wavenumber, n_eff, setup.frequency, setup.sign, caller, port=port
+    )
+    if direction == "backward":
+        _check_nonmagnetic(model, setup, port, caller)
+        weights, ez = _solve_pair_weights(optical, setup, port, mode)
+        return _Solved(grad, n_eff, n_g, found, weights, direction, ez)
+    weights = _solve_weights(optical, setup, port, mode)
     return _Solved(grad, n_eff, n_g, found, weights)
 
 
@@ -537,6 +730,10 @@ def _parts(
         _check_walls(setup, w, inside, caller, port)
         g = jnp.asarray(solved.grad[setup.section.nodes[inside]][:, :2])
         mb = jnp.sum(g * w).astype(jnp.complex128)
+        if solved.direction == "backward":
+            # the normal field is tangential to the moving interface, so the
+            # mirrored twin sees the opposite sign of its energy: -2 c . W
+            mb = mb - 2 * jnp.sum(jnp.asarray(solved.ez[inside]) * w)
     if len(rows):
         mean_s = _mean_strain_of(
             displacement,
@@ -627,11 +824,34 @@ def optomechanical_overlap(
     nearby designs of a symmetric section: an objective reads the
     convention-free :math:`|\partial n_\mathrm{eff}/\partial\alpha|^2`.
 
+    The displacement's own axial wavenumber :math:`q` selects the pair, through
+    a window of :math:`\pm 2\tau\beta`, :math:`\tau = 10^{-2}`,
+    :math:`\beta = 2\pi f\,\mathrm{Re}\,n_\mathrm{eff}/c`: near
+    :math:`q = 0` the forward numbers above; near :math:`q = 2\beta s`
+    (:math:`s = \hat n\cdot\hat z` of the port) the backward pair overlap
+
+    .. math::
+
+        \delta n_{ps} = \sum_t B_t : \Delta\varepsilon_t
+        + \nabla_\mathrm{nodes} n_\mathrm{eff}\cdot\mathbf W
+        - 2\,\mathbf c\cdot\mathbf W,
+        \qquad B_t = \mathrm{sym}(D H_t),
+        \quad H_t = \frac{c\varepsilon_0}{4}\int_t E_p E_p^H\,dA
+
+    with :math:`\mathbf c` the node weights of
+    :math:`\tfrac{c\varepsilon_0}{4}\oint u_n\,\Delta\varepsilon_{zz}|E_z|^2\,dl`
+    (the normal field flips sign in the twin). A backward pair's parts are the
+    transition element between the pump and its counter-propagating twin, not a
+    change of :math:`n_\mathrm{eff}`. Any other :math:`q` raises. A backward
+    pair costs the same two port mode solves; a section with :math:`\mu_r \ne 1`
+    is refused.
+
     Args:
         model: The optical model: a 3D slab (`gfem.Mesh.from_gmsh_cross_section`)
             with a lossless section.
         displacement: A displacement ``FieldMap`` with the components
-            ``x``, ``y``, ``z`` (m) at :math:`q = 0`, on a native 2D mesh with
+            ``x``, ``y``, ``z`` (m) at :math:`q \approx 0` or :math:`q \approx
+            2\beta s`, on a native 2D mesh with
             the same global :math:`(x, y)` as the optical section (translate a
             mesh to align them).
         port: The wave port's name; its section lies in a plane
@@ -648,7 +868,8 @@ def optomechanical_overlap(
             a ``FieldMap``.
         ValueError: ``port`` is not a wave port of the model, a sequence of
             frequencies is given, ``displacement`` lacks a component, is not
-            on a 2D mesh or has an axial wavenumber other than 0, the port's
+            on a 2D mesh or has an axial wavenumber outside both phase-matching
+            windows (the message names the expected values), the port's
             section is not in a plane :math:`z = \mathrm{const}`, no node of
             the section is in the displacement's support and no element has a
             ``photoelastic_tensor``, an element with one lies outside the
@@ -656,9 +877,10 @@ def optomechanical_overlap(
             displacement moves a node of the section's outer edge across it
             (the message names the node).
         NotImplementedError: The model is on a 2D mesh (a 2D `gfem.PortMode` is
-            a line mode) or the section is lossy (a complex ``eps_r``, a
+            a line mode), the section is lossy (a complex ``eps_r``, a
             ``tan_delta`` or ``conductivity`` other than 0, or a permittivity
-            law).
+            law), or a backward pair meets a section element with
+            :math:`\mu_r \ne 1`.
         NonDifferentiableError: Under `jax.grad`, an input of the optical
             model other than the photoelastic tensors (its ``eps_r``,
             ``tan_delta``, ``mu_r``, ``conductivity`` or node coordinates):
@@ -667,7 +889,9 @@ def optomechanical_overlap(
     """
     setup = _setup(model, port, frequency, _OVERLAP, displacement)
     inside, points = _check_support(setup, displacement, _OVERLAP, port)
-    solved = _solve_optical(model, setup, port, mode)
+    solved = _solve_optical(
+        model, setup, port, mode, wavenumber=displacement.wavenumber, caller=_OVERLAP
+    )
     mb, pe = _parts(
         model,
         setup,
@@ -686,6 +910,8 @@ def optomechanical_overlap(
         n_g=solved.n_g,
         moving_boundary=mb,
         photoelastic=pe,
+        wavenumber=float(displacement.wavenumber),
+        direction=solved.direction,
     )
 
 
@@ -771,7 +997,110 @@ register_fields(
 )
 
 
-def _modes(mechanical: MechanicalEigenmodeResult, selection: Any) -> tuple[int, ...]:
+@dataclasses.dataclass(frozen=True, eq=False)
+class BrillouinGain:
+    r"""The peak Brillouin gain of mechanical modes on a wave port's mode.
+
+    For a mechanical mode of complex angular frequency :math:`\Omega` that
+    stores 1 J/m, with a pump and a Stokes wave of 1 W each at the optical
+    angular frequency :math:`\omega = 2\pi f`, ``total`` is the gain at the
+    centre of the Lorentzian line
+
+    .. math::
+
+        G_B = \frac{Q_m\,\omega\,|\delta n_{ps}|^2}{c^2},
+        \qquad Q_m = \frac{\mathrm{Re}\,\Omega}{2\,\mathrm{Im}\,\Omega}
+
+    in 1/(W m): the Stokes wave grows as :math:`\pm\mathrm{d}P_s/\mathrm{d}z =
+    G_B P_p P_s` (the sign of the direction it travels), the pump loses what it
+    gives. :math:`\delta n_{ps}` is the pair overlap of
+    `gfem.optomechanical_overlap` (the change of the effective index per unit
+    amplitude of the displacement for a forward pair, the transition element
+    between the pump and its counter-propagating twin for a backward pair) and
+    :math:`c` is the speed of light of `scipy.constants`. The forward gain
+    equals :math:`4Q_m\,|\tilde g_0|^2/(\hbar\,\omega\,v_g^2\,\mathrm{Re}\,
+    \Omega)` of `gfem.optomechanical_coupling`, with :math:`v_g = c/n_g`.
+
+    ``moving_boundary`` and ``photoelastic`` are the gains of each part alone
+    (the "radiation pressure only" and "electrostriction only" bars of a
+    published breakdown). ``total`` is not their sum: the amplitudes
+    :math:`\delta n^\mathrm{MB}` and :math:`\delta n^\mathrm{PE}` add with their
+    signs before they are squared (destructively for the backward pair of a
+    silicon wire). Gains are real and do not depend on the mode's phase
+    convention.
+
+    The linewidth of the Lorentzian is :math:`2\,\mathrm{Im}\,\Omega` rad/s
+    (full width at half maximum). The mode's :math:`Q_m` comes from the
+    mechanical materials' ``mechanical_quality_factor``; a measured
+    :math:`Q'` rescales the gain as :math:`G_B Q'/Q_m`, exact to
+    :math:`O(Q^{-2})`.
+
+    Attributes:
+        overlap: The `OptomechanicalOverlap` of each mode, arrays of shape
+            ``(n,)`` over the modes: ``moving_boundary`` and ``photoelastic``
+            are the parts of :math:`\delta n_{ps}` and ``total`` is
+            :math:`\delta n_{ps}`, complex and dimensionless; ``n_eff`` and
+            ``n_g`` are scalars. Its ``direction`` and ``wavenumber`` are the
+            pair's.
+        omega_m: The mechanical modes' complex angular frequencies, rad/s,
+            ``(n,)``.
+        modes: The numbers of the mechanical modes (``MechanicalEigenmodeResult``
+            order, 0 = nearest its target), in the order of the arrays.
+    """
+
+    overlap: OptomechanicalOverlap
+    omega_m: jax.Array
+    modes: tuple[int, ...]
+
+    @property
+    def quality_factor(self) -> jax.Array:
+        r""":math:`Q_m = \mathrm{Re}\,\Omega/(2\,\mathrm{Im}\,\Omega)`, ``(n,)``."""
+        return jnp.real(self.omega_m) / (2 * jnp.imag(self.omega_m))
+
+    def _gain(self, delta_n: jax.Array) -> jax.Array:
+        omega = 2 * jnp.pi * self.overlap.frequency
+        return (
+            self.quality_factor * omega * jnp.abs(delta_n) ** 2 / scipy.constants.c**2
+        )
+
+    @property
+    def total(self) -> jax.Array:
+        r""":math:`G_B = Q_m\,\omega\,|\delta n_{ps}|^2/c^2`, 1/(W m), ``(n,)``."""
+        return self._gain(self.overlap.total)
+
+    @property
+    def moving_boundary(self) -> jax.Array:
+        r"""The gain of the moving-boundary part alone, 1/(W m), ``(n,)``."""
+        return self._gain(self.overlap.moving_boundary)
+
+    @property
+    def photoelastic(self) -> jax.Array:
+        r"""The gain of the photoelastic part alone, 1/(W m), ``(n,)``."""
+        return self._gain(self.overlap.photoelastic)
+
+    def __repr__(self) -> str:
+        o = self.overlap
+        head = (
+            f"BrillouinGain(port {o.port!r}, {o.direction} q {o.wavenumber:.6g} "
+            f"rad/m, modes {self.modes}"
+        )
+        try:
+            g = np.asarray(self.total)
+            f = np.real(np.asarray(self.omega_m)) / (2 * np.pi)
+        except (TypeError, jax.errors.TracerArrayConversionError):
+            return f"{head})"
+        rows = ", ".join(f"{a:.6g} Hz: {b:.4g}" for a, b in zip(f, g, strict=True))
+        return f"{head}, [{rows}] 1/(W m))"
+
+
+register_fields(BrillouinGain, ("overlap", "omega_m"))
+
+
+def _modes(
+    mechanical: MechanicalEigenmodeResult,
+    selection: Any,
+    caller: _Caller = _COUPLING,
+) -> tuple[int, ...]:
     """The non-negative mode numbers ``selection`` names, ``None`` for every mode."""
     n = mechanical.n_modes
     if selection is None:
@@ -781,17 +1110,17 @@ def _modes(mechanical: MechanicalEigenmodeResult, selection: Any) -> tuple[int, 
     for k in [selection] if single else selection:
         if isinstance(k, bool | np.bool_) or not isinstance(k, int | np.integer):
             raise TypeError(
-                f"{_COUPLING.owner}: mechanical_modes takes an int or a sequence "
+                f"{caller.owner}: mechanical_modes takes an int or a sequence "
                 f"of ints, got {k!r}."
             )
         if not -n <= int(k) < n:
             raise IndexError(
-                f"{_COUPLING.owner}: Mode {int(k)} does not exist: the result has "
+                f"{caller.owner}: Mode {int(k)} does not exist: the result has "
                 f"{n} mode(s), numbered from 0."
             )
         modes.append(int(k) % n)
     if not modes:
-        raise ValueError(f"{_COUPLING.owner}: mechanical_modes is empty.")
+        raise ValueError(f"{caller.owner}: mechanical_modes is empty.")
     return tuple(modes)
 
 
@@ -881,13 +1210,14 @@ def optomechanical_coupling(
         raise ValueError(
             f"{_COUPLING.owner}: the mechanical modes have the axial wavenumber "
             f"q = {mechanical.wavenumber:g} rad/m; only q = 0 is read (a mode "
-            "with q != 0 averages to zero against an optical mode with itself)."
+            "with q != 0 averages to zero against an optical mode with itself); "
+            "use gfem.brillouin_gain for the gain at q != 0."
         )
     modes = _modes(mechanical, mechanical_modes)
     first = mechanical.displacement(modes[0])
     setup = _setup(model, port, frequency, _COUPLING, first)
     inside, points = _check_support(setup, first, _COUPLING, port)
-    solved = _solve_optical(model, setup, port, mode)
+    solved = _solve_optical(model, setup, port, mode, wavenumber=0.0, caller=_COUPLING)
     parts = [
         _parts(
             model,
@@ -924,5 +1254,169 @@ def optomechanical_coupling(
         omega_m=omega_m,
         moving_boundary=scale * mb,
         photoelastic=scale * pe,
+        modes=modes,
+    )
+
+
+def _refuse_lossless(
+    mechanical: MechanicalEigenmodeResult, modes: tuple[int, ...]
+) -> None:
+    """Raise for a requested mode with no loss: its peak gain is unbounded."""
+    # read as numbers: the loss is a constant of the check, the gradient flows
+    # through the omega the gain reads
+    im = np.asarray(jax.lax.stop_gradient(jnp.imag(mechanical.omega)))
+    for m in modes:
+        if not im[m] > 0:
+            raise ValueError(
+                f"{_GAIN.owner}: mechanical mode {m} has Im(Omega) = {im[m]:g} rad/s "
+                "<= 0: a lossless mode has an unbounded peak gain "
+                "(Q_m = Re Omega / (2 Im Omega) is infinite). Give the mechanical "
+                "material a mechanical_quality_factor."
+            )
+
+
+def brillouin_gain(
+    model: Model,
+    mechanical: MechanicalEigenmodeResult,
+    *,
+    port: str,
+    frequency: float,
+    mode: int | None = None,
+    mechanical_modes: int | Sequence[int] | None = None,
+) -> BrillouinGain:
+    r"""The peak Brillouin gain of mechanical modes on a wave port's mode.
+
+    For each requested mode :math:`u` of a `gfem.MechanicalEigenmode` solve of
+    axial wavenumber :math:`q` (stored energy 1 J/m) the pair overlap
+    :math:`\delta n_{ps}` of `gfem.optomechanical_overlap` gives the intramodal
+    gain at the centre of the line,
+
+    .. math::
+
+        G_B = \frac{Q_m\,\omega\,|\delta n_{ps}|^2}{c^2}\ \text{in}\ 1/(\mathrm{W\,m}),
+        \qquad Q_m = \frac{\mathrm{Re}\,\Omega}{2\,\mathrm{Im}\,\Omega},
+
+    for a pump and a Stokes wave of 1 W, :math:`\omega = 2\pi f` the pump's
+    angular frequency and :math:`c` from `scipy.constants`; the Stokes power
+    changes as :math:`\pm\mathrm{d}P_s/\mathrm{d}z = G_BP_pP_s`.
+
+    The direction is read from ``mechanical.wavenumber``: :math:`q \approx 0`
+    is the forward pair (the pump's own mode, the phonon standing along the
+    guide), :math:`q \approx 2\beta` along the pump (:math:`\beta = 2\pi f\,
+    \mathrm{Re}\,n_\mathrm{eff}/c`, plus for a port whose pump travels along
+    :math:`+z`) the backward pair, within :math:`\pm 2\cdot 10^{-2}\beta`;
+    every other :math:`q` raises. The Stokes shift of :math:`q`
+    (:math:`\Omega n_g/c` of :math:`2\beta`, below :math:`10^{-3}` of it) is
+    dropped: perfect phase matching is assumed at the given :math:`q`. The pair
+    is the mode with itself (intramodal): a pump and a Stokes wave in two
+    different optical modes are not supported. The forward gain equals
+    :math:`4Q_m|\tilde g_0|^2/(\hbar\,\omega\,v_g^2\,\mathrm{Re}\,\Omega)` of
+    `gfem.optomechanical_coupling`.
+
+    The canonical script, with the phase-matched :math:`q` read from the
+    optical solve (a port whose inward normal is :math:`+z`, such as
+    ``"front"``; the sign flips for the opposite port):
+
+    .. code-block:: python
+
+        pm = gfem.solve(optical, gfem.PortMode("p", frequency))
+        q = 2 * float(pm.gamma[0].imag)  # rad/m, along the pump
+        modes = gfem.solve(
+            mechanical,
+            gfem.MechanicalEigenmode(18e9, n_modes=24, wavenumber=q),
+            options=gfem.SolverOptions(order=3),
+        )
+        gain = gfem.brillouin_gain(optical, modes, port="p", frequency=frequency)
+        k = int(np.argmax(gain.total))
+        print(gain.overlap.direction, modes.frequency[k], gain.total[k])
+
+    Every requested mode is returned (default all of them), including the modes
+    of a symmetry class that does not couple, whose gain is at the level of
+    the mesh's asymmetry; select with ``mechanical_modes``. The optical mode,
+    its node gradient and its weights are solved once for all of them.
+
+    `jax.grad` reaches every input of the mechanical solve (stiffness, density,
+    ``mechanical_quality_factor``, piezoelectric tensor, permittivity, node
+    coordinates of the mechanical mesh) through :math:`\mathrm{Re}\,\Omega`,
+    :math:`\mathrm{Im}\,\Omega` and the mode field, and the
+    ``photoelastic_tensor``. The optical solve (:math:`n_\mathrm{eff}`,
+    :math:`n_g`, the node gradient and the weights) and :math:`q` are held
+    constant, so the optical model's other inputs are refused, and so is
+    `jax.jit`. A clustered (degenerate) mode is refused by the mechanical
+    solve's backward pass.
+
+    Args:
+        model: The optical model, as for `optomechanical_overlap`.
+        mechanical: A `gfem.MechanicalEigenmodeResult` of a lossy material at
+            :math:`q \approx 0` or :math:`q \approx 2\beta` along the pump, on a
+            native 2D mesh with the same global :math:`(x, y)` (m) as the
+            optical section.
+        port: The wave port's name.
+        frequency: One optical frequency, Hz.
+        mode: Which optical mode (1 = the most propagating), or ``None`` for
+            the wave port's own.
+        mechanical_modes: Which mechanical modes (numbers in ``mechanical``,
+            negative counting from the last): an int, a sequence, or ``None``
+            for every mode.
+
+    Returns:
+        The gain, its two parts and the overlap, per requested mode.
+
+    Raises:
+        TypeError: ``mechanical`` is not a `gfem.MechanicalEigenmodeResult`, or
+            ``model`` is not a `gfem.Model`.
+        IndexError: A number of ``mechanical_modes`` is not a mode of ``mechanical``.
+        ValueError: A requested mode has :math:`\mathrm{Im}\,\Omega \le 0` (the
+            message names the mode and ``mechanical_quality_factor``),
+            ``mechanical.wavenumber`` is in neither phase-matching window (the
+            message holds the expected values, with sign; a counter-propagating
+            phonon and an intermodal pair are named), ``mechanical_modes`` is
+            empty, and every ``ValueError`` of `optomechanical_overlap`.
+        NotImplementedError: A backward pair meets a section element with
+            :math:`\mu_r \ne 1`, and as `optomechanical_overlap`.
+        NonDifferentiableError: As `optomechanical_overlap`.
+    """
+    from gfem.results import MechanicalEigenmodeResult
+
+    _refuse_jit(_GAIN)
+    if not isinstance(mechanical, MechanicalEigenmodeResult):
+        raise TypeError(
+            f"{_GAIN.owner} takes a gfem.MechanicalEigenmodeResult (the solve of a "
+            f"gfem.MechanicalEigenmode), got {type(mechanical).__name__}."
+        )
+    modes = _modes(mechanical, mechanical_modes, _GAIN)
+    _refuse_lossless(mechanical, modes)
+    first = mechanical.displacement(modes[0])
+    setup = _setup(model, port, frequency, _GAIN, first)
+    inside, points = _check_support(setup, first, _GAIN, port)
+    solved = _solve_optical(
+        model, setup, port, mode, wavenumber=mechanical.wavenumber, caller=_GAIN
+    )
+    parts = [
+        _parts(
+            model,
+            setup,
+            solved,
+            mechanical.displacement(m),
+            inside=inside,
+            points=points,
+            caller=_GAIN,
+            port=port,
+        )
+        for m in modes
+    ]
+    return BrillouinGain(
+        overlap=OptomechanicalOverlap(
+            port=port,
+            mode=solved.mode,
+            frequency=setup.frequency,
+            n_eff=solved.n_eff,
+            n_g=solved.n_g,
+            moving_boundary=jnp.stack([a for a, _ in parts]),
+            photoelastic=jnp.stack([b for _, b in parts]),
+            wavenumber=float(mechanical.wavenumber),
+            direction=solved.direction,
+        ),
+        omega_m=jnp.asarray(mechanical.omega)[jnp.asarray(modes)],
         modes=modes,
     )

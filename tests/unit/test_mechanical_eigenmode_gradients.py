@@ -30,6 +30,7 @@ import jax
 import jax.numpy as jnp
 import mechanical_cases as mc
 import numpy as np
+import optomechanics_cases as oc
 import piezo_cases as pc
 import pytest
 
@@ -350,6 +351,41 @@ def test_a_left_vector_above_the_tolerance_raises_by_mode(rectangle, monkeypatch
     problem = gfem.MechanicalEigenmode(1.2e9, wavenumber=Q_RECT)
     with pytest.raises(gfem.EigenmodeConvergenceError, match="left vector of mode 0"):
         gfem.solve(model, problem)
+
+
+def test_a_left_vector_is_iterated_to_its_round_off_floor(tmp_path, monkeypatch):
+    # The 2 x 0.6 um film at q = 2.68e7 rad/m: modes near 30 GHz about 1 % apart,
+    # with a quality factor that varies by element (a uniform one keeps conj(x)
+    # the exact left vector). One inverse-iteration step from conj(x) meets the
+    # 1e-10 tolerance (measured backward errors 1.4e-12 to 3.8e-12) yet keeps a
+    # part of the neighbours' left vectors that a gradient reads (an eigenvector
+    # gradient was 5e-6 off); the next step lowers the error to the round-off
+    # floor, about 1e-18. Returned vectors sit on that floor: one more step
+    # lowers their error by under a factor of 100 (measured at most 1.1; a
+    # vector stopped after one step fails at 8e5).
+    from gfem._engine import mechanical_eigen
+
+    system = mechanical_eigen.MechanicalSystem
+    left = system._left
+    gains = []
+
+    def spy(self, lam, *args):
+        y = left(self, lam, *args)
+        handle = args[2]  # after x and the tolerance
+        step = handle.solve(self._embed(self.mass.T @ y), transpose=True)[self.index]
+        error = self._backward_error(lam, y, left=True)
+        gains.append(error / self._backward_error(lam, step, left=True))
+        return y
+
+    monkeypatch.setattr(system, "_left", spy)
+    mesh = oc.film_rectangle(tmp_path / "film.msh")
+    quality = QUALITY + 20.0 * np.sin(np.arange(len(mesh.elements("film"))))
+    gfem.solve(
+        _edited(oc.film_model(mesh), ["film"], mechanical_quality_factor=quality),
+        gfem.MechanicalEigenmode(30e9, n_modes=4, wavenumber=2.677e7),
+    )
+    assert len(gains) == 4
+    assert max(gains) < 100, gains
 
 
 # --- the strain of a mode ---------------------------------------------------------

@@ -24,6 +24,7 @@ import jax.numpy as jnp
 import numpy as np
 import optomechanics_cases as oc
 import pytest
+import scipy.constants
 
 import gfem
 from gfem._field import FieldMap
@@ -532,10 +533,16 @@ def test_a_displacement_without_a_component_or_on_a_3d_mesh_raises(rough, dilati
         _overlap(model, solid)
 
 
-def test_an_axial_wavenumber_other_than_zero_raises(rough, dilation):
+def test_an_axial_wavenumber_between_the_windows_raises(rough, dilation):
+    """q = beta is neither a forward (q ~ 0) nor a backward (q ~ 2 beta) pair."""
     model = oc.model(rough, _film())
-    guided = FieldMap(dict(dilation), label="component", wavenumber=1e5)
-    with pytest.raises(ValueError, match=r"optomechanical_overlap.*q = 100000"):
+    beta = (
+        2 * np.pi * FREQUENCY * oc.slab_n_eff((EPS,) * 3, D, "TE") / scipy.constants.c
+    )
+    guided = FieldMap(dict(dilation), label="component", wavenumber=beta)
+    with pytest.raises(
+        ValueError, match=r"intermodal.*expected q = 0 \(forward\) or q = "
+    ):
         _overlap(model, guided)
 
 
