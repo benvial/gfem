@@ -12,6 +12,9 @@ result reloaded with `gfem.load_result`.
 - `characteristic_impedance`: the complex impedance of a port mode from a
   voltage path, a current path or both (power-voltage, power-current or
   voltage-current).
+- `junction_coupling`: the complex power coupling between two
+  port modes of one section, the loss of a butt junction between a straight
+  and a bent guide.
 - `power_flow`: the net power a driven field carries out of a set of
   elements, exact for the solved field (a flux of point-sampled
   ``E x H*`` is not, see the measurements recipe).
@@ -116,6 +119,7 @@ __all__ = [
     "heat_flow",
     "heat_flow_per_length",
     "interface_participation",
+    "junction_coupling",
     "multipoles",
     "optical_force",
     "power_flow",
@@ -598,6 +602,83 @@ def _media(
         speed2 = jnp.where(inside, 1.0 / high, speed2)
     vacuum = speed2 >= _VACUUM**2
     return eps, vacuum
+
+
+# --- junction coupling -------------------------------------------------------------
+
+
+def junction_coupling(model: Model, a: PortModeResult, b: PortModeResult) -> jax.Array:
+    r"""Power coupling :math:`\tau^2` between two port modes of one section.
+
+    A butt junction between two guides that share a cross-section plane (a
+    straight guide and a bent one, two bends of different radius or side,
+    two straight modes) launches the mode ``b`` from the mode ``a`` with the
+    amplitude :math:`\tau`,
+
+    .. math::
+
+        \tau^2 = \frac{\big(\tfrac12(\langle a, b\rangle +
+        \langle b, a\rangle)\big)^2}{\langle a, a\rangle\langle b, b\rangle},
+        \qquad
+        \langle a, b\rangle = \tfrac12 \int (\mathbf{E}_a \times
+        \mathbf{H}_b)\cdot\mathbf{n}\, \mathrm{d}A,
+
+    over the whole section, a perfectly matched layer included, with the
+    reciprocity pairing of the port mode problem: each mode's :math:`\mathbf{H}`
+    comes from its own :math:`\mu^{-1}` (the bend's metric is in it), and
+    the pairing is unconjugated on purpose, as the modes of a leaky guide
+    are not orthogonal under a conjugated one. The two modes are normalized
+    out, so :math:`\tau^2` does not depend on their phase or power; it is 1
+    for a mode with itself, symmetric in ``a`` and ``b``, and 0 between two
+    orthogonal straight modes. The junction loss is
+
+    .. math:: L = -10 \log_{10} |\tau^2| \;\mathrm{dB},
+
+    which counts the power the junction leaves out of ``b`` into the other
+    modes and the radiation; the reflection at the junction is neglected.
+    For a lossless guide the loss is the overlap of the two modes. Returns
+    the raw complex :math:`\tau^2`, not the loss.
+
+    Under `jax.grad` it differentiates with respect to the bend radius of
+    either mode, and to the permittivity, laws and `gfem.MaterialField`
+    values through the solves that made the modes. The inverse permeability
+    of a mode's section enters the pairing directly: a traced ``mu_r`` (or
+    principal axis) raises `gfem.NonDifferentiableError`, as the node
+    coordinates do.
+
+    Example:
+        The loss of the junction between a straight guide and the same guide
+        bent with radius ``R``, in dB::
+
+            problem = gfem.PortMode("p1", (f,), bend=gfem.Bend(R, outward="+x", at=at))
+            straight = gfem.solve(model, gfem.PortMode("p1", (f,)))
+            bent = gfem.solve(model, problem)
+            loss = -10 * jnp.log10(
+                jnp.abs(gfem.junction_coupling(model, straight, bent))
+            )
+
+    Args:
+        model: The model both modes were solved on.
+        a: A port mode result (straight or bent).
+        b: A port mode result of the same port, element order, section and
+            frequency grid.
+
+    Returns:
+        ``(n_freq,)`` complex, dimensionless.
+
+    Raises:
+        TypeError: An argument is not a model or a `gfem.PortModeResult`
+            with an electric field.
+        ValueError: The modes are of different ports, element orders,
+            sections or frequency grids, or ``model`` is not the one they
+            were solved on.
+        NotImplementedError: A mode of a line port.
+        NonDifferentiableError: The node coordinates, or a ``mu_r`` or
+            principal axis of the model, are traced.
+    """
+    from gfem._junction import junction_tau2
+
+    return junction_tau2(model, a, b)
 
 
 # --- characteristic impedance ------------------------------------------------------
