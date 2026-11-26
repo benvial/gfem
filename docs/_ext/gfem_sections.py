@@ -103,14 +103,20 @@ def _read(docs: Path, doc: str) -> tuple[str, str]:
     """(H1, first paragraph) of a document: Markdown or a notebook."""
     path = docs / f"{doc}.md"
     if path.is_file():
-        return _heading_and_line(path.read_text(encoding="utf-8"))
-    path = docs / f"{doc}.ipynb"
-    if not path.is_file():
-        raise SectionsError(f"{doc}: no source file")
-    for cell in json.loads(path.read_text(encoding="utf-8"))["cells"]:
-        if cell["cell_type"] == "markdown":
-            return _heading_and_line("".join(cell["source"]))
-    raise SectionsError(f"{doc}: no markdown cell")
+        found = _heading_and_line(path.read_text(encoding="utf-8"))
+    else:
+        path = docs / f"{doc}.ipynb"
+        if not path.is_file():
+            raise SectionsError(f"{doc}: no source file")
+        for cell in json.loads(path.read_text(encoding="utf-8"))["cells"]:
+            if cell["cell_type"] == "markdown":
+                found = _heading_and_line("".join(cell["source"]))
+                break
+        else:
+            raise SectionsError(f"{doc}: no markdown cell")
+    if not found[0]:
+        raise SectionsError(f"{doc}: no first-level heading for the card name")
+    return found
 
 
 def sections(docs: Path = DOCS, derived: dict | None = None) -> list[dict]:
@@ -166,9 +172,19 @@ def sections(docs: Path = DOCS, derived: dict | None = None) -> list[dict]:
             raise SectionsError(f"{doc}: unknown gradient rows {unknown}")
         tutorials = [d for d in entries[1:] if d.startswith("tutorials/")]
         recipes = [d for d in entries[1:] if d.startswith("recipes/")]
+        other = [d for d in entries[1:] if d not in tutorials and d not in recipes]
+        if other:
+            raise SectionsError(
+                f"{caption}: entries that are neither tutorials/ nor recipes/ "
+                f"would vanish from the cards: {other}"
+            )
         cards = []
         for tutorial in tutorials:
             title, first = _read(docs, tutorial)
+            if not first:
+                raise SectionsError(
+                    f"{tutorial}: no first paragraph after the H1 for the card line"
+                )
             cards.append(
                 {
                     "doc": tutorial,

@@ -7,7 +7,7 @@ LOBE = "tangential 0"  # the dipole 30 nm from the surface
 
 
 def card(ns):
-    """Draw Re E_x of the silicon case on the y = 0 cut, from the kept fields."""
+    """Draw the real x field of the silicon case on the middle y cut."""
     import pyvista as pv
     from gfem_stills import save_still
 

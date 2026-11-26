@@ -8,7 +8,7 @@ DRAWN_DISPLACEMENT = 0.5  # um: the largest warped displacement, so the wave sho
 
 
 def card(ns):
-    """Extrude the section along the fingers, warped by Re u at the wave frequency."""
+    """Extrude the section along the fingers, warped by the real displacement."""
     import pyvista as pv
     from gfem_stills import save_still
 
