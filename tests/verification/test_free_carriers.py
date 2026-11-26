@@ -136,9 +136,11 @@ def test_the_filled_wr90_overlap_and_generation(guide_model):
 
 def test_generation_times_photon_energy_and_area_is_the_kerr_loss(guide_model):
     # same quadrature and operations up to the order of the sums: round-off
-    # of a sum of ~1e4 terms, 1e-12 relative
+    # of a sum of ~1e4 terms, 1e-12 relative. The pinned value is the closed
+    # form theta hbar omega A: the field's mesh error against it is 6.7e-6 at
+    # order 2 and 1.2e-7 measured at order 3, under the 1e-6 gate
     mode = gfem.solve(
-        guide_model, gfem.PortMode("p1", [F_GUIDE]), options=gfem.SolverOptions(order=2)
+        guide_model, gfem.PortMode("p1", [F_GUIDE]), options=gfem.SolverOptions(order=3)
     )
     fc = gfem.free_carriers(guide_model, mode)
     im = float(np.imag(gfem.kerr_nonlinearity(guide_model, mode).gamma_nl[0]))

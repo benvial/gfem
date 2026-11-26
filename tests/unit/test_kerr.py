@@ -1067,14 +1067,15 @@ def _ln(n_y, axes=None):
 @pytest.mark.parametrize("n_y", [NO, NE], ids=["ordinary", "extraordinary"])
 def test_a_birefringent_filled_te10_follows_its_closed_form(guide_mesh, n_y):
     model = guide_model(guide_mesh, _ln(n_y))
-    mode = mode_of(model, [F])
+    mode = mode_of(model, [F], order=gfem.SolverOptions(order=3))
     got = gfem.kerr_nonlinearity(model, mode).gamma_nl[0]
     k0 = k0_of(F)
     n_eff = float(mode.gamma.imag[0] / k0)
     reference = 1.5 * k0 * LN_N2 / (A * B) * (n_y / n_eff) ** 2
-    # the field's own mesh error: 7e-6 measured at order 2 on the isotropic guide
-    # (the x component of the field adds a share of the same size); gate 1e-5
-    assert got.real == pytest.approx(reference, rel=1e-5, abs=0)
+    # the field's own mesh error against the continuum form: 2.8e-6 and 1.1e-5
+    # at order 2, 1.5e-7 and 1.2e-7 measured at order 3 (ordinary, extraordinary);
+    # gate 1e-6 at order 3
+    assert got.real == pytest.approx(reference, rel=1e-6, abs=0)
     assert got.imag == 0.0
 
 
