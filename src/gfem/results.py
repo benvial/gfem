@@ -633,6 +633,9 @@ class PortModeField:
         self._vector: jax.Array | None = None
         self._locate: Callable[..., ModeSpace] | None = None
         self._port = space.section.port.name
+        # whether the solve's node coordinates were traced (a concrete field's
+        # were not): an overlap needs the model's to be traced alike
+        self._traced_nodes = False
         # a space that does not name its field is a planar port's: E in V/m
         self.quantity = getattr(space, "quantity", "E")
         self.unit = getattr(space, "unit", "V/m")
@@ -646,6 +649,7 @@ class PortModeField:
         *,
         quantity: str = "E",
         unit: str = "V/m",
+        traced_nodes: bool = False,
     ) -> PortModeField:
         """Internal: the field as a JAX array of its full DOF vector, per frequency.
 
@@ -653,7 +657,9 @@ class PortModeField:
         n_dof)``, linear in the mode's normalized coordinates); ``locate()``
         gives the port's discrete space, built from the geometry alone (at the
         values of traced node coordinates), and ``locate(point_read=True)``
-        raises when the node coordinates are traced.
+        raises when the node coordinates are traced. ``traced_nodes`` records
+        that the solve's node coordinates were traced: the vector then carries
+        their derivative.
         """
         field = object.__new__(cls)
         field._parts = None
@@ -661,6 +667,7 @@ class PortModeField:
         field._vector = vector
         field._locate = locate
         field._port = port
+        field._traced_nodes = traced_nodes
         field.quantity, field.unit = quantity, unit
         return field
 
@@ -685,6 +692,7 @@ class PortModeField:
         field._vector = None
         field._locate = None
         field._port = port
+        field._traced_nodes = False
         field.quantity, field.unit = quantity, unit
         return field
 

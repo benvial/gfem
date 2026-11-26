@@ -497,7 +497,8 @@ def three_wave_coupling(
         NotImplementedError: An Hz line port.
         TypeError: An entry is not a `gfem.PortModeResult`, or has no electric
             field.
-        NonDifferentiableError: The node coordinates are traced by `jax.grad`.
+        NonDifferentiableError: The node coordinates of ``model``, or of a
+            mode's solve, are traced by `jax.grad`.
     """
     waves = _waves(model, modes, "gfem.three_wave_coupling", _chi2_materials)
     e = _three_components(waves.field())
@@ -557,7 +558,8 @@ def second_harmonic(
         NotImplementedError: An Hz line port.
         TypeError: An entry is not a `gfem.PortModeResult`, or has no electric
             field.
-        NonDifferentiableError: The node coordinates are traced by `jax.grad`.
+        NonDifferentiableError: The node coordinates of ``model``, or of a
+            mode's solve, are traced by `jax.grad`.
     """
     owner = "gfem.second_harmonic"
     for name, r in (("pump", pump), ("harmonic", harmonic)):

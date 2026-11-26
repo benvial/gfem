@@ -669,6 +669,7 @@ class PortModeRule:
                 jnp.asarray(outputs["field"]),
                 quantity=quantity,
                 unit=unit,
+                traced_nodes=is_traced(self._model.mesh.nodes),
             )
         hz = polarization == "Hz"
         return PortModeResult(

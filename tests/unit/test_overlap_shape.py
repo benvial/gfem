@@ -130,7 +130,8 @@ def test_free_carriers_scale_with_the_face(guide):
     v[used] = (local - local.mean(axis=0)) @ frame
 
     def area(nodes):
-        return gfem.free_carriers(make(nodes), mode).area
+        model = make(nodes)
+        return gfem.free_carriers(model, _mode(model, [F_WR90])).area
 
     # the area of the one region is the face's: it grows as s^2, so d ln A/ds = 2
     # (round-off of a few sums of 1e-16, gate 1e-12)
@@ -292,3 +293,40 @@ def test_the_overlaps_refuse_staged_node_coordinates(guide):
 
     with pytest.raises(TypeError, match=r"jax\.jit"):
         staged(nodes0)
+
+
+def test_a_mode_solved_outside_the_gradient_is_refused(guide):
+    # the mode's field holds no node derivative: the overlap would get only the
+    # motion of its quadrature points
+    mesh, make = guide
+    nodes0 = jnp.asarray(mesh.nodes)
+    mode = _mode(make(nodes0), [F_WR90])
+    figures = {
+        "kerr_nonlinearity": lambda m: gfem.kerr_nonlinearity(m, mode).gamma_nl[0],
+        "free_carriers": lambda m: gfem.free_carriers(m, mode).overlap[0],
+    }
+    for owner, figure in figures.items():
+        with pytest.raises(gfem.NonDifferentiableError, match=rf"{owner}.*constants"):
+            jax.grad(lambda n, f=figure: jnp.real(f(make(n))))(nodes0)
+
+
+def test_a_traced_mode_on_a_constant_model_is_refused(guide):
+    # the mode moves with the nodes, the constant model's section does not
+    mesh, make = guide
+    nodes0 = jnp.asarray(mesh.nodes)
+    base = make(nodes0)
+    figures = {
+        "kerr_nonlinearity": lambda m: gfem.kerr_nonlinearity(base, m).gamma_nl[0],
+        "free_carriers": lambda m: gfem.free_carriers(base, m).overlap[0],
+        "three_wave_coupling": lambda m: gfem.three_wave_coupling(base, [m, m]).kappa[
+            0, 0, 0
+        ],
+        "spdc": lambda m: gfem.spdc(base, m, m, m).coupling,
+    }
+    for owner, figure in figures.items():
+
+        def objective(nodes, f=figure):
+            return jnp.real(f(_mode(make(nodes), [F_WR90])))
+
+        with pytest.raises(gfem.NonDifferentiableError, match=rf"gfem\.{owner}"):
+            jax.grad(objective)(nodes0)

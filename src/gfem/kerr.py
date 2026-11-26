@@ -647,7 +647,8 @@ def kerr_nonlinearity(model: Model, mode: PortModeResult) -> KerrNonlinearity:
         TypeError: ``mode`` is not a `gfem.PortModeResult`, or has no electric
             field.
         NonDifferentiableError: The node coordinates are traced by `jax.grad`
-            on a line port of a 2D model.
+            on a line port of a 2D model; those of ``model`` are traced and
+            those of a mode's solve are not, or the reverse.
         TypeError: The node coordinates are traced by `jax.jit`.
     """
     owner = "gfem.kerr_nonlinearity"
@@ -802,7 +803,8 @@ def free_carriers(
         TypeError: ``mode`` is not a `gfem.PortModeResult`, or has no electric
             field; ``regions`` is not names.
         NonDifferentiableError: The node coordinates are traced by `jax.grad`
-            on a line port of a 2D model.
+            on a line port of a 2D model; those of ``model`` are traced and
+            those of a mode's solve are not, or the reverse.
         TypeError: The node coordinates are traced by `jax.jit`.
     """
     owner = "gfem.free_carriers"
@@ -896,7 +898,8 @@ def kerr_coupling(
         TypeError: An entry is not a `gfem.PortModeResult`, or has no electric
             field.
         NonDifferentiableError: The node coordinates are traced by `jax.grad`
-            on a line port of a 2D model.
+            on a line port of a 2D model; those of ``model`` are traced and
+            those of a mode's solve are not, or the reverse.
         TypeError: The node coordinates are traced by `jax.jit`.
     """
     waves = _waves(

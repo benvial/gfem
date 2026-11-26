@@ -35,6 +35,17 @@ _NODES = (
     "not available in this version. Differentiate with respect to the materials, "
     "or wrap the node coordinates in jax.lax.stop_gradient."
 )
+_SOLVED_CONSTANT = (
+    "{owner} differentiates the model's node coordinates, but the mode was solved "
+    "where they were constants (outside the differentiated function, or on another "
+    "model): its field carries no node derivative and the gradient would miss it. "
+    "Solve the mode with gfem.solve on the model passed here, inside the function."
+)
+_SOLVED_TRACED = (
+    "{owner}: the mode was solved with node coordinates traced by jax.grad, but "
+    "the model passed here has constant ones: the overlap would miss the motion of "
+    "its section. Pass the model the mode was solved on."
+)
 
 
 def _columns(space: Any, raised: int = 0) -> _Columns:
@@ -146,7 +157,8 @@ def _waves(
         ValueError: The results are of different ports or discretizations, or
             the model is not the one they were solved on.
         NonDifferentiableError: The node coordinates are traced (without
-            ``shape``, or on a line port).
+            ``shape``, or on a line port), here or in a mode's solve; or the
+            model's are traced and a mode's solve's were not, or the reverse.
         TypeError: With ``shape``, the node coordinates are traced by
             `jax.jit`.
     """
@@ -177,11 +189,8 @@ def _waves(
                 "field (a driven result's port modes do not): solve "
                 "gfem.solve(model, gfem.PortMode(...)) and pass that result."
             )
-    host = model
-    if is_traced(model.mesh.nodes):
-        if not shape:
-            raise NonDifferentiableError(_NODES.format(owner=owner))
-        host = _at_host_nodes(model, owner)
+    traced, refusal = _node_state(model, results, owner, shape=shape)
+    host = _at_host_nodes(model, owner) if traced else model
     spaces = []
     for r in results:
         try:
@@ -214,6 +223,8 @@ def _waves(
     materials = read_materials(host, section, frequency, results[0].port, owner)
     columns = (cached_columns or _cached_columns)(host, section, results[0].port, first)
     moved = None if host is model else _moved(model, section, owner)
+    if refusal is not None:  # after the line port's own refusal
+        raise NonDifferentiableError(refusal)
     return _Waves(
         results[0].port,
         modes_of,
@@ -224,6 +235,30 @@ def _waves(
         materials,
         moved,
     )
+
+
+def _node_state(
+    model: Model, results: Sequence[Any], owner: str, *, shape: bool
+) -> tuple[bool, str | None]:
+    """Whether the model's node coordinates are traced, and a refusal to raise.
+
+    Each solve records whether its node coordinates were traced. The concrete
+    field of a solve outside the gradient holds no tracer to compare with the
+    model's by identity, so tracedness, not the tracer, is the signal: the
+    overlap's node derivative needs the mode's and the model's both traced, or
+    neither.
+
+    Raises:
+        NonDifferentiableError: Without ``shape``, the model's or a solve's
+            node coordinates are traced.
+    """
+    traced = is_traced(model.mesh.nodes)
+    solved = [r.e_field._traced_nodes for r in results]  # noqa: SLF001
+    if not shape and (traced or any(solved)):
+        raise NonDifferentiableError(_NODES.format(owner=owner))
+    if all(s == traced for s in solved):
+        return traced, None
+    return traced, (_SOLVED_CONSTANT if traced else _SOLVED_TRACED).format(owner=owner)
 
 
 def _at_host_nodes(model: Model, owner: str) -> Model:
