@@ -128,6 +128,10 @@ def test_the_pages_are_found():
     assert {
         "get-started.md",
         "modes-and-ports.md",
+        "phasors-and-power-waves.md",
+        "plane-waves-and-floquet-orders.md",
+        "multiphysics-couplings.md",
+        "nonlinear-and-quantum-optics.md",
         "capabilities.md",
         "verification.md",
     } <= names
@@ -150,7 +154,13 @@ def test_every_recipe_is_in_the_site_tree():
 
 def test_the_modes_and_ports_page_is_in_the_site_tree():
     tree = dp.toctree_entries((dp.DOCS / "index.md").read_text(encoding="utf-8"))
-    assert "modes-and-ports" in tree
+    assert {
+        "modes-and-ports",
+        "phasors-and-power-waves",
+        "plane-waves-and-floquet-orders",
+        "multiphysics-couplings",
+        "nonlinear-and-quantum-optics",
+    } <= set(tree)
 
 
 def test_get_started_next_steps_pick_pages_of_the_site_tree():

@@ -91,6 +91,10 @@ missing, and refuses an MPI other than Open MPI.
 - The script's MUMPS orders with PT-Scotch on at most 32 processes, so the fill of
   BDDC's coarse factorization does not grow with the ranks. A stack built by an
   earlier script lacks this: build it again to get it.
+  The environment variable `MUMPS_PARAORD_MAX` sets another cap for a run: 2 or
+  more (`1` counts as `2`), or `0` for none. On a stack built before the cap,
+  gfem logs once per process, at INFO level on the `"gfem.solver"` logger, how
+  many ranks a rebuilt stack would factor the coarse problem on.
 - A stack runs under the Open MPI it was built on: load the same one to use it.
 - The no-MPI stack under a launcher serves {term}`rank copies` only, and a
   {term}`distributed solve` naming PETSc refuses it, with

@@ -34,8 +34,10 @@ def test_the_thermal_block_flags_the_density_rename_as_the_code_does():
 
     notes = (DOCS / "project" / "release-notes.md").read_text(encoding="utf-8")
     (release,) = (s for s in notes.split("\n## ") if s.startswith("0.1.0 "))
-    assert "\nThermal:\n" in release
-    block = " ".join(release.split("\nThermal:\n")[1].split("\n\n")[0].split())
+    assert "\nHeat and thermo-optics:\n" in release
+    block = " ".join(
+        release.split("\nHeat and thermo-optics:\n")[1].split("\n\n")[0].split()
+    )
     assert block.startswith("- **Behaviour change: `density` is now `mass_density`.**")
     for said in ("`DeprecationWarning`", "`AttributeError`", "Job files"):
         assert said in block, said
@@ -56,7 +58,7 @@ def test_the_unreleased_thermal_block_flags_the_joule_heating_type_error():
 
     notes = (DOCS / "project" / "release-notes.md").read_text(encoding="utf-8")
     (unreleased,) = (s for s in notes.split("\n## ") if s.startswith("Unreleased\n"))
-    block = " ".join(unreleased.split("\nThermal:\n")[1].split())
+    block = " ".join(unreleased.split("\nHeat and thermo-optics:\n")[1].split())
     flag = (
         "**Behaviour change: `joule_heating` of a driven result raises `TypeError`.**"
     )

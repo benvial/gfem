@@ -32,12 +32,27 @@ def test_the_page_is_in_the_table_of_contents():
 UNRENDERED = "agreement.md"
 
 
-def test_the_page_includes_every_snippet_but_the_agreement_table():
-    included = re.findall(
-        r"^```\{include\} _scaling/(.+)$", PAGE.read_text(), re.MULTILINE
-    )
-    assert sorted(included) == [s.name for s in SNIPPETS if s.name != UNRENDERED]
+#: Where a snippet is read: GitHub renders its tables; the docs build does not.
+LINK = "https://github.com/benvial/gfem/blob/main/docs/project/_scaling/"
+
+
+def test_the_page_links_every_snippet_but_the_agreement_table_and_includes_none():
+    text = PAGE.read_text()
+    assert "{include}" not in text
+    linked = set(re.findall(re.escape(LINK) + r"([\w-]+\.md)\)", text))
+    assert linked == {s.name for s in SNIPPETS if s.name != UNRENDERED}
     assert UNRENDERED in [s.name for s in SNIPPETS]
+
+
+def test_every_dof_count_in_the_summary_is_in_a_snippet():
+    # The page copies its numbers from the snippets now that it no longer
+    # includes them. The hand-written ranks-and-threads section is in no snippet
+    # and sits between the summary and the reproduction section.
+    summary = PAGE.read_text().split("## Ranks and threads")[0]
+    counts = set(re.findall(r"\d{1,3}(?:,\d{3})+", summary))
+    assert counts
+    corpus = "\n".join(s.read_text() for s in SNIPPETS)
+    assert [c for c in sorted(counts) if c not in corpus] == []
 
 
 @pytest.mark.parametrize("page", ["project/scaling.md", "verification.md"])

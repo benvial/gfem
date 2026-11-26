@@ -1,11 +1,11 @@
-"""The conventions page shows every convention of `gfem.conventions` on a solve.
+"""The conventions page names every convention; the theory pages show each on a solve.
 
-docs/conventions.md runs nothing at docs build time. This checks that the
-page names every constant of the module (so a constant added there without a
-line on the page fails here) with its value, and runs the page's blocks on
-the repository's own docs/tutorials/data/line.msh (and heater and modulator
-sections): what they print is what the page shows, and is what each
-convention says it must be.
+docs/conventions.md holds one entry per convention. This checks that it
+names every constant of `gfem.conventions` (so a constant added there without
+a line on the page fails here) with its value, and runs the blocks of the
+theory pages that check the conventions on the repository's own
+docs/tutorials/data/line.msh (and heater and modulator sections): what they
+print is what the pages show, and is what each convention says it must be.
 """
 
 import docs_pages as dp
@@ -15,6 +15,14 @@ import pytest
 import gfem
 
 PAGE = dp.DOCS / "conventions.md"
+#: The theory pages that hold the executed checks of the conventions.
+THEORY = (
+    "phasors-and-power-waves",
+    "plane-waves-and-floquet-orders",
+    "multiphysics-couplings",
+    "nonlinear-and-quantum-optics",
+)
+RUN = THEORY[:3]  # the pages with executed blocks
 
 
 @pytest.fixture(scope="module")
@@ -23,11 +31,19 @@ def page():
 
 
 @pytest.fixture(scope="module")
+def floquet_page():
+    return (dp.DOCS / "plane-waves-and-floquet-orders.md").read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
 def ran(tmp_path_factory):
-    workdir = tmp_path_factory.mktemp("conventions")
-    with pytest.MonkeyPatch.context() as patch:
-        patch.syspath_prepend(str(workdir))  # the section builder it downloads
-        return dp.run_page(PAGE, workdir)
+    found = []
+    for name in RUN:
+        workdir = tmp_path_factory.mktemp(name)
+        with pytest.MonkeyPatch.context() as patch:
+            patch.syspath_prepend(str(workdir))  # the section builder it downloads
+            found += dp.run_page(dp.DOCS / f"{name}.md", workdir)
+    return found
 
 
 def _printed(ran, section: str) -> np.ndarray:
@@ -177,8 +193,10 @@ def test_an_empty_cell_delays_the_phase_by_its_thickness(ran):
     assert complex(s_re, s_im) == pytest.approx(complex(airy_re, airy_im), abs=1e-3)
 
 
-def test_the_floquet_section_states_the_frame_sigma_and_circular_handedness(page):
-    section = dp._prose(dp.section(page, "Floquet ports"))
+def test_the_floquet_section_states_the_frame_sigma_and_circular_handedness(
+    floquet_page,
+):
+    section = dp._prose(dp.section(floquet_page, "Floquet ports"))
     for text in (
         r"\hat{\mathbf{e}}_3 \times \hat{\boldsymbol{\kappa}}",  # the TE reference
         r"\sigma_p \sigma_q",  # Bloch reciprocity with Floquet ports
@@ -355,8 +373,8 @@ def test_an_empty_cell_keeps_handedness_and_its_mueller_matrix_is_the_identity(r
     np.testing.assert_allclose(numbers[4:].reshape(4, 4), np.eye(4), atol=1e-4)
 
 
-def test_the_page_states_the_cell_output_conventions(page):
-    text = " ".join(dp._prose(dp.section(page, "Floquet ports")).split())
+def test_the_page_states_the_cell_output_conventions(floquet_page):
+    text = " ".join(dp._prose(dp.section(floquet_page, "Floquet ports")).split())
     for expected in (
         "**Jones matrices.**",
         "ordered (TM, TE)",
@@ -386,7 +404,8 @@ def test_incident_fields_gives_the_downward_rcp_phase(page):
     ) in text
 
 
-def test_the_page_names_no_solver_or_vendor_it_must_not(page):
-    lowered = page.lower()
+@pytest.mark.parametrize("name", ["conventions", *THEORY])
+def test_the_page_names_no_solver_or_vendor_it_must_not(name):
+    lowered = (dp.DOCS / f"{name}.md").read_text(encoding="utf-8").lower()
     for word in ("palace", "flexcompute", "tidy3d"):
         assert word not in lowered

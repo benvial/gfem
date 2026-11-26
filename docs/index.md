@@ -178,6 +178,10 @@ recipes/gsim
 
 conventions
 modes-and-ports
+phasors-and-power-waves
+plane-waves-and-floquet-orders
+multiphysics-couplings
+nonlinear-and-quantum-optics
 ```
 
 ```{toctree}
