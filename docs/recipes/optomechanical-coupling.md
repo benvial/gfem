@@ -242,13 +242,13 @@ print(
     f"d n_eff / d alpha: moving boundary {overlap.moving_boundary.real:.4g}, photoelastic {overlap.photoelastic.real:.4g}"
 )
 print(
-    f"scaled by the zero-point factor, the total is the coupling: {complex(scale * overlap.total / coupling.total[0]):.6f}"
+    f"scaled by the zero-point factor, the total is the coupling: {complex(scale * overlap.total / coupling.total[0]).real:.6f}"
 )
 ```
 
 ```text
 d n_eff / d alpha: moving boundary -17.91, photoelastic -17.37
-scaled by the zero-point factor, the total is the coupling: 1.000000-0.000000j
+scaled by the zero-point factor, the total is the coupling: 1.000000
 ```
 
 ## The gradient of the coupling

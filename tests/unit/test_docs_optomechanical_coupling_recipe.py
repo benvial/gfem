@@ -93,7 +93,8 @@ def test_the_gain_is_the_published_one_to_the_coarse_meshs_error(ran):
 
 def test_the_overlap_helper_times_the_zero_point_factor_is_the_coupling(ran):
     lines = _example(ran, "The overlap of any displacement").printed.splitlines()
-    assert dp.numbers(lines[1])[-2:] == pytest.approx([1.0, 0.0], abs=1e-5)
+    (ratio,) = dp.numbers(lines[1])
+    assert ratio == pytest.approx(1.0, abs=1e-5)
 
 
 def test_the_gradient_is_the_stiffness_scaling_law(ran):
