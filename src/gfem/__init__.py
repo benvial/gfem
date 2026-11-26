@@ -142,8 +142,10 @@ from gfem.model import (  # noqa: E402
 )
 from gfem.options import SolverOptions  # noqa: E402
 from gfem.optomechanics import (  # noqa: E402
+    BrillouinGain,
     OptomechanicalCoupling,
     OptomechanicalOverlap,
+    brillouin_gain,
     optomechanical_coupling,
     optomechanical_overlap,
 )
@@ -228,6 +230,7 @@ __all__ = [
     "AntiBoundRootWarning",
     "Background",
     "BandDiagram",
+    "BrillouinGain",
     "Conductor",
     "Convection",
     "CrossSections",
@@ -353,6 +356,7 @@ __all__ = [
     "acousto_optic_shift",
     "band_diagram",
     "beam_coupling",
+    "brillouin_gain",
     "characteristic_impedance",
     "conventions",
     "cross_sections",

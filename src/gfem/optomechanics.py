@@ -64,8 +64,10 @@ if TYPE_CHECKING:
     from gfem.results import MechanicalEigenmodeResult
 
 __all__ = [
+    "BrillouinGain",
     "OptomechanicalCoupling",
     "OptomechanicalOverlap",
+    "brillouin_gain",
     "optomechanical_coupling",
     "optomechanical_overlap",
 ]
@@ -80,6 +82,13 @@ _OVERLAP = _Caller(
 _COUPLING = _Caller(
     "optomechanical_coupling",
     "the optomechanical coupling",
+    "the displacement",
+    "the mechanical model or the photoelastic_tensor",
+    "mechanical",
+)
+_GAIN = _Caller(
+    "brillouin_gain",
+    "the Brillouin gain",
     "the displacement",
     "the mechanical model or the photoelastic_tensor",
     "mechanical",
@@ -988,7 +997,110 @@ register_fields(
 )
 
 
-def _modes(mechanical: MechanicalEigenmodeResult, selection: Any) -> tuple[int, ...]:
+@dataclasses.dataclass(frozen=True, eq=False)
+class BrillouinGain:
+    r"""The peak Brillouin gain of mechanical modes on a wave port's mode.
+
+    For a mechanical mode of complex angular frequency :math:`\Omega` that
+    stores 1 J/m, with a pump and a Stokes wave of 1 W each at the optical
+    angular frequency :math:`\omega = 2\pi f`, ``total`` is the gain at the
+    centre of the Lorentzian line
+
+    .. math::
+
+        G_B = \frac{Q_m\,\omega\,|\delta n_{ps}|^2}{c^2},
+        \qquad Q_m = \frac{\mathrm{Re}\,\Omega}{2\,\mathrm{Im}\,\Omega}
+
+    in 1/(W m): the Stokes wave grows as :math:`\pm\mathrm{d}P_s/\mathrm{d}z =
+    G_B P_p P_s` (the sign of the direction it travels), the pump loses what it
+    gives. :math:`\delta n_{ps}` is the pair overlap of
+    `gfem.optomechanical_overlap` (the change of the effective index per unit
+    amplitude of the displacement for a forward pair, the transition element
+    between the pump and its counter-propagating twin for a backward pair) and
+    :math:`c` is the speed of light of `scipy.constants`. The forward gain
+    equals :math:`4Q_m\,|\tilde g_0|^2/(\hbar\,\omega\,v_g^2\,\mathrm{Re}\,
+    \Omega)` of `gfem.optomechanical_coupling`, with :math:`v_g = c/n_g`.
+
+    ``moving_boundary`` and ``photoelastic`` are the gains of each part alone
+    (the "radiation pressure only" and "electrostriction only" bars of a
+    published breakdown). ``total`` is not their sum: the amplitudes
+    :math:`\delta n^\mathrm{MB}` and :math:`\delta n^\mathrm{PE}` add with their
+    signs before they are squared (destructively for the backward pair of a
+    silicon wire). Gains are real and do not depend on the mode's phase
+    convention.
+
+    The linewidth of the Lorentzian is :math:`2\,\mathrm{Im}\,\Omega` rad/s
+    (full width at half maximum). The mode's :math:`Q_m` comes from the
+    mechanical materials' ``mechanical_quality_factor``; a measured
+    :math:`Q'` rescales the gain as :math:`G_B Q'/Q_m`, exact to
+    :math:`O(Q^{-2})`.
+
+    Attributes:
+        overlap: The `OptomechanicalOverlap` of each mode, arrays of shape
+            ``(n,)`` over the modes: ``moving_boundary`` and ``photoelastic``
+            are the parts of :math:`\delta n_{ps}` and ``total`` is
+            :math:`\delta n_{ps}`, complex and dimensionless; ``n_eff`` and
+            ``n_g`` are scalars. Its ``direction`` and ``wavenumber`` are the
+            pair's.
+        omega_m: The mechanical modes' complex angular frequencies, rad/s,
+            ``(n,)``.
+        modes: The numbers of the mechanical modes (``MechanicalEigenmodeResult``
+            order, 0 = nearest its target), in the order of the arrays.
+    """
+
+    overlap: OptomechanicalOverlap
+    omega_m: jax.Array
+    modes: tuple[int, ...]
+
+    @property
+    def quality_factor(self) -> jax.Array:
+        r""":math:`Q_m = \mathrm{Re}\,\Omega/(2\,\mathrm{Im}\,\Omega)`, ``(n,)``."""
+        return jnp.real(self.omega_m) / (2 * jnp.imag(self.omega_m))
+
+    def _gain(self, delta_n: jax.Array) -> jax.Array:
+        omega = 2 * jnp.pi * self.overlap.frequency
+        return (
+            self.quality_factor * omega * jnp.abs(delta_n) ** 2 / scipy.constants.c**2
+        )
+
+    @property
+    def total(self) -> jax.Array:
+        r""":math:`G_B = Q_m\,\omega\,|\delta n_{ps}|^2/c^2`, 1/(W m), ``(n,)``."""
+        return self._gain(self.overlap.total)
+
+    @property
+    def moving_boundary(self) -> jax.Array:
+        r"""The gain of the moving-boundary part alone, 1/(W m), ``(n,)``."""
+        return self._gain(self.overlap.moving_boundary)
+
+    @property
+    def photoelastic(self) -> jax.Array:
+        r"""The gain of the photoelastic part alone, 1/(W m), ``(n,)``."""
+        return self._gain(self.overlap.photoelastic)
+
+    def __repr__(self) -> str:
+        o = self.overlap
+        head = (
+            f"BrillouinGain(port {o.port!r}, {o.direction} q {o.wavenumber:.6g} "
+            f"rad/m, modes {self.modes}"
+        )
+        try:
+            g = np.asarray(self.total)
+            f = np.real(np.asarray(self.omega_m)) / (2 * np.pi)
+        except (TypeError, jax.errors.TracerArrayConversionError):
+            return f"{head})"
+        rows = ", ".join(f"{a:.6g} Hz: {b:.4g}" for a, b in zip(f, g, strict=True))
+        return f"{head}, [{rows}] 1/(W m))"
+
+
+register_fields(BrillouinGain, ("overlap", "omega_m"))
+
+
+def _modes(
+    mechanical: MechanicalEigenmodeResult,
+    selection: Any,
+    caller: _Caller = _COUPLING,
+) -> tuple[int, ...]:
     """The non-negative mode numbers ``selection`` names, ``None`` for every mode."""
     n = mechanical.n_modes
     if selection is None:
@@ -998,17 +1110,17 @@ def _modes(mechanical: MechanicalEigenmodeResult, selection: Any) -> tuple[int, 
     for k in [selection] if single else selection:
         if isinstance(k, bool | np.bool_) or not isinstance(k, int | np.integer):
             raise TypeError(
-                f"{_COUPLING.owner}: mechanical_modes takes an int or a sequence "
+                f"{caller.owner}: mechanical_modes takes an int or a sequence "
                 f"of ints, got {k!r}."
             )
         if not -n <= int(k) < n:
             raise IndexError(
-                f"{_COUPLING.owner}: Mode {int(k)} does not exist: the result has "
+                f"{caller.owner}: Mode {int(k)} does not exist: the result has "
                 f"{n} mode(s), numbered from 0."
             )
         modes.append(int(k) % n)
     if not modes:
-        raise ValueError(f"{_COUPLING.owner}: mechanical_modes is empty.")
+        raise ValueError(f"{caller.owner}: mechanical_modes is empty.")
     return tuple(modes)
 
 
@@ -1098,7 +1210,8 @@ def optomechanical_coupling(
         raise ValueError(
             f"{_COUPLING.owner}: the mechanical modes have the axial wavenumber "
             f"q = {mechanical.wavenumber:g} rad/m; only q = 0 is read (a mode "
-            "with q != 0 averages to zero against an optical mode with itself)."
+            "with q != 0 averages to zero against an optical mode with itself); "
+            "use gfem.brillouin_gain for the gain at q != 0."
         )
     modes = _modes(mechanical, mechanical_modes)
     first = mechanical.displacement(modes[0])
@@ -1141,5 +1254,169 @@ def optomechanical_coupling(
         omega_m=omega_m,
         moving_boundary=scale * mb,
         photoelastic=scale * pe,
+        modes=modes,
+    )
+
+
+def _refuse_lossless(
+    mechanical: MechanicalEigenmodeResult, modes: tuple[int, ...]
+) -> None:
+    """Raise for a requested mode with no loss: its peak gain is unbounded."""
+    # read as numbers: the loss is a constant of the check, the gradient flows
+    # through the omega the gain reads
+    im = np.asarray(jax.lax.stop_gradient(jnp.imag(mechanical.omega)))
+    for m in modes:
+        if not im[m] > 0:
+            raise ValueError(
+                f"{_GAIN.owner}: mechanical mode {m} has Im(Omega) = {im[m]:g} rad/s "
+                "<= 0: a lossless mode has an unbounded peak gain "
+                "(Q_m = Re Omega / (2 Im Omega) is infinite). Give the mechanical "
+                "material a mechanical_quality_factor."
+            )
+
+
+def brillouin_gain(
+    model: Model,
+    mechanical: MechanicalEigenmodeResult,
+    *,
+    port: str,
+    frequency: float,
+    mode: int | None = None,
+    mechanical_modes: int | Sequence[int] | None = None,
+) -> BrillouinGain:
+    r"""The peak Brillouin gain of mechanical modes on a wave port's mode.
+
+    For each requested mode :math:`u` of a `gfem.MechanicalEigenmode` solve of
+    axial wavenumber :math:`q` (stored energy 1 J/m) the pair overlap
+    :math:`\delta n_{ps}` of `gfem.optomechanical_overlap` gives the intramodal
+    gain at the centre of the line,
+
+    .. math::
+
+        G_B = \frac{Q_m\,\omega\,|\delta n_{ps}|^2}{c^2}\ \text{in}\ 1/(\mathrm{W\,m}),
+        \qquad Q_m = \frac{\mathrm{Re}\,\Omega}{2\,\mathrm{Im}\,\Omega},
+
+    for a pump and a Stokes wave of 1 W, :math:`\omega = 2\pi f` the pump's
+    angular frequency and :math:`c` from `scipy.constants`; the Stokes power
+    changes as :math:`\pm\mathrm{d}P_s/\mathrm{d}z = G_BP_pP_s`.
+
+    The direction is read from ``mechanical.wavenumber``: :math:`q \approx 0`
+    is the forward pair (the pump's own mode, the phonon standing along the
+    guide), :math:`q \approx 2\beta` along the pump (:math:`\beta = 2\pi f\,
+    \mathrm{Re}\,n_\mathrm{eff}/c`, plus for a port whose pump travels along
+    :math:`+z`) the backward pair, within :math:`\pm 2\cdot 10^{-2}\beta`;
+    every other :math:`q` raises. The Stokes shift of :math:`q`
+    (:math:`\Omega n_g/c` of :math:`2\beta`, below :math:`10^{-3}` of it) is
+    dropped: perfect phase matching is assumed at the given :math:`q`. The pair
+    is the mode with itself (intramodal): a pump and a Stokes wave in two
+    different optical modes are not supported. The forward gain equals
+    :math:`4Q_m|\tilde g_0|^2/(\hbar\,\omega\,v_g^2\,\mathrm{Re}\,\Omega)` of
+    `gfem.optomechanical_coupling`.
+
+    The canonical script, with the phase-matched :math:`q` read from the
+    optical solve (a port whose inward normal is :math:`+z`, such as
+    ``"front"``; the sign flips for the opposite port):
+
+    .. code-block:: python
+
+        pm = gfem.solve(optical, gfem.PortMode("p", frequency))
+        q = 2 * float(pm.gamma[0].imag)  # rad/m, along the pump
+        modes = gfem.solve(
+            mechanical,
+            gfem.MechanicalEigenmode(18e9, n_modes=24, wavenumber=q),
+            options=gfem.SolverOptions(order=3),
+        )
+        gain = gfem.brillouin_gain(optical, modes, port="p", frequency=frequency)
+        k = int(np.argmax(gain.total))
+        print(gain.overlap.direction, modes.frequency[k], gain.total[k])
+
+    Every requested mode is returned (default all of them), including the modes
+    of a symmetry class that does not couple, whose gain is at the level of
+    the mesh's asymmetry; select with ``mechanical_modes``. The optical mode,
+    its node gradient and its weights are solved once for all of them.
+
+    `jax.grad` reaches every input of the mechanical solve (stiffness, density,
+    ``mechanical_quality_factor``, piezoelectric tensor, permittivity, node
+    coordinates of the mechanical mesh) through :math:`\mathrm{Re}\,\Omega`,
+    :math:`\mathrm{Im}\,\Omega` and the mode field, and the
+    ``photoelastic_tensor``. The optical solve (:math:`n_\mathrm{eff}`,
+    :math:`n_g`, the node gradient and the weights) and :math:`q` are held
+    constant, so the optical model's other inputs are refused, and so is
+    `jax.jit`. A clustered (degenerate) mode is refused by the mechanical
+    solve's backward pass.
+
+    Args:
+        model: The optical model, as for `optomechanical_overlap`.
+        mechanical: A `gfem.MechanicalEigenmodeResult` of a lossy material at
+            :math:`q \approx 0` or :math:`q \approx 2\beta` along the pump, on a
+            native 2D mesh with the same global :math:`(x, y)` (m) as the
+            optical section.
+        port: The wave port's name.
+        frequency: One optical frequency, Hz.
+        mode: Which optical mode (1 = the most propagating), or ``None`` for
+            the wave port's own.
+        mechanical_modes: Which mechanical modes (numbers in ``mechanical``,
+            negative counting from the last): an int, a sequence, or ``None``
+            for every mode.
+
+    Returns:
+        The gain, its two parts and the overlap, per requested mode.
+
+    Raises:
+        TypeError: ``mechanical`` is not a `gfem.MechanicalEigenmodeResult`, or
+            ``model`` is not a `gfem.Model`.
+        IndexError: A number of ``mechanical_modes`` is not a mode of ``mechanical``.
+        ValueError: A requested mode has :math:`\mathrm{Im}\,\Omega \le 0` (the
+            message names the mode and ``mechanical_quality_factor``),
+            ``mechanical.wavenumber`` is in neither phase-matching window (the
+            message holds the expected values, with sign; a counter-propagating
+            phonon and an intermodal pair are named), ``mechanical_modes`` is
+            empty, and every ``ValueError`` of `optomechanical_overlap`.
+        NotImplementedError: A backward pair meets a section element with
+            :math:`\mu_r \ne 1`, and as `optomechanical_overlap`.
+        NonDifferentiableError: As `optomechanical_overlap`.
+    """
+    from gfem.results import MechanicalEigenmodeResult
+
+    _refuse_jit(_GAIN)
+    if not isinstance(mechanical, MechanicalEigenmodeResult):
+        raise TypeError(
+            f"{_GAIN.owner} takes a gfem.MechanicalEigenmodeResult (the solve of a "
+            f"gfem.MechanicalEigenmode), got {type(mechanical).__name__}."
+        )
+    modes = _modes(mechanical, mechanical_modes, _GAIN)
+    _refuse_lossless(mechanical, modes)
+    first = mechanical.displacement(modes[0])
+    setup = _setup(model, port, frequency, _GAIN, first)
+    inside, points = _check_support(setup, first, _GAIN, port)
+    solved = _solve_optical(
+        model, setup, port, mode, wavenumber=mechanical.wavenumber, caller=_GAIN
+    )
+    parts = [
+        _parts(
+            model,
+            setup,
+            solved,
+            mechanical.displacement(m),
+            inside=inside,
+            points=points,
+            caller=_GAIN,
+            port=port,
+        )
+        for m in modes
+    ]
+    return BrillouinGain(
+        overlap=OptomechanicalOverlap(
+            port=port,
+            mode=solved.mode,
+            frequency=setup.frequency,
+            n_eff=solved.n_eff,
+            n_g=solved.n_g,
+            moving_boundary=jnp.stack([a for a, _ in parts]),
+            photoelastic=jnp.stack([b for _, b in parts]),
+            wavenumber=float(mechanical.wavenumber),
+            direction=solved.direction,
+        ),
+        omega_m=jnp.asarray(mechanical.omega)[jnp.asarray(modes)],
         modes=modes,
     )
