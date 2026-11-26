@@ -221,3 +221,80 @@ def film_material(*, quality: float | None = None) -> gfem.Material:
 def film_model(mesh: gfem.Mesh, *, quality: float | None = None) -> gfem.Model:
     """The free film as a mechanical model."""
     return gfem.Model(mesh, materials={"film": film_material(quality=quality)})
+
+
+# --- the suspended silicon wire (published case) ----------------------------------
+
+#: Silicon's index and the wavelength of the published wire (Qiu et al. 2013:
+#: omega = 0.203 (2 pi c / a) at a = 315 nm).
+N_SI = 3.5
+WIRE_WAVELENGTH = 1.552e-6
+
+
+def wire_section(path: Path, width: float, height: float, h_wire: float, h_air: float):
+    """The wire (region ``wire``) in a 1 um air margin, PEC outer ``wall``, as a slab.
+
+    ``width``, ``height`` in um; edge lengths ``h_wire`` and ``h_air`` in um.
+    """
+    x1, y1 = width / 2, height / 2
+    big_x, big_y = x1 + 1.0, y1 + 1.0
+    rects = [
+        (-big_x, -big_y, big_x, -y1, "air", h_air),
+        (-big_x, y1, big_x, big_y, "air", h_air),
+        (-big_x, -y1, -x1, y1, "air", h_air),
+        (x1, -y1, big_x, y1, "air", h_air),
+        (-x1, -y1, x1, y1, "wire", h_wire),
+    ]
+    wall = [(lambda p: max(abs(p[0]) - big_x, abs(p[1]) - big_y) > -1e-9, "wall")]
+    return tc.section(path, rects, h_air, wall)
+
+
+def wire_optical(mesh) -> gfem.Model:
+    """The wire's optical model: silicon with the cubic photoelastic tensor."""
+    return gfem.Model(
+        mesh,
+        materials={
+            "wire": gfem.Material(eps_r=N_SI**2, photoelastic_tensor=cubic_p()),
+            "air": gfem.Material(eps_r=1.0),
+        },
+        boundaries=[gfem.PEC("wall")],
+        ports=[gfem.WavePort("p", "front")],
+    )
+
+
+def wire_mechanical(path: Path, width: float, height: float, h: float) -> gfem.Model:
+    """The wire's mechanical model on a native 2D mesh (um in, isotropic silicon)."""
+    rect = [(-width / 2, -height / 2, width / 2, height / 2, "wire", h)]
+    nodes, tris, lines = tc._mesh2d(rect, h, [])
+    tc._write_section(path, nodes, tris, lines)
+    silicon = gfem.Material(
+        stiffness=gfem.isotropic_stiffness(170e9, 0.28),
+        mass_density=2329.0,
+        mechanical_quality_factor=1000.0,
+    )
+    return gfem.Model(
+        gfem.Mesh.from_gmsh(path, length_unit="um"), materials={"wire": silicon}
+    )
+
+
+def parities(displacement, width: float, height: float):
+    r"""The mode's mirror parities and :math:`u_z` share, sampled on a grid.
+
+    Returns ``(sx, sy, uz_share)``: the eigenvalue (+1 even, -1 odd) of the
+    vector field under :math:`x \to -x` and :math:`y \to -y`, as
+    :math:`\sum \bar u\cdot Ru' / \sum |u|^2` over 80 interior points (m), and
+    :math:`\sum|u_z|^2/\sum|u|^2`.
+    """
+    g = np.linspace(-0.8, 0.8, 9)
+    pts = [(a * width / 2e6, b * height / 2e6) for a in g for b in g if (a, b) != (0, 0)]
+
+    def vec(p):
+        return np.array([complex(displacement[c].at([p])[0]) for c in "xyz"])
+
+    v = np.array([vec(p) for p in pts])
+    norm = np.sum(np.abs(v) ** 2)
+    out = []
+    for sgn in ((-1, 1, 1), (1, -1, 1)):
+        vm = np.array([vec((sgn[0] * p[0], sgn[1] * p[1])) * np.array(sgn) for p in pts])
+        out.append(float(np.sum(np.conj(v) * vm).real / norm))
+    return out[0], out[1], float(np.sum(np.abs(v[:, 2]) ** 2) / norm)
