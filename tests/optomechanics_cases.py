@@ -286,7 +286,9 @@ def parities(displacement, width: float, height: float):
     :math:`\sum|u_z|^2/\sum|u|^2`.
     """
     g = np.linspace(-0.8, 0.8, 9)
-    pts = [(a * width / 2e6, b * height / 2e6) for a in g for b in g if (a, b) != (0, 0)]
+    pts = [
+        (a * width / 2e6, b * height / 2e6) for a in g for b in g if (a, b) != (0, 0)
+    ]
 
     def vec(p):
         return np.array([complex(displacement[c].at([p])[0]) for c in "xyz"])
@@ -295,6 +297,8 @@ def parities(displacement, width: float, height: float):
     norm = np.sum(np.abs(v) ** 2)
     out = []
     for sgn in ((-1, 1, 1), (1, -1, 1)):
-        vm = np.array([vec((sgn[0] * p[0], sgn[1] * p[1])) * np.array(sgn) for p in pts])
+        vm = np.array(
+            [vec((sgn[0] * p[0], sgn[1] * p[1])) * np.array(sgn) for p in pts]
+        )
         out.append(float(np.sum(np.conj(v) * vm).real / norm))
     return out[0], out[1], float(np.sum(np.abs(v[:, 2]) ** 2) / norm)

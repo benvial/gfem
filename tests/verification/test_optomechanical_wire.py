@@ -61,7 +61,9 @@ def tmp(tmp_path_factory):
 
 def test_qiu_gain(tmp):
     width, height = 0.315, 0.2835
-    optical = oc.wire_optical(oc.wire_section(tmp / "o.msh", width, height, H_WIRE, H_AIR))
+    optical = oc.wire_optical(
+        oc.wire_section(tmp / "o.msh", width, height, H_WIRE, H_AIR)
+    )
     mech = oc.wire_mechanical(tmp / "m.msh", width, height, H_MECH)
     result = gfem.solve(
         mech,
