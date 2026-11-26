@@ -80,6 +80,15 @@ class KerrNonlinearity:
     3(1-\rho) \sum_s |a_s\cdot E|^4`, with :math:`a_s` the rows of its
     `axes` (the cube axes): the bracket at :math:`\rho = 1`, whatever the axes.
 
+    A region whose `Material.eps_r` has three principal values along `axes`
+    (a birefringent crystal) replaces :math:`n^2` and the products
+    :math:`u\cdot v` by :math:`N = \sum_k n_k a_k a_k^\mathsf{T}`,
+    :math:`n_k = \sqrt{\mathrm{Re}\,\varepsilon_{r,k}}`: the bracket becomes
+    :math:`2 (E^\mathsf{H} N E)^2 + |E^\mathsf{T} N E|^2`, which is
+    :math:`n^2` times the isotropic one for :math:`N = n I`. The scalar
+    :math:`n_2` is then the index change :math:`n_2 I` of light polarized
+    along each principal axis.
+
     Attributes:
         port: The wave port's name.
         mode: Which mode (1 = the most propagating).
@@ -146,7 +155,11 @@ class KerrCoupling:
     A material with a `Material.nonlinear_anisotropy` :math:`\rho` replaces
     :math:`S` by :math:`S_\rho = \rho S + 3(1-\rho)\sum_s (a_s\cdot
     u)(a_s\cdot v)(a_s\cdot w)(a_s\cdot z)` over the rows :math:`a_s` of its
-    `axes` (the cube axes), which is :math:`S` at :math:`\rho = 1`.
+    `axes` (the cube axes), which is :math:`S` at :math:`\rho = 1`. A region
+    with a birefringent `Material.eps_r` replaces :math:`n_a^2 S` by
+    :math:`S_N`, every :math:`u\cdot v` of :math:`S` becoming
+    :math:`u^\mathsf{T} N_a v` with :math:`N_a = \sum_k n_k a_k a_k^\mathsf{T}`
+    at wave :math:`a`'s frequency.
 
     Attributes:
         port: The wave port's name.
@@ -186,7 +199,7 @@ def _kerr_columns(model: Model, section: Any, port: str, space: Any) -> _Columns
 
 @dataclasses.dataclass(frozen=True, eq=False)
 class _Kerr:
-    """The Kerr material values of the section's elements, in the columns' order.
+    r"""The Kerr material values of the section's elements, in the columns' order.
 
     ``n2`` and ``beta`` ``(n_el,)`` (0 where an element has none), ``eps``
     ``(n_wave, n_el)`` the real part of the permittivity at each wave's
@@ -194,7 +207,10 @@ class _Kerr:
     triangles. ``rho`` ``(n_el,)`` and ``axes`` ``(n_el, 3, 3)`` (the crystal
     axes as rows) are the Kerr anisotropy of each element and its frame, both
     ``None`` when no element carries a `Material.nonlinear_anisotropy`: the
-    isotropic path then runs unchanged.
+    isotropic path then runs unchanged. ``index`` ``(n_wave, n_el, 3, 3)`` is
+    the real symmetric matrix :math:`N = \sum_k n_k a_k a_k^\mathsf{T}` of each
+    element at each wave's frequency, ``None`` unless a region has a
+    birefringent ``eps_r``; it replaces ``eps`` (and excludes ``rho``).
     """
 
     n2: jax.Array
@@ -203,14 +219,19 @@ class _Kerr:
     keep: np.ndarray
     rho: jax.Array | None = None
     axes: np.ndarray | None = None
+    index: jax.Array | None = None
 
 
-def _anisotropic(material: Material | MaterialField) -> bool:
+def _birefringent(material: Material | MaterialField) -> bool:
     # a Material's axes with one permittivity only orient its crystal (the Kerr
-    # anisotropy); a field's axes mean a tensor, as everywhere in the engine
-    if isinstance(material, Material):
-        return not material.isotropic
-    return material.axes is not None
+    # anisotropy); three principal values of eps_r make it birefringent. A
+    # field's axes mean a tensor, as everywhere in the engine, and are refused
+    return isinstance(material, Material) and isinstance(material.eps_r, tuple)
+
+
+def _index_matrix(n: jax.Array, axes: np.ndarray) -> jax.Array:
+    r""":math:`N = \sum_k n_k a_k a_k^\mathsf{T}` from ``(..., 3)`` indices and rows."""
+    return jnp.einsum("...k,...ki,...kj->...ij", n, axes, axes)
 
 
 def _crystal_components(e: jax.Array, axes: jax.Array) -> jax.Array:
@@ -251,6 +272,48 @@ def _region_permittivity(
     return jnp.broadcast_to(_per_element(eps, pos), (len(frequency), len(pos)))
 
 
+def _assemble(
+    kerr: _Kerr,
+    rho: np.ndarray | None,
+    frames: np.ndarray,
+    principal: np.ndarray,
+    birefringent: np.ndarray,
+    *,
+    owner: str,
+    port: str,
+) -> _Kerr:
+    """Add the anisotropy (``rho``) or the index matrix of the birefringent elements."""
+    if not birefringent.any():
+        if rho is None:
+            return kerr
+        return dataclasses.replace(kerr, rho=jnp.asarray(rho), axes=frames)
+    if rho is not None:
+        raise NotImplementedError(
+            f"{owner}: wave port {port!r}'s section has a region with a "
+            "nonlinear_anisotropy and another with a birefringent eps_r: the "
+            "two forms are not combined in this version. Give the section "
+            "one or the other."
+        )
+    # N = n I on an isotropic element, so that n^2 S is the isotropic formula
+    n = jnp.where(
+        birefringent[None, :, None],
+        jnp.asarray(principal)[None],
+        jnp.sqrt(kerr.eps)[..., None],
+    )
+    return dataclasses.replace(kerr, index=_index_matrix(n, frames))
+
+
+def _no_carrier_message(owner: str, port: str, names: Any, tags: np.ndarray) -> str:
+    regions = ", ".join(repr(names[int(t)]) for t in np.unique(tags))
+    return (
+        f"{owner}: no element of wave port {port!r}'s section outside a "
+        "perfectly matched layer (whose triangles are skipped) has a "
+        "nonlinear_index or a two_photon_absorption (its regions are "
+        f"{regions}), so the nonlinearity is zero. Set one on the core's "
+        "material."
+    )
+
+
 def _kerr_materials(
     model: Model, section: Any, frequency: np.ndarray, port: str, owner: str
 ) -> _Kerr:
@@ -259,9 +322,10 @@ def _kerr_materials(
     Raises:
         ValueError: No element outside a perfectly matched layer carries a
             Kerr property.
-        NotImplementedError: A region carrying one is anisotropic, a density
-            blend without a per-element permittivity, or a layer-grid design
-            blending a Kerr property.
+        NotImplementedError: A region carrying one is an anisotropic
+            `gfem.MaterialField`, a density blend without a per-element
+            permittivity, or a layer-grid design blending a Kerr property;
+            a birefringent region beside a `Material.nonlinear_anisotropy`.
     """
     mesh = model.mesh
     cells, tags = _elements(model, section)
@@ -274,6 +338,8 @@ def _kerr_materials(
     rho = np.ones(n_el)
     frames = np.broadcast_to(np.eye(3), (n_el, 3, 3)).copy()
     anisotropy = False
+    principal = np.zeros((n_el, 3))
+    birefringent = np.zeros(n_el, bool)
     for tag in np.unique(tags):
         region = names[int(tag)]
         material = model.materials[region]
@@ -291,26 +357,34 @@ def _kerr_materials(
                 )
         if all(v is None for v in given.values()):
             continue
-        if _anisotropic(material):
+        if isinstance(material, MaterialField) and material.axes is not None:
             raise NotImplementedError(
                 f"{owner}: region {region!r} of wave port {port!r}'s section is "
-                "anisotropic and carries a Kerr property: the refractive index "
-                "squared and the isotropic nonlinearity are not defined on a "
-                "permittivity tensor in this version. Give the region an isotropic "
-                "eps_r."
+                "an anisotropic gfem.MaterialField and carries a Kerr property: "
+                "the index matrix is read from a constant gfem.Material only. "
+                "Give the region a gfem.Material with a three-value eps_r and "
+                "axes, or an isotropic eps_r."
             )
         rows = np.flatnonzero(tags == tag)
         pos = np.searchsorted(mesh.elements(region), cells[rows])
         carries[rows] = True
-        if isinstance(material, Material) and material.nonlinear_anisotropy is not None:
-            anisotropy = True
-            rho[rows] = material.nonlinear_anisotropy
+        if isinstance(material, Material):
             if material.axes is not None:
                 frames[rows] = np.asarray(material.axes)
+            if material.nonlinear_anisotropy is not None:
+                anisotropy = True
+                rho[rows] = material.nonlinear_anisotropy
         if given["nonlinear_index"] is not None:
             n2 = n2.at[rows].set(_per_element(given["nonlinear_index"], pos))
         if given["two_photon_absorption"] is not None:
             beta = beta.at[rows].set(_per_element(given["two_photon_absorption"], pos))
+        if _birefringent(material):
+            values = np.sqrt(np.real(np.asarray(material.eps_r, dtype=complex)))
+            birefringent[rows] = True
+            principal[rows] = values
+            # the index matrix replaces this value, which only keeps the array full
+            eps = eps.at[:, rows].set(float(np.mean(values**2)))
+            continue
         eps = eps.at[:, rows].set(
             _region_permittivity(
                 material, pos, frequency, port=port, region=region, owner=owner
@@ -320,17 +394,62 @@ def _kerr_materials(
     layer = layer_tetrahedra(mesh, model.pml) if len(section.normal) == 3 else None
     keep = np.ones(n_el, bool) if layer is None else ~layer[cells]
     if not (carries & keep).any():
-        regions = ", ".join(repr(names[int(t)]) for t in np.unique(tags))
-        raise ValueError(
-            f"{owner}: no element of wave port {port!r}'s section outside a "
-            "perfectly matched layer (whose triangles are skipped) has a "
-            "nonlinear_index or a two_photon_absorption (its regions are "
-            f"{regions}), so the nonlinearity is zero. Set one on the core's "
-            "material."
+        raise ValueError(_no_carrier_message(owner, port, names, tags))
+    return _assemble(
+        _Kerr(n2, beta, eps, keep),
+        rho if anisotropy else None,
+        frames,
+        principal,
+        birefringent,
+        owner=owner,
+        port=port,
+    )
+
+
+def _isotropic_tensor(
+    points: jax.Array, kerr: _Kerr, x: jax.Array, n_q: int
+) -> jax.Array:
+    r""":math:`T_{abcd}` with :math:`S` or :math:`S_\rho`; ``x`` is :math:`\chi_a`."""
+    if kerr.rho is not None:
+        rho = jnp.repeat(kerr.rho, n_q)[None]
+        x_cubic = 3 * (1 - rho) * x
+        x = rho * x
+    p = jnp.einsum("bnx,cnx->bcn", points, points)
+    q = jnp.einsum("bnx,cnx->bcn", points, jnp.conj(points))
+    t = (
+        jnp.einsum("an,bcn,adn->abcd", x, p, jnp.conj(p))
+        + jnp.einsum("an,ban,cdn->abcd", x, q, q)
+        + jnp.einsum("an,bdn,can->abcd", x, q, q)
+    )
+    if kerr.rho is not None:
+        frames = jnp.repeat(jnp.asarray(kerr.axes), n_q, axis=0)
+        r = _crystal_components(points, frames[None])  # (n_wave, n, 3)
+        t = t + jnp.einsum(
+            "an,bns,cns,ans,dns->abcd", x_cubic, r, r, jnp.conj(r), jnp.conj(r)
         )
-    if not anisotropy:
-        return _Kerr(n2, beta, eps, keep)
-    return _Kerr(n2, beta, eps, keep, jnp.asarray(rho), frames)
+    return t
+
+
+def _birefringent_tensor(
+    points: jax.Array, index: jax.Array, x: jax.Array
+) -> jax.Array:
+    r""":math:`T_{abcd}` with :math:`S_N`, :math:`u\cdot v` as :math:`u^\mathsf{T}N_av`.
+
+    ``index`` ``(n_wave, n, 3, 3)`` is wave :math:`a`'s :math:`N_a` at each point.
+    """
+    if points.shape[-1] == 1:  # an Ez line port: the zz entry of N
+        index = index[..., 2:, 2:]
+    ne = jnp.einsum("anxy,cny->acnx", index, points)  # N_a E_c
+    # P[a, b, c] = E_b . N_a E_c and R[a, b, c] = E_b . N_a conj(E_c), N real
+    p = jnp.einsum("bnx,acnx->abcn", points, ne)
+    r = jnp.einsum("bnx,acnx->abcn", points, jnp.conj(ne))
+    p_aa = jnp.einsum("aadn->adn", p)  # E_a . N_a E_d
+    r_a = jnp.einsum("aban->abn", r)  # E_b . N_a conj(E_a)
+    return (
+        jnp.einsum("an,abcn,adn->abcd", x, p, jnp.conj(p_aa))
+        + jnp.einsum("an,abn,acdn->abcd", x, r_a, r)
+        + jnp.einsum("an,abdn,acn->abcd", x, r, r_a)
+    )
 
 
 # --- public functions ------------------------------------------------------------
@@ -380,9 +499,10 @@ def kerr_nonlinearity(model: Model, mode: PortModeResult) -> KerrNonlinearity:
     Raises:
         ValueError: No element outside a perfectly matched layer carries a
             Kerr property.
-        NotImplementedError: A region carrying one has an anisotropic
-            permittivity, or is a density blend without a per-element
-            permittivity; an Hz line port.
+        NotImplementedError: A region carrying one is an anisotropic
+            `gfem.MaterialField`, or a density blend without a per-element
+            permittivity; a section with both a birefringent region and a
+            `Material.nonlinear_anisotropy`; an Hz line port.
         TypeError: ``mode`` is not a `gfem.PortModeResult`, or has no electric
             field.
         NonDifferentiableError: The node coordinates are traced by `jax.grad`.
@@ -400,10 +520,21 @@ def kerr_nonlinearity(model: Model, mode: PortModeResult) -> KerrNonlinearity:
     rho = None if kerr.rho is None else kerr.rho[:, None]
     frames = None if kerr.axes is None else jnp.asarray(kerr.axes)[:, None]
 
+    index = kerr.index
+
     @jax.checkpoint
-    def integral(vector: jax.Array) -> jax.Array:
+    def integral(vector: jax.Array, matrix: jax.Array | None) -> jax.Array:
         e = waves.row(vector)
         re, im = jnp.real(e), jnp.imag(e)
+        if matrix is not None:
+            # 2 (E^H N E)^2 + |E^T N E|^2 with N real symmetric, n^2 S for N = n I
+            if e.shape[-1] == 1:  # an Ez line port: the zz entry of N
+                matrix = matrix[:, 2:, 2:]
+            ne = jnp.einsum("eij,eqj->eqi", matrix, e)
+            hh = jnp.sum(re * jnp.real(ne) + im * jnp.imag(ne), axis=-1)
+            tt = jnp.sum(e * ne, axis=-1)
+            quartic = 2 * hh * hh + jnp.real(tt) ** 2 + jnp.imag(tt) ** 2
+            return jnp.sum(weights * quartic, axis=-1)
         e2 = jnp.sum(re * re + im * im, axis=-1)
         ee = jnp.sum(e * e, axis=-1)
         quartic = 2 * e2 * e2 + jnp.real(ee) ** 2 + jnp.imag(ee) ** 2
@@ -415,12 +546,17 @@ def kerr_nonlinearity(model: Model, mode: PortModeResult) -> KerrNonlinearity:
         return jnp.sum(weights * quartic, axis=-1)
 
     # one row at a time: the point values of a row are (n_el, n_q, 3) complex
-    per_element = jax.lax.map(integral, waves.vectors)  # (n_wave, n_el)
+    if index is None:
+        per_element = jax.lax.map(lambda v: integral(v, None), waves.vectors)
+    else:
+        per_element = jax.lax.map(lambda a: integral(*a), (waves.vectors, index))
+    # (n_wave, n_el); the index matrix holds n^2 already
+    eps = kerr.eps if index is None else jnp.ones_like(kerr.eps)
     k0 = jnp.asarray(2 * np.pi * waves.frequency / _C)[:, None]
     # conjugate of n2 - i beta / (2 k0): the e^{-i omega t} convention
     n2 = kerr.n2[None] + 1j * kerr.beta[None] / (2 * k0)
     gamma = (k0[:, 0] * _C**2 * _EPS0**2 / 12) * jnp.sum(
-        kerr.eps * n2 * per_element, axis=-1
+        eps * n2 * per_element, axis=-1
     )
     return KerrNonlinearity(
         port=waves.port,
@@ -477,31 +613,21 @@ def kerr_coupling(
     points = e.reshape(n_wave, n_el * n_q, n_c)
     omega = jnp.asarray(2 * np.pi * waves.frequency)
     kerr = waves.materials
+    index = kerr.index
+    # the index matrix holds n^2 already
+    eps = kerr.eps if index is None else jnp.ones_like(kerr.eps)
     chi = (
         (4 / 3)
-        * kerr.eps
+        * eps
         * _C
         * _EPS0
         * (kerr.n2[None] - 1j * kerr.beta[None] * _C / (2 * omega[:, None]))
     )
     x = jnp.repeat(chi, n_q, axis=1) * waves.weights.reshape(-1)[None]
-    if kerr.rho is not None:
-        rho = jnp.repeat(kerr.rho, n_q)[None]
-        x_cubic = 3 * (1 - rho) * x
-        x = rho * x
-    p = jnp.einsum("bnx,cnx->bcn", points, points)
-    q = jnp.einsum("bnx,cnx->bcn", points, jnp.conj(points))
-    t = (
-        jnp.einsum("an,bcn,adn->abcd", x, p, jnp.conj(p))
-        + jnp.einsum("an,ban,cdn->abcd", x, q, q)
-        + jnp.einsum("an,bdn,can->abcd", x, q, q)
-    )
-    if kerr.rho is not None:
-        frames = jnp.repeat(jnp.asarray(kerr.axes), n_q, axis=0)
-        r = _crystal_components(points, frames[None])  # (n_wave, n, 3)
-        t = t + jnp.einsum(
-            "an,bns,cns,ans,dns->abcd", x_cubic, r, r, jnp.conj(r), jnp.conj(r)
-        )
+    if index is not None:
+        t = _birefringent_tensor(points, jnp.repeat(index, n_q, axis=1), x)
+    else:
+        t = _isotropic_tensor(points, kerr, x, n_q)
     gamma = jnp.conj(omega[:, None, None, None] * _EPS0 / 16 * t)
     return KerrCoupling(
         port=waves.port,

@@ -1415,7 +1415,10 @@ class Material:
         nonlinear_index: The Kerr index :math:`n_2`, the change of the
             refractive index per unit intensity
             (:math:`\delta n = n_2 I`), in m^2/W: one real number of any
-            sign, isotropic. Read by `gfem.kerr_nonlinearity` and
+            sign, one scalar: in a birefringent crystal (three `eps_r`
+            values along `axes`) it is the change :math:`n_2 I` of the index
+            of light polarized along each principal axis. Read by
+            `gfem.kerr_nonlinearity` and
             `gfem.kerr_coupling` only, never by a solve. ``None`` means no
             Kerr effect.
         two_photon_absorption: The two-photon absorption coefficient
@@ -1527,7 +1530,7 @@ class Material:
             `eps_r` of 1 (the crystal's optical permittivity left out); a
             `nonlinear_anisotropy` that is not one finite real number,
             sits beside an anisotropic `eps_r` (cubic crystals are optically
-            isotropic) or has neither a `nonlinear_index` nor a
+            isotropic) or a `PermittivityLaw` (no `axes`), or has neither a `nonlinear_index` nor a
             `two_photon_absorption`; a `raman_spectrum` that holds a
             traced gain (`NonDifferentiableError`), sits beside an
             anisotropic `eps_r`, or is cubic beside a `PermittivityLaw`; a
@@ -1704,6 +1707,13 @@ def _check_anisotropy(material: Material, owner: str) -> None:
             f"{owner}: nonlinear_anisotropy scales the Kerr effect, but the "
             "material has no nonlinear_index and no two_photon_absorption. "
             "Give n2 (or beta_TPA) along a crystal axis."
+        )
+    if isinstance(material.eps_r, PermittivityLaw):
+        raise ValueError(
+            f"{owner}: nonlinear_anisotropy is given in the crystal frame of axes, "
+            "but eps_r is a PermittivityLaw, which takes no axes, so the frame "
+            "would be lost. Give the optical permittivity at the wavelength as a "
+            "constant eps_r, with axes."
         )
     if not material.isotropic:
         raise ValueError(
@@ -2988,7 +2998,18 @@ class MaterialField:
         Args:
             region: The volume region the field is for.
             material: The material.
+
+        Raises:
+            ValueError: The material has a `nonlinear_anisotropy` or a
+                `raman_spectrum`, which a field does not carry.
         """
+        for dropped in ("nonlinear_anisotropy", "raman_spectrum"):
+            if getattr(material, dropped) is not None:
+                raise ValueError(
+                    f"MaterialField.uniform: the material has a {dropped}, which a "
+                    "MaterialField does not carry, so it would be dropped. Assign "
+                    "the Material itself to the region."
+                )
         if isinstance(material.eps_r, PermittivityLaw):
             raise TypeError(
                 "MaterialField.uniform: the material's eps_r is a PermittivityLaw. "

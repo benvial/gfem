@@ -442,7 +442,7 @@ def test_a_model_without_a_property_names_the_port(guide_mesh):
         gfem.kerr_nonlinearity(model, mode_of(model))
 
 
-def test_an_anisotropic_region_with_a_property_is_refused(tmp_path):
+def test_an_anisotropic_field_with_a_property_is_refused(tmp_path):
     path = pml_cases.strip_guide(
         tmp_path / "strip.msh", 0.4, thickness=0, quarter=False, length=0.15
     )
@@ -457,9 +457,11 @@ def test_an_anisotropic_region_with_a_property_is_refused(tmp_path):
     works = materials(aniso)  # without the property it contributes nothing
     mode = gfem.solve(works, gfem.PortMode("p1", f), options=ORDER)
     assert gfem.kerr_nonlinearity(works, mode).gamma_nl[0].real > 0
-    refused = materials(dataclasses.replace(aniso, nonlinear_index=2.6e-20))
-    with pytest.raises(NotImplementedError, match=r"region 'clad'.*anisotropic"):
-        gfem.kerr_nonlinearity(refused, mode)
+    field = gfem.MaterialField.uniform(
+        "clad", dataclasses.replace(aniso, nonlinear_index=2.6e-20)
+    )
+    with pytest.raises(NotImplementedError, match=r"region 'clad'.*MaterialField"):
+        gfem.kerr_nonlinearity(materials(field), mode)
 
 
 def test_a_layer_grid_design_blending_a_kerr_property_is_refused(slab):
@@ -799,7 +801,7 @@ def uniform(monkeypatch, filled):
     """``measure(fields, rho, axes, what)``: the overlap of given uniform fields."""
     model, mode, _ = filled
 
-    def measure(fields, rho, axes=None, coupling=False):
+    def measure(fields, rho, axes=None, coupling=False, index=None):
         axes = np.eye(3) if axes is None else axes
         fields = np.asarray(fields, complex)
         n = len(fields)
@@ -811,6 +813,9 @@ def uniform(monkeypatch, filled):
             keep=np.ones(1, bool),
             rho=jnp.asarray([rho]) if has else None,
             axes=np.asarray(axes)[None] if has else None,
+            index=None
+            if index is None
+            else jnp.asarray(index)[None, None] * jnp.ones((n, 1, 1, 1)),
         )
         waves = _Uniform(fields, kerr_materials)
         monkeypatch.setattr(kerr, "_waves", lambda *_: waves)
@@ -1020,3 +1025,170 @@ def test_the_anisotropy_survives_a_pytree_and_a_job_round_trip():
     leaves, tree = jax.tree.flatten(material)
     assert jax.tree.unflatten(tree, leaves).nonlinear_anisotropy == RHO
     assert "nonlinear_anisotropy=1.27" in repr(material)
+
+
+# --- birefringent regions: the index matrix N ----------------------------------------
+
+NO, NE = 2.21111101, 2.13755965  # lithium niobate at 1550 nm (ordinary, extraordinary)
+LN_N2 = 1.8e-19
+
+
+def _index_matrix(values, axes=None):
+    axes = np.eye(3) if axes is None else np.asarray(axes)
+    return axes.T @ np.diag(values) @ axes
+
+
+def _ln(n_y, axes=None):
+    # the guide's TE10 field is along y: the second principal value is its index
+    values = (NO, n_y, NO) if n_y != NO else (NE, NO, NE)
+    return gfem.Material(
+        eps_r=tuple(v**2 for v in values), nonlinear_index=LN_N2, axes=axes
+    )
+
+
+@pytest.mark.parametrize("n_y", [NO, NE], ids=["ordinary", "extraordinary"])
+def test_a_birefringent_filled_te10_follows_its_closed_form(guide_mesh, n_y):
+    model = guide_model(guide_mesh, _ln(n_y))
+    mode = mode_of(model, [F])
+    got = gfem.kerr_nonlinearity(model, mode).gamma_nl[0]
+    k0 = k0_of(F)
+    n_eff = float(mode.gamma.imag[0] / k0)
+    reference = 1.5 * k0 * LN_N2 / (A * B) * (n_y / n_eff) ** 2
+    # the field's own mesh error: 7e-6 measured at order 2 on the isotropic guide
+    # (the x component of the field adds a share of the same size); gate 1e-5
+    assert got.real == pytest.approx(reference, rel=1e-5)
+    assert got.imag == 0.0
+
+
+def test_the_ln_guide_of_the_decision_numbers_is_the_same_closed_form():
+    # the micron guide of the design notes (a = 2 um, 1550 nm) has no mesh here: the
+    # closed form itself, evaluated at its two indices; the quoted digits are the
+    # formula's to 1e-9
+    a, b, wavelength = 2e-6, 1e-6, 1.55e-6
+    k0 = 2 * np.pi / wavelength
+
+    def gamma(n_y):
+        n_eff = math.sqrt(n_y**2 - (wavelength / (2 * a)) ** 2)
+        return 1.5 * k0 * LN_N2 / (a * b) * (n_y / n_eff) ** 2
+
+    assert gamma(NO) == pytest.approx(0.5645852829, rel=1e-9)
+    assert gamma(NE) == pytest.approx(0.5658403721, rel=1e-9)
+
+
+def test_an_isotropic_index_matrix_is_the_squared_index_overlap(uniform):
+    rng = np.random.default_rng(3)
+    fields = rng.normal(size=(2, 3)) + 1j * rng.normal(size=(2, 3))
+    matrix = N * np.eye(3)
+    # N = n I gives the operations of n^2 S with the order of the products changed:
+    # round-off 1e-16 on numbers of order 1, gate 1e-13
+    np.testing.assert_allclose(
+        uniform(fields, None, index=matrix),
+        uniform(fields, None),
+        rtol=1e-13,
+        atol=0,
+    )
+    np.testing.assert_allclose(
+        uniform(fields, None, coupling=True, index=matrix),
+        uniform(fields, None, coupling=True),
+        rtol=1e-13,
+        atol=1e-13 * np.abs(uniform(fields, None, coupling=True)).max(),
+    )
+
+
+def test_the_index_matrix_overlap_is_exact_along_each_principal_axis(uniform):
+    axes = np.asarray(_random_axes(9))
+    values = (2.0, 2.2, 2.4)
+    matrix = _index_matrix(values, axes)
+    for k, n_k in enumerate(values):
+        got = uniform([axes[k]], None, index=matrix)[0]
+        # the scalar n2 is the index change along each principal axis: n_k^2 S
+        np.testing.assert_allclose(
+            got, uniform([axes[k]], None, index=n_k * np.eye(3))[0], rtol=1e-13
+        )
+    # halfway between two axes the quadratic form is the mean index (n_0 + n_2) / 2
+    mixed = uniform([(axes[0] + axes[2]) / np.sqrt(2)], None, index=matrix)[0]
+    along = uniform([axes[0]], None, index=matrix)[0]
+    ratio = ((values[0] + values[2]) / 2 / values[0]) ** 2
+    assert mixed.real / along.real == pytest.approx(ratio, rel=1e-13)
+
+
+def test_the_index_matrix_diagonal_of_the_coupling_is_the_coefficient(uniform):
+    rng = np.random.default_rng(5)
+    fields = rng.normal(size=(1, 3)) + 1j * rng.normal(size=(1, 3))
+    matrix = _index_matrix((2.0, 2.2, 2.4), _random_axes(2))
+    tensor = uniform(fields, None, coupling=True, index=matrix)[0, 0, 0, 0]
+    single = uniform(fields, None, index=matrix)[0]
+    assert tensor == pytest.approx(single, rel=1e-13)
+
+
+def test_the_index_matrix_coupling_has_the_symmetries_of_s(uniform):
+    # S is symmetric in its first pair and in (c, d): gamma_abcd = conj(T) with T
+    # symmetric in b <-> c at one frequency (here N is the same for every wave)
+    rng = np.random.default_rng(8)
+    fields = rng.normal(size=(3, 3)) + 1j * rng.normal(size=(3, 3))
+    matrix = _index_matrix((2.0, 2.2, 2.4), _random_axes(6))
+    g = uniform(fields, None, coupling=True, index=matrix)
+    np.testing.assert_allclose(g, np.swapaxes(g, 1, 2), rtol=1e-13, atol=1e-13)
+
+
+def test_a_law_beside_a_rho_is_refused_and_the_constant_route_works(guide_mesh):
+    # a dispersive core cannot carry axes, so a rho beside a law would lose its
+    # frame: refused. The route is the band centre's constant permittivity with
+    # axes, in a second model of the same mesh, whose centre row differs from the
+    # law's by the factor alone (the same permittivity there)
+    eps = complex(LORENTZ(jnp.asarray(F)))
+    axes = _random_axes(12)
+    with pytest.raises(ValueError, match=r"nonlinear_anisotropy.*constant eps_r"):
+        gfem.Material(eps_r=LORENTZ, nonlinear_index=N2, nonlinear_anisotropy=RHO)
+    with pytest.raises(ValueError, match="axes"):
+        gfem.Material(eps_r=LORENTZ, nonlinear_index=N2, axes=axes)
+    law = gfem.Material(eps_r=LORENTZ, nonlinear_index=N2)
+    constant = gfem.Material(
+        eps_r=eps.real, nonlinear_index=N2, nonlinear_anisotropy=RHO, axes=axes
+    )
+    model = guide_model(guide_mesh, law)
+    mode = mode_of(model, [F])
+    a = gfem.kerr_nonlinearity(model, mode).gamma_nl
+    b = gfem.kerr_nonlinearity(model.with_material("air", constant), mode).gamma_nl
+    factor = RHO + (1 - RHO) * _quartic_factor(axes, Y)
+    assert abs(factor - 1) > 0.05
+    # the field is y up to the mesh's x component (measured 1.07e-5 at order 2)
+    assert b.real[0] / a.real[0] == pytest.approx(factor, rel=2e-5)
+
+
+def test_a_birefringent_region_beside_a_rho_region_is_refused(tmp_path):
+    path = pml_cases.strip_guide(
+        tmp_path / "strip.msh", 0.4, thickness=0, quarter=False, length=0.15
+    )
+    base = pml_cases.strip_model(path)
+    core = gfem.Material(
+        eps_r=pml_cases.STRIP_CORE**2, nonlinear_index=6e-18, nonlinear_anisotropy=RHO
+    )
+    clad = gfem.Material(eps_r=(2.1, 2.1, 2.3), nonlinear_index=2.6e-20)
+    model = base.replace(materials={"core": core, "clad": clad})
+    mode = gfem.solve(model, gfem.PortMode("p1", pml_cases.STRIP_F), options=ORDER)
+    with pytest.raises(
+        NotImplementedError, match=r"nonlinear_anisotropy.*birefringent"
+    ):
+        gfem.kerr_nonlinearity(model, mode)
+    # alone, the birefringent cladding is accepted
+    alone = base.replace(
+        materials={
+            "core": dataclasses.replace(core, nonlinear_anisotropy=None),
+            "clad": clad,
+        }
+    )
+    assert gfem.kerr_nonlinearity(alone, mode).gamma_nl[0].real > 0
+
+
+def test_uniform_field_refuses_a_material_with_dropped_properties():
+    cubic = _cubic(RHO)
+    with pytest.raises(ValueError, match="nonlinear_anisotropy"):
+        gfem.MaterialField.uniform("air", cubic)
+    spectrum = gfem.RamanSpectrum(
+        [0.0, 1e12, 2e12], [0.0, 1.0, 0.0], 2e14, "isotropic", [0.0, 0.5, 0.0]
+    )
+    with pytest.raises(ValueError, match="raman_spectrum"):
+        gfem.MaterialField.uniform(
+            "air", gfem.Material(eps_r=N**2, raman_spectrum=spectrum)
+        )
