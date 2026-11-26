@@ -135,7 +135,9 @@ def _waves(
     With ``shape`` the node coordinates may be traced by `jax.grad`: the
     section, the columns and the materials are read at their values and the
     waves carry the map of each section triangle from there to the moved one
-    (`_moved`), so the overlaps differentiate the moving cross-section.
+    (`_moved`), so the overlaps differentiate the moving cross-section. The
+    materials are read by owner element, so a `gfem.MaterialField`'s values
+    move with their elements, as the mode's own node derivative holds them.
 
     Raises:
         TypeError: An entry is not a `gfem.PortModeResult`, or has no electric

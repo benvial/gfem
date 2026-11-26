@@ -621,9 +621,11 @@ def kerr_nonlinearity(model: Model, mode: PortModeResult) -> KerrNonlinearity:
     respect to the section's ``eps_r``, laws, losses and density blends (one 2D
     adjoint per row) and to the node coordinates of a planar port: the section's
     elements move, the mode's field with them (its own shape adjoint), and the
-    overlap is read on the moved triangles. A line port of a 2D model has no
-    node derivative. A mode's phase is free, so an objective that depends on it
-    raises.
+    overlap is read on the moved triangles. A `gfem.MaterialField`'s values
+    belong to their elements and move with them, in the overlap as in the mode
+    solve: the node derivative holds each element's material, not the material
+    at a fixed point. A line port of a 2D model has no node derivative. A mode's
+    phase is free, so an objective that depends on it raises.
 
     Args:
         model: The model the mode was solved on, with the Kerr properties.
