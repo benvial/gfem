@@ -110,10 +110,14 @@ def gain_backward(optical, backward):
 
 def test_the_forward_gain_is_the_couplings_g0_squared(optical, forward, gain_forward):
     # G_B = 4 Q_m |g~0|^2 / (hbar omega v_g^2 Re Omega) with v_g = c / n_g, from the
-    # coupling's own g~0 = (omega / n_g) dn sqrt(hbar Re Omega / 4): both read the
-    # same overlap path, each side is ~12 scalar flops (<= 3e-15 relative), so the
-    # gate 1e-13 holds 30x of margin; measured 4.2e-16 on the gain, 0 on the
-    # overlaps
+    # coupling's own g~0 = (omega / n_g) dn sqrt(hbar Re Omega / 4). Each side runs
+    # its own optical port-mode solve (the public calls take the model, not a
+    # solved mode), so they agree as far as that solve repeats: measured 0 on the
+    # overlaps and on the gain, with 1 and with 8 MKL/NGSolve threads (three
+    # repeats of each call).
+    # Beyond it each side is ~12 scalar flops (<= 3e-15 relative); the gate 1e-13
+    # holds 30x of that flop bound and 20x of the 4.5e-15 by which two mirrored
+    # port solves of one section differ; measured 4.2e-16 on the gain
     coupling = gfem.optomechanical_coupling(
         optical, forward, port="p", frequency=FREQUENCY
     )
@@ -195,8 +199,10 @@ def test_the_total_is_not_the_sum_of_the_parts(gain_backward):
 def test_the_modes_are_selected_by_number(optical, backward, gain_backward):
     only = _gain(optical, backward, mechanical_modes=[MIXED, -4])
     assert only.modes == (MIXED, 0)
-    # the same solves and the same sums per mode: measured 0; gate 1e-13 (450
-    # eps), for a threaded assembly that sums in another order
+    # each call runs its own optical solve, which repeats bitwise on 1 and on 8
+    # threads (measured 0 on both), and sums per mode in the same order: measured
+    # 0; gate 1e-13 (450 eps, 20x of the 4.5e-15 scatter of two mirrored port
+    # solves), for a threaded assembly that sums in another order
     np.testing.assert_allclose(
         only.total, np.asarray(gain_backward.total)[[MIXED, 0]], rtol=1e-13, atol=0
     )

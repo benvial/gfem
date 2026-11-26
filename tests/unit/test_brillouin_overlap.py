@@ -292,6 +292,68 @@ def test_a_wavenumber_outside_the_windows_raises_naming_the_expected_values(
     assert "(backward, along the pump of port 'p')" in str(info.value)
 
 
+# --- a pump toward -z ----------------------------------------------------------------
+
+
+def _shifted(mechanical, q, u_z):
+    """A rigid shift ``(0, 1 nm, u_z)`` of the film at wavenumber ``q``.
+
+    Its strain :math:`S_{yz} = -iq u_y`, :math:`S_{zz} = -iq u_z` is uniform, so
+    the mean over a tetrahedron does not depend on how the section's prisms are
+    split into tetrahedra, which differs between the front and the back face.
+    """
+    return oc.displacement(
+        mechanical,
+        ("film",),
+        gradients=[(0, 0), (0, 0), (0, 0)],
+        offsets=(0.0, 1e-9, u_z),
+        wavenumber=q,
+    )
+
+
+def _back(model):
+    """``model`` with its wave port on the back face (the pump travels along -z)."""
+    return gfem.Model(
+        model.mesh,
+        materials=model.materials,
+        boundaries=model.boundaries,
+        ports=[gfem.WavePort("p", "back")],
+    )
+
+
+def test_a_pump_toward_minus_z_pairs_with_the_mirrored_phonon(rough, mechanical, beta):
+    # The z mirror maps the front pump at q to the back pump at -q with u_z ->
+    # -u_z; the overlap is its own mirror image, so the two agree. Both sides
+    # solve their own port mode on the same section, and the weights of the two
+    # solves differ by 4.5e-15 of the largest (measured); the strains are
+    # uniform. The moving boundary is a cancelling sum (3.8e-6 against a total
+    # of 4.4e-3), so the gate is absolute, 1e-12 of |total|: measured 4.2e-16
+    # (moving boundary), 1e-16 (photoelastic), 5.1e-16 (total), so the gate
+    # holds 2000x of margin over the largest; the 4.5e-15 scatter of each weight
+    # is the reference, and the sum of 121 of them averages it down.
+    front = oc.model(rough, _film(), pec=False)
+    back = _back(front)
+    want = _overlap(front, _shifted(mechanical, 2 * beta, 3e-10), mode=2)
+    got = _overlap(back, _shifted(mechanical, -2 * beta, -3e-10), mode=2)
+    assert want.direction == got.direction == "backward"
+    assert abs(want.photoelastic) > 1e-3 * abs(want.moving_boundary)
+    scale = abs(complex(want.total))
+    for name in ("moving_boundary", "photoelastic", "total"):
+        np.testing.assert_allclose(
+            getattr(got, name), getattr(want, name), rtol=0, atol=1e-12 * scale
+        )
+
+
+def test_a_phonon_with_the_pump_of_a_back_port_counter_propagates(
+    rough, mechanical, beta
+):
+    back = _back(oc.model(rough, _film(), pec=False))
+    with pytest.raises(ValueError, match="counter-propagates") as info:
+        _overlap(back, _shifted(mechanical, 2 * beta, 0.0), mode=2)
+    assert "guides the pump along -z" in str(info.value)
+    assert f"q = {-2 * beta:+.4e} rad/m" in str(info.value)
+
+
 # --- refusals and cost ---------------------------------------------------------------
 
 
