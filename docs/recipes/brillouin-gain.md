@@ -206,9 +206,10 @@ d ln G / d ln E = -1.00000
   gain by $Q'/Q_m$.
 - **Symmetry.** A mode of a symmetry class other than the pump's couples only
   through the mesh's asymmetry, orders of magnitude below the even modes.
-- **A finer mesh.** Refine both meshes near the wire: the parts and the totals
-  approach the published values, and the frequencies keep their first four
-  digits.
+- **A finer mesh.** Refine both meshes near the wire: E1's photoelastic part
+  moves to within 2 % of the published value, the frequencies keep their first
+  four digits, and E2's moving-boundary part stays about 7 % below the
+  published figure on every mesh.
 - See {doc}`../verification`, "Brillouin gain", for the closed form and the
   published case.
 
