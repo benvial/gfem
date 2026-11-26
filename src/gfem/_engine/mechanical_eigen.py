@@ -343,7 +343,8 @@ class MechanicalEigenmodeRule:
         :math:`x\,\bar\omega / (2\omega g)`, with the weights of every piece of
         :math:`\hat K` at :math:`q` and :math:`-\lambda` on the mass, and no
         solve. A cotangent on a mode's displacement or potential adds one
-        solve at the converged eigenvalue (`_field_adjoint`). The left field
+        solve at the converged eigenvalue (`MechanicalSystem.field_adjoint`).
+        The left field
         is the test side of each form (`_terms`, `tensors`).
 
         Raises:
@@ -390,7 +391,12 @@ class MechanicalEigenmodeRule:
                     left = y * (omega_ct[i] / (2 * omega * fields["gram"][i]))
                     if has_field[i]:
                         adjoint = system.field_adjoint(
-                            lam, x, y, fields["gram"][i], field_ct[i]
+                            lam,
+                            x,
+                            y,
+                            fields["gram"][i],
+                            field_ct[i],
+                            gauge=int(fields["gauge"][i]),
                         )
                         left = left + adjoint.left
                         pairs.append(
@@ -916,7 +922,7 @@ class MechanicalSystem:
         try:
             if handle is not None and self.coupled:
                 x = self._refined(handle, x)
-            v = self._normalized(x, omega)
+            v, _ = self._normalized(x, omega)
             return v, self._left(lam, v, tolerance, handle, mode)
         finally:
             if handle is not None:
@@ -980,6 +986,7 @@ class MechanicalSystem:
         right = np.zeros((self.ndof, want), complex)
         left = np.zeros((self.ndof, want), complex)
         gram = np.zeros(want, complex)
+        gauge = np.zeros(want, int)
         lams = np.zeros(want, complex)
         for i, (lam, x, error) in enumerate(found[:want]):
             v, y = self._vectors(lam, x, omega_all[i], tolerance, i)
@@ -991,7 +998,7 @@ class MechanicalSystem:
                 # section has a real frequency, so its quality factor is inf
                 lams[i] = lams[i].real
             omega = np.sqrt(lams[i])
-            v = self._normalized(v, omega)
+            v, gauge[i] = self._normalized(v, omega)
             right[self.index, i], left[self.index, i] = v, y
             gram[i] = y @ (self.mass @ v)
             out["omega"][i] = omega
@@ -1007,6 +1014,7 @@ class MechanicalSystem:
             "x": right,
             "y": left,
             "gram": gram,
+            "gauge": gauge,
             "lambda": lams,
             "shared": shared,
         }
@@ -1021,20 +1029,24 @@ class MechanicalSystem:
         y: np.ndarray,
         gram: complex,
         x_bar: np.ndarray,
+        *,
+        gauge: int,
     ) -> FieldAdjoint:
         r"""Carry a cotangent of a normalized mode to the pencil.
 
         ``x`` is the mode as returned (`_normalized`), ``y`` its left vector,
-        ``gram`` :math:`= y^T M x` and ``x_bar`` the cotangent of ``x``, all on
+        ``gram`` :math:`= y^T M x`, ``x_bar`` the cotangent of ``x``, all on
         the whole space, in the convention :math:`dL = \mathrm{Re}\,\bar
-        x^T dx`. With :math:`A = \hat K - \lambda M`, a perturbation of the
-        pencil moves the mode as :math:`dx = w + \beta x`, :math:`A w = -P\,
-        dA\,x`, :math:`P = I - M x\,y^T/g` and :math:`dA = d\hat K -
-        \lambda\,dM`; the complex :math:`\beta` holds the normalization
+        x^T dx`, and ``gauge`` the position (among the free coefficients) of
+        the coefficient `_normalized` made real. With :math:`A = \hat K -
+        \lambda M`, a perturbation of the pencil moves the mode as
+        :math:`dx = w + \beta x`, :math:`A w = -P\,dA\,x`,
+        :math:`P = I - M x\,y^T/g` and :math:`dA = d\hat K - \lambda\,dM`;
+        the complex :math:`\beta` holds the normalization
         :math:`\tfrac12 (\mathrm{Re}\,\omega)^2 x^H M x = 1` and the phase
-        gauge :math:`\mathrm{Im}\,x_j = 0` at the largest displacement
-        coefficient :math:`j`. With :math:`c = \bar x^T x` and :math:`E = x^H
-        M x`, eliminating :math:`\beta` gives
+        gauge :math:`\mathrm{Im}\,x_j = 0` at the coefficient :math:`j` =
+        ``gauge``, the largest displacement coefficient. With
+        :math:`c = \bar x^T x` and :math:`E = x^H M x`, eliminating :math:`\beta` gives
 
         .. math::
 
@@ -1059,8 +1071,7 @@ class MechanicalSystem:
         m = self.mass
         energy = float(np.real(np.vdot(v, m @ v)))
         c = complex(v_bar @ v)
-        shown = np.flatnonzero(i < 3 * self.nu)
-        j = shown[np.argmax(np.abs(v[shown]))]
+        j = gauge
         r = v_bar - (c.real / energy) * (m @ np.conj(v))
         r[j] -= 1j * c.imag / v[j].real
         z = self._bordered(lam, v, w, r)
@@ -1089,14 +1100,19 @@ class MechanicalSystem:
         finally:
             handle.free()
 
-    def _normalized(self, x: np.ndarray, omega: complex) -> np.ndarray:
+    def _normalized(self, x: np.ndarray, omega: complex) -> tuple[np.ndarray, int]:
         r"""``x`` scaled to :math:`\tfrac12 (\mathrm{Re}\,\omega)^2 x^H M x = 1`.
 
         The largest displacement coefficient is real and positive; the
-        potential is scaled with it.
+        potential is scaled with it. Returns the vector and the position of
+        that coefficient (the phase gauge's), which the eigenvector adjoint
+        reads rather than seek it again: on a symmetric section mirror
+        coefficients tie to round-off, and another search could pick the
+        other one.
         """
         energy = np.real(np.vdot(x, self.mass @ x))
         x = x * np.sqrt(2 / (omega.real**2 * energy))
         shown = np.flatnonzero(self.index < 3 * self.nu)
-        largest = x[shown[np.argmax(np.abs(x[shown]))]]
-        return x * (np.conj(largest) / abs(largest))
+        j = int(shown[np.argmax(np.abs(x[shown]))])
+        largest = x[j]
+        return x * (np.conj(largest) / abs(largest)), j
