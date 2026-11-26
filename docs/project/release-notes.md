@@ -4,6 +4,14 @@
 
 Integrated photonics:
 
+- **Behaviour change: a `PortMode` solve costs more.** It takes about 15 to 30 %
+  longer and its result holds three more arrays, so gfem 0.2.0 cannot load a saved
+  one. Upgrade before you load it ({doc}`../recipes/waveguide-dispersion`).
+- **Behaviour change: `gfem.PortModeProjectionWarning` is removed.** It has not been
+  emitted since 0.1.0; delete any warning filter that names it.
+- **Behaviour change: a bad voltage path raises.** A `WavePort` whose
+  `voltage_path` has a point outside the port section now raises `ValueError` in
+  the solve. Move the point onto the port.
 - **Designs at wave ports.** S, port waves and kept fields differentiate with
   respect to the materials, sheets and nodes of a wave port's face, on every
   driven sweep and solver ({doc}`../recipes/port-mode-gradient`).
@@ -18,14 +26,6 @@ Integrated photonics:
   ({doc}`../recipes/sax-circuit`).
 - **Group index and dispersion.** Every `gfem.PortMode` solve gives `n_g`,
   `beta_2`, `beta_3` and `D` at each frequency ({doc}`../recipes/waveguide-dispersion`).
-- **Behaviour change: a `PortMode` solve costs more.** It takes about 15 to 30 %
-  longer and its result holds three more arrays, so gfem 0.2.0 cannot load a saved
-  one. Upgrade before you load it ({doc}`../recipes/waveguide-dispersion`).
-- **Behaviour change: `gfem.PortModeProjectionWarning` is removed.** It has not been
-  emitted since 0.1.0; delete any warning filter that names it.
-- **Behaviour change: a bad voltage path raises.** A `WavePort` whose
-  `voltage_path` has a point outside the port section now raises `ValueError` in
-  the solve. Move the point onto the port.
 - **SAX components.** `gfem.SaxComponent` turns a `gfem.Model` function and a
   `gfem.Driven` band into a SAX circuit model, so one `jax.grad` reaches gfem and
   SAX together ({doc}`../recipes/sax-circuit`).
@@ -95,6 +95,12 @@ Heat and thermo-optics:
 
 Mechanics and acoustics:
 
+- **Behaviour change: anisotropic materials on a 2D model.** A 2D model no longer
+  raises an anisotropic material when it is built, and a 2D solve refuses it at the
+  solve. Catch the error there ({doc}`../recipes/piezoelectric-admittance`).
+- **Behaviour change: a region excluded from every physics.** The check now counts
+  the `"mechanical"` key, so a model that excludes every volume from the other
+  physics raises when solved, not when built ({doc}`../recipes/piezoelectric-admittance`).
 - **Piezoelectric problems.** `gfem.Piezoelectric` solves a 2D section's admittance
   per length between electrodes over a list of frequencies
   ({doc}`../recipes/piezoelectric-admittance`).
@@ -119,12 +125,6 @@ Mechanics and acoustics:
   coupling of mechanical modes to a wave port's mode, and
   `gfem.optomechanical_overlap` the index change of any displacement, both
   differentiable ({doc}`../recipes/optomechanical-coupling`).
-- **Behaviour change: anisotropic materials on a 2D model.** A 2D model no longer
-  raises an anisotropic material when it is built, and a 2D solve refuses it at the
-  solve. Catch the error there ({doc}`../recipes/piezoelectric-admittance`).
-- **Behaviour change: a region excluded from every physics.** The check now counts
-  the `"mechanical"` key, so a model that excludes every volume from the other
-  physics raises when solved, not when built ({doc}`../recipes/piezoelectric-admittance`).
 
 Free-space scattering:
 
@@ -240,13 +240,13 @@ Design workflow:
 
 Solvers and scale-out:
 
+- **Behaviour change: `"auto"` may pick `pmg_gmres`.** A driven problem whose direct
+  factorization does not fit now takes `"pmg_gmres"` before `"bddc_gmres"`. Models
+  that ran on the direct solver still do ({doc}`../recipes/large-driven-model`).
 - **Fewer stale iterations in a sweep.** A reused BDDC or p-multigrid preconditioner
   is set up again sooner as the frequency moves ({doc}`../recipes/large-driven-model`).
 - **A p-multigrid solver.** `linear_solver="pmg_gmres"` solves large driven models
   in a quarter of the direct solver's memory ({doc}`../recipes/large-driven-model`).
-- **Behaviour change: `"auto"` may pick `pmg_gmres`.** A driven problem whose direct
-  factorization does not fit now takes `"pmg_gmres"` before `"bddc_gmres"`. Models
-  that ran on the direct solver still do ({doc}`../recipes/large-driven-model`).
 
 Results and files:
 
@@ -257,6 +257,9 @@ Results and files:
 
 ## 0.2.0 (2026-11-23)
 
+- **Behaviour change: kept coarse factorizations count in `retain_memory`.** Under
+  ranks, `retain_memory=0` keeps none past a solve and `gfem.release_memory()`
+  frees them ({doc}`../recipes/distributed-solve`).
 - **Native 2D models.** `gfem.Driven(polarization="Ez")` or `"Hz"` solves a 2D model
   with line ports and adjoint gradients ({doc}`../recipes/2d-models`).
 - **Perfectly matched layers.** `gfem.PML` absorbs oblique waves in driven,
@@ -271,9 +274,6 @@ Results and files:
   most 32 processes; rebuild an older stack to get it ({doc}`../recipes/petsc-slepc`).
 - **ParMETIS on your own stack.** `tools/petsc_wheelhouse.sh --mpi --with-parmetis`
   adds ParMETIS for its builder's use alone ({doc}`../recipes/petsc-slepc`).
-- **Behaviour change: kept coarse factorizations count in `retain_memory`.** Under
-  ranks, `retain_memory=0` keeps none past a solve and `gfem.release_memory()`
-  frees them ({doc}`../recipes/distributed-solve`).
 - **Modes and ports page.** It tells a port mode from a resonant mode
   ({doc}`../modes-and-ports`).
 - **Benchmarks page.** The November 2026 comparison on MareNostrum 5
@@ -378,6 +378,12 @@ RF and microwave:
   not excited had a gradient off by up to 1e-2. Each sample now solves every
   lumped port, so `excite=` saves nothing. Recompute those gradients
   ({doc}`../recipes/adaptive-sweep-gradient`).
+- **Behaviour change: `MaterialField` values are checked at the solve.** A
+  non-finite or non-passive value built under `jax.grad` now raises with the
+  region named ({doc}`../recipes/s-parameter-gradient`).
+- **Behaviour change: frequencies given twice.** `Driven.frequency` and
+  `PortMode.frequency` raise `ValueError` for a repeat. Drop repeats with
+  `numpy.unique` ({doc}`../recipes/frequency-sweep`).
 - **Reuse across designs.** A design loop on `"direct"` reuses the wave-port
   couplings, the solver plan and each frequency's factorization
   ({doc}`../recipes/s-parameter-gradient`).
@@ -388,14 +394,8 @@ RF and microwave:
   ({doc}`../recipes/watch-a-solve`).
 - **Electrostatic gradients.** `result.energy` differentiates in `eps_r` and the
   nodes, and its backward solve prepares once per step ({doc}`../recipes/capacitance-gradient`).
-- **Behaviour change: `MaterialField` values are checked at the solve.** A
-  non-finite or non-passive value built under `jax.grad` now raises with the
-  region named ({doc}`../recipes/s-parameter-gradient`).
 - **Kept fields under a transformation.** `Driven(keep_fields=...)` with wave ports
   runs under `jax.jit`, `jax.grad` and `jax.vmap` ({doc}`../recipes/port-mode-gradient`).
-- **Behaviour change: frequencies given twice.** `Driven.frequency` and
-  `PortMode.frequency` raise `ValueError` for a repeat. Drop repeats with
-  `numpy.unique` ({doc}`../recipes/frequency-sweep`).
 - **Power flow differentiates.** `gfem.power_flow` takes gradients through its
   field ({doc}`../recipes/measurements`).
 
@@ -452,9 +452,6 @@ Meshes, materials and boundaries:
 - **Behaviour change: `interface_participation`'s vacuum test.** A side with
   `eps_r = (1, 1, 4)` is no longer taken as vacuum. Rerun such results
   ({doc}`../recipes/anisotropic-materials`).
-- **Anisotropic materials.** Driven, eigenmode, electrostatic and port mode solves,
-  wave ports, `MaterialField` and its gradients take an anisotropic `Material`
-  ({doc}`../recipes/anisotropic-materials`).
 - **Behaviour change: refinement refuses what it underestimated.** S estimates on
   an `Impedance` or `Absorbing` surface, a lumped port across a permeability
   contrast or a law with a small negative real part raise
@@ -462,6 +459,9 @@ Meshes, materials and boundaries:
   ({doc}`../recipes/mesh-refinement`).
 - **Behaviour change: `refine_mesh` tolerance defaults to `None`.** It is 1e-2
   except for an objective, which needs its own ({doc}`../recipes/mesh-refinement`).
+- **Anisotropic materials.** Driven, eigenmode, electrostatic and port mode solves,
+  wave ports, `MaterialField` and its gradients take an anisotropic `Material`
+  ({doc}`../recipes/anisotropic-materials`).
 - **Adaptive mesh refinement.** `gfem.refine_mesh` subdivides where the error
   estimate is largest until it meets a tolerance ({doc}`../recipes/mesh-refinement`).
 - **Refine for your objective.** `gfem.QuantityEstimator(objective=J)` refines for
