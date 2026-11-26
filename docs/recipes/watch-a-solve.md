@@ -2,19 +2,14 @@
 
 See what gfem does while it solves: which solver each frequency got, whether
 a factorization was reused, how long each phase took, and how far a long
-sweep has gone. gfem reports all of it as standard `logging` records on
-loggers under `gfem` and prints nothing by default. One call turns on the
-{term}`log display`: one line per record on stderr, and a {term}`progress row`
-for each long loop while it runs.
-
-The display is optional and changes no result: S, fields and gradients are
-the same with it on or off. It colours its lines with rich, which the `log`
-extra installs:
+sweep has gone. gfem writes all of it as standard `logging` records under
+`gfem` and prints nothing by default. One
+call turns on the {term}`log display`: a line per record on stderr and a
+{term}`progress row` for each long loop. The display changes no result. It
+colours with rich, which the `log` extra installs; without rich the lines are
+plain text:
 
 {{ install_log }}
-
-Without rich it prints the same lines in plain text, with ANSI colours on a
-terminal.
 
 ## Turn it on
 
@@ -51,42 +46,31 @@ result = gfem.solve(model, gfem.Driven(frequency=(2e9, 5e9, 8e9), excite="p1"))
 14:02:31.220 INFO  solver driven forward solve at 8 GHz: direct refactorized (other frequency), iterations []
 ```
 
-- The lines go to stderr, so they never mix with what your script prints on
-  stdout.
-- `gfem.log.enable("DEBUG")` shows more, `gfem.log.enable("WARNING")` only
-  warnings and errors. The level is a name in any case, or an int such as
-  `logging.DEBUG`.
-- Calling `enable` again replaces the earlier settings; it never adds a
-  second display.
-- A job run from the command line takes the same switch:
+- The lines go to stderr, never into what your script prints.
+- `gfem.log.enable("DEBUG")` shows more, `"WARNING"` only warnings and errors.
+  A second `enable` replaces the first settings.
+- A command-line job takes the same switch:
   `python -m gfem run job.json --out result --log info`.
 
 ## Read a log line
 
-Each line holds, in order:
-
-1. the wall-clock time the record was made, to the millisecond;
-2. the level: `DEBUG`, `INFO`, `WARN`, `ERROR` or `CRIT`;
-3. the logger's short name: `solver` for `"gfem.solver"`, `timing` for
-   `"gfem.timing"`, `cache` for `"gfem.solve_cache"`, `mpi`, `mesh`,
-   `mesh_refinement`;
-4. under MPI, the rank tag `rN/M` ({ref}`watch-under-mpi`);
-5. the record's message, as gfem wrote it.
+A line holds the time to the millisecond, the level (`DEBUG`, `INFO`, `WARN`,
+`ERROR`, `CRIT`), the logger's short name (`solver`, `timing`, `cache`, `mpi`,
+`mesh`, `mesh_refinement`), under MPI the rank tag `rN/M`
+({ref}`watch-under-mpi`), and the message.
 
 A `solver` line of a driven solve names the frequency, the direction
 (`forward`, or `backward` for the {term}`adjoint solve` of a gradient), the
 linear solver and what it did, with the reason in brackets:
 
-- `factorized`: a new factorization or preconditioner, here for the first
-  frequency;
-- `refactorized`: the matrix changed (another frequency, another design), so
-  the solver factorized again;
-- `reused`: the factorization or preconditioner of an earlier solve served
-  again, as in a design loop ({doc}`s-parameter-gradient`).
+- `factorized`: a new factorization or preconditioner.
+- `refactorized`: the matrix changed (another frequency or design), so the
+  solver factorized again.
+- `reused`: an earlier factorization or preconditioner served again, as in a
+  design loop ({doc}`s-parameter-gradient`).
 
 `iterations` lists the Krylov iterations per excited port; it is empty for a
-direct solve. On a colour terminal the solver and its action stand out:
-`factorized` and `refactorized` in magenta, `reused` in green.
+direct solve.
 
 ## How long each phase took
 
@@ -108,17 +92,15 @@ again = gfem.solve(model, gfem.Driven(frequency=5e9, excite="p1"))
 14:02:33.853 INFO  solver driven forward solve at 5 GHz: direct factorized (first), iterations []
 ```
 
-`gfem.log.enable("WARNING", timing=True)` shows the phases and the warnings
-only. To add the seconds up per phase rather than read them line by line,
-attach a handler of your own, as in {doc}`solve-a-device` ("Time each phase").
+To add the seconds up per phase, attach a handler of your own, as in
+{doc}`solve-a-device` ("Time each phase").
 
 ## Progress rows
 
-While a long loop runs, the display draws one {term}`progress row` for it
-below the log lines: its name, a bar, the units done out of the total
-(`k/?` when the total is not known in advance), the phase it is in
-(`assemble`, `setup`, `solve`), the latest values of the loop (the frequency
-in GHz, the iterations, the error estimate) and the elapsed time. The rows are:
+A long loop draws one {term}`progress row` below the log lines: its name, a
+bar, the units done out of the total (`k/?` when unknown), the phase
+(`assemble`, `setup`, `solve`), the latest values (frequency in GHz,
+iterations, error estimate) and the elapsed time. The rows are:
 
 | Row | One unit is | Total |
 | --- | --- | --- |
@@ -129,55 +111,45 @@ in GHz, the iterations, the error estimate) and the elapsed time. The rows are:
 | `mode search` | a seed solve or a mode refined | unknown |
 | `mesh refinement` | one refinement cycle | unknown |
 
-- A phase that runs outside these loops (assembling a single solve, say) gets
-  a spinner row of its own with its elapsed time.
-- A loop inside another gets its own row under its parent's. A fixed-angle
-  sweep's one-frequency solves advance its one `uniform sweep` row.
+- A phase outside these loops gets a spinner row of its own.
+- A loop inside another gets its own row under its parent's.
 - With {term}`frequency workers <frequency worker>`, each frequency a worker
   finishes advances the one row of your process.
-- A row disappears when its loop ends, also when it stops on an error: only
-  the log lines stay.
+- A row disappears when its loop ends, also on an error; the log lines stay.
 
-Rows are drawn only where they can be erased and redrawn: in a terminal, and
-in Jupyter when `ipywidgets` is installed (there each finished loop leaves an
-empty output line). In a pipe, a file or a batch job's output file you get
-the log lines and no rows; nothing is printed in their place. On any process
-but rank 0 of an MPI job there are no rows either.
+Rows are drawn where they can be redrawn: in a terminal, and in Jupyter with
+`ipywidgets` installed. In a pipe, a file or a batch job's output you get the
+log lines and no rows, and none on a rank other than 0.
 
 (watch-under-mpi)=
 ## Under MPI
 
-Launched on several ranks, the display shows rank 0's lines only, each
-tagged with the rank and the number of ranks, `r0/4`. Warnings and errors
-show from every rank, since a rank-local warning is often the one that
-matters. To read every rank's lines, tagged `r0/4` to `r3/4`:
+On several ranks the display shows rank 0's lines, tagged with the rank and
+the number of ranks, `r0/4`. Warnings and errors show from every rank. To read
+every rank's lines:
 
 ```python
 gfem.log.enable(rank0_only=False)
 ```
 
-gfem reads the rank from the launcher's environment, so `enable` works before
-anything imports mpi4py. The {doc}`distributed solve recipe <distributed-solve>` covers the launch itself.
+`enable` works before anything imports mpi4py. The launch itself is in
+{doc}`distributed-solve`.
 
 ## With your own handlers
 
-The records and their `extra` attributes (`frequency`, `solver`, `action`,
-`phase`, `seconds`, ...) are the same with the display on or off: a handler of
-your own on a `gfem` logger reads them either way, and you may skip `enable`
-altogether. While the display is on, the `gfem` logger stops propagating, so
-a root handler (`logging.basicConfig`) does not print gfem's records a second
-time.
-
-If you keep a stream handler of your own that writes to the same terminal,
-its lines tear through the rows; turn the rows off:
+A handler of your own on a `gfem` logger reads the records and their `extra`
+attributes (`frequency`, `solver`, `action`, `phase`, `seconds`, ...) with the
+display on or off, so you may skip `enable`. While the display is on, the
+`gfem` logger stops propagating, so a root handler does not print a record
+twice. A stream handler on the same terminal tears through the rows; turn the
+rows off:
 
 ```python
 gfem.log.enable(progress=False)
 ```
 
-`rich=False` gives the plain-text lines even where rich is installed, and
-`rich=True` raises `ImportError` where it is not. Colour follows the usual
-switches: `NO_COLOR` turns it off, `FORCE_COLOR` on.
+`rich=False` gives plain text even where rich is installed. `NO_COLOR` turns
+colour off, `FORCE_COLOR` on.
 
 ## Turn it off
 
@@ -185,10 +157,9 @@ switches: `NO_COLOR` turns it off, `FORCE_COLOR` on.
 gfem.log.disable()
 ```
 
-`disable` removes the display and gives the `gfem` logger back the level and
-propagation it had before the first `enable`, so a level you set on `gfem`
-while the display was on is overwritten. With the display off, `disable`
-does nothing.
+`disable` removes the display and restores the level and propagation the
+`gfem` logger had before the first `enable`, overwriting a level you set while
+it was on.
 
 ## Limits
 

@@ -1,13 +1,10 @@
 # Anisotropic materials
 
-Model a crystal whose permittivity, permeability, loss tangent or
-conductivity depends on the direction of the field. Lithium niobate guides
-its TE and TM modes with different indices. Sapphire loses energy
-differently along and across its c-axis. gfem takes each property as a real
-symmetric tensor, and the tensors of one {term}`anisotropic material` share
-one set of {term}`principal axes`. Driven, eigenmode, electrostatic and port
-mode solves all read them, and gradients reach their
-{term}`principal values`.
+Model a crystal whose permittivity, permeability, loss tangent or conductivity
+depends on the direction of the field. gfem takes each property as a real
+symmetric tensor, and the tensors of one {term}`anisotropic material` share one
+set of {term}`principal axes`. Driven, eigenmode, electrostatic and port mode
+solves read them, and gradients reach their {term}`principal values`.
 
 ## Give the tensor
 
@@ -27,29 +24,26 @@ ln.eps_r  # (4.889, 4.571, 4.889), along x, y, z
 
 - Per principal axis `a_k`, the complex permittivity is
   `ε0 eps_r[k] (1 - i tan_delta[k]) - i conductivity[k] / ω` under $e^{+i\omega t}$
-  ({py:obj}`gfem.conventions`). The tensor is the sum of these values times
+  ({py:obj}`gfem.conventions`); the tensor is the sum of these times
   `a_k a_kᵀ`. A single value counts for all three axes.
-- Every tensor property of one material shares the same principal axes, so
-  the loss is coaxial with the permittivity.
-- The media are linear, local and reciprocal, with values constant in
-  frequency: a permittivity law is isotropic only (see Limits).
+- Every tensor property of one material shares the principal axes, so the loss
+  is coaxial with the permittivity.
+- The media are linear, local, reciprocal and constant in frequency.
 
 ## Turn the axes
 
-When the principal axes are not the coordinate axes, give them as `axes`,
-three orthonormal vectors, one row per principal value. The same film with
-its extraordinary axis turned 10° in the chip plane:
+When the principal axes are not the coordinate axes, give them as `axes`, three
+orthonormal vectors, one row per principal value. The same film with its
+extraordinary axis turned 10° in the chip plane:
 
 ```python
 c, s = np.cos(np.radians(10)), np.sin(np.radians(10))
 turned = gfem.Material(eps_r=(no2, ne2, no2), axes=[(c, s, 0), (-s, c, 0), (0, 0, 1)])
 ```
 
-Or give the tensor itself, a real symmetric 3x3 matrix in the global frame,
-and leave `axes` as `None`. gfem stores it in the same form as above: the
-principal values and the axes it derives (axis k is the one closest to
-coordinate axis k, with its largest component positive). Any rotation
-library will do for building the matrix:
+Or give the tensor itself, a real symmetric 3x3 matrix in the global frame, and
+leave `axes` as `None`: gfem derives the principal values and axes (axis k is
+the closest to coordinate axis k, largest component positive):
 
 ```python
 r = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
@@ -62,21 +56,18 @@ gfem.Material(eps_r=np.diag([no2, ne2, no2])) == gfem.Material(
 )  # True
 ```
 
-`mu_r`, `tan_delta` and `conductivity` take the same three forms, on the same
-axes. A wire grid that conducts along x only:
+`mu_r`, `tan_delta` and `conductivity` take the same forms, on the same axes. A
+wire grid that conducts along x only:
 
 ```python
 grid = gfem.Material(eps_r=2.1, conductivity=(5e4, 0.0, 0.0))
 ```
 
-Equal principal values are one value: `gfem.Material(eps_r=(2, 2, 2))` is
-stored as `eps_r=2.0`, equals `gfem.Material(eps_r=2)`, and is `isotropic`.
-
-A material whose tensors cannot be put in this form raises `ValueError` when
-it is built. A loss tensor whose principal axes differ from the
-permittivity's is one: give the loss on the permittivity's axes. A
-non-symmetric tensor (a {term}`gyrotropic material`, such as a magnetized
-ferrite) is the other, and gfem has no model for it.
+Equal principal values are one value: `gfem.Material(eps_r=(2, 2, 2))` equals
+`gfem.Material(eps_r=2)` and is `isotropic`. A material whose tensors cannot be
+put in this form raises `ValueError` when built: a loss tensor on other axes
+than the permittivity's (give it on the permittivity's), or a non-symmetric
+tensor ({term}`gyrotropic material`), which gfem does not model.
 
 ## At ports and boundaries
 
@@ -94,38 +85,25 @@ s = gfem.solve(model, problem).s
 ```
 
 - **Wave ports.** A port's cross-section may hold anisotropic materials only
-  when they are {term}`transverse-anisotropic`. Every tensor (`eps_r` with
-  `tan_delta`, `mu_r`, `conductivity`) then has a principal axis along the
-  port normal, with any orientation in the port plane. The x-cut film passes on
-  guides along x or y (its axes include both). A port on a guide at 45° in
-  the plane does not, and the port mode solve raises `ValueError` naming the
-  region and the property. End such a port in an access guide that is
-  transverse-anisotropic there, or in an isotropic one. Away from the ports
-  the principal axes may point in any direction.
-- **First-order absorbing boundaries.** `gfem.Absorbing(..., order=1)` next
-  to an anisotropic material applies that material's
-  {term}`absorbing admittance` for each face's normal. It is exact for a
-  plane wave at normal incidence and, like the isotropic first order,
-  reflects at oblique incidence: place it where the outgoing waves meet it
-  close to normal. It reads the real parts of $\varepsilon$ and $\mu$, as on
-  isotropic faces.
-- **Second-order absorbing boundaries** raise `NotImplementedError` when an
-  anisotropic material, or a material field with `axes`, touches the surface.
-  Use order 1, or put an isotropic buffer layer between the anisotropic
-  material and the boundary.
-- **Perfectly matched layers.** An anisotropic material whose principal
-  axes are $x$, $y$ and $z$ may continue into a
-  {term}`perfectly matched layer`; one with tilted axes may not
+  when they are {term}`transverse-anisotropic`: every tensor has a principal
+  axis along the port normal, with any orientation in the port plane. The x-cut
+  film passes on guides along x or y; a guide at 45° raises `ValueError`
+  naming the region and property. End such a port in an access guide that
+  passes, or in an isotropic one.
+- **First-order absorbing boundaries** next to an anisotropic material use its
+  {term}`absorbing admittance` per face normal: exact at normal incidence, like
+  the isotropic first order, and on the real parts of $\varepsilon$ and $\mu$.
+- **Second-order absorbing boundaries** raise `NotImplementedError` against an
+  anisotropic material: use order 1 or an isotropic buffer layer.
+- **Perfectly matched layers** accept axes along $x$, $y$, $z$ only
   ({doc}`perfectly-matched-layer`).
 
 ## Loss per principal axis
 
-A resonator on a sapphire substrate, c-axis along z: the substrate's loss
-tangent differs along and across the c-axis. Solve the resonator lossless,
-then weigh assumed loss tangents along each principal axis by
-{term}`principal participation`. `modes.principal_participation` holds one
-`(n_modes, 3)` array per anisotropic region, in the order of the material's
-`axes` (here the coordinate axes):
+A resonator on a sapphire substrate, c-axis along z. Solve it lossless, then
+weigh assumed loss tangents along each axis by {term}`principal participation`.
+`modes.principal_participation` holds one `(n_modes, 3)` array per anisotropic
+region, in the order of the material's `axes`:
 
 ```python
 sapphire = gfem.Material(eps_r=(9.3, 9.3, 11.5), name="sapphire")  # c-axis along z
@@ -142,21 +120,18 @@ inverse_q_substrate = p @ tan_delta  # (n_modes,)
 ```
 
 - The three columns add up to `modes.bulk_participation["substrate"]`.
-- A `conductivity` given as principal values adds
-  `p[:, k] * conductivity[k] / (ε0 eps_r[k] Re ω)` on each axis.
-- The sum is exact for any field direction, with the losses uniform over the
-  region. `bulk_participation × tan_delta` is the rule for an isotropic loss:
-  it does not apply to principal values.
-
-Isotropic regions have no entry in `principal_participation`.
+- A `conductivity` adds `p[:, k] * conductivity[k] / (ε0 eps_r[k] Re ω)` on
+  each axis.
+- The sum is exact for any field direction with uniform loss;
+  `bulk_participation × tan_delta` does not apply to principal values.
+- Isotropic regions have no entry.
 
 ## Design with an anisotropic material
 
-In the model above, the region `"design"` (between the two guides, away
-from the ports) holds the cladding. A density blended there between the
-cladding and the LN film is an
-{term}`anisotropic material field`: its permittivity holds three principal
-values per element, along the film's principal axes.
+The region `"design"` (away from the ports) holds the cladding. A density
+blended there between the cladding and the LN film is an
+{term}`anisotropic material field`: three principal values per element, along
+the film's axes.
 
 ```python
 import jax
@@ -173,54 +148,38 @@ n = len(mesh.elements("design"))
 grad = jax.grad(loss)(jnp.full(n, 0.5))  # (n,), one value per element
 ```
 
-- **Shapes.** `field.eps_r` is `(n, 3)`, and its gradient has the same
-  shape. `gfem.MaterialField.uniform("design", ln)` gives `(3,)` arrays: the
-  sensitivity to each principal value of the whole region.
-  `gfem.MaterialField(eps_r=values, axes=...)` with `values` of shape
-  `(n, 3)` builds one directly.
-- **Shared axes.** `interpolate` blends two materials per principal value
-  when their tensors share principal axes. An isotropic material shares any,
-  so cladding and LN blend. Two anisotropic materials on different
-  principal axes raise `ValueError`: blend each with an isotropic one
-  instead.
-- **What differentiates.** Gradients with respect to the principal values of
-  `eps_r` (driven, eigenmode and electrostatic solves) and of `conductivity`
-  (driven and eigenmode solves) are checked against finite differences: see
-  {doc}`../capabilities`. The axes, the material's orientation, are not a
-  design input: axes differentiated by `jax.grad` raise
-  `gfem.NonDifferentiableError`, so keep them
-  fixed numbers.
-- **Ports.** As for any design, keep the design region off the wave port
-  faces ({doc}`s-parameter-gradient`).
+- **Shapes.** `field.eps_r` is `(n, 3)`, as its gradient;
+  `gfem.MaterialField.uniform("design", ln)` gives `(3,)` arrays.
+  `gfem.MaterialField(eps_r=values, axes=...)` with `(n, 3)` values builds one
+  directly.
+- **Shared axes.** `interpolate` blends per principal value when the tensors
+  share axes; an isotropic material shares any. Two anisotropic materials on
+  different axes raise `ValueError`: blend each with an isotropic one.
+- **What differentiates.** The principal values of `eps_r` (driven, eigenmode,
+  electrostatic) and of `conductivity` (driven, eigenmode); see
+  {doc}`../capabilities`. The axes are not a design input: a traced one raises
+  `gfem.NonDifferentiableError`.
+- Keep the design region off the wave port faces ({doc}`s-parameter-gradient`).
 
 ## Check your results
 
-- Rotate the whole model (mesh, ports, voltage paths) and the material's axes
-  together: S should not change.
-- A lossless device with lossless anisotropic materials should keep
-  `SᴴS ≈ I`.
-- A solve with the loss tangents in the material should give the same 1/Q as
-  the principal participations weighted by those loss tangents, to first
-  order in 1/Q.
-
-How gfem itself is checked on anisotropic materials: {doc}`../verification`.
+- Rotate the whole model and the material's axes together: S does not change.
+- A lossless device keeps `SᴴS ≈ I`.
+- A solve with loss tangents gives the 1/Q of the principal participations
+  weighted by them, to first order in 1/Q ({doc}`../verification`).
 
 ## Limits
 
-- **Shape gradients** (mesh node coordinates) raise
-  `gfem.NonDifferentiableError` when an absorbing face has an anisotropic
-  material behind it. Put an isotropic buffer layer next to the absorbing
-  face.
+- **Shape gradients** raise `gfem.NonDifferentiableError` when an absorbing
+  face has an anisotropic material behind it: add an isotropic buffer layer.
 - **Interface participation.** The thin layer of
-  `gfem.interface_participation` is isotropic. Its neighbours may be
-  anisotropic, and a side counts as vacuum only when no wave in it is slower
-  than in vacuum ({doc}`measurements`).
+  `gfem.interface_participation` is isotropic; its neighbours may be
+  anisotropic ({doc}`measurements`).
 - **Dispersion is isotropic only.** A permittivity law on an anisotropic
-  material raises `ValueError`. For a dispersive isotropic region see
-  {doc}`dispersive-materials`; an anisotropic one still takes constant
-  values, so solve each band with its own values.
-- **No rotation helper.** gfem has no constructor for axes from Euler angles
-  or a crystal cut: build the rotation with numpy or scipy.
+  material raises `ValueError`; solve each band with its own constant values
+  ({doc}`dispersive-materials`).
+- **No rotation helper.** Build the axes from Euler angles or a crystal cut with
+  numpy or scipy.
 
 ## Next
 

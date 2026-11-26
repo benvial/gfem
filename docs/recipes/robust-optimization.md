@@ -2,17 +2,14 @@
 
 A density design is fabricated with an etch bias: edges move outwards
 (under-etch, more material) or inwards (over-etch, less material).
-{py:obj}`gfem.design.robust` gives the three variants of one filtered density, and
-the optimizer works on the worst of them. The result keeps its performance
-across the bias, and both the solid and the void get a minimum feature size
-set by the filter radius. The full worked example is the
-[topology tutorial](../tutorials/topology.ipynb).
-
-The sections after the first add what a lithographic layer needs: a
-{term}`fabrication model` of the process (a blur and an {term}`edge bias` in
-metres), a foundry's {term}`minimum width` and {term}`minimum spacing` held as
-constraints, the real neighbours of the design region, and the checks that
-accept the final design. {doc}`fabricable-layout` then turns it into a GDS file.
+{py:obj}`gfem.design.robust` gives the eroded, nominal and dilated variants of
+one filtered density and the optimizer works on the worst, so performance holds
+across the bias and the filter radius sets a minimum feature size for solid and
+void. The worked example is the
+[topology tutorial](../tutorials/topology.ipynb); the later sections add a
+{term}`fabrication model` (a blur and an {term}`edge bias` in metres), a
+foundry's {term}`minimum width` and {term}`minimum spacing`, and the checks
+that accept the design before {doc}`fabricable-layout`.
 
 ## The chain
 
@@ -44,47 +41,33 @@ def worst_loss(rho, beta):
 value, grad = jax.value_and_grad(worst_loss)(rho, 4.0)
 ```
 
-- **Eroded** is the projection at the higher threshold `eta + delta` (less
-  solid), **dilated** at `eta - delta` (more solid). `delta` sets the etch
-  tolerance and has no default.
-- `jax.vmap` over `gfem.solve` runs the three solves one after the other:
-  each optimizer step costs three forward solves and three backward passes.
-- `jnp.max` is not smooth where two variants tie. Adam copes; for a
-  gradient-based constrained optimizer (MMA, SLSQP) use the epigraph form
-  (see "Worst case" below).
-- A volume constraint goes on the **dilated** design, the one with the most
-  material.
-- Raise `beta` in steps (2, 4, 8, 16, 32) as the design converges: a soft
-  projection lets material move, a sharp one makes the design binary. End the
-  continuation at $\beta = 32$; beyond about 64 the projection's gradients turn
+- **Eroded** is the projection at the higher threshold `eta + delta`,
+  **dilated** at `eta - delta`; `delta` sets the etch tolerance and has no
+  default.
+- `jax.vmap` over `gfem.solve` runs the three solves in sequence: three
+  forward solves and three backward passes per step.
+- A volume constraint goes on the **dilated** design.
+- Raise `beta` in steps (2, 4, 8, 16, 32); beyond about 64 the gradients turn
   jagged.
-- `delta` is a threshold shift, not a length. Near a straight edge of a nearly
-  binary design the filtered profile falls off as $\tfrac12 e^{-x/l}$, with
-  $l = R/(2\sqrt3)$ for a filter radius $R$, so the thresholds
-  $\tfrac12 \pm \delta$ move the edge by $|b| = -l\ln(1 - 2\delta)$:
-
-  | $\delta$ | 0.05 | 0.10 | 0.15 | 0.20 | 0.25 |
-  |---|---|---|---|---|---|
-  | $\lvert b\rvert / R$ | 0.030 | 0.064 | 0.103 | 0.147 | 0.200 |
-
-  Elsewhere (grey regions, curved or narrow features) the shift differs. For a
-  bias in metres, use a fabrication model.
+- `delta` is a threshold shift, not a length: near a straight edge of a nearly
+  binary design the edge moves by $|b| = -l\ln(1 - 2\delta)$,
+  $l = R/(2\sqrt3)$ for a filter radius $R$ ($0.064R$ at $\delta = 0.1$). For
+  a bias in metres use a fabrication model.
 
 ## A fabrication model
 
-The optimizer designs the **drawn** design, `design.project(blur(rho), beta)`:
-the design intent, whose pattern goes to GDS. The process prints something
-else. {py:obj}`gfem.design.FabricationModel` predicts it: a Gaussian blur of
-standard deviation $\sigma$, then a threshold set by the edge bias $b$ (m,
-$b > 0$ grows the solid),
+The optimizer designs the **drawn** design, `design.project(blur(rho), beta)`,
+whose pattern goes to GDS. {py:obj}`gfem.design.FabricationModel` predicts what
+the process prints: a Gaussian blur of standard deviation $\sigma$, then a
+threshold set by the edge bias $b$ (m, $b > 0$ grows the solid),
 
 $$
 \hat\rho_b = P_{\beta,\,\eta(b)}(G_\sigma * \hat\rho), \qquad
 \eta(b) = \tfrac12\operatorname{erfc}\frac{b}{\sqrt2\,\sigma},
 $$
 
-so a straight edge prints moved outwards by $b$ and corners round off over
-about $2\sigma$. The solves see the **printed** designs:
+so a straight edge prints moved by $b$ and corners round off over about
+$2\sigma$. The solves see the **printed** designs:
 
 ```python
 grid = design.LayerGrid(mesh, "design", pitch=7.5e-9)  # sigma / 4
@@ -99,47 +82,31 @@ def worst_loss(rho, beta):
     return 0.01 * jax.nn.logsumexp(losses / 0.01)  # a smooth worst case
 ```
 
-- `fab.robust` returns the same `Robust(eroded, nominal, dilated)` as
-  `design.robust`, printed at biases $b - t$, $b$ and $b + t$ for a tolerance
-  $t$. The printed projection uses the drawn design's $\beta$: a drawn design
-  held grey while the printed one sharpens would rely on grey levels that a GDS
-  file cannot carry.
-- **Pitch.** At $\beta = 32$ a printed edge sits within a few hundredths of
-  $\sigma$ of its intended place when the pitch is $\sigma/4$ or finer (about
-  $0.1\sigma$ at $\sigma/2$). A $\sigma$ below the pitch is refused: the blur
-  is then unresolved.
-- **Bias range.** $|b|$ or $|b \pm t|$ above $2\sigma$ is refused: the edge
-  would sit in the blur's tail. Keep them within $1.5\sigma$.
-- **Narrow features.** A line of drawn width $w$ prints at $w + 2b$ once $w$ is
-  above about $3\sigma + 2\max(-b, 0)$; narrower lines print narrower still and
-  vanish below about $2\sigma$. Spaces are the mirror case.
-- **Fixed guides are not biased.** Geometry outside the grid, such as feed
-  guides, keeps its drawn width, so a printed variant steps by $b$ per side
-  against it. On the bend tutorial's guides (0.55 µm, indices 2.25 and 1.444)
-  a 0.55 µm guide meeting a 0.505 or 0.597 µm stub loses 6 to
-  $8\times10^{-4}$ of the power per junction: for the bend's two junctions,
-  about 1 % of the 0.07 to 0.11 drop of its variants. The blur mirrors at the grid's edge, which continues a guide
-  meeting it at right angles exactly: keep features normal to the footprint
-  edge there.
-- `bias` may be traced (`fab(drawn, beta=beta, bias=b)`), for the derivative
-  of an objective in the bias.
+- `fab.robust` returns the same `Robust(eroded, nominal, dilated)`, printed at
+  biases $b - t$, $b$ and $b + t$ for a tolerance $t$, with the drawn design's
+  $\beta$ (a grey drawn design cannot go to GDS).
+- **Pitch and bias.** Use a pitch of $\sigma/4$ or finer and keep
+  $|b|$, $|b \pm t|$ within $1.5\sigma$; $\sigma$ below the pitch or biases
+  above $2\sigma$ are refused.
+- **Narrow features** print narrower than $w + 2b$ below about
+  $3\sigma + 2\max(-b, 0)$ and vanish below about $2\sigma$.
+- **Fixed guides are not biased.** Geometry outside the grid keeps its drawn
+  width, so a printed variant steps by $b$ per side against it.
+- `bias` may be traced, for the derivative in the bias.
 
 ## Worst case
 
 The worst of the three variants is a maximum, not smooth where two tie.
 
-- With Adam (optax), use the smooth maximum $t \ln \sum_i e^{f_i / t}$,
-  `t * jax.nn.logsumexp(f / t)`, as above. It lies above the maximum by at most
-  $t \ln 3$ for three variants; $t = 0.01$ suits losses between 0.01 and 1.
-- With a constrained optimizer (MMA, CCSAQ), use the epigraph form: add a
-  variable $s$, minimize $s$ subject to $f_i(\rho) \le s$ for each variant, and
-  start $s$ 5 % above the worst variant so that the start is feasible.
+- With Adam, use the smooth maximum `t * jax.nn.logsumexp(f / t)`, above the
+  maximum by at most $t \ln 3$; $t = 0.01$ suits losses between 0.01 and 1.
+- With MMA or CCSAQ, use the epigraph form: minimize a variable $s$ subject to
+  $f_i(\rho) \le s$ per variant, starting $s$ 5 % above the worst.
 
 ## Minimum width and spacing
 
 A foundry's minimum width and spacing become two differentiable constraints on
-the filtered density, each at most 0 when the drawn design's pattern keeps its
-rule:
+the filtered density, each at most 0 when the drawn pattern keeps its rule:
 
 ```python
 rules = design.length_scale_constraints(blur, min_width=165e-9, min_spacing=165e-9)
@@ -149,15 +116,10 @@ def constraints(rho):
     return jnp.stack(rules(blur(rho)))  # [solid, void], each <= 0 when held
 ```
 
-Run them in two stages:
-
-1. Optimize without the constraints, raising $\beta$ up to 32, until the
-   topology has formed.
-2. Switch the constraints on at that $\beta$ (16 or more), never from a grey
-   start: they measure the drawn design's lines and spaces, and a grey design
-   has none yet.
-
-A quadratic penalty with Adam is the plain path, its weight raised in steps:
+Run them in two stages: optimize without them, raising $\beta$ to 32, until the
+topology forms; then switch them on at $\beta \ge 16$, never from a grey start
+(a grey design has no lines or spaces to measure). A quadratic penalty with
+Adam is the plain path, its weight raised in steps:
 
 ```python
 import optax
@@ -177,9 +139,8 @@ for mu in (1.0, 10.0, 100.0):
         rho = jnp.clip(optax.apply_updates(rho, updates), 0.0, 1.0)
 ```
 
-With nlopt installed, its CCSAQ method takes the two values as inequality
-constraints and holds them more closely. Scale the objective into about 1 to
-100, where CCSAQ's steps behave:
+With nlopt, CCSAQ takes the two values as inequality constraints and holds
+them more closely; scale the objective into about 1 to 100:
 
 ```python
 import nlopt
@@ -210,29 +171,22 @@ opt.set_maxeval(100)
 rho = opt.optimize(np.ravel(rho)).reshape(grid.shape)
 ```
 
-- **What $g \le 0$ guarantees.** Straight lines and spaces of the drawn design
-  are at least about 0.97 of their rule; compact features (a dot, a hole) are
-  held stricter, to about 1.1 times it. After an optimization a few percent of
-  a phase's area can still sit below the rule: constrain about 10 % above the
-  foundry rule (165 nm here for a 150 nm rule), then confirm on the pattern
-  with `LayerPattern.check` (see "Accept the design" below).
-- **Range.** A rule above $1.25R$ or a pitch above $R/3$ is refused: beyond
-  them the constraints let lines narrower than the rule pass. Raise the filter
-  radius or refine the grid.
-- The constraints act on the drawn design, the design intent; the fabrication
-  model's printed designs go to the solves.
-- On the single-filter path (`design.robust`), the filter radius alone can hold
-  a minimum length $\ell$ through the eroded and dilated variants:
-  `design.radius_for_length_scale(150e-9, delta=0.1)` gives that radius,
-  $2.50\,\ell$ at $\delta = 0.1$.
+- **What $g \le 0$ guarantees.** Straight lines and spaces reach about 0.97 of
+  their rule, compact features about 1.1 times it: constrain about 10 % above
+  the foundry rule (165 nm for 150 nm), then confirm with
+  `LayerPattern.check` ("Accept the design").
+- **Range.** A rule above $1.25R$ or a pitch above $R/3$ is refused: raise the
+  filter radius or refine the grid.
+- On the single-filter path (`design.robust`) the radius alone holds a minimum
+  length $\ell$: `design.radius_for_length_scale(150e-9, delta=0.1)` gives
+  $2.50\,\ell$.
 
 ## Real neighbours, symmetry and footprint
 
-The filter, the constraints and the blur all treat the grid's edge as a mirror,
-and the width and spacing check does not measure along it, so a feed guide
-outside the grid is invisible to all four. Mesh the design region a margin
-beyond the free design area, into the guides and the cladding, and pin the
-margin's pixels to the real neighbours before the filter:
+The filter, the constraints and the blur treat the grid's edge as a mirror, so a
+feed guide outside the grid is invisible to them. Mesh the design region a
+margin beyond the free area, into the guides, and pin the margin's pixels to
+the real neighbours before the filter:
 
 ```python
 import numpy as np
@@ -250,24 +204,18 @@ rho = (rho + rho[:, ::-1]) / 2  # mirror symmetry about the grid's centre line i
 rho = jnp.where(grid.sampled, rho, 0.0)  # void outside a non-rectangular footprint
 ```
 
-- The margin is at least $\max(R, 3\sigma, s_\text{min})$, with $s_\text{min}$
-  the minimum spacing: the filter's kernel decays as $e^{-x/l}$ with
-  $l = 0.29R$, so $R$ leaves 3 % of it; $3\sigma$ holds 99.7 % of the blur; and
-  the check needs a rule's reach to see a sliver.
-- The guide stubs inside the margin are part of the pattern, and the guides
-  outside abut them on the footprint edge. The guide step of the printed
-  variants moves to the margin's outer edge.
-- Without a margin (an existing mesh), the edge stays a mirror: a guide meeting
-  it at right angles is continued exactly, but a sliver along the edge is left
-  to the assembled layout's checks.
+- The margin is at least $\max(R, 3\sigma, s_\text{min})$, $s_\text{min}$ the
+  minimum spacing. The guide stubs in it are part of the pattern.
+- Without a margin the edge stays a mirror: a guide meeting it at right angles
+  continues exactly, but a sliver along the edge is left to the assembled
+  layout's checks.
 
 ## Accept the design
 
 Check the printed variants against the rules: the width on the **eroded**
-pattern, the spacing on the **dilated** one, each where its rule is tightest.
-The fabrication model predicts them best from the exact drawn design, the area
-fractions of the drawn pattern (edges to about 0.015 pixel, against about 0.2
-pixel from a $\beta = 32$ projection):
+pattern, the spacing on the **dilated** one. The fabrication model predicts
+them best from the drawn design's exact area fractions (edges to about 0.015
+pixel, against about 0.2 from a $\beta = 32$ projection):
 
 ```python
 drawn_pattern = grid.pattern(blur(rho), eta=0.5)  # the drawn pattern, to GDS
@@ -279,9 +227,9 @@ print(dilated.check(min_spacing=150e-9))
 ```
 
 On the single-filter path the variants are contours of the filtered density at
-the shifted thresholds: `grid.pattern(blur(rho), eta=0.5 + delta)` for the
-width, `eta=0.5 - delta` for the spacing. Then export and re-solve the drawn
-pattern: {doc}`fabricable-layout`.
+shifted thresholds: `grid.pattern(blur(rho), eta=0.5 + delta)` for the width,
+`eta=0.5 - delta` for the spacing. Then export and re-solve the drawn pattern:
+{doc}`fabricable-layout`.
 
 ## Next
 
