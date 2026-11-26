@@ -569,10 +569,11 @@ class PortModeRule:
         """
         self._explicit = {}
         self._nodes = None
-        self._radius = None
         pairs: list = []
         nodes = ("nodes",) in wanted
         radius = BEND_RADIUS_KIND in wanted
+        # the other ranks hold an exact zero: every rank returns the kind
+        self._radius = 0.0 if radius else None
 
         def compute() -> dict[str, np.ndarray]:
             pairs.extend(
