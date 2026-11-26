@@ -337,16 +337,26 @@ _ARGS = (5e-3, 1e-12, _PERIOD0 * 1.0003)
 def test_the_figures_differentiate_like_their_finite_differences(which):
     x = np.array(_ARGS)
     jac = np.asarray(jax.jit(jax.jacfwd(_figures, argnums=which))(*_ARGS))
-    # central difference at a relative step r: truncation (h^2/6) f'''/f' with
-    # h f'''/f' ~ the phase the step adds, and round-off eps / r on each value.
-    # Length and duration move the phase by ~1e2 r rad: r = 1e-5 gives
-    # truncation ~1e-7 and round-off 1e-11. The period moves the 5e2-rad poling
-    # phase by 5e2 r: r = 1e-7 gives 1e-9 and 1e-9
-    h = (1e-5, 1e-5, 1e-7)[which] * x[which]
-    up, dn = np.array(_ARGS), np.array(_ARGS)
-    up[which] += h
-    dn[which] -= h
-    fd = (np.asarray(_figures(*up)) - np.asarray(_figures(*dn))) / (2 * h)
+    # fourth-order central difference at the relative step r = 1e-5.
+    # Truncation, relative: (h^4/30) f^(5)/f'. The period moves the poling phase
+    # 2 pi L / Lambda ~ 1.05e3 rad by 1.05e3 r rad, so ~(1.05e3 r)^4 / 30 ~ 4e-10;
+    # length and duration move the phase ~1e2 r rad, far less.
+    # Round-off, relative: eps_f / (S r) per difference, with eps_f ~ 1e-15 the
+    # relative error of a figure (a few ulps, measured on the jax 0.8.3 / numpy
+    # 2.2 floor; newer releases are ~10x below) and S = |d ln f / d ln x| the
+    # figures' log-sensitivity, smallest for the period (S ~ 4e-3: it sits 3e-4
+    # off matching). So ~2.5e-8 at r = 1e-5, measured 3e-8 on the floor and 2e-9
+    # on current releases: 30x under the tolerance. A second-order difference
+    # needs r ~ 1e-7 against its (1.05e3 r)^2 / 6 truncation, where the same
+    # round-off is 2.5e-6.
+    h = 1e-5 * x[which]
+
+    def at(k):
+        shifted = np.array(_ARGS)
+        shifted[which] += k * h
+        return np.asarray(_figures(*shifted))
+
+    fd = (8 * (at(1) - at(-1)) - (at(2) - at(-2))) / (12 * h)
     np.testing.assert_allclose(jac, fd, rtol=1e-6, atol=0)
     assert np.all(np.isfinite(jac))
     assert np.abs(jac).min() > 0
