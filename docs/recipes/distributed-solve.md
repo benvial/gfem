@@ -1,4 +1,4 @@
-# Run a distributed solve
+# Distributed solves
 
 Split one large solve across the cores and nodes of a cluster. You start
 your script with `mpirun` or `srun`, and gfem divides the mesh and the linear

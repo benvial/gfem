@@ -1,4 +1,4 @@
-# Differentiate eigenfrequencies, Q and participation ratios
+# Eigenfrequency and Q gradients
 
 Tune a resonator's frequency and Q by differentiating them with respect to the
 material in each element. `jax.grad` of an objective built from

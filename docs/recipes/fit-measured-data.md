@@ -1,4 +1,4 @@
-# Fit a measured n, k table to a permittivity law
+# Permittivity fit to n, k data
 
 Turn a measured table of refractive index $n$ and
 {term}`extinction coefficient` $k$ into a {term}`permittivity law` that a

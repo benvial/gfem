@@ -1,4 +1,4 @@
-# Follow a temperature over time
+# Thermal step response
 
 Find how fast a device heats up and cools down when its heater switches on
 and off: the temperature and the phase over time, the rise time and the time

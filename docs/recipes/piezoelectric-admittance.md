@@ -1,4 +1,4 @@
-# Find a transducer's admittance and reflection
+# Transducer admittance
 
 Find the admittance of electrodes on a piezoelectric crystal, such as an
 {term}`interdigital transducer`, per metre of aperture, over a band of

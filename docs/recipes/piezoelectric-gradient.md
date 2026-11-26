@@ -1,4 +1,4 @@
-# Differentiate a transducer's admittance
+# Transducer admittance gradients
 
 Find how the radiation conductance of a transducer depends on what sets it:
 the stiffness, piezoelectric tensor, permittivity, density and quality factor

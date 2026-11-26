@@ -1,4 +1,4 @@
-# Differentiate S-parameters and driven fields
+# S-parameter gradients
 
 Optimize a device's transmission, reflection or a field quantity by taking
 `jax.grad` of an objective built from S or from kept fields, with respect to

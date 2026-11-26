@@ -123,7 +123,7 @@ On a platform outside its list, an extra installs nothing and gfem solves with
 the plain install's CPU solvers.
 
 PETSc and SLEPc solvers are not an extra: they need a source build, which
-{doc}`recipes/petsc-slepc` does with one script.
+{doc}`one script <recipes/petsc-slepc>` does.
 
 Importing gfem turns on JAX double precision (`jax_enable_x64`) for your whole
 program, because every gfem solve needs it.

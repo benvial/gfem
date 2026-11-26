@@ -1,4 +1,4 @@
-# Absorb outgoing waves with a perfectly matched layer
+# Perfectly matched layer
 
 A {term}`perfectly matched layer` ({py:obj}`gfem.PML`) is a meshed shell of
 volume regions around the {term}`air box` that absorbs the waves leaving it.

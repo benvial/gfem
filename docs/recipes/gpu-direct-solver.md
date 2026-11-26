@@ -1,4 +1,4 @@
-# Run the direct solver on an NVIDIA GPU
+# GPU direct solver
 
 Run the `direct` linear solver's factorization and solves on an NVIDIA GPU,
 with NVIDIA cuDSS. Only that step moves to the GPU. Assembly, the

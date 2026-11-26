@@ -1,4 +1,4 @@
-# See S in the time domain: TDR, TDT and impedance profiles
+# TDR and time responses
 
 What would a time-domain reflectometer show on your device: the reflected
 step at a port (TDR), the impedance along the line behind it, the

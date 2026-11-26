@@ -1,4 +1,4 @@
-# Find the photon pairs of a waveguide source
+# Photon-pair sources
 
 Find how many pairs of photons a waveguide emits when it is pumped, in which
 frequencies, and how pure each photon is once its partner is detected. Two

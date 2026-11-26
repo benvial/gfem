@@ -1,4 +1,4 @@
-# Frequency-dependent materials and their gradients
+# Dispersive materials
 
 Give a region a permittivity that follows Drude, Lorentz, Debye or
 Djordjevic-Sarkar terms, solve over a band, and differentiate through it. A

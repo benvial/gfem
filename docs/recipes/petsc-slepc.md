@@ -1,4 +1,4 @@
-# Solve with PETSc and SLEPc
+# PETSc and SLEPc
 
 gfem can solve its linear systems with PETSc and find eigenmodes with SLEPc
 in place of its built-in solvers. `linear_solver="petsc"` runs the linear
@@ -78,7 +78,7 @@ pip install --no-index --find-links wheelhouse petsc petsc4py slepc slepc4py
 
 `bash petsc_wheelhouse.sh --mpi wheelhouse` builds the {term}`MPI PETSc stack`
 beside the no-MPI one, on the Open MPI whose `mpicc`, `mpicxx` and `mpifort` are on
-`PATH`. {doc}`distributed-solve` is what it is for. It has complex scalars, 64-bit
+`PATH`. The {doc}`distributed solve recipe <distributed-solve>` is what it is for. It has complex scalars, 64-bit
 indices, MUMPS, METIS, ScaLAPACK and PT-Scotch, and no ParMETIS. It also needs
 bison 3 or newer, flex and cmake 3.26 or newer. `--check` names what is
 missing, and refuses an MPI other than Open MPI.
