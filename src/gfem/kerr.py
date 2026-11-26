@@ -33,7 +33,7 @@ import numpy as np
 import scipy.constants
 
 from gfem._checks import is_traced
-from gfem._materials import Material, MaterialField, PermittivityLaw
+from gfem._materials import PROPERTIES, Material, MaterialField, PermittivityLaw
 from gfem._mode_overlap import (
     _COLUMNS,
     _cached_columns,
@@ -310,6 +310,40 @@ def _birefringent(material: Material | MaterialField) -> bool:
     return isinstance(material, Material) and isinstance(material.eps_r, tuple)
 
 
+def _refuse_tensor(
+    material: Material | MaterialField, region: str, port: str, owner: str
+) -> None:
+    """Refuse a tensor the overlap cannot read: only a `Material`'s ``eps_r`` may be.
+
+    Raises:
+        NotImplementedError: ``material`` is an anisotropic
+            `gfem.MaterialField`, or a `gfem.Material` with a tensor property
+            other than ``eps_r``.
+    """
+    if isinstance(material, MaterialField) and material.axes is not None:
+        raise NotImplementedError(
+            f"{owner}: region {region!r} of wave port {port!r}'s section is "
+            "an anisotropic gfem.MaterialField and carries a Kerr property: "
+            "the index matrix is read from a constant gfem.Material only. "
+            "Give the region a gfem.Material with a three-value eps_r and "
+            "axes, or an isotropic eps_r."
+        )
+    if not isinstance(material, Material):
+        return
+    for p in PROPERTIES:
+        if (
+            p.may_be_tensor
+            and p.name != "eps_r"
+            and isinstance(getattr(material, p.name), tuple)
+        ):
+            raise NotImplementedError(
+                f"{owner}: region {region!r} of wave port {port!r}'s section is "
+                f"anisotropic in {p.name} and is read by the overlap: only eps_r "
+                "may be a tensor there (read through the index matrix) in this "
+                f"version. Give the region a scalar {p.name}."
+            )
+
+
 def _index_matrix(n: jax.Array, axes: np.ndarray) -> jax.Array:
     r""":math:`N = \sum_k n_k a_k a_k^\mathsf{T}` from ``(..., 3)`` indices and rows."""
     return jnp.einsum("...k,...ki,...kj->...ij", n, axes, axes)
@@ -413,7 +447,8 @@ def _kerr_materials(
         ValueError: No element outside a perfectly matched layer carries a
             Kerr property.
         NotImplementedError: A region carrying one is an anisotropic
-            `gfem.MaterialField`, a density blend without a per-element
+            `gfem.MaterialField`, a `gfem.Material` with a tensor property
+            other than ``eps_r``, a density blend without a per-element
             permittivity, or a layer-grid design blending a Kerr property;
             a birefringent region beside a `Material.nonlinear_anisotropy`.
     """
@@ -447,14 +482,7 @@ def _kerr_materials(
                 )
         if region not in also and all(v is None for v in given.values()):
             continue
-        if isinstance(material, MaterialField) and material.axes is not None:
-            raise NotImplementedError(
-                f"{owner}: region {region!r} of wave port {port!r}'s section is "
-                "an anisotropic gfem.MaterialField and carries a Kerr property: "
-                "the index matrix is read from a constant gfem.Material only. "
-                "Give the region a gfem.Material with a three-value eps_r and "
-                "axes, or an isotropic eps_r."
-            )
+        _refuse_tensor(material, region, port, owner)
         rows = np.flatnonzero(tags == tag)
         pos = np.searchsorted(mesh.elements(region), cells[rows])
         carries[rows] = any(v is not None for v in given.values())
@@ -641,7 +669,8 @@ def kerr_nonlinearity(model: Model, mode: PortModeResult) -> KerrNonlinearity:
         ValueError: No element outside a perfectly matched layer carries a
             Kerr property.
         NotImplementedError: A region carrying one is an anisotropic
-            `gfem.MaterialField`, or a density blend without a per-element
+            `gfem.MaterialField`, a `gfem.Material` with a tensor property
+            other than ``eps_r``, or a density blend without a per-element
             permittivity; a section with both a birefringent region and a
             `Material.nonlinear_anisotropy`; an Hz line port.
         TypeError: ``mode`` is not a `gfem.PortModeResult`, or has no electric
@@ -798,8 +827,10 @@ def free_carriers(
         ValueError: A named region is not in the section or lies wholly in a
             perfectly matched layer; the regions carry no
             ``two_photon_absorption``; no region does, by default.
-        NotImplementedError: A region is an anisotropic `gfem.MaterialField` or
-            a density blend without a per-element permittivity; an Hz line port.
+        NotImplementedError: A region is an anisotropic `gfem.MaterialField`,
+            a `gfem.Material` with a tensor property other than ``eps_r``, or
+            a density blend without a per-element permittivity; an Hz line
+            port.
         TypeError: ``mode`` is not a `gfem.PortModeResult`, or has no electric
             field; ``regions`` is not names.
         NonDifferentiableError: The node coordinates are traced by `jax.grad`

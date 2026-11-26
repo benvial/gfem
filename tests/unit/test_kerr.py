@@ -464,6 +464,16 @@ def test_an_anisotropic_field_with_a_property_is_refused(tmp_path):
         gfem.kerr_nonlinearity(materials(field), mode)
 
 
+def test_a_tensor_property_other_than_eps_r_is_refused(filled):
+    # a three-value eps_r is read through the index matrix; a tensor mu_r,
+    # tan_delta or conductivity has no place in the overlap
+    model, mode, _ = filled
+    for tensor in ({"mu_r": (1.0, 1.0, 2.0)}, {"tan_delta": (0.0, 0.0, 1e-3)}):
+        material = gfem.Material(eps_r=N**2, nonlinear_index=N2, **tensor)
+        with pytest.raises(NotImplementedError, match=r"region 'air'.*anisotropic"):
+            gfem.kerr_nonlinearity(model.replace(materials={"air": material}), mode)
+
+
 def test_a_layer_grid_design_blending_a_kerr_property_is_refused(slab):
     # the solve refuses a layer grid in a port mode problem, so the mode is the
     # slab's and the model is the same mesh with the core as a pixel design
