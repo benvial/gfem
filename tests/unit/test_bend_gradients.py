@@ -17,14 +17,14 @@ import gfem
 # nearest wall) the truncation is $(\delta/\rho)^4 \approx 10^{-12}$ and the
 # round-off $1.5\,\epsilon\,|\gamma|/(\delta|f'|)$ for an objective $f$ of
 # $\gamma$ solved to the relative error $\epsilon$; $|\gamma|/(\delta|f'|)$ is
-# $1.3\times10^5$ for the guide's $\beta$ and $n_\mathrm{eff}$, $3.6\times10^5$
+# $1.3\times10^5$ for the guide's $\beta$ and $n_\mathrm{eff}$, $4\times10^5$
 # for the slab's $\mathrm{Re}\,\gamma$ and loss, $8\times10^4$ for its
 # $\mathrm{Im}\,\gamma$. ARPACK's tolerance $10^{-10}$ is on
 # $\theta = 1/(\lambda-\sigma)$, so it bounds $\lambda = \gamma^2$ only to
 # $10^{-10}|\lambda-\sigma|/|\lambda|$, with the shift $\sigma$ the closed
 # straight mode's eigenvalue: $|\lambda-\sigma|/|\lambda| = 0.013$ (guide) and
 # 0.017 (slab), $\epsilon \le 8.3\times10^{-13}$, a round-off of up to
-# $4.5\times10^{-7}$.
+# $5.5\times10^{-7}$.
 # The pairs come out converged to round-off, not to the tolerance (measured
 # at p = 2 and 3: backward error $3\times10^{-15}$, and $\gamma$ moves by less
 # than $4\times10^{-16}$ when the tolerance falls to $10^{-15}$), so the gates

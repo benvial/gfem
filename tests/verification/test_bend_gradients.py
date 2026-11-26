@@ -24,13 +24,13 @@ import gfem
 # $1.5\,\epsilon\,|\gamma|/(\delta|f'|)$ for an objective $f$ of $\gamma$ solved
 # to the relative error $\epsilon$. $|\gamma|/(\delta|f'|)$ is $1.3\times10^5$
 # for the guide's $\beta$, $10^5$ for the slab's $\mathrm{Im}\,\gamma$,
-# $3.6\times10^5$ (Hy) and $1.4\times10^6$ (Ey) for its $\mathrm{Re}\,\gamma$
+# $4\times10^5$ (Hy) and $1.6\times10^6$ (Ey) for its $\mathrm{Re}\,\gamma$
 # and loss. ARPACK's tolerance $10^{-10}$ is on $\theta = 1/(\lambda-\sigma)$,
 # so it bounds $\lambda = \gamma^2$ to $10^{-10}|\lambda-\sigma|/|\lambda|$, with
 # the shift $\sigma$ at the closed straight mode: 0.013 (Ey) and 0.017 (Hy) at
 # $R = 5$ um, 0.013 at 30 mm. The worst-case round-off is then $1.2\times10^{-7}$
-# for $\beta$, $4.5\times10^{-7}$ for the Hy slab's $\mathrm{Re}\,\gamma$ and
-# loss and $1.3\times10^{-6}$ for the Ey slab's, at the repository's gate 1e-6;
+# for $\beta$, $5.5\times10^{-7}$ for the Hy slab's $\mathrm{Re}\,\gamma$ and
+# loss and $1.5\times10^{-6}$ for the Ey slab's, at the repository's gate 1e-6;
 # and the field and impedance objectives read the vector, which the tolerance
 # bounds to about $10^{-10}$ only. The gate holds because the pairs come out
 # converged to round-off, not to the tolerance (backward error
