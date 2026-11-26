@@ -7,10 +7,9 @@ trades that memory for iterations. This page picks one and checks it.
 
 ## When the direct solver does not fit
 
-The default `linear_solver="auto"` already moves off `"direct"` when the
-direct solver's estimate, about 48 KiB per unknown, passes half the memory the
-process may use. It says so on the `"gfem.solver"` logger. Two iterative solvers
-take over:
+The default `linear_solver="auto"` leaves `"direct"` when its estimate, about
+48 KiB per unknown, passes half the memory the process may use, and says so on
+the `"gfem.solver"` logger. Two iterative solvers take over:
 
 - **`"pmg_gmres"`** for a driven problem in 3D at order 2 or 3, in one
   process, on an operator equal to its transpose: no Bloch wave vector, no
@@ -39,7 +38,10 @@ The solver splits the field in two. It solves one part exactly: the
 {term}`direct set`. That part holds the lowest-order (Whitney) unknown of every
 mesh edge, which carries the long-range propagation and the static fields,
 and every unknown of a cell in a perfectly matched layer or of a
-{term}`poor cell`. The higher-order rest it smooths patch by patch, around
+{term}`poor cell`: a tetrahedron with $L_\mathrm{max} > 10\, h_\mathrm{min}$,
+where $h_\mathrm{min} = 3V / S_\mathrm{max}$ ($V$ its volume, $S_\mathrm{max}$
+its largest face area), as in a thin film meshed one cell across. The
+higher-order rest it smooths patch by patch, around
 each mesh vertex. Together these make the {term}`p-multigrid`, and GMRES runs
 on it. `tolerance` bounds the preconditioned residual, as for
 `"bddc_gmres"`: it is not the error of S (see {py:obj}`gfem.SolverOptions`).
