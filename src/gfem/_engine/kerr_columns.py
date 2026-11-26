@@ -34,6 +34,8 @@ class Columns:
     (n_el, n_q, k_n)``, ``None`` on a line. Both are jax arrays, put on the
     device once. ``measure (n_el, n_q)`` is the weight of each point in m² (m
     on a line). Elements are in the order of the section's triangles (segments).
+    ``points (n_el, n_q, 2)`` are the points' plane coordinates in the section's
+    local units, read by a bent mode's metric factor: ``None`` on a line.
     """
 
     dofs: jax.Array
@@ -41,6 +43,7 @@ class Columns:
     normal_dofs: jax.Array | None
     normal_weights: jax.Array | None
     measure: np.ndarray
+    points: np.ndarray | None = None
 
 
 def _coo(form: Any, shape: tuple[int, int]) -> sp.csr_matrix:
@@ -95,6 +98,30 @@ def _point_maps(
         [list(irs.GetDofNrs(ngs.ElementId(ngs.VOL, e))) for e in range(n_el)], int
     )
     return mats, w.real, point_dofs
+
+
+def _plane_points(space: Any, point_dofs: np.ndarray, raised: int) -> np.ndarray:
+    """The plane coordinates of the rule's points, ``(n_el, n_q, 2)``.
+
+    The two coordinates are P1 fields mapped to the points like the mode's
+    components, so a point lies where the rule puts it whatever the element's
+    vertex order.
+    """
+    q = 2 * space.order + raised
+    mesh = space.mesh
+    h1 = ngs.H1(mesh, order=1)
+    with serial_spaces():
+        irs = ngs.comp.IntegrationRuleSpace(mesh, order=q, complex=True)
+    cell = ngs.ET.TRIG
+    dx = ngs.dx(intrules={cell: ngs.IntegrationRule(cell, 2 * q)})
+    form = ngs.BilinearForm(h1, irs)
+    form += h1.TrialFunction() * irs.TestFunction() * dx
+    mass = ngs.BilinearForm(irs)
+    mass += irs.TrialFunction() * irs.TestFunction() * dx
+    w = _coo(mass, (irs.ndof, irs.ndof)).diagonal()
+    at_vertices = np.array([v.point for v in mesh.vertices])[:, :2]
+    nodal = _coo(form, (irs.ndof, h1.ndof)) @ at_vertices / w[:, None]
+    return nodal.real[point_dofs]
 
 
 def columns(space: Any, raised: int = 0) -> Columns:
@@ -155,6 +182,7 @@ def columns(space: Any, raised: int = 0) -> Columns:
     measure = np.zeros((n_el, n_q))
     measure[row_el, row_q] = w
     measure *= section.scale**2 if planar else section.scale
+    points = _plane_points(space, point_dofs, raised) if planar else None
     dofs = np.maximum(dofs, 0)
     if not planar:
         # NGSolve elements to section segments
@@ -172,6 +200,7 @@ def columns(space: Any, raised: int = 0) -> Columns:
             jnp.asarray(dofs[:, on_n]),
             jnp.asarray(weights[:, :, 2][..., on_n]),
             measure,
+            points,
         )
     else:
         cols = Columns(jnp.asarray(dofs), jnp.asarray(weights), None, None, measure)

@@ -195,11 +195,13 @@ def slab_mesh(
     return sm.write_msh22(path, sm.structured(edges, volume, surface))
 
 
-def wr90_model(path: Path) -> gfem.Model:
+def wr90_model(path: Path, n2: float | None = None) -> gfem.Model:
+    """The guide's model; ``n2`` (m^2/W) gives the vacuum a Kerr index."""
     mesh = gfem.Mesh.from_gmsh(path, length_unit="mm")
+    air = gfem.Material() if n2 is None else gfem.Material(nonlinear_index=n2)
     return gfem.Model(
         mesh,
-        materials={"air": gfem.Material()},
+        materials={"air": air},
         boundaries=[gfem.PEC("walls")],
         ports=[gfem.WavePort("p1", "p1")],
     )

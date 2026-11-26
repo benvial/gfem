@@ -26,7 +26,7 @@ import numpy as np
 import scipy.constants
 
 from gfem._materials import Material, PermittivityLaw
-from gfem._mode_overlap import _elements, _waves
+from gfem._mode_overlap import _elements, _waves, refuse_bend
 from gfem._pml import layer_tetrahedra
 from gfem._pytree import register_fields
 from gfem.results import PortModeResult
@@ -258,7 +258,7 @@ def raman_gain(
             section geometries; no element outside a perfectly matched layer
             carries a ``raman_spectrum``.
         NotImplementedError: A region carrying a spectrum is anisotropic; an
-            Hz line port.
+            Hz line port; a bent mode (`gfem.Bend`).
         TypeError: An entry is not a `gfem.PortModeResult`, or has no electric
             field.
         NonDifferentiableError: The node coordinates are traced by `jax.grad`
@@ -266,6 +266,7 @@ def raman_gain(
             those of a mode's solve are not, or the reverse.
         TypeError: The node coordinates are traced by `jax.jit`.
     """
+    refuse_bend("gfem.raman_gain", modes)
     waves = _waves(model, modes, "gfem.raman_gain", _raman_materials, shape=True)
     raman = waves.materials
     has = raman.index > 0

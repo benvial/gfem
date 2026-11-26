@@ -716,7 +716,9 @@ class PortModeRule:
         polarization = self.problem.polarization
         quantity, unit = _FIELD_NAMES[polarization]
         if sweep is not None:
-            field = PortModeField(sweep.space, sweep.basis, sweep.coords)
+            field = PortModeField(
+                sweep.space, sweep.basis, sweep.coords, self.problem.bend
+            )
         else:
             field = PortModeField._on_vector(  # noqa: SLF001
                 self.port.name,
@@ -725,6 +727,7 @@ class PortModeRule:
                 quantity=quantity,
                 unit=unit,
                 traced_nodes=is_traced(self._model.mesh.nodes),
+                bend=self.problem.bend,
             )
         hz = polarization == "Hz"
         return PortModeResult(

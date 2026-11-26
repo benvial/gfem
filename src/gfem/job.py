@@ -856,19 +856,25 @@ def _port_mode_field_args(field: PortModeField, _: _codec.Context) -> dict[str, 
     space = field._space  # noqa: SLF001
     # a line port's polarization; a planar port's field is written as before
     polarization = getattr(space, "polarization", None)
-    return {
-        "section": space.section,
-        "order": space.order,
-        "basis": field._basis,  # noqa: SLF001
-        "coords": field._coords,  # noqa: SLF001
-    } | ({} if polarization is None else {"polarization": polarization})
+    return (
+        {
+            "section": space.section,
+            "order": space.order,
+            "basis": field._basis,  # noqa: SLF001
+            "coords": field._coords,  # noqa: SLF001
+        }
+        | ({} if polarization is None else {"polarization": polarization})
+        | (
+            {} if field._bend is None else {"bend": field._bend}  # noqa: SLF001
+        )
+    )
 
 
 def _port_mode_field_from_args(args: dict[str, Any], _: _codec.Context) -> Any:
     from gfem._engine.line_mode import mode_space
 
     space = mode_space(args["section"], args["order"], args.get("polarization"))
-    return PortModeField(space, args["basis"], args["coords"])
+    return PortModeField(space, args["basis"], args["coords"], args.get("bend"))
 
 
 def _port_section_from_args(args: dict[str, Any], _: _codec.Context) -> PortSection:

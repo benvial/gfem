@@ -622,8 +622,15 @@ class PortModeField:
     quantity = "E"
     unit = "V/m"
 
-    def __init__(self, space: ModeSpace, basis: np.ndarray, coords: np.ndarray) -> None:
+    def __init__(
+        self,
+        space: ModeSpace,
+        basis: np.ndarray,
+        coords: np.ndarray,
+        bend: Bend | None = None,
+    ) -> None:
         """Internal: built by `gfem.solve` (field ``i`` is ``basis @ coords[i]``)."""
+        self._bend = bend
         self._parts: tuple[ModeSpace, np.ndarray, np.ndarray] | None = (
             space,
             basis,
@@ -650,6 +657,7 @@ class PortModeField:
         quantity: str = "E",
         unit: str = "V/m",
         traced_nodes: bool = False,
+        bend: Bend | None = None,
     ) -> PortModeField:
         """Internal: the field as a JAX array of its full DOF vector, per frequency.
 
@@ -666,6 +674,7 @@ class PortModeField:
         field._build = None
         field._vector = vector
         field._locate = locate
+        field._bend = bend
         field._port = port
         field._traced_nodes = traced_nodes
         field.quantity, field.unit = quantity, unit
@@ -679,6 +688,7 @@ class PortModeField:
         *,
         quantity: str = "E",
         unit: str = "V/m",
+        bend: Bend | None = None,
     ) -> PortModeField:
         """Internal: a field built by ``build()`` on first use.
 
@@ -689,6 +699,7 @@ class PortModeField:
         field = object.__new__(cls)
         field._parts = None
         field._build = build
+        field._bend = bend
         field._vector = None
         field._locate = None
         field._port = port
@@ -748,7 +759,11 @@ class PortModeField:
         Points off the cross-section's elements (inside metal holes or outside
         the port) give zero. On a line port of a 2D mesh, the scalar field at
         ``(n_points, 2)`` points: ``(n_freq, n_points)``. Points inside a
-        perfectly matched layer give the stretched field, not a physical one.
+        perfectly matched layer give the stretched field, not a physical one. On a
+        bent mode (`gfem.Bend`) the field is the physical one: the component
+        along the port normal, the one the bend stretches, is divided by the
+        metric factor :math:`h` of the bend at the point (in a layer, the factor
+        of the physical point, not of the stretched coordinate).
 
         Args:
             points: ``(n_points, 3)`` (or one ``(3,)``) global coordinates, m,
@@ -777,8 +792,13 @@ class PortModeField:
             raise ValueError(f"points must be 3-vectors in m, got shape {p.shape}.")
         local = self._local(p)
         columns = self._space.evaluate(self._basis.T, local)
-        e = np.einsum("fk,kpc->fpc", self._coords, columns) @ self._section.frame
-        return jnp.asarray(e[:, 0] if single else e)
+        e = np.einsum("fk,kpc->fpc", self._coords, columns)
+        if self._bend is None:
+            e = e @ self._section.frame
+            return jnp.asarray(e[:, 0] if single else e)
+        e = jnp.asarray(e) * self._unstretch(p)[None, :, :]
+        e = e @ jnp.asarray(self._section.frame)
+        return e[:, 0] if single else e
 
     def _at_vector(self, points: Any) -> jax.Array:
         """`at` on the traced DOF vector: host-built columns times the vector."""
@@ -804,8 +824,25 @@ class PortModeField:
         dofs, weights = space.point_columns(local)
         picked = jnp.asarray(self._vector)[:, dofs]
         e = jnp.einsum("pcl,fpl->fpc", jnp.asarray(weights), picked)
+        if self._bend is not None:
+            e = e * self._unstretch(p)[None, :, :]
         e = e @ jnp.asarray(section.frame)
         return e[:, 0] if single else e
+
+    def _unstretch(self, p: np.ndarray) -> jax.Array:
+        r"""``(n_points, 3)`` factors taking the solved field to the physical one.
+
+        :math:`(1, 1, 1/h)` with
+        :math:`h = 1 + (\mathbf{p} - \mathbf{at})\cdot\mathbf{outward}/R` at the
+        real point :math:`\mathbf{p}`; :math:`R` is the result's, so traced when
+        the solve is.
+        """
+        bend = self._bend
+        assert bend is not None  # noqa: S101 - callers check
+        xi = (p - np.asarray(bend.at)) @ np.asarray(bend.outward)
+        h = 1 + jnp.asarray(xi) / bend.radius
+        one = jnp.ones_like(h)
+        return jnp.stack([one, one, 1 / h], axis=-1)
 
     def _local(self, p: np.ndarray) -> np.ndarray:
         return _local_points(self._section, p)
