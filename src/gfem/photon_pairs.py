@@ -916,13 +916,12 @@ def _build(
         or points < 3
     ):
         raise ValueError(f"{owner}: points must be an integer >= 3, got {points!r}.")
+    if is_traced(model.mesh.nodes):  # the overlaps do not move with the nodes yet
+        raise NonDifferentiableError(_NODES.format(owner=owner))
     for r in arms:
-        try:
-            line = r.h_field is not None or (
-                r.e_field is not None and len(r.e_field._space.section.normal) != 3  # noqa: SLF001
-            )
-        except NonDifferentiableError as err:
-            raise NonDifferentiableError(_NODES.format(owner=owner)) from err
+        line = r.h_field is not None or (
+            r.e_field is not None and len(r.e_field._space.section.normal) != 3  # noqa: SLF001
+        )
         if line:
             raise NotImplementedError(
                 f"{owner}: wave port {r.port!r} is a line port (a 2D mesh): a pair "
