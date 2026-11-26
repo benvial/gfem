@@ -115,11 +115,12 @@ backward
 18.233 GHz: moving boundary 468, photoelastic 35, total 248 1/(W m)
 ```
 
-Three of these are Qiu's modes, E4, E2 and E1, even under both mirrors
-of the section. The two parts of each have opposite signs, so the total is far
-below their sum: $(\sqrt{G_\mathrm{PE}} - \sqrt{G_\mathrm{MB}})^2$, not
-$G_\mathrm{MB} + G_\mathrm{PE}$. The 27.13 GHz mode, another symmetry class,
-has parts of the same sign.
+Four of these are Qiu's modes, E4, E2, E1 and E3, even under both mirrors of
+the section. The 27.13 GHz mode is a higher mode of the same class. The two
+parts of each of Qiu's modes have opposite signs except at 27.13 GHz, where
+they add. Where they oppose, the total is far below their sum: about
+$(\sqrt{G_\mathrm{PE}} - \sqrt{G_\mathrm{MB}})^2$, not
+$G_\mathrm{MB} + G_\mathrm{PE}$.
 
 E1 and E2 against the published frequencies, parts and totals:
 
@@ -183,9 +184,7 @@ def gain_of(young):
         gfem.MechanicalEigenmode(13.9e9, n_modes=1, wavenumber=q),
         options=gfem.SolverOptions(order=3),
     )
-    return jnp.real(
-        gfem.brillouin_gain(optical, solved, port="p", frequency=frequency).total[0]
-    )
+    return gfem.brillouin_gain(optical, solved, port="p", frequency=frequency).total[0]
 
 
 young = 170e9
@@ -199,9 +198,10 @@ d ln G / d ln E = -1.00000
 
 ## Check your results
 
-- **Parts and total.** The total is $(\sqrt{G_\mathrm{PE}} -
-  \sqrt{G_\mathrm{MB}})^2$ when the parts have opposite signs, and the sum of
-  roots squared when they do not.
+- **Parts and total.** The total is about $(\sqrt{G_\mathrm{PE}} -
+  \sqrt{G_\mathrm{MB}})^2$ when the parts have opposite signs, and about the
+  sum of roots squared when they do not (exact for collinear complex
+  amplitudes).
 - **The quality factor.** $G_\mathrm{B} \propto Q_m$: a measured $Q'$ rescales the
   gain by $Q'/Q_m$.
 - **Symmetry.** A mode of a symmetry class other than the pump's couples only

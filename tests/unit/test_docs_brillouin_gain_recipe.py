@@ -43,8 +43,8 @@ def test_q_is_twice_the_optical_wavenumber_of_the_wire(ran):
 def test_the_selected_modes_are_the_e_class_at_the_expected_frequencies(ran):
     lines = _example(ran, "The gain of every mode").printed.splitlines()
     assert lines[0] == "backward"
-    # E4, E2, another class, E1 by total; frequencies are mesh independent to
-    # 4 digits (the wire's own 13.890 and 15.415 GHz at q)
+    # E4, E2, a higher mode of the same class, E1, E3 by total; frequencies are
+    # mesh independent to 4 digits (the wire's own 13.890 and 15.415 GHz at q)
     frequencies = [dp.numbers(line)[0] for line in lines[1:]]
     assert frequencies[0] == pytest.approx(22.541, abs=2e-3)
     assert frequencies[1] == pytest.approx(15.415, abs=2e-3)
