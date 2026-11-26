@@ -896,7 +896,9 @@ class MechanicalSystem:
         gradient :math:`5 \cdot 10^{-6}` off. Each step shrinks that part by
         the shift's distance over the gap (here :math:`10^{-8} / 10^{-2}`), so
         the next step removes it. The iteration stops once a step lowers the
-        error by less than `_LEFT_STALL`, or after `_LEFT_STEPS` steps.
+        error by less than a factor 1/`_LEFT_STALL` (10), or after `_LEFT_STEPS`
+        steps. It returns the iterate of least error, so a later step that drifts
+        above ``tolerance`` does not discard an earlier one within it.
 
         Raises:
             EigenmodeConvergenceError: The iteration ends above ``tolerance``.
@@ -908,14 +910,21 @@ class MechanicalSystem:
         assert handle is not None  # noqa: S101
         y = np.conj(x)
         error = np.inf
+        best_error, best = np.inf, y
         for _ in range(_LEFT_STEPS):
             y = handle.solve(self._embed(self.mass.T @ y), transpose=True)[self.index]
             y = y / np.linalg.norm(y)
             previous, error = error, self._backward_error(lam, y, left=True)
+            if error < best_error:
+                best_error, best = error, y
+            # Step 1 never stops: previous = inf, so the error always drops by
+            # more than the stall factor and every lossy q != 0 mode takes two
+            # solves at least.
             if error <= tolerance and error > _LEFT_STALL * previous:
-                return y
-        if error <= tolerance:
-            return y
+                return best
+        if best_error <= tolerance:
+            return best
+        error = best_error
         raise EigenmodeConvergenceError(
             f"MechanicalEigenmode: the left vector of mode {mode} did not reach "
             f"eigen_tolerance={tolerance:g} in {_LEFT_STEPS} steps (backward error "
