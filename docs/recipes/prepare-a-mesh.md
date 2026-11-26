@@ -1,27 +1,18 @@
-# Prepare a mesh for gfem
+# Mesh preparation
 
-Build the mesh of your own device and solve on it. gfem builds no geometry: it
-reads a [gmsh](https://gmsh.info) `.msh` file of straight-sided tetrahedra
-whose volumes and surfaces are grouped into named
-{term}`regions <region>` (gmsh's physical groups). The model refers to the
-geometry only by those names: a material per volume, a boundary condition or
-a port per surface.
+Build the mesh of your own device and solve on it. gfem reads a
+[gmsh](https://gmsh.info) `.msh` file of straight-sided tetrahedra whose
+volumes and surfaces are grouped into named {term}`regions <region>` (gmsh's
+physical groups); the model refers to the geometry only by those names.
 
-This page builds the line of {doc}`../get-started` from scratch: two parallel
-plates 40 mm long, 6 mm wide and 1 mm apart, with a ceramic of relative
-permittivity 10 over the middle 20 mm. It then reads the mesh, solves the
-get-started model on it unchanged and checks that the mesh resolves the
-field. The coordinates in the file are in mm; gfem converts them to metres
-once, when it reads the file, and works in SI units from there on
+The script rebuilds the line of {doc}`../get-started` (plates 40 mm long,
+6 mm wide, 1 mm apart; ceramic $\varepsilon_r = 10$ over the middle 20 mm)
+with the Python API from `pip install gmsh`. File coordinates are in mm
 ({doc}`../conventions`).
-
-gfem does not install gmsh: `pip install gmsh` gives its Python API, which the
-script below uses.
 
 ## Build and name the regions
 
-Draw the line as three boxes along x, in mm: a feed, the ceramic and a second
-feed. `fragment` splits them along their common faces, so neighbouring
+Three boxes along x: feed, ceramic, feed. `fragment` makes neighbouring
 volumes share one surface mesh, which gfem needs:
 
 ```python
@@ -47,9 +38,8 @@ gmsh.model.addPhysicalGroup(3, [feed_in, feed_out], name="feed")
 gmsh.model.addPhysicalGroup(3, [design], name="design")
 ```
 
-Name every surface the model will refer to: the two plates, which will be
-perfect conductors, and the two ends, which will carry the ports. Here the
-surfaces are found by the plane they lie in:
+Name every surface the model refers to: the two plates and the two port
+ends, found here by the plane they lie in:
 
 ```python
 def faces_in_plane(axis, value):
@@ -68,14 +58,12 @@ gmsh.model.addPhysicalGroup(2, faces_in_plane(0, 0), name="port1")
 gmsh.model.addPhysicalGroup(2, faces_in_plane(0, 40), name="port2")
 ```
 
-The two side walls ($y = 0$ and $y$ = 6 mm) stay unnamed. An outer surface that
-the model does not name is a magnetic wall, where the tangential magnetic
-field vanishes. That is the side condition of the get-started line, so the
-sides need no name. Name a surface when you want another condition on it.
+The side walls ($y = 0$ and $y$ = 6 mm) stay unnamed: an unnamed outer surface
+is a magnetic wall, the side condition of the get-started line. Name a surface
+to give it another condition.
 
-Then mesh and write the file. The largest element edge is set to the plate
-spacing, 1 mm, about a twelfth of the shortest wavelength in the ceramic
-(11.9 mm at 8 GHz):
+Mesh and write the file. The largest edge is the plate spacing, 1 mm, about a
+twelfth of the shortest wavelength in the ceramic (11.9 mm at 8 GHz):
 
 ```python
 gmsh.option.setNumber("Mesh.MeshSizeMax", 1.0)  # mm
@@ -84,8 +72,7 @@ gmsh.write("my_line.msh")
 gmsh.finalize()
 ```
 
-gmsh writes first-order (straight-sided) tetrahedra unless you ask for more,
-and its default `.msh` format 4.1 is one gfem reads; format 2.2 works too.
+gmsh writes first-order tetrahedra by default; formats 4.1 and 2.2 both read.
 
 ## Read it and check the names
 
@@ -106,14 +93,12 @@ print(mesh.imported_nodes.max(axis=0))  # m: the far corner of the line
 [0.04  0.006 0.001]
 ```
 
-- `length_unit` is the unit of the file's coordinates: one of
-  `"m"`, `"cm"`, `"mm"`, `"um"` or `"nm"` (`gfem.mesh.LENGTH_UNITS`). The
-  default is `"um"`, the unit gsim writes. Get it wrong and every length is
-  off by a power of ten: the far corner above should read 40 mm, 6 mm, 1 mm.
-- `mesh.volumes` and `mesh.surfaces` are the names the model can use, and
-  only those. A misspelt name in the model raises
-  {py:obj}`gfem.RegionNotFoundError`, which suggests the closest names the
-  mesh has.
+- `length_unit` is the unit of the file's coordinates, one of `gfem.mesh.LENGTH_UNITS`
+  (default `"um"`, what gsim writes). A wrong unit shifts every length by a
+  power of ten: the far corner above should read 40 mm, 6 mm, 1 mm.
+- `mesh.volumes` and `mesh.surfaces` are the only names the model can use. A
+  misspelt name raises {py:obj}`gfem.RegionNotFoundError` with the closest
+  names.
 
 ## Solve on it
 
@@ -140,8 +125,7 @@ print(abs(s21))  # |S21| at 2, 5 and 8 GHz
 ```
 
 These are the get-started values, 0.8306, 0.9013 and 0.6052, to the fourth
-digit, on a different mesh of the same line. The two meshes agree on what
-the model uses: the names it refers to, the unit and the geometry.
+digit, on a different mesh of the same line.
 
 ## Is it fine enough?
 
@@ -159,24 +143,22 @@ print(abs(finer.s["p2", "p1"] - s21).max())  # the largest change of S21
 1.1851208817813629e-05
 ```
 
-S21 changes by about 1e-5, most at 8 GHz, where the wavelength is
-shortest. When the change is larger than you can accept, make the mesh finer
-where the field varies fastest: in gmsh (`"Mesh.MeshSizeMax"`, or a size
-field near edges and gaps), or with gfem's own refinement, which starts from
-this mesh ({doc}`mesh-refinement`).
+S21 changes by about 1e-5, most at 8 GHz, where the wavelength is shortest.
+If that is too much, refine where the field varies fastest: in gmsh
+(`"Mesh.MeshSizeMax"`, or a size field near edges and gaps) or with gfem's
+own refinement ({doc}`mesh-refinement`).
 
 ## Metals: a surface or an excluded volume
 
-A thin metal, a plate or a trace whose thickness you do not need to resolve,
-is a named surface with a {py:obj}`gfem.PEC` or {py:obj}`gfem.Conductor`
-condition, as the plates above. A thick metal that you mesh as a volume is
-taken out of the solve domain with `Model(excluded=...)`, and its outer
-faces carry the condition. The volume is either a region of its own,
-`excluded=("trace",)`, or, when the mesher tags it with the name of the
-dielectric around it (gsim does), the volume enclosed by its named faces,
-{py:obj}`gfem.enclosed_by`. Say `chip.msh` is your own mesh of a substrate
-`sub` under a volume of `air`, with a meshed trace inside the substrate whose
-faces are `metal_xy` (top and bottom) and `metal_z` (sides):
+A thin metal whose thickness you do not resolve is a named surface with a
+{py:obj}`gfem.PEC` or {py:obj}`gfem.Conductor` condition, as the plates
+above. A thick metal meshed as a volume leaves the solve domain with
+`Model(excluded=...)` and its outer faces carry the condition. Name the
+volume (`excluded=("trace",)`) or, when the mesher tags it with the
+surrounding dielectric (gsim does), take the volume enclosed by its faces,
+{py:obj}`gfem.enclosed_by`. Here `chip.msh` is a substrate `sub` under `air`
+with a trace inside the substrate whose faces are `metal_xy` (top and bottom)
+and `metal_z` (sides):
 
 ```python
 chip = gfem.Mesh.from_gmsh("chip.msh", length_unit="um")
@@ -198,9 +180,8 @@ on_chip = gfem.Model(
 ```
 
 A {term}`lumped port` sits on a surface that spans from one conductor to the
-other, as `port1` spans from the bottom plate to the top one. Make that
-surface a face of its own in gmsh and give it a name: a port cannot share a
-surface with another condition.
+other, as `port1` does. Give it a face and a name of its own: a port cannot
+share a surface with another condition.
 
 ## Look at the mesh
 
@@ -211,8 +192,8 @@ ParaView:
 mesh.to_vtu("my_line.vtu")
 ```
 
-Open the file and colour by region to see that each volume is where you meant
-it. gmsh's own viewer shows the physical groups too (`gmsh my_line.msh`).
+Colour by region in ParaView to see each volume where you meant it; `gmsh
+my_line.msh` shows the physical groups too.
 
 ## What a bad mesh raises
 
@@ -233,10 +214,8 @@ raises `ValueError` naming the file and the remedy:
 
 ## Limits
 
-- Straight-sided tetrahedra only: no curved elements, no hexahedra or
-  prisms. A curved surface is as round as its facets; refinement in gfem
-  subdivides them and never moves them onto the curve, so mesh curved
-  surfaces finer in gmsh ({doc}`mesh-refinement`, Limits).
+- Straight-sided tetrahedra only. Refinement never moves facets onto a
+  curve: mesh curved surfaces finer in gmsh ({doc}`mesh-refinement`, Limits).
 - gfem generates no mesh and reads no CAD file: geometry, meshing and region
   names are gmsh's, or gsim's ({doc}`gsim`).
 - The whole mesh is read into memory on every process.

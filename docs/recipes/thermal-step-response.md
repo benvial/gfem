@@ -1,4 +1,4 @@
-# Follow a temperature over time
+# Thermal step response
 
 Find how fast a device heats up and cools down when its heater switches on
 and off: the temperature and the phase over time, the rise time and the time
@@ -6,21 +6,14 @@ constant. {py:obj}`gfem.TransientThermal` steps the heat equation
 $\rho c_p\, \partial T/\partial t - \nabla\cdot(k \nabla T) = s(t)\, q$ on a uniform time grid, and records
 {term}`traces <Trace>` of the temperature at every step.
 
-The device is the heater section of {doc}`heater-temperature`: a TiN strip
-over a silicon waveguide in oxide, on a substrate whose bottom is held at
-300 K. Every material now needs its `mass_density` (kg/m³) and
-`specific_heat` (J/kg/K) besides its thermal conductivity. Heat conduction is
-linear, and the heat sources switch between constant levels. Time is in
-seconds and temperatures in kelvin; on a cross-section, powers are per metre
-of guide ({doc}`../conventions`, "Temperature and thermo-optic phase").
+The device is the section of {doc}`heater-temperature`; every material now also
+needs `mass_density` and `specific_heat` ({doc}`../conventions`, "Temperature and
+thermo-optic phase").
 
 ## A step on and off
 
-The heater dissipates 70 W per metre of guide, about the power that turns
-the core's phase by $\pi$ ({doc}`thermo-optic-phase`). It switches on at $t = 0$
-and off at 80 µs; the run lasts 160 µs, in 320 steps of 0.5 µs. Three traces
-follow it: the mean temperature of the core, the temperature at the heater's
-centre, and the core's thermo-optic phase per metre.
+The heater dissipates 70 W/m, about a $\pi$ phase ({doc}`thermo-optic-phase`),
+from $t = 0$ to 80 µs; the run lasts 160 µs in 320 steps.
 
 ```python
 import urllib.request
@@ -109,22 +102,16 @@ heater centre at switch-off: 331.80 K
 phase at switch-off: 3.1203 rad
 ```
 
-- `run.time` is the time grid, `steps + 1` times from 0 to `duration`, and
-  each trace has one value per time. A switch time must be on the grid; one
-  off it raises, naming the nearest grid times.
-- The {term}`waveform` scales every heat source of the problem: off before
-  its first start time, then each scale until the next start time.
-- {py:meth}`gfem.Trace.mean` records the mean temperature of a region and
-  {py:meth}`gfem.Trace.point` the temperature at a point, both absolute, in
-  K.
-  `thermo_optic_shift(...).trace()` and `route_phase(...).trace(name)` record
-  the phase (per metre on a section, in rad along a route): their mode is
-  solved once, before the run, and needs no rise.
-  {py:meth}`gfem.Trace.heat_out_per_length` records the heat that has left
-  through the sink ("The heat that has left").
+- `run.time` has `steps + 1` times from 0 to `duration`. A switch time must be
+  on the grid; one off it raises, naming the nearest grid times.
+- The {term}`waveform` scales every heat source: off before its first start
+  time, then each scale until the next start time.
+- {py:meth}`gfem.Trace.mean` and {py:meth}`gfem.Trace.point` record absolute
+  temperatures, in K. `thermo_optic_shift(...).trace()` and
+  `route_phase(...).trace(name)` record the phase; their mode is solved once,
+  before the run.
 - With no `initial_temperature`, the run starts from the
-  {term}`source-free temperature`, so every rise starts at 0. A number starts
-  the whole device at that uniform temperature, in K.
+  {term}`source-free temperature`, so every rise starts at 0.
 
 ## Fields at chosen times
 
@@ -142,16 +129,15 @@ print(f"mean core rise at 40 us: {float(gfem.region_mean(halfway, 'core')):.3f} 
 mean core rise at 40 us: 11.818 K
 ```
 
-`run.temperature(time)` gives the absolute temperature. Asking for a time
-that was not kept raises, naming the kept ones. Each kept field holds every
-node's value, so keep only the times you need on a large mesh.
+`run.temperature(time)` gives the absolute temperature. A time that was not
+kept raises, naming the kept ones; on a large mesh keep only the times you need.
 
 ## Rise time and time constant
 
 {py:func}`gfem.rise_time` is the 10–90 % time of a trace, and
 {py:func}`gfem.time_constant` the time to $1 - 1/e$ = 63.2 % of its swing.
-Both normalise the trace between its first and last samples, so pass the
-part of the trace that goes with one switch, and that switch's time:
+Both normalise between the first and last samples, so pass the part of the
+trace that goes with one switch, and its time:
 
 ```python
 tau = gfem.time_constant(t[on], core[on], switch_times=(0.0,))
@@ -168,19 +154,15 @@ time constant: 8.56 us on, 8.56 us off
 ```
 
 - The model is linear, so the fall mirrors the rise.
-- A single exponential has rise time / time constant = $\ln 9 = 2.20$. A ratio
+- A single exponential has rise time / time constant = $\ln 9 = 2.20$; a ratio
   near it means one slow thermal mode dominates.
-- Both take plain arrays of times and values, from gfem or anywhere else.
 
 ## The heat that has left
 
 {py:meth}`gfem.Trace.heat_out_per_length` records the {term}`heat out` of a
 side: the heat that has left it since $t = 0$, in J/m (J on a 3D mesh, with
-{py:meth}`gfem.Trace.heat_out`). It takes the sides of
-{py:obj}`gfem.heat_flow_per_length`: surface names, volume regions or a
-predicate on the element centroids. Its step difference over `dt` is the
-mean {term}`heat flow` over each step, in W/m, which tends to the steady
-flow once the temperature has settled:
+{py:meth}`gfem.Trace.heat_out`). Its step difference over `dt` is the mean
+{term}`heat flow` over each step, which tends to the steady flow:
 
 ```python
 heat_out = np.asarray(run.traces["sink"])  # J/m since t = 0
@@ -200,25 +182,19 @@ mean flow over the last step on: 69.9032 W/m
 steady flow into the sink: 69.9978 W/m
 ```
 
-- The heat is read from the discrete heat balance, with the heat the
-  elements store: the heat out of every surface plus the heat stored equals
-  the heat the sources put in, at every time, whatever the time scheme.
-- At switch-off, nine time constants after the switch-on, the flow into
-  the sink is 0.14 % short of the steady one: slower thermal modes than the
-  core's are still filling. By the end of the run the device has given back
-  all but 0.02 % of its heat; the rest is still stored, or left through the
-  top.
-- The trace is a cumulative heat, so {py:func}`gfem.rise_time` and
-  {py:func}`gfem.time_constant` have no meaning on it: take `np.diff` first,
-  and measure the flow.
+- The heat out of every surface plus the heat stored equals the heat the
+  sources put in, at every time and for every time scheme.
+- At switch-off the flow into the sink is 0.14 % short of the steady one:
+  slower thermal modes than the core's are still filling. By the end the
+  device has given back all but 0.02 % of its heat.
+- The trace is a cumulative heat: take `np.diff` before
+  {py:func}`gfem.rise_time` or {py:func}`gfem.time_constant`.
 
 ## A trace that has not settled
 
-The normalisation needs the trace to end where it is going. When the last
-samples still change, by more than 1 % of the swing extrapolated, the
-{term}`settled trace` test fails and both functions warn with
-{py:obj}`gfem.UnsettledTraceWarning`. The first 15 µs of the step, under
-two time constants, are not settled:
+When the last samples still change by more than 1 % of the extrapolated swing,
+the {term}`settled trace` test fails and both functions warn with
+{py:obj}`gfem.UnsettledTraceWarning`. The first 15 µs of the step are not settled:
 
 ```python
 early = t <= 15e-6
@@ -232,15 +208,14 @@ print([w.category.__name__ for w in caught])
 ['UnsettledTraceWarning']
 ```
 
-Run longer, or switch later: about five time constants after the last switch
-settle a single-exponential response to 1 %.
+Run longer: about five time constants after the last switch settle a
+single exponential to 1 %.
 
 ## The time scheme
 
-The default scheme, TR-BDF2, is second order and damps the jump at a
-switch. `SolverOptions(time_scheme="theta", theta=1.0)` is backward Euler,
-first order: use it to compare with a code that steps that way, at the same
-time grid. `theta=0.5` is Crank-Nicolson.
+The default TR-BDF2 is second order and damps the jump at a switch.
+`SolverOptions(time_scheme="theta", theta=1.0)` is backward Euler, first
+order; `theta=0.5` is Crank-Nicolson.
 
 ```python
 euler = gfem.solve(
@@ -263,8 +238,7 @@ print(f"time constant, backward Euler: {tau_euler * 1e6:.2f} us")
 time constant, backward Euler: 8.86 us
 ```
 
-Backward Euler lags by 3.5 % at 0.5 µs steps. It is first order, so halving
-the step roughly halves the lag.
+Backward Euler lags by 3.5 % at 0.5 µs steps; halving the step roughly halves the lag.
 
 ## Check your results
 
@@ -276,15 +250,11 @@ the step roughly halves the lag.
 
 ## Limits
 
-- The time grid is uniform, set by `duration` and `steps`; there is no
-  adaptive stepping. A heater switched on for a short time needs steps much
-  shorter than that time.
-- Heat sources switch between constant levels, at grid times. A ramp is a
-  staircase of switches.
-- Materials are constant and linear, as in the steady solve.
-- A run holds one factorization, the traces and the kept fields in memory. A
-  gradient through a long run also keeps the trajectory, or checkpoints it
-  when it does not fit ({doc}`thermal-gradient`).
+- The time grid is uniform; there is no adaptive stepping. A short pulse needs
+  steps much shorter than it.
+- Sources switch between constant levels at grid times; a ramp is a staircase.
+- Materials are constant and linear. A gradient through a long run keeps or
+  checkpoints the trajectory ({doc}`thermal-gradient`).
 
 ## Next
 

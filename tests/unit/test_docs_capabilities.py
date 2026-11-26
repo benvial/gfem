@@ -938,3 +938,80 @@ def test_an_effectivity_role_with_no_range_name_fails_the_build(tmp_path, text):
     # Several ranges exist: a bare end is ambiguous, so it is an error.
     status, _ = _build_role_page(tmp_path, f"From :gfem-effectivity:`{text}`.")
     assert status != 0
+
+
+# --- the test-link role -------------------------------------------------------------
+
+_TEST_URL = "https://example.org/blob/main/"
+
+
+def _build_test_role_page(tmp_path, body, *, markdown=False):
+    build = pytest.importorskip("sphinx.cmd.build")
+    source = tmp_path / "source"
+    source.mkdir()
+    extensions = (
+        "['gfem_capabilities', 'myst_parser']"
+        if markdown
+        else ("['gfem_capabilities']")
+    )
+    (source / "conf.py").write_text(
+        f"import sys\nsys.path.insert(0, {str(REPO / 'docs' / '_ext')!r})\n"
+        f"extensions = {extensions}\n"
+        f"gfem_capabilities_source_url = {_TEST_URL!r}\n",
+        encoding="utf-8",
+    )
+    if markdown:
+        (source / "index.md").write_text(f"# Tests\n\n{body}\n", encoding="utf-8")
+    else:
+        (source / "index.rst").write_text(f"Tests\n=====\n\n{body}\n", encoding="utf-8")
+    out = tmp_path / "html"
+    status = build.build_main(["-q", "-W", "-b", "html", str(source), str(out)])
+    return status, out / "index.html"
+
+
+def test_the_test_role_links_a_file_a_node_and_a_directory(tmp_path):
+    node = (
+        "tests/verification/test_gradient_matrix.py"
+        "::test_gradient_matrix_matches_central_differences"
+    )
+    status, page = _build_test_role_page(
+        tmp_path,
+        ":gfem-test:`tests/verification/test_gradient_matrix.py`, "
+        f":gfem-test:`{node}` and :gfem-test:`tests/mpi`.",
+    )
+    assert status == 0
+    text = page.read_text(encoding="utf-8")
+    assert f'href="{_TEST_URL}tests/verification/test_gradient_matrix.py"' in text
+    assert f'href="{_TEST_URL}tests/mpi"' in text
+    assert node in text
+    assert text.count(f'href="{_TEST_URL}tests/verification/') == 2
+
+
+def test_the_test_role_renders_inside_a_pipe_table_cell(tmp_path):
+    pytest.importorskip("myst_parser")
+    status, page = _build_test_role_page(
+        tmp_path,
+        "| Case | Test |\n| --- | --- |\n"
+        "| A | {gfem-test}`tests/verification/test_gradient_matrix.py` |\n",
+        markdown=True,
+    )
+    assert status == 0
+    text = page.read_text(encoding="utf-8")
+    cell = text.split("<td")[2]
+    assert f'href="{_TEST_URL}tests/verification/test_gradient_matrix.py"' in cell
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "tests/verification/test_no_such_file.py",
+        "tests/no_such_directory",
+        "tests/verification/test_gradient_matrix.py::test_no_such_node",
+        "tests/verification/no_such.py::test_x",
+        "../outside.py",
+        "",
+    ],
+)
+def test_the_test_role_with_a_missing_target_fails_the_build(tmp_path, target):
+    status, _ = _build_test_role_page(tmp_path, f"See :gfem-test:`{target}`.")
+    assert status != 0

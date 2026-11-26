@@ -1,26 +1,18 @@
-# Differentiate port modes and designs at a port
+# Port-mode gradients
 
 Tune a guide's cross-section for a target effective index or impedance, and
 optimize a device whose design reaches its wave ports: a taper's width at its
 port, a filling that runs into the feed lines. Under {py:obj}`jax.grad`, a
-{py:obj}`gfem.PortMode` result's propagation constant $\gamma$ (so
-`n_eff`), its impedance $Z_{PV}$ and its field differentiate with respect to
-everything the port's cross-section is made of: the materials of the regions
-with elements on the port face (a {py:obj}`gfem.MaterialField` and a
-permittivity law included), the fill of a sheet and the values of an
-`Impedance` on an edge of the face, and the node coordinates of the face. A
-{py:obj}`gfem.Driven` solve differentiates the same way when its design
-reaches a wave port face: S, the port waves, kept fields,
-`result.port_modes` and `s.z_ref` follow the port's mode as it changes.
-Fields follow $e^{+i\omega t}$ and a port mode varies as $e^{-\gamma s}$
-along its guide ({doc}`../conventions`).
+{py:obj}`gfem.PortMode` result's propagation constant $\gamma$ (so `n_eff`),
+impedance $Z_{PV}$ and field differentiate with respect to the section's
+materials, sheets and nodes, and so does a {py:obj}`gfem.Driven` solve whose
+design reaches a wave port face.
 
 ## The effective index of a strip waveguide
 
 How does the effective index of a 500 × 220 nm silicon strip's TE mode at
-1.55 µm depend on the silicon and on the oxide around it? The section is the
-optical window of {doc}`thermo-optic-phase`; the two permittivities are the
-inputs.
+1.55 µm depend on the permittivities of the silicon and of the oxide
+({doc}`thermo-optic-phase` has the window)?
 
 ```python
 import urllib.request
@@ -65,23 +57,19 @@ dn_eff/deps_r: silicon 0.15339, oxide 0.08275
 ```
 
 - `n_eff` is $\gamma / (i k_0)$: its real part is the effective index, its
-  imaginary part $-\alpha / k_0$.
-- A gradient of $\gamma$ alone (so of `n_eff`) needs no extra solve: the
-  backward pass (the part of `jax.grad` that runs after the solve) is one
-  sum over the section's elements per mode and frequency.
-- A {py:obj}`gfem.MaterialField` on the window gives one derivative per
-  element: where added index raises $n_\mathrm{eff}$ most.
-- The mode's field differentiates too: `mode.e_field.at(points)` is
-  linear in the field, and an objective on it costs one 2D solve per mode
-  and frequency in the backward pass. gfem fixes the field's phase (see
-  {py:obj}`gfem.PortModeResult`), and the gradient follows that phase
-  exactly, but a physical overlap is read as $|\cdot|^2$.
+  imaginary part $-\alpha / k_0$ ({doc}`../conventions`).
+- A gradient of $\gamma$ needs no extra solve: the backward pass is one sum
+  over the section's elements per mode and frequency. A
+  {py:obj}`gfem.MaterialField` on the window gives one derivative per element.
+- The field differentiates too: an objective on `mode.e_field.at(points)`
+  costs one 2D solve per mode and frequency. The gradient follows gfem's fixed
+  phase ({py:obj}`gfem.PortModeResult`); a physical overlap is read as
+  $|\cdot|^2$.
 
 ### Half the group index
 
-Scaling every permittivity of the section by $s$ is the same as scaling the
-frequency by $\sqrt{s}$, when $\mu_r = 1$ and no boundary of the section
-depends on frequency. The gradient therefore obeys
+Scaling every permittivity of the section by $s$ scales the frequency by
+$\sqrt{s}$ (with $\mu_r = 1$, no frequency-dependent boundary), so
 
 $$
 \sum_r \varepsilon_r \frac{\partial n_\mathrm{eff}}{\partial \varepsilon_r}
@@ -104,11 +92,11 @@ sum eps dn_eff/deps = 2.027680, n_g / 2 = 2.027680
 
 ## Size a line for 50 Ω
 
-The line of {doc}`../get-started` is two plates 1 mm apart and 6 mm wide,
-between magnetic side walls `"side"`, with a wave port at each end. Which
-width gives 50 Ω? The width is a shape design that moves the port faces, so
-both ports are named in `sliding_ports`: their faces slide in their plane,
-and each port's mode follows the moved section.
+The line of the {doc}`get started page <../get-started>` is two plates 1 mm
+apart and 6 mm wide, between magnetic side walls `"side"`, with a wave port at
+each end. Which width gives 50 Ω? The width moves the port faces, so both
+ports are named in `sliding_ports`: their faces slide in their plane and each
+port's mode follows.
 
 ```python
 urllib.request.urlretrieve(url.replace("heater_w2.msh", "line.msh"), "line.msh")
@@ -150,19 +138,16 @@ w = 7.53458 mm: Z_PV = 50.00015 ohm
 w = 7.53461 mm
 ```
 
-- `sliding_ports` names the wave ports whose faces slide in their plane
-  instead of being held; the port keeps its reference plane. Without it,
-  `boundary_morph` holds every port's face, and a lumped or Floquet port's
-  face is always held.
-- The line's TEM mode has $Z_{PV} = \eta_0 h / w$, exactly on any mesh of
-  the section: 50 Ω at $w$ = 7.5346 mm, the last width printed.
-- The voltage path is a fixed set of points. Keep the conductors it joins
-  where its ends are: here the side walls move and the plates stay, so the
-  path still spans the gap.
+- Without `sliding_ports`, `boundary_morph` holds every port's face; a lumped
+  or Floquet port's face is always held.
+- The line's TEM mode has $Z_{PV} = \eta_0 h / w$ on any mesh: 50 Ω at
+  $w$ = 7.5346 mm, the last width printed.
+- The voltage path is a fixed set of points: keep the conductors it joins
+  where its ends are (here the side walls move, the plates stay).
 
 ## A design that reaches the ports
 
-Put the ceramic of {doc}`solve-a-device` back in the middle of the line, and
+Put the ceramic of {doc}`solve-a-device` back in the middle of the line and
 make the feed lines' filling the design. It runs into both port faces. How
 does the reflection into 50 Ω terminations depend on it?
 
@@ -195,62 +180,51 @@ mean |S11|^2 at 50 ohm: 0.625562
 gradient -0.332319, central difference -0.332319
 ```
 
-- S is normalized to each port's own mode, which now follows the design:
-  `s.z_ref` and `result.port_modes` move with the filling
-  ($Z_{PV} = \eta_0 h / (w \sqrt{\varepsilon_r})$ here), and S in the line's
-  own pseudo-waves does not see a mismatch to the terminations. Where a port
-  meets a fixed external line, as here, renormalize S to it
-  (`s.renormalize(50.0)`). For a guide with no impedance, keep a stretch of
-  the external guide's own section between the design and the port, so the
-  port's mode is that guide's.
-- An objective on how much of an output field is in a port's mode is that
-  port's S entry, `s["out", "in"]`: a wave port's S is the field's
-  projection on the port's mode, exact on lossy lines too. On a
+- S is normalized to each port's own mode, which follows the design:
+  `s.z_ref` and `result.port_modes` move with the filling. S in the line's
+  own pseudo-waves does not see a mismatch to the terminations, so renormalize
+  to a fixed external line with `s.renormalize(50.0)`. For a guide with no
+  impedance, keep a stretch of the external guide's section between the design
+  and the port.
+- A wave port's S entry, `s["out", "in"]`, is the projection of the field on
+  the port's mode, exact on lossy lines too; on a
   {doc}`shared port surface <shared-port-surface>` each requested mode is a
   port of its own.
-- The gradient costs what it costs with the design away from the ports,
-  plus a 2D pass on each wave port face at each frequency (a small part of
-  the 3D solve). That pass runs only when the design reaches a port face.
+- The gradient adds a 2D pass on each wave port face at each frequency, only
+  when the design reaches a face.
 
 ## Check your results
 
-- Compare the gradient with a central difference of your objective along
-  one direction, as above. Call {py:obj}`gfem.release_memory` before each
-  evaluation ({doc}`s-parameter-gradient`).
-- Between the frequencies a sweep solves exactly, a port mode comes from a
-  reduced model accurate to `SolverOptions(port_mode_tolerance=...)`. The
-  gradient is that of the exact mode. For a difference over many
-  frequencies, solve with `port_mode_tolerance=1e-12`.
-- Each moved mesh is a different discretization: a node gradient is the
-  exact derivative of the discrete objective ({doc}`shape-gradient`).
-
-How gfem itself is checked: {doc}`../verification`.
+- Compare the gradient with a central difference along one direction, as
+  above, calling {py:obj}`gfem.release_memory` before each evaluation
+  ({doc}`s-parameter-gradient`).
+- Between the frequencies a sweep solves exactly, the mode comes from a
+  reduced model accurate to `SolverOptions(port_mode_tolerance=...)`; the
+  gradient is that of the exact mode. For a difference over many frequencies,
+  use `port_mode_tolerance=1e-12`.
+- A node gradient is the exact derivative of the discrete objective
+  ({doc}`shape-gradient`); how gfem itself is checked is in
+  {doc}`../verification`.
 
 ## Limits
 
-- An {py:obj}`gfem.Eigenmode` solve with a design at a wave port face raises
-  {py:obj}`gfem.PortGeometryError`; a driven solve differentiates it.
-- Under a Bloch wave vector or on a fixed-angle sweep, a design at a wave
-  port face raises {py:obj}`gfem.NonDifferentiableError`.
-- `residual` (of a `PortMode` result or of `result.port_modes`) is the mode
-  solve's backward error, a diagnostic: with a design at the face it raises
-  {py:obj}`gfem.NonDifferentiableError`. Wrap it in `jax.lax.stop_gradient`.
-- `mode.e_field.at(points)` raises {py:obj}`gfem.NonDifferentiableError`
-  with respect to node coordinates (its points stay put while the section
-  moves); `gamma`, `n_eff` and `Z_PV` differentiate.
-- {py:obj}`gfem.characteristic_impedance` is not differentiable; `Z_PV`,
-  along the port's own `voltage_path`, is.
-- A voltage path whose end sits on a conductor that the design moves, or
-  that runs along a material interface or mesh edge that moves, gives
-  $Z_{PV}$ and `z_ref` a kink: the derivatives from the two sides differ
-  (by a few percent along a moving interface). Place the path inside
-  elements and across the gap, between conductors that stay.
-- The thermo-optic and electro-optic shifts hold their mode constant: their
-  gradient with respect to the optical model's permittivity or nodes raises
+- **Eigenmode.** A design at a wave port face raises
+  {py:obj}`gfem.PortGeometryError` in an {py:obj}`gfem.Eigenmode` solve (a
+  driven solve differentiates it); so does a move of a face out of its plane,
+  which `sliding_ports` otherwise allows within it.
+- **Bloch and fixed-angle sweeps.** A design at a wave port face raises
+  {py:obj}`gfem.NonDifferentiableError`.
+- **Diagnostics.** `residual` raises {py:obj}`gfem.NonDifferentiableError`
+  with a design at the face (wrap it in `jax.lax.stop_gradient`), and so does
+  `mode.e_field.at(points)` for node coordinates, whose points stay put;
+  {py:obj}`gfem.characteristic_impedance` is not differentiable, `Z_PV` along
+  the port's `voltage_path` is.
+- **Voltage path.** An end on a moving conductor, or a path along a moving
+  interface, gives $Z_{PV}$ a kink (a few percent); place it inside elements,
+  across the gap.
+- **Fixed modes.** The thermo-optic and electro-optic shifts hold their mode
+  constant: their gradient with respect to the optical model raises
   ({doc}`thermal-gradient`, {doc}`electro-optic-gradient`).
-- A port face stays planar: `sliding_ports` keeps it in its plane. A move
-  out of the plane beyond the forward's tolerance raises
-  {py:obj}`gfem.PortGeometryError` in the solve.
 
 ## Next
 

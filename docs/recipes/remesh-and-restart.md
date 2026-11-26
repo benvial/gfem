@@ -1,39 +1,6 @@
-# Remesh and restart
+# Remeshing a shape design
 
-A shape design in gfem moves the nodes of one imported mesh; it never changes
-the mesh's topology. {py:obj}`gfem.shape.boundary_morph` builds a fixed linear map from
-normal displacements of a surface's nodes to a moved mesh, solved once on the
-imported mesh. Small and moderate moves keep the mesh valid, but a long
-optimization can travel further than one mesh allows. This recipe shows how to
-notice that, and how to remesh at the current geometry and carry on.
-
-The [shape tutorial](../tutorials/shape.ipynb) runs a whole gap-width
-optimization of a coplanar line on one mesh, with the step acceptance of
-section 2; [Shape gradients](shape-gradient.md) explains the gradients.
-
-gfem v0.1 does not remesh for you: gfem reads meshes, it does not make them.
-You regenerate the layout and its mesh yourself (here with gdsfactory and
-gsim), and restart the optimizer from where it stopped.
-
-## How far one mesh goes
-
-On a coplanar line in IHP's TopMetal2 with a 15 µm gap, pushing one sidewall of the signal conductor into the gap with a smooth
-bump gives:
-
-| Bump amplitude into the gap | What happens |
-|---|---|
-| up to 10.5 µm | nothing |
-| 11 µm | {py:obj}`gfem.MeshQualityWarning`: an element fell below a quarter of its imported quality |
-| 14 µm (93% of the gap) | {py:obj}`gfem.MeshQualityError`: an element is inverted |
-
-Moving the wall into the metal inverts nothing down to −15 µm. Three things
-make this travel possible, and they are worth keeping in your own setup:
-
-- every named surface other than the moving one, the ports and `fixed=` slides
-  in its own plane, so layered meshes deform along their interfaces;
-- the default extension is stiffened elasticity: small elements, which sit
-  next to the geometry's features, resist deformation most;
-- the design is smooth along the surface (see below).
+Remesh a shape design at its current geometry and restart the optimization from it. A shape design moves the nodes of one imported mesh and never changes its topology, so a long optimization can outrun the mesh. gfem does not make meshes: you regenerate the layout and mesh (here with gdsfactory and gsim) and restart. The [shape tutorial](../tutorials/shape.ipynb) runs a whole optimization on one mesh; {doc}`shape-gradient` explains the gradients.
 
 ## 1. Parametrize smoothly
 
@@ -72,8 +39,7 @@ def displacements(q, morph):
 
 Mesh surfaces are grouped by layer and orientation (`topmetal2_z` holds every
 sidewall of every conductor), so `where=` picks the feature by coordinates.
-Ports are held automatically: a node on a port surface never moves and is not
-a parameter.
+Ports never move and are not parameters.
 
 ## 2. Accept steps on mesh quality
 
@@ -102,31 +68,44 @@ while True:
         raise RuntimeError("the mesh is used up: remesh and restart (below)")
 ```
 
-Calling the morph with concrete values also checks the moved mesh: it warns
-with `MeshQualityWarning` when an element falls below a quarter of its
-imported quality and raises `MeshQualityError` on an inverted element. Every
-solve on a moved mesh runs the same check. Inside an objective,
-`quality` can also serve as a smoothly aggregated constraint.
+A morph called with concrete values warns with `MeshQualityWarning` when an
+element falls below a quarter of its imported quality and raises
+`MeshQualityError` on an inverted one; every solve on a moved mesh runs the
+same check. Inside an objective, `quality` can serve as a smoothly aggregated
+constraint.
+
+## How far one mesh goes
+
+On a coplanar line in IHP's TopMetal2 with a 15 µm gap, pushing one sidewall of
+the signal conductor into the gap with a smooth bump gives:
+
+| Bump amplitude into the gap | What happens |
+|---|---|
+| up to 10.5 µm | nothing |
+| 11 µm | {py:obj}`gfem.MeshQualityWarning`: an element fell below a quarter of its imported quality |
+| 14 µm (93% of the gap) | {py:obj}`gfem.MeshQualityError`: an element is inverted |
+
+Moving the wall into the metal inverts nothing down to −15 µm. Three things
+extend the travel: other named surfaces (ports, `fixed=` slides) move in their
+own plane; the default extension is stiffened elasticity, where small elements
+resist most; and the design is smooth along the surface.
 
 ## 3. Remesh at the current geometry and restart
 
-When the geometry is unchanged and only the mesh is too coarse, refining the
-current mesh is the lighter path: {doc}`mesh-refinement`.
-
-When backtracking stalls, or the warnings keep coming, the mesh has gone as
-far as it can. At the current parameters `q_k`:
+When only the mesh is too coarse, refining it is lighter:
+{doc}`mesh-refinement`. When backtracking stalls or the warnings keep coming,
+the mesh has gone as far as it can. At the current parameters `q_k`:
 
 1. **Regenerate the layout at `q_k`** with gdsfactory, the same cell with the
    new widths and gaps.
-2. **Mesh it with gsim and build a new `Model`**, with the same materials,
-   boundaries, ports and `excluded=` as before.
-3. **Build a new `boundary_morph`** on the new model with the same selection,
-   and the same `q → t` map *relative to `q_k`*: the new mesh already has the
-   geometry of `q_k`, so its displacement is zero there.
-4. **Restart the optimizer from `q_k` with its history reset.** The discrete
-   objective jumps a little at a remesh (a new mesh has a new discretization
-   error), so L-BFGS curvature pairs and MMA asymptotes from the old mesh no
-   longer apply.
+2. **Mesh it with gsim and build a new `Model`** with the same materials,
+   boundaries, ports and `excluded=`.
+3. **Build a new `boundary_morph`** with the same selection and the same
+   `q → t` map *relative to `q_k`*: the new mesh already has the geometry of
+   `q_k`.
+4. **Restart the optimizer from `q_k` with its history reset**: the objective
+   jumps a little at a remesh, so L-BFGS pairs and MMA asymptotes no longer
+   apply.
 
 ```python
 import gdsfactory as gf
@@ -168,13 +147,9 @@ def design_mesh(q):
 optimizer = make_optimizer(x0=q_base)  # fresh state: no history from the old mesh
 ```
 
-Two details to keep in mind:
-
-- The selection may move with the geometry: if the wall sat at `y = 10 µm` on
-  the first mesh, it sits at `y = 10 µm + Δ` on the new one. Write `where=` as
-  a function of `q_base`.
-- Compare objective values only within one mesh. Record the value at `q_k` on
-  both meshes if you want to see the size of the jump.
+- The selection may move with the geometry: a wall at `y = 10 µm` sits at
+  `y = 10 µm + Δ` on the new mesh, so write `where=` as a function of `q_base`.
+- Compare objective values only within one mesh.
 
 ## Next
 

@@ -1,26 +1,16 @@
-# Find the mechanical modes of a film or a rib
+# Mechanical modes
 
 Find the modes of vibration of a solid cross-section that propagate along its
 axis: the {term}`mechanical eigenmode` of a suspended film (its Lamb modes) or
 of a rib, at a given {term}`axial wavenumber` $q$. Each mode has a frequency, a
 quality factor $Q$, a displacement and a group velocity.
-{py:class}`gfem.MechanicalEigenmode` solves a 2D section of elastic solids, with
-the fields varying as $e^{i\omega t - iqz}$ along $z$, the normal of the
-section: a waveguide of any cross-section is one solve a wavenumber.
-
-The device is a silica-like plate, 500 nm thick and 3 µm long, held at both
-ends by a frame of the same material 3 µm long. Its faces above and below are
-free. {download}`plate_section.py <plate_section.py>` meshes it with netgen; the
-outer ends of the frames are the line `"end"`.
+{py:class}`gfem.MechanicalEigenmode` solves a 2D section, one solve a wavenumber.
 
 ## A solid and its modes
 
-A solid needs a `stiffness`, a `mass_density` and, for a loss, a
-{term}`mechanical quality factor`; see
-{doc}`piezoelectric-admittance` for the tensors and {py:obj}`gfem.isotropic_stiffness`
-for an isotropic solid. The problem needs the {term}`axial wavenumber` $q$ in
-rad/m, a `target` frequency in Hz, how many modes (`n_modes`) and where the
-displacement is held (`clamped`). Every other line is free.
+A solid needs a `stiffness` ({py:obj}`gfem.isotropic_stiffness`), a
+`mass_density` and, for a loss, a {term}`mechanical quality factor`. The problem
+takes $q$ in rad/m, a `target` in Hz, `n_modes` and the `clamped` line.
 
 ```python
 import urllib.request
@@ -55,22 +45,22 @@ print(res)
 MechanicalEigenmodeResult([974.596 MHz (Q 1000), 1.08455 GHz (Q 1000), 1.11127 GHz (Q 1000)], wavenumber=2e+06 rad/m)
 ```
 
-The modes are the `n_modes` nearest the `target`, nearest first. `res.omega` is
-the complex angular frequency, `res.frequency` its real part over $2\pi$ in Hz
-and `res.q` the quality factor of each mode,
-$Q = \mathrm{Re}\,\omega / (2\,\mathrm{Im}\,\omega)$. A solid with a uniform
-$Q_m$ has $Q = Q_m$ for every mode, as here: the plate loses nothing else.
-`res.error` is the backward error of each mode, below the solver's eigenvalue
-tolerance.
+The device is a silica-like plate held at both ends by a frame;
+{download}`plate_section.py <plate_section.py>` meshes it. The frames' outer
+ends are the line `"end"`.
+
+The modes are the `n_modes` nearest the `target`. `res.omega` is the complex
+angular frequency, `res.frequency` its real part over $2\pi$ in Hz and `res.q`
+the quality factor $Q = \mathrm{Re}\,\omega / (2\,\mathrm{Im}\,\omega)$. A
+uniform $Q_m$ gives $Q = Q_m$ for every mode, as here. `res.error` is the
+backward error of each mode.
 
 ## The displacement at a point
 
-`res.displacement(0)` is the displacement of the first mode: a map with the
-scalar fields `"x"`, `"y"` and `"z"`, in metres, that read like any field, with
-`.at(points)` taking $(x, y)$ points in metres. A mode is normalized to
-1 J per metre along $z$ and its largest coefficient is real, so the numbers are
-comparable between modes and runs. The first mode is a flexural one, its
-motion along $y$:
+`res.displacement(0)` is a map of the scalar fields `"x"`, `"y"` and `"z"`, in
+metres, read with `.at(points)` at $(x, y)$ points. A mode is normalized to 1 J
+per metre along $z$ with its largest coefficient real. The first mode is
+flexural, moving along $y$:
 
 ```python
 u = res.displacement(0)
@@ -91,8 +81,7 @@ no motion along x at the centre: True
 ## Group velocity
 
 `res.group_velocity` is $\mathrm{Re}\,\mathrm{d}\omega/\mathrm{d}q$ in m/s, read
-from the mode and its left eigenvector without a second solve. It is the
-derivative of the discrete band, so a difference of two solves at
+from the left eigenvector without a second solve; a difference of two solves at
 $q \pm \delta q$ agrees with it:
 
 ```python
@@ -112,19 +101,16 @@ print(f"v_g = {float(res.group_velocity[0]):.1f} m/s, difference {slope:.1f} m/s
 v_g = 1797.7 m/s, difference 1797.7 m/s
 ```
 
-A mode with $q > 0$ travels along $+z$ where its group velocity is positive,
-and $\omega(-q) = \omega(q)$ for every section (reciprocity), with the
-opposite group velocity; at $q = 0$ the group velocity is exactly 0.
+A mode with $q > 0$ travels along $+z$ where its group velocity is positive;
+$\omega(-q) = \omega(q)$ with the opposite group velocity, and at $q = 0$ it is 0.
 
 ## A damping frame
 
-A mode of a plate that rings between anchors loses its energy to the anchors. A
-{py:class}`gfem.DampingFrame` makes the two frame regions absorb the waves that
-reach them, as it does for {py:class}`gfem.Piezoelectric` (see
-{doc}`../conventions`, "Piezoelectric problems"): the stiffness there is
-$c\,(1 + i(1/Q_m + \eta r^2))$ with $\eta$ the `loss_factor` and $r$ the depth
-into the frame. The modes are then those of the plate that radiates into the
-frames, and their $Q$ is the plate's anchor loss:
+A {py:class}`gfem.DampingFrame` makes the frame regions absorb the waves that
+reach them, as for {py:class}`gfem.Piezoelectric` ({doc}`../conventions`,
+"Piezoelectric problems"): the stiffness there is
+$c\,(1 + i(1/Q_m + \eta r^2))$, with $\eta$ the `loss_factor` and $r$ the depth
+into the frame. $Q$ is then the plate's anchor loss:
 
 ```python
 frame = gfem.DampingFrame(["frame_left", "frame_right"])
@@ -142,15 +128,14 @@ for f, quality in zip(np.asarray(lossy.frequency), np.asarray(lossy.q), strict=T
 0.8777 GHz, Q = 4.52
 ```
 
-The sign of the loss follows the convention of {doc}`../conventions`: under
-$e^{+i\omega t}$ a decaying mode has $\mathrm{Im}\,\omega > 0$. A mode that
-overlaps the frames little keeps a higher $Q$ (22.9 here) than one that fills
-them (4.5). Modes are sorted by the distance of their frequency
-to the target, so the order differs between the two solves.
+Under $e^{+i\omega t}$ a decaying mode has $\mathrm{Im}\,\omega > 0$
+({doc}`../conventions`). A mode that overlaps the frames little keeps a higher
+$Q$ (22.9) than one that fills them (4.5); the order differs between the two
+solves.
 
-## What raises
+## Limits
 
-- A tetrahedral or a slab mesh: the problem is 2D (`Mesh.from_gmsh` of a file
+- The problem is 2D: a tetrahedral or a slab mesh raises (`Mesh.from_gmsh` of a file
   of triangles).
 - `linear_solver="petsc"`, any solve under `comm` and a GPU `device`: one
   process and the sparse direct solver.
@@ -162,13 +147,13 @@ to the target, so the order differs between the two solves.
   differentiate in the materials and the node coordinates.
 - Fewer than `n_modes` modes meeting `SolverOptions.eigen_tolerance`:
   {py:obj}`gfem.EigenmodeConvergenceError`.
+- The quality factor is a constant per material.
 
 ## Next
 
 - {doc}`optomechanical-coupling`: the coupling of these modes to the light of a
   waveguide.
-- {doc}`piezoelectric-admittance`: the same solids driven by electrodes, per
-  volt.
-- {doc}`../conventions`, "Mechanical eigenmodes": the sign of $q$, the
-  normalization and the quality factor.
+- {doc}`piezoelectric-admittance`: the same solids driven by electrodes.
+- {doc}`../conventions`, "Mechanical eigenmodes": the sign of $q$ and the
+  normalization.
 - {doc}`2d-models`: what a 2D model is and what it refuses.

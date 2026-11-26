@@ -1,36 +1,15 @@
-# Find the index change a sound wave puts on a waveguide
+# Acousto-optic index change
 
 Find how much a voltage on an interdigital transducer shifts the effective index
 of a waveguide that its sound wave crosses: the {term}`acousto-optic shift` of a
 guided mode per volt, as a complex phasor at each acoustic frequency, the
 voltage-length product $V_\pi L$ of one arm and of a push-pull pair, and the
-voltage of the wave that reaches the transducer. A
-{py:class}`gfem.Piezoelectric` solve that keeps its fields gives the strain and the
-electric field of the wave; {py:obj}`gfem.acousto_optic_shift` reads them on the
-optical cross-section and weighs them against one mode solve, through the crystal's
-{term}`photoelastic tensor` and electro-optic tensor.
-
-The device is the section of the {doc}`acousto-optic tutorial
-<../tutorials/acousto-optic>`: x-cut lithium niobate film, two ribs, aluminium
-fingers on an oxide and silicon stack, light at 1.55 µm. The tutorial's
-{download}`transducer_section.py <../tutorials/transducer_section.py>` and
-{download}`aom_section.py <../tutorials/aom_section.py>` mesh the acoustic section and
-the optical windows with netgen; here at 2.5 times the tutorial's edge lengths and
-three frequencies, which is quicker and moves the shift by 2 %. The shift is first
-order in the acoustic fields: the mode is solved once and held constant, and the shift
-is the sum over the section of its weights times the change of permittivity the fields
-cause.
+voltage of the wave that reaches the transducer.
 
 ## A crystal with a photoelastic tensor
 
-A material's `photoelastic_tensor` is the contracted $p^E_{IJ}$, a 6 × 6 array,
-dimensionless, in the frame of the material's `axes`: rows and columns in the Voigt
-order $xx, yy, zz, yz, xz, xy$, with the engineering shear strain, so that
-$\Delta(\varepsilon_r^{-1})_I = p_{IJ} S_J$
-({doc}`../conventions`, "Photoelastic tensor"). It belongs to the optical crystal,
-beside its `eps_r` and its `electro_optic_tensor`; the acoustic model has its own
-material for the same crystal, with the stiffness and the piezoelectric tensor, and the
-two must share one `axes`, which the shift cannot check.
+A material's `photoelastic_tensor` is the contracted $p^E_{IJ}$ (6 × 6) in the
+frame of its `axes` ({doc}`../conventions`, "Photoelastic tensor").
 
 ```python
 import dataclasses
@@ -108,26 +87,29 @@ optical_ln = dataclasses.replace(
 optical_oxide = gfem.materials.silica(frequency=frequency)
 ```
 
-- The tensor is a property of the material, so a region of crystal carries it in every
-  model it appears in. It may sit beside an `electro_optic_tensor` and not beside a
-  `stiffness` or a `piezoelectric_tensor`: a material is either the optical
-  crystal or the acoustic one, and giving both raises.
-- The shift treats $p$ as the tensor at constant electric field, $p^E$, and the
-  electro-optic tensor as the clamped $r^S$: the strain is counted through $p$ and the
-  piezoelectric field through $r$. {py:obj}`gfem.materials.lithium_niobate` carries
-  the clamped $r^S$. A free $r^T$ would count the strain twice.
-- `p_ln` is a literature set for the bulk crystal, not the film's: published values
-  differ by tens of percent. The shift is linear in the tensor, so another set rescales
-  it with no new acoustic solve.
-- `axes` must be right-handed: the tensors' signs follow the crystal's frame.
+{py:obj}`gfem.acousto_optic_shift` reads a kept {py:class}`gfem.Piezoelectric`
+solve on the optical cross-section through the {term}`photoelastic tensor` and
+the electro-optic tensor, first order, with the mode held constant. The device is
+the {doc}`acousto-optic tutorial <../tutorials/acousto-optic>`'s, meshed by
+{download}`transducer_section.py <../tutorials/transducer_section.py>` and
+{download}`aom_section.py <../tutorials/aom_section.py>`. The optical crystal
+carries the tensor; the acoustic model's material for the same crystal must
+share its `axes`, which the shift cannot check.
+
+- A material is either the optical crystal (with an `electro_optic_tensor`) or
+  the acoustic one (with a `stiffness` or `piezoelectric_tensor`); giving both raises.
+- The shift treats $p$ as $p^E$ and the electro-optic tensor as the clamped
+  $r^S$, which {py:obj}`gfem.materials.lithium_niobate` carries: the strain
+  counts through $p$ and the piezoelectric field through $r$. A free $r^T$ would
+  count the strain twice.
+- `p_ln` is a bulk-crystal literature set; published values differ by tens of
+  percent. The shift is linear in the tensor, so another set needs no new acoustic solve.
+- `axes` must be right-handed.
 
 ## The shift per volt
 
-The acoustic section is solved once, at the frequencies of the band, with the fields
-kept. Each arm has an {term}`optical window`: the film, the rib, oxide below and air
-above, meshed in the acoustic section's own coordinates, so the acoustic fields are
-read at the optical points with no offset. A wave port on its end face `"front"` carries
-the mode.
+The acoustic section is solved once, with the fields kept. Each arm has an
+{term}`optical window` in the section's own coordinates.
 
 ```python
 section = transducer_section(edge_scale=2.5)
@@ -182,27 +164,21 @@ arm b / arm a: 0.9875
 V_pi L of arm a at 0.8625 GHz: 8.496 V cm
 ```
 
-- `delta_n_eff_per_volt` is the complex $\delta n$ at each acoustic frequency
-  (`acoustic_frequency`), per volt on `terminal` with every other terminal and the
-  ground at 0 V. With a drive $\mathrm{Re}(V e^{i\Omega t})$ the effective index is
-  $n_\mathrm{eff} + \mathrm{Re}(\delta n\,V e^{i\Omega t})$ to first order, the
-  phasor convention of gfem's $e^{+i\omega t}$ ({doc}`../conventions`).
-- One mode solve serves every kept frequency: the acoustic fields are only read. It
-  gives `n_eff`, the index without the wave.
-- `phase_per_length_per_volt` is $k_0\,\delta n$ in rad/(V m).
-- `v_pi_l` is $\lambda / (2|\delta n|)$ in V m of one arm at each acoustic frequency:
-  `100 * v_pi_l` is in V cm.
-- A result that kept no fields, a terminal the result does not have, and several
-  terminals with `terminal=None` raise `ValueError`; a result that kept fields for a
-  list of frequencies gives those.
-- `mode=1` is the TE mode of this window. Check the polarization of the mode you pick
-  from its field, as in {doc}`electro-optic-phase`.
+- `delta_n_eff_per_volt` is the complex $\delta n$ at each `acoustic_frequency`,
+  per volt on `terminal`, others at 0 V: with a drive $\mathrm{Re}(V e^{i\Omega t})$
+  the index is $n_\mathrm{eff} + \mathrm{Re}(\delta n\,V e^{i\Omega t})$
+  ({doc}`../conventions`). One mode solve serves every kept frequency and gives `n_eff`.
+- `phase_per_length_per_volt` is $k_0\,\delta n$ in rad/(V m); `v_pi_l` is
+  $\lambda / (2|\delta n|)$ in V m of one arm (`100 * v_pi_l` in V cm).
+- A result without fields, a missing terminal and several terminals with
+  `terminal=None` raise `ValueError`.
+- `mode=1` is the TE mode of this window; check the polarization of the mode you
+  pick, as in {doc}`electro-optic-phase`.
 
 ## The photoelastic and the electro-optic part
 
-The shift is the sum of two phasors: the strain through $p$ and the field through $r$.
-`photoelastic_per_volt` leaves the electro-optic tensor out, and
-`electro_optic_per_volt` the photoelastic one.
+The shift is the sum of the strain through $p$ and the field through $r$:
+`photoelastic_per_volt` and `electro_optic_per_volt`.
 
 ```python
 pe, eo = a.photoelastic_per_volt[1], a.electro_optic_per_volt[1]
@@ -219,26 +195,24 @@ photoelastic -5.481e-06+1.200e-05j, electro-optic 2.592e-06-3.353e-06j
 |total / PE| = 0.691
 ```
 
-On this stack the two have opposite signs and the electro-optic part is about a third
-of the photoelastic one, so a model without the strain, or without the field, is wrong
-by tens of percent. Both parts are counted in `delta_n_eff_per_volt`.
+On this stack they have opposite signs and the electro-optic part is about a
+third of the photoelastic one: a model without either is wrong by tens of percent.
 
 ## Push-pull and the incident wave
 
-The two ribs sit an odd number of half-wavelengths apart, so the arms' shifts are in
-antiphase. Driven push-pull in a Mach-Zehnder interferometer, the phase difference is
-the difference of the shifts:
+The two ribs sit an odd number of half-wavelengths apart, so the arms' shifts are
+in antiphase. Driven push-pull in a Mach-Zehnder interferometer, the phase
+difference is the difference of the shifts:
 
 $$
 V_\pi L = \frac{\lambda}{2\,|\delta n_a - \delta n_b|}
 $$
 
-per volt on the fingers. That is not the voltage of the source. For an incident wave
-$V_\mathrm{inc}$ on a source impedance $Z_0$, the fingers carry
-$V_\mathrm{IDT} = 2Z\,V_\mathrm{inc}/(Z_L + Z_0)$, with $Z = 1/(W Y')$ the
-transducer's impedance at the aperture $W$, from `admittance_per_length`, and
-$Z_L = Z + R_s$ its load with the fingers' series resistance. The product per volt of
-incident wave is the one per volt on the fingers times $|(Z_L + Z_0)/(2Z)|$.
+per volt on the fingers, not of the source. For an incident wave
+$V_\mathrm{inc}$ on $Z_0$ the fingers carry
+$V_\mathrm{IDT} = 2Z\,V_\mathrm{inc}/(Z_L + Z_0)$, with $Z = 1/(W Y')$ at the
+aperture $W$ and $Z_L = Z + R_s$. The product per volt of incident wave is the
+one per volt on the fingers times $|(Z_L + Z_0)/(2Z)|$.
 
 ```python
 wavelength = sc.c / frequency
@@ -262,22 +236,17 @@ for f, pp, k in zip(a.acoustic_frequency, v_pi_l, refer, strict=True):
 0.8750 GHz: 4.74 V cm per volt on the fingers, 2.52 V cm incident
 ```
 
-Arms of length $L$ driven with amplitude $V$ on the fingers have a phase difference
-$\pi V L / (V_\pi L)$, so $V_\pi = V_\pi L / L$. The arms run along the fingers, so
-their length is the transducer's aperture.
+Arms of length $L$ (the aperture) driven with $V$ on the fingers differ in phase
+by $\pi V L / (V_\pi L)$, so $V_\pi = V_\pi L / L$.
 
 ## Where the windows sit, and the gradient
 
-`offset=(dx, dy)` in metres moves the optical section against the acoustic one: the
-fields are read at the optical points plus `offset`. It is a move of the reading,
-not of the mode, and differentiable. The shift is exactly linear in
-the tensors and the acoustic fields, and `jax.grad` reaches the tensors (give the
-crystal as a {py:class}`gfem.MaterialField`), the offset, and every input the
-piezoelectric solve differentiates (the acoustic materials and the node maps of
-{doc}`piezoelectric-gradient`), through the kept fields. The optical model's own nodes
-are held constant: a `jax.grad` through them raises
-{py:class}`gfem.errors.NonDifferentiableError`, and a waveguide width needs a
-remesh and a finite difference.
+`offset=(dx, dy)` in metres moves the reading of the acoustic fields, not the
+mode, and is differentiable. `jax.grad` reaches the tensors (give the crystal as
+a {py:class}`gfem.MaterialField`), the offset, and every input the piezoelectric
+solve differentiates ({doc}`piezoelectric-gradient`). The optical model's nodes
+are held constant: a gradient through them raises
+{py:class}`gfem.errors.NonDifferentiableError`.
 
 ```python
 def push_pull(p, slide):
@@ -321,54 +290,38 @@ p_yy,yy: +0.105
 d/dslide = -3.9568e-01 per V and per m, central difference -3.9568e-01
 ```
 
-- **The step of a check.** The strain is piecewise polynomial on the acoustic mesh and
-  jumps across element edges, and the derivative is that of the reading at fixed
-  points in their elements. A central difference in `offset` whose step carries a
-  reading point across an edge adds the jump and is no check of the gradient: use
-  a step far smaller than the elements (here 1 pm for edges of 0.1 µm), and read
-  the difference at two steps. The same holds for a node map moving the acoustic
-  mesh under fixed points.
-- **The acoustic solve is the gradient's cost.** With the result held fixed, the
-  gradient costs one adjoint pass over the readings and the mode solves of the
-  forward call. Through a piezoelectric solve it adds that solve's adjoint.
+- **The step of a check.** The strain jumps across element edges, so a central
+  difference in `offset` whose step carries a reading point across an edge is no
+  check: use a step far smaller than the elements (here 1 pm for edges of
+  0.1 µm), at two steps. The same holds for a node map moving the acoustic mesh.
+- Through a piezoelectric solve the gradient adds that solve's adjoint.
 
 ## Check your results
 
-- **Antiphase.** The two arms' shifts have opposite phase, $\arg(\delta n_b/\delta n_a)
-  = 180°$ to a fraction of a degree, when the ribs are an odd number of half
-  wavelengths apart: this follows from the geometry, not the frequency.
-- **Linearity.** The shifts of several terminals add, each times its drive; the shift
-  scales with the tensors. Doubling `photoelastic_tensor` doubles `photoelastic_per_volt`.
-- **Convergence.** The shift reads the strain's gradient on the acoustic mesh, and the
-  mode on the window's. Refine `edge_scale` (the tutorial's 1.5 against this page's 2.5
-  moves the shift by 2 %) and the window's `h_film` and `h_outer` (the tutorial's
-  0.08 and 0.4 µm against this page's 0.12 and 0.5 µm: 0.15 %).
-- **The mode.** Compare `n_eff` with a mode solve of the window alone
-  ({py:class}`gfem.PortMode`).
+- **Antiphase.** $\arg(\delta n_b/\delta n_a) = 180°$ to a fraction of a
+  degree when the ribs are an odd number of half wavelengths apart.
+- **Linearity.** Doubling `photoelastic_tensor` doubles `photoelastic_per_volt`.
+- **Convergence.** Refine `edge_scale` (the tutorial's 1.5 against 2.5 moves the
+  shift by 2 %) and the window's `h_film` and `h_outer` (0.15 %).
+- **The mode.** Compare `n_eff` with a {py:class}`gfem.PortMode` solve of the window alone.
 
 ## Limits
 
-- Photoelastic and electro-optic terms only. The moving boundaries and the rotation of
-  the crystal by the displacement (roto-optic) are not counted. For a wave whose
-  displacement moves no boundary of the optical section, such as the shear wave
-  polarized along the guide here, they vanish to first order; for Rayleigh and Lamb
-  waves, which move the section's boundaries, they are an approximation.
-- First order in the acoustic fields, with the mode held constant, for a lossless
-  optical section: a complex `eps_r`, a `tan_delta` or a `conductivity` raises
-  `NotImplementedError`, and so does a 2D optical model and a sequence of optical
-  frequencies.
-- The strain and the field are read at the quadrature points of each tetrahedron
-  behind the section's triangles. A point outside the acoustic mechanical domain, for
-  an element with a `photoelastic_tensor`, or outside the potential's support, for one
-  with an `electro_optic_tensor`, raises `ValueError` and names it.
-- An optical element with neither tensor adds nothing, and a model with none raises.
-- A cross-section: the arms' length is the aperture and the shift uniform along it.
+- Photoelastic and electro-optic terms only: moving boundaries and the
+  roto-optic rotation are not counted. They vanish to first order for a wave that
+  moves no boundary of the section, such as the shear wave here; for Rayleigh and
+  Lamb waves this is an approximation.
+- Lossless optical section: a complex `eps_r`, a `tan_delta` or a `conductivity`
+  raises `NotImplementedError`, as do a 2D optical model and a sequence of
+  optical frequencies.
+- A point outside the acoustic mechanical domain (with a `photoelastic_tensor`)
+  or outside the potential's support (with an `electro_optic_tensor`) raises
+  `ValueError`, naming it. A model with neither tensor raises.
+- A cross-section: the shift is uniform along the arms' length, the aperture.
 
 ## Next
 
-- {doc}`../tutorials/acousto-optic`: the push-pull modulator, the shift over a band, the
-  derivative in the pitch and the position of the arms.
-- {doc}`piezoelectric-admittance`: the admittance, the damping frames and the strain.
-- {doc}`electro-optic-phase`: the static-field counterpart, with a potential as the
-  drive.
+- {doc}`../tutorials/acousto-optic`: the push-pull modulator over a band.
+- {doc}`piezoelectric-admittance`: the admittance and the strain.
+- {doc}`electro-optic-phase`: the static-field counterpart.
 - {doc}`piezoelectric-gradient`: the gradients through the acoustic solve.

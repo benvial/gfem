@@ -1,4 +1,4 @@
-# Start from a gsim simulation
+# gsim simulations
 
 Solve and differentiate a device that [gsim](https://pypi.org/project/gsim/)
 has laid out, meshed and configured. gfem reads what gsim writes: the gmsh mesh
@@ -142,7 +142,7 @@ takes `jax.grad` of an objective; the [topology
 tutorial](../tutorials/topology.ipynb) runs a whole optimization.
 
 gsim sets up a broadband sweep (`fmin=1e9, fmax=100e9` above). For more than
-about 20 frequencies, {doc}`frequency-sweep` reads them from a few solves or
+about 20 frequencies, the {doc}`frequency sweep recipe <frequency-sweep>` reads them from a few solves or
 spreads them over many cores.
 
 ## 5. Thermal cross-sections
@@ -160,5 +160,5 @@ print(section.volumes, section.surfaces)
 - The regions and surfaces take the names of the file's physical groups:
   each 2D group becomes a volume region, each 1D group a surface.
 - On the section, powers and resistances are per metre of guide.
-- {doc}`heater-temperature` builds a thermal model on such a section and
-  {doc}`thermo-optic-phase` reads the phase it puts on a waveguide.
+- Next: {doc}`heater-temperature`, which builds a thermal model on such a section,
+  and {doc}`thermo-optic-phase`, which reads the phase it puts on a waveguide.

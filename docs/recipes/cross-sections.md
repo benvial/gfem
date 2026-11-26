@@ -1,29 +1,11 @@
-# Measure cross sections
+# Cross sections
 
 {py:obj}`gfem.cross_sections` gives the extinction, absorption and
 scattering {term}`cross sections` of the {term}`scatterer` under an
 {term}`incident field`: the power removed from the incident field, the power
 the scatterer absorbs and the power the {term}`scattered field` carries out,
-each divided by the {term}`incident intensity`, in m².
-
-They come from one exact power balance of the solved fields, read on the
-{term}`truncation layer` (the physical elements touching the
-{term}`perfectly matched layer` or an absorbing face). With $u$ the total
-field, $b$ the incident load, $e_s$ the scattered field and $\operatorname{flux}$
-the residual form of {py:obj}`gfem.power_flow` out of the elements $S$ inside
-that layer:
-
-$$
-P_\text{sca} = \operatorname{flux}(e_s), \qquad
-P_\text{abs} = \frac{\operatorname{Im}(u_S^H b)}{2\omega\mu_0} - \operatorname{flux}(u),
-\qquad P_\text{ext} = P_\text{abs} + P_\text{sca}.
-$$
-
-Any set of elements holding the scatterer gives the same three numbers, so
-there is no surface to choose, and extinction is absorption plus scattering
-exactly. A Poynting integral of point-sampled fields over a sphere does not
-have these properties: its two sides differ by percents and it finds
-absorption where there is none.
+each divided by the {term}`incident intensity`, in m². They come from one exact
+power balance of the solved fields, read on the {term}`truncation layer`.
 
 ## Cross sections of a sphere
 
@@ -78,16 +60,14 @@ te: extinction 0.6012, absorption 0.2214, scattering 0.3798 um^2
 tm: extinction 0.6019, absorption 0.2224, scattering 0.3795 um^2
 ```
 
-A sphere scatters both polarizations alike: the two columns differ by the
-mesh only.
+A sphere scatters both polarizations alike; the columns differ by the mesh only.
 
 ## Compare with Mie
 
-Straight tetrahedra cut the sphere's surface, so compare with the Mie
-series at the radius of the sphere's meshed volume, not the nominal one
-(against it the faceted sphere is 2-3 % off). The Bohren-Huffman series,
-with their $e^{-i\omega t}$ index $m = \sqrt{\varepsilon' + i\varepsilon''}$
-for gfem's $\varepsilon = \varepsilon' - i\varepsilon''$:
+Compare with the Mie series at the radius of the sphere's meshed volume, not
+the nominal one (the faceted sphere is 2-3 % off it). The Bohren-Huffman
+series takes the index $m = \sqrt{\varepsilon' + i\varepsilon''}$ for gfem's
+$\varepsilon = \varepsilon' - i\varepsilon''$:
 
 ```python
 from scipy.special import spherical_jn, spherical_yn
@@ -146,9 +126,27 @@ error: [-0.67 -2.19  0.23] %
 ```
 
 The absorption converges slowest: it lives inside the sphere, where the
-wavelength is half the vacuum one. Refining the sphere's elements to about
-a sixth of that inner wavelength brings each of the three within 0.5 % of
-Mie; the rest is set by the exterior mesh and the layer.
+wavelength is half the vacuum one. Elements of about a sixth of that inner
+wavelength bring each of the three within 0.5 % of Mie.
+
+## How the power balance is read
+
+The {term}`truncation layer` is the physical elements touching the
+{term}`perfectly matched layer` or an absorbing face. With $u$ the total field,
+$b$ the incident load, $e_s$ the scattered field and $\operatorname{flux}$ the
+residual form of {py:obj}`gfem.power_flow` out of the elements $S$ inside that
+layer:
+
+$$
+P_\text{sca} = \operatorname{flux}(e_s), \qquad
+P_\text{abs} = \frac{\operatorname{Im}(u_S^H b)}{2\omega\mu_0} - \operatorname{flux}(u),
+\qquad P_\text{ext} = P_\text{abs} + P_\text{sca}.
+$$
+
+Any set of elements holding the scatterer gives the same three numbers, so
+there is no surface to choose, and extinction is absorption plus scattering
+exactly. A Poynting integral of point-sampled fields over a sphere has
+neither property.
 
 ## The intensity of each source
 
@@ -167,50 +165,41 @@ The powers are divided by:
 
 ## On a substrate
 
-On a layered {py:obj}`gfem.Background` the same balance holds, and the
-incident field is the stack's own solution: the incident wave with its
-reflected and transmitted waves. Extinction is then the power the
-scatterer removes from that stack field, not from the incident wave alone;
-scattering is what the scattered field carries to the truncation through
-every layer, the substrate included, and absorption the loss in the
-scatterer. The truncation layer may run through the stack: its elements
-are background where their material is the stack's at their height. Every
-layer must be lossless, or a layer's own loss of the stack field would
-count as absorption.
+On a layered {py:obj}`gfem.Background` the same balance holds and the incident
+field is the stack's own solution, with its reflected and transmitted waves.
+Extinction is the power the scatterer removes from that stack field;
+scattering is what the scattered field carries to the truncation through every
+layer. Every layer must be lossless, or a layer's own loss would count as
+absorption.
 
 ## Absorption per region
 
 Cross sections are totals over the scatterer. For one region's absorption,
 use {py:obj}`gfem.power_flow` on the source's total field
 ({doc}`incident-fields`): `-power_flow(result.e_field(f, "te"), "sphere",
-model=model)` is the absorbed power in W, `absorption * intensity` when the
-region is the whole scatterer.
+model=model)` is the absorbed power in W.
 
 ## Symmetry-reduced models
 
 A model cut by a wall the incident field satisfies (a {py:obj}`gfem.PEC`
 plane where its $E$ is normal, a magnetic one where its $H$ is) is a
 mirror-symmetric model's half, and {py:obj}`gfem.cross_sections` reports the
-meshed half: multiply by $2^n$ for $n$ mirror planes. gfem does not scale
-it, since it cannot tell a symmetry plane from a physical wall.
+meshed half: multiply by $2^n$ for $n$ planes. gfem cannot tell a symmetry
+plane from a physical wall, so it does not scale.
 
 ## Gradients
 
-The cross sections are differentiable through the fields: under
-{py:obj}`jax.grad`, a {py:obj}`gfem.MaterialField` in the scatterer gets
-its gradient, so maximizing absorption is an objective. The measurement
-reads only background elements, the load and the incident interpolant,
-none of which depends on the design. A design region with an element in the
-truncation layer raises {py:obj}`gfem.NonDifferentiableError`; the source,
-its intensity and the frequency are static.
+Under {py:obj}`jax.grad`, a {py:obj}`gfem.MaterialField` in the scatterer gets
+its gradient, so maximizing absorption is an objective. A design region with
+an element in the truncation layer raises
+{py:obj}`gfem.NonDifferentiableError`; the source, its intensity and the
+frequency are static.
 
 ## Across ranks
 
 On a result of a {term}`distributed solve`, {py:obj}`gfem.cross_sections`
 and {py:obj}`gfem.power_flow` are collective calls: call them on every rank,
-and every rank gets the same numbers, one process's to round-off
-({doc}`distributed-solve`). A large scattering problem can stay on its
-ranks for its cross sections; no second run on one process is needed.
+and every rank gets the same numbers ({doc}`distributed-solve`).
 
 ## Limits
 
@@ -220,17 +209,12 @@ ranks for its cross sections; no second run on one process is needed.
 - **One intensity per source**: an {py:obj}`gfem.IncidentField` needs
   `intensity=`, a positive number or one per kept frequency; a plane wave
   or a beam takes none.
-- **A background truncation layer**: a scatterer that reaches the truncation
-  layer has no finite cross section and is refused; leave one background
-  element between them, or measure per region with
-  {py:obj}`gfem.power_flow`.
-- **Lossless backgrounds**: in a lossy background, or a stack with a lossy
-  layer, the absorption would hold the background's own loss of the
-  incident field, so it is refused.
-- **Wave ports outside the side**: the incident load next to a wave port
-  holds the port's terms, so a side (or the region inside the truncation
-  layer) whose elements reach a wave port's face is refused; keep the port at
-  least one element outside it, or read the scattered field.
+- **A background truncation layer**: a scatterer reaching the truncation layer
+  is refused; leave one background element between them, or measure per
+  region with {py:obj}`gfem.power_flow`.
+- **Lossless backgrounds**: a lossy background, or a stack with a lossy layer,
+  is refused.
+- **Wave ports outside the side**: a side whose elements reach a wave port's
+  face is refused; keep the port one element outside it.
 - **Power flow of an incident column**: {py:obj}`gfem.power_flow` refuses the
-  incident part, which balances no load, and a side holding layer elements,
-  where the kept field is the scattered one.
+  incident part and a side holding layer elements.

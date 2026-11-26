@@ -1,57 +1,17 @@
-# Solve with PETSc and SLEPc
+# PETSc and SLEPc
 
-gfem can solve its linear systems with PETSc and find eigenmodes with SLEPc
-in place of its built-in solvers. `linear_solver="petsc"` runs the linear
-solves of driven, electrostatic and eigenmode problems through PETSc: with no
-`petsc_options` an exact MUMPS factorization, like `"direct"`, and otherwise
-any PETSc Krylov method and preconditioner. `eigen_solver="slepc"` finds an
-eigenmode problem's modes near the target with SLEPc's Krylov-Schur instead of
-ARPACK; gfem refines them, computes their Q and differentiates them as it does
-after ARPACK, so you get the same modes.
-
-Both run on the CPU. This page's stack is the {term}`no-MPI PETSc stack`, which
-runs in one process. `"auto"` never picks either, and neither is a pip extra: you
-build the {term}`PETSc stack` once, from source. For solves across ranks, see
-{ref}`petsc-with-mpi`.
-
-(petsc-when-to-choose)=
-## When to choose PETSc
-
-- For speed, keep `"direct"` with the `mkl` extra: on gfem's driven problems
-  its PARDISO factorization is faster than MUMPS through PETSc, at every
-  frequency of a sweep, in about the same memory. Both give the same S to
-  solver precision.
-- Without the `mkl` extra, `"direct"` uses NGSolve's sparse Cholesky.
-  `"petsc"` with no `petsc_options` is faster than it and needs less memory,
-  but installing the `mkl` extra gains more, for less effort.
-- Choose `"petsc"` for what only PETSc gives: MUMPS and its options, or your
-  own Krylov method and preconditioner through `petsc_options`.
-- For a uniform sweep over a narrow band, GMRES on one reused MUMPS
-  factorization ({ref}`petsc-krylov-methods`) skips the refactorization at
-  every later frequency. Over a wide band, keep the default factorization.
-- For eigenmodes, `eigen_solver="slepc"` finds the same modes and Q as ARPACK,
-  damped and nonlinear problems included, after about as many shift-invert
-  solves, in about the same time and memory. Choose it for SLEPc's own
-  controls (`eps_ncv`, `eps_monitor`, `eps_view` and their kin), not for
-  speed. An eigenmode solve's time goes into its linear solves, whichever
-  eigen solver runs, so for speed pair it with `"direct"` and the `mkl` extra.
+gfem can solve with PETSc and SLEPc in place of its built-in solvers:
+`linear_solver="petsc"` gives driven, electrostatic and eigenmode problems an
+exact MUMPS factorization or your own Krylov method; `eigen_solver="slepc"`
+finds modes near the target with Krylov-Schur instead of ARPACK. Both need a
+{term}`PETSc stack`, built once from source; neither is a pip extra.
 
 ## Build the PETSc stack
 
-You need Linux (macOS is not tested, Windows is not supported), uv, curl,
-make, cmake, the system's gcc, g++ and gfortran compilers, and a Python not
-built by conda (for example `uv python install 3.13` and a uv virtual
-environment). The script takes an active conda environment off `PATH`. gfem
-needs PETSc with complex scalars, and conda-forge's PETSc depends on ParMETIS,
-which is not free for commercial use ({doc}`../project/licence`).
-
-The script `petsc_wheelhouse.sh`
-({download}`download it <../../tools/petsc_wheelhouse.sh>`, or read it at the
-end of this page) builds PETSc, SLEPc, petsc4py and slepc4py, with MUMPS, METIS
-and OpenBLAS, into a wheelhouse: a folder of four wheels. It compiles all of
-them from source, once per Python version: about 22 minutes on a GitHub
-Actions `ubuntu-24.04` runner, 26 with `--mpi`. Run it with the
-environment that runs gfem active, since the wheels are built for its Python:
+`petsc_wheelhouse.sh` ({download}`download it <../../tools/petsc_wheelhouse.sh>`,
+or read it below) compiles PETSc, SLEPc, petsc4py and slepc4py with complex
+scalars, MUMPS, METIS and OpenBLAS into four wheels, once per Python version,
+in about 22 minutes. Run it in gfem's environment:
 
 ```bash
 bash petsc_wheelhouse.sh --check      # check the prerequisites and the target Python
@@ -59,48 +19,47 @@ bash petsc_wheelhouse.sh wheelhouse   # build the four wheels into ./wheelhouse
 pip install --no-index --find-links wheelhouse petsc petsc4py slepc slepc4py
 ```
 
-- `PYTHON` picks another target Python, as a path or a version
-  (`PYTHON=3.12`); `MAKE_NP` sets the number of parallel compile jobs.
-- In a uv project, install with `uv pip install`. A plain `uv sync` removes
-  packages its lock file does not list, these four included: sync with
-  `uv sync --inexact`, or rerun the install line after an exact sync. `uv run`
-  leaves them in place.
-- Rebuild for another Python version, and when gfem raises the PETSc version
-  it supports: the error message names the oldest one it accepts.
-- Rebuild a stack built by gfem 0.1.0's script, which gfem refuses
-  ({doc}`../project/release-notes`). Run the current script into a new
-  folder, then rerun the install line with `--force-reinstall`, since the
-  package versions do not change. An MPI stack rebuilds the same way, with
-  `--mpi`.
+This page builds the {term}`no-MPI PETSc stack`; for ranks see
+{ref}`petsc-with-mpi`. `"auto"` never picks them. gfem refines the modes,
+differentiates them and gives Q as after ARPACK.
+
+- Needs Linux, uv, curl, make, cmake, gcc, g++, gfortran and a Python not
+  built by conda (conda-forge's PETSc depends on ParMETIS,
+  {doc}`../project/licence`).
+- `PYTHON=3.12` picks another target Python; `MAKE_NP` sets the compile jobs.
+- In a uv project use `uv pip install`; a plain `uv sync` removes the four
+  packages (use `--inexact`).
+- Rebuild for another Python, a newer PETSc, and a stack from gfem 0.1.0's
+  script, which gfem refuses ({doc}`../project/release-notes`): rerun the script
+  into a new folder, then the install line with `--force-reinstall`.
 
 (petsc-with-mpi)=
 ### With MPI
 
 `bash petsc_wheelhouse.sh --mpi wheelhouse` builds the {term}`MPI PETSc stack`
-beside the no-MPI one, on the Open MPI whose `mpicc`, `mpicxx` and `mpifort` are on
-`PATH`. {doc}`distributed-solve` is what it is for. It has complex scalars, 64-bit
-indices, MUMPS, METIS, ScaLAPACK and PT-Scotch, and no ParMETIS. It also needs
-bison 3 or newer, flex and cmake 3.26 or newer. `--check` names what is
-missing, and refuses an MPI other than Open MPI.
+beside the no-MPI one, for {doc}`distributed-solve`, on the Open MPI whose
+`mpicc`, `mpicxx` and `mpifort` are on `PATH`; it also
+needs bison 3+, flex and cmake 3.26+ (`--check` names what is missing). It has
+complex scalars, 64-bit indices, MUMPS, METIS, ScaLAPACK and PT-Scotch.
 
-- `--fetch-sources DIR` downloads what a build needs, on a machine with internet;
-  `--sources DIR` builds from it, offline.
-- The stack runs one-process solves too, through the same `linear_solver="petsc"`.
-- An eigenmode solve across ranks finds its modes with SLEPc from this stack:
-  `eigen_solver="auto"` names it there, and `"arpack"` raises.
-- The script's MUMPS orders with PT-Scotch on at most 32 processes, so the fill of
-  BDDC's coarse factorization does not grow with the ranks. A stack built by an
-  earlier script lacks this: build it again to get it.
-- A stack runs under the Open MPI it was built on: load the same one to use it.
-- The no-MPI stack under a launcher serves {term}`rank copies` only, and a
-  {term}`distributed solve` naming PETSc refuses it, with
-  `gfem.SolverUnavailableError`.
+- An eigenmode solve across ranks uses SLEPc from this stack.
+- The script's MUMPS orders with PT-Scotch on at most 32 processes;
+  `MUMPS_PARAORD_MAX` sets another cap (2 or more, `0` for none). A stack
+  built before the cap logs once, at INFO on `"gfem.solver"`, how many ranks a
+  rebuilt one would use.
+- A stack runs under its build's Open MPI. The no-MPI stack under a
+  launcher serves {term}`rank copies` only; a {term}`distributed solve`
+  naming PETSc raises `gfem.SolverUnavailableError`.
+- `--mpi --with-parmetis` adds ParMETIS, which may not be redistributed.
 
-ParMETIS is part of neither stack: it is free only for educational and research
-use by non-profit institutions and US government agencies, and for evaluation by
-others; it may not be redistributed. `--mpi --with-parmetis` adds it to the MPI
-stack, for users its terms allow; that stack is for its builder alone and must
-not be shared. gfem then orders BDDC's coarse problem with it.
+(petsc-when-to-choose)=
+## When to choose PETSc
+
+- For speed, keep `"direct"` with the `mkl` extra: PARDISO beats MUMPS through
+  PETSc, with the same S. Without `mkl`, `"petsc"` beats NGSolve's Cholesky.
+- Choose `"petsc"` for MUMPS and its options, or your own Krylov method
+  ({ref}`petsc-krylov-methods`); `"slepc"` for SLEPc's controls
+  (`eps_ncv`, `eps_monitor`), not speed: modes and Q match ARPACK's.
 
 ## Check the build
 
@@ -113,9 +72,8 @@ np.dtype(PETSc.ScalarType)  # dtype('complex128')
 PETSc.Sys.hasExternalPackage("mumps")  # True
 ```
 
-If gfem cannot use the stack, the solve raises `gfem.SolverUnavailableError`
-with the reason (a package that does not import, real scalars, a version older
-than gfem supports, a stack built by gfem 0.1.0's script) and the fix. gfem never falls back to another solver.
+A stack gfem cannot use raises `gfem.SolverUnavailableError` with the fix; gfem
+never falls back.
 
 ## Choose the solvers
 
@@ -127,15 +85,10 @@ modes = gfem.solve(model, gfem.Eigenmode(target=7.8e9, n_modes=2), options=optio
 modes.frequency, modes.q
 ```
 
-- The two fields are independent: SLEPc works with every linear solver,
-  `"direct"` on a GPU included, and `"petsc"` solves every problem type.
-- `SolverOptions` refuses `device="cuda"` with `"petsc"`. Wave port modes are
-  2D problems that always run SuperLU and SciPy on the CPU, so a standalone
-  `gfem.PortMode` solve ignores both fields.
-- `frequency_workers` work: each worker process starts PETSc itself.
-- gfem checks the stack when the solve starts, never when the options are
-  built, so a job naming PETSc can be written anywhere and run where the stack
-  is installed. The options of such a job file:
+- The two fields are independent; `device="cuda"` with `"petsc"` is refused.
+  `frequency_workers` work.
+- gfem checks the stack when the solve starts, so a job naming PETSc can be
+  written anywhere:
 
 ```json
 {
@@ -149,8 +102,8 @@ modes.frequency, modes.q
 
 `petsc_options` maps PETSc option names, without the leading `-`, to values;
 `None` is a flag. Names starting `eps_`, `bv_`, `ds_`, `rg_` or `fn_` go to
-SLEPc and need `eigen_solver="slepc"`; every other name goes to the linear
-solver and needs `linear_solver="petsc"`.
+SLEPc and need `eigen_solver="slepc"`; the rest go to the linear solver and
+need `linear_solver="petsc"`.
 
 ```python
 options = gfem.SolverOptions(
@@ -159,27 +112,20 @@ options = gfem.SolverOptions(
 )
 ```
 
-- `{"ksp_view": None}` prints the linear solver PETSc set up.
-- `{"eps_ncv": 40, "eps_monitor": None}` gives SLEPc a larger subspace and
-  prints its progress; `eps_mpd` and `eps_max_it` also reach SLEPc.
-- `{"eps_view": None}` prints the eigensolver SLEPc ran, at the end of each
-  of its solves; so do SLEPc's other end-of-solve viewers, `eps_converged_reason`
-  and `eps_error_*`.
-- Never write an options prefix: gfem gives each solver its own and holds its
-  options in PETSc's database only while that solver reads them. Command-line
-  PETSc options and your own petsc4py options do not reach gfem's solvers.
-- An option the linear solver does not read raises `ValueError` when the solve
-  starts: a typo, or an option of another configuration, such as a MUMPS
-  option with `pc_type` `jacobi`. So does an option PETSc or SLEPc refuses,
-  with its reason. An option SLEPc does not read, such as `eps_mpdd`, raises
-  `ValueError` after SLEPc's first pass.
+- `{"ksp_view": None}` prints the linear solver PETSc set up;
+  `{"eps_ncv": 40, "eps_monitor": None}` enlarges SLEPc's subspace and prints
+  its progress; `{"eps_view": None}` prints the eigensolver SLEPc ran.
+- Write no options prefix; command-line and petsc4py options do not reach
+  gfem.
+- An option the solver does not read, or that PETSc or SLEPc refuses, raises
+  `ValueError`.
 
 (petsc-krylov-methods)=
 ### Krylov methods
 
 With only `ksp_type` set, gfem's MUMPS factorization is the preconditioner.
 Keep the first frequency's factors, and GMRES runs a whole uniform sweep on
-one factorization:
+them:
 
 ```python
 options = gfem.SolverOptions(
@@ -188,108 +134,60 @@ options = gfem.SolverOptions(
 )
 ```
 
-This pays off over a narrow band, where GMRES needs a few iterations per
-frequency in place of a refactorization. Further from the factored frequency
-the iterations grow. Where GMRES does not converge (for example at
-`ksp_max_it`), gfem factorizes again at that frequency, finishes its solve from
-where GMRES stopped, and reuses the new factors for the frequencies after it.
-Over a wide band reuse therefore pays only between these refactorizations, each
-of which also costs the iterations spent before it: lower `ksp_max_it` to
-refactorize sooner. A solve
-that still does not converge on the new factors raises
-`gfem.LinearSolverConvergenceError`, which carries the frequencies the sweep
-solved. Adaptive sweeps set the preconditioner up at every sample.
+This pays off over a narrow band, where the iterations stay few. Where GMRES
+does not converge (`ksp_max_it`, default 400), gfem factorizes again there and
+reuses the new factors; lower `ksp_max_it` to refactorize sooner. A solve that
+still fails raises `gfem.LinearSolverConvergenceError`.
 
-- `tolerance` (`adjoint_tolerance` for adjoint solves) becomes `ksp_rtol`: the
-  true, unpreconditioned residual relative to the right-hand side.
-  `bddc_gmres` and `pmg_gmres` measure their preconditioned residual instead, so the same
-  `tolerance` is a different norm per backend. `ksp_max_it` defaults to 400.
-  Set `ksp_norm_type` for PETSc's own norm.
+- `tolerance` (`adjoint_tolerance` for adjoint solves) becomes `ksp_rtol`, the
+  true residual relative to the right-hand side; `bddc_gmres` and `pmg_gmres`
+  measure the preconditioned one. `ksp_norm_type` sets PETSc's own norm.
 - Driven and eigenmode operators are complex symmetric, not Hermitian: use
-  GMRES-type methods (`gmres`, `fgmres`, `bcgs`, `tfqmr`). PETSc's CG assumes
-  a Hermitian operator, and its `ksp_cg_type symmetric` variant stops when the
-  real part of $p^T A p$ changes sign, which these operators allow. CG suits
-  the electrostatic problem, whose operator is real symmetric positive definite.
-- gfem brings no Krylov preconditioner for curl-curl operators to PETSc (its
-  own `bddc_gmres` and `pmg_gmres` are built for them): PETSc's
-  algebraic multigrid does not know the curl's null space, and the build has
-  no hypre. Incomplete factorizations fail too: GMRES with PETSc's ILU, with or
-  without fill levels, does not converge on gfem's driven problems. To try
-  one anyway, also set `pc_factor_mat_solver_type` to `petsc`: gfem's default
-  MUMPS has no ILU, so `pc_type` `ilu` alone is refused.
-- Below the low-frequency floor ({py:obj}`gfem.LowFrequencyWarning`), a Krylov
-  method on the MUMPS factorization loses the same digits of the capacitive
-  part of S as the factorization alone, whatever the `tolerance`, and
-  $S_{12}$ and $S_{21}$ agree to about $10^{-9}$ instead of $10^{-15}$.
-  `"petsc"` solves are not gauged. `linear_solver="direct"` on one process
-  goes through the {term}`tree-cotree gauge` and keeps these digits; MUMPS
-  through PETSc does not.
+  `gmres`, `fgmres`, `bcgs` or `tfqmr`; CG suits only electrostatics.
+- No PETSc Krylov preconditioner suits curl-curl operators: algebraic
+  multigrid does not know the curl's null space (no hypre) and ILU does not
+  converge.
+- Below the low-frequency floor ({py:obj}`gfem.LowFrequencyWarning`) PETSc
+  solves are not gauged and lose the capacitive digits of S; `"direct"` on
+  one process keeps them.
 
 ## What gfem refuses, and what to set instead
 
-`SolverOptions` raises `ValueError` for these options, naming what to set:
+`SolverOptions` raises `ValueError` for these options and names the setting:
 
-| Option | Why | Set instead |
-|---|---|---|
-| `-ksp_type` | names are written without `-` | `ksp_type` |
-| `ksp_rtol` | gfem sets it | `tolerance`, `adjoint_tolerance` |
-| `ksp_atol` | gfem stops on the relative residual only | `tolerance`, `adjoint_tolerance` |
-| `ksp_initial_guess_nonzero` | gfem sets it per solve | nothing: remove it |
-| `eps_tol` | gfem sets it | `eigen_tolerance` |
-| `eps_nev` | gfem sets it | `Eigenmode.n_modes` |
-| `eps_target`, `eps_largest_real`, other selections | gfem keeps the modes nearest the target | `Eigenmode.target` |
-| `st_ksp_type`, any `st_` option | gfem applies the shift-invert itself | `linear_solver`; with `"petsc"`, its `ksp_` and `pc_` options |
-| `eps_gen_hermitian`, `eps_conv_abs`, `eps_two_sided`, `eps_harmonic` and their kin | SLEPc sees a non-Hermitian shift-inverted operator | `eigen_tolerance` for convergence |
-| `eps_type` other than `krylovschur` or `arnoldi` | the others do not suit that operator | `krylovschur` (the default) or `arnoldi` |
-| `ksp_type` with `linear_solver="direct"` | the option's solver is not selected | select it |
+| Option | Set instead |
+|---|---|
+| `ksp_rtol`, `ksp_atol` | `tolerance`, `adjoint_tolerance` |
+| `ksp_initial_guess_nonzero` | nothing: gfem sets it |
+| `eps_tol`, `eps_nev` | `eigen_tolerance`, `Eigenmode.n_modes` |
+| `eps_target`, `eps_largest_real`, other selections | `Eigenmode.target` |
+| any `st_` option | `linear_solver` and its `ksp_`, `pc_` options |
+| `eps_gen_hermitian`, `eps_conv_abs`, `eps_two_sided`, `eps_harmonic` | `eigen_tolerance` |
+| `eps_type` other than `krylovschur` or `arnoldi` | `krylovschur` (default) or `arnoldi` |
 
-When the solve starts, gfem also refuses an option the linear solver did not
-read, an option PETSc refuses, and `ksp_reuse_preconditioner` with `ksp_type`
-`preonly`, which would solve with a stale operator. `ksp_type` `preonly`
-(gfem's default) applies the preconditioner once and measures no residual, so
-gfem refuses it with a `pc_type` other than `lu` or `cholesky`, and with a
-`pc_factor_shift_type` other than `none`: use a Krylov `ksp_type` such as
-`gmres` with any other preconditioner. A Krylov solve that PETSc ends on its
-iteration count without measuring a residual (`ksp_convergence_test` `skip`)
-raises `ValueError` too.
-
-## Threads
-
-`linear_solver="petsc"` does not read `SolverOptions.threads`. MUMPS runs its
-dense kernels on the threaded OpenBLAS the script builds: set
-`OPENBLAS_NUM_THREADS` before Python starts. Frequency workers already give
-each worker its share of the threads.
+At the solve start gfem also refuses `ksp_reuse_preconditioner` with
+`preonly`, `preonly` with a `pc_type` other than `lu` or `cholesky`, and
+`ksp_convergence_test` `skip`.
 
 ## Check your results
 
-- **Two linear solvers.** With no `petsc_options`, `"petsc"` is an exact
-  factorization: solve once with `"petsc"` and once with `"direct"`, and S
-  should agree to solver precision.
-- **Two eigen solvers.** gfem refines SLEPc's modes as it does ARPACK's: with
-  `eigen_solver="slepc"` and with `"arpack"`, the modes, Q, fields and gradients
-  should agree to solver precision.
+- **Two linear solvers.** `"petsc"` without `petsc_options` and `"direct"`
+  give S to solver precision.
+- **Two eigen solvers.** `"slepc"` and `"arpack"` give the same modes, Q,
+  fields and gradients to solver precision.
 
 How gfem itself is checked on PETSc and SLEPc:
-{ref}`verification <verification-petsc>`. The {doc}`../capabilities` gradient
-matrix does not list PETSc, because those checks run only where the stack is
-installed.
+{ref}`verification <verification-petsc>`.
 
 ## Limits
 
-- CPU only. One process on the no-MPI stack: spread a uniform sweep with
-  `frequency_workers`, or see {doc}`distributed-solve` for the MPI stack. Tested on
-  Linux only.
-- SLEPc's polynomial and nonlinear eigensolvers are not used: damped and
-  nonlinear eigenmode problems go through the same shift-invert iteration as
-  with ARPACK.
-- An eigenmode solve with `linear_solver="petsc"` differentiates its
-  eigenfrequencies only. A gradient through a mode's field (participations,
-  port Q, the field itself) raises `gfem.NonDifferentiableError`: use
-  `linear_solver="direct"` for those ({doc}`eigenmode-gradient`).
-- Your own petsc4py code in the same process: gfem starts PETSc without
-  command-line options (or uses the PETSc you started), keeps its options to
-  itself, and serializes only its own PETSc calls. Do not call PETSc from
-  another thread during a gfem solve.
+- CPU and Linux only. The no-MPI stack runs one process ({doc}`distributed-solve`
+  for ranks).
+- An eigenmode solve with `"petsc"` differentiates eigenfrequencies only; a
+  gradient through a mode's field raises `gfem.NonDifferentiableError`: use
+  `"direct"` ({doc}`eigenmode-gradient`).
+- `"petsc"` ignores `SolverOptions.threads`: set `OPENBLAS_NUM_THREADS`.
+- Never call PETSc from another thread during a gfem solve.
 
 ## Next
 

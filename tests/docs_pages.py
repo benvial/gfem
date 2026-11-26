@@ -12,6 +12,7 @@ import dataclasses
 import importlib
 import inspect
 import io
+import json
 import re
 import shutil
 import textwrap
@@ -82,20 +83,95 @@ _DOTTED = re.compile(r"(?<![\w./-])gfem(?:\.[A-Za-z_]\w*)+")
 _FILE_SUFFIXES = {"json", "npz", "msh", "py", "md", "toml", "txt", "yml", "html"}
 
 
-def user_pages() -> list[Path]:
-    """Every user page with code a reader may copy, found on disk.
+def root_tree() -> dict[str | None, list[str]]:
+    """The documents of each root toctree of ``docs/index.md``, by caption."""
+    index = (DOCS / "index.md").read_text(encoding="utf-8")
+    tree: dict[str | None, list[str]] = {}
+    for body in blocks(index, "{toctree}"):
+        options = dict(re.findall(r"^:(\w+):[ \t]*(.*)$", body, re.MULTILINE))
+        tree[options.get("caption")] = [
+            line.strip()
+            for line in body.splitlines()
+            if line.strip() and not line.startswith(":")
+        ]
+    return tree
 
-    The recipes are globbed, so a page is covered from the day it is added.
-    """
-    top = (
-        "get-started.md",
-        "conventions.md",
-        "modes-and-ports.md",
-        "capabilities.md",
-        "verification.md",
+
+def source(doc: str) -> Path:
+    """The file of a document of the site tree: Markdown or a notebook."""
+    return next(
+        path
+        for suffix in (".md", ".ipynb")
+        if (path := DOCS / f"{doc}{suffix}").is_file()
     )
-    pages = [DOCS / name for name in top if (DOCS / name).is_file()]
-    return pages + sorted((DOCS / "recipes").glob("*.md"))
+
+
+def page_text(path: Path) -> str:
+    """A page as Markdown: a notebook's code cells fenced as python, magics dropped."""
+    text = path.read_text(encoding="utf-8")
+    if path.suffix != ".ipynb":
+        return text
+    parts = []
+    for cell in json.loads(text)["cells"]:
+        body = "".join(cell["source"])
+        if cell["cell_type"] == "code":
+            kept = [
+                line
+                for line in body.splitlines()
+                if not line.lstrip().startswith(("%", "!"))
+            ]
+            body = "```python\n" + "\n".join(kept) + "\n```"
+        parts.append(body)
+    return "\n\n".join(parts)
+
+
+#: Documents of the site tree that are not user pages with code to check: the
+#: release notes name removed API on purpose.
+NOT_USER_PAGES = {"project/release-notes"}
+
+
+def user_pages() -> list[Path]:
+    """Every user page, notebooks included, read from the root site tree.
+
+    A page is covered from the day it joins the tree. Read one with
+    ``page_text``, which also reads a notebook.
+    """
+    return [
+        source(doc)
+        for docs in root_tree().values()
+        for doc in docs
+        if doc not in NOT_USER_PAGES
+    ]
+
+
+_DISPLAY = re.compile(r"^\$\$.*?\$\$[ \t]*$", re.MULTILINE | re.DOTALL)
+_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+def prose_words(text: str) -> int:
+    """The words a reader reads, as the docs budgets count them.
+
+    Fenced blocks, display math, comments, headings, labels and front matter
+    are left out; a role counts as its text and inline math as one word;
+    tables and admonitions count.
+    """
+    text = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.DOTALL)
+    text = _COMMENT.sub("", _DISPLAY.sub("", _prose(text)))
+    text = re.sub(r"\{[\w:-]+\}`([^`<]*)(<[^>]*>)?`", r"\1", text)
+    text = re.sub(r"\$[^$\n]+\$", "X", text)
+    lines = [
+        line
+        for line in text.splitlines()
+        if not line.lstrip().startswith("#")
+        and not re.fullmatch(r"\s*\(.+\)=\s*", line)
+    ]
+    return sum(1 for word in " ".join(lines).split() if re.search(r"\w", word))
+
+
+def title(text: str) -> str | None:
+    """The page's first-level heading, or None."""
+    match = re.search(r"^# (.+)$", _prose(text), re.MULTILINE)
+    return match[1].strip() if match else None
 
 
 def section(page: str, heading: str) -> str:

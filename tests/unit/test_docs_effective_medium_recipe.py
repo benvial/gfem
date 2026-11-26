@@ -76,13 +76,6 @@ def test_the_page_has_its_sections(page, heading):
     assert dp.section(page, heading).strip()
 
 
-def test_the_page_is_linked_from_the_recipe_index():
-    index = (dp.DOCS / "recipes" / "index.md").read_text(encoding="utf-8")
-    assert "effective-medium" in dp.toctree_entries(index) or (
-        "{doc}`effective-medium`" in index
-    )
-
-
 def test_the_names_the_page_calls_exist_in_gfem(page):
     names = set(re.findall(r"\bgfem\.([A-Za-z_]\w*)", page))
     assert names - {"conventions", "diffraction"} <= set(gfem.__all__)

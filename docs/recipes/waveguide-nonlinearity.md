@@ -1,4 +1,4 @@
-# Find the Kerr nonlinearity of a waveguide
+# Kerr nonlinearity
 
 Find how a guided mode changes the phase and the loss of its own light, and
 how its waves exchange power: the {term}`Kerr nonlinear coefficient`
@@ -8,18 +8,14 @@ microring's Lugiato-Lefever equation. `gfem.kerr_nonlinearity` reads a
 {py:obj}`gfem.PortModeResult` and the model's materials: it needs no solve
 beyond the mode's own, at every frequency of its grid.
 
-The guide is the silicon strip of {doc}`waveguide-dispersion`, 500 × 220 nm in
-oxide, in its fundamental TE mode around $\lambda$ = 1.55 µm. Units are SI:
-$\gamma_\mathrm{NL}$ in 1/(W m), $n_2$ in m²/W and $\beta_\mathrm{TPA}$ in m/W
-({doc}`../conventions`, "Kerr nonlinearity"). The cladding around the core is
-its {term}`clearance`.
+The guide is the silicon strip of {doc}`waveguide-dispersion` near 1.55 µm;
+units are SI ({doc}`../conventions`).
 
 ## Silicon and oxide, with their nonlinearity
 
-The Sellmeier laws are those of the dispersion recipe (the linear index and
-its dispersion). The nonlinearity is two more numbers on a material:
-`nonlinear_index` ($n_2$, m²/W) and `two_photon_absorption`
-($\beta_\mathrm{TPA}$, m/W), added with `dataclasses.replace`:
+Two more numbers on a material, `nonlinear_index` ($n_2$, m²/W) and
+`two_photon_absorption` ($\beta_\mathrm{TPA}$, m/W), join the Sellmeier laws
+of the dispersion recipe:
 
 ```python
 import dataclasses
@@ -63,20 +59,12 @@ print(silicon_kerr.nonlinear_index, silicon_kerr.two_photon_absorption)
 4e-18 8e-12
 ```
 
-- Both properties are constants of the material over the grid, a number
-  given at the band's centre: a table of $n_2(\lambda)$ is not a law here.
-  An element without them counts as zero, so the oxide, whose $n_2$ is some
-  much smaller than silicon's, adds nothing until you give it one.
-- The values are a choice: $n_2$ of silicon varies strongly with the
-  wavelength (by a factor of four between 850 and 2200 nm, Bristow et al.,
-  Appl. Phys. Lett. 90, 191104 (2007)) and with the crystal direction, and
-  $\beta_\mathrm{TPA}$ with the source. Other published values, for the materials
-  of a photonic platform: silicon nitride $n_2 = 2.4 \times 10^{-19}$ m²/W
-  with no two-photon loss at 1.55 µm (Ikeda et al., Opt. Express 16, 12987
-  (2008)). Read the source of a value before you rely on it, and its
-  wavelength.
-- Both are real, non-dispersive and isotropic. A value applies to a
-  material, so a graded `gfem.MaterialField` carries them per element.
+- Both are real, isotropic constants of the material over the grid (a graded
+  `gfem.MaterialField` carries them per element); an element without them
+  counts as zero, so the oxide adds nothing until you give it one.
+- The values are a choice: $n_2$ of silicon varies by a factor of four between
+  850 and 2200 nm (Bristow et al., Appl. Phys. Lett. 90, 191104 (2007)); read
+  a value's source and wavelength first.
 
 ## The nonlinear coefficient over a band
 
@@ -127,25 +115,19 @@ KerrNonlinearity(port 'wg', mode 1, 21 frequencies, gamma_nl Re 153.6-202.5, Im 
 1650 nm: gamma 153.6 /(W m), A_eff 0.0992 um^2
 ```
 
-- `gamma_nl` is the complex coefficient of a pulse's propagation equation,
-  $\mathrm{d}A/\mathrm{d}z = i\,\gamma_\mathrm{NL}|A|^2 A$ with $|A|^2$ in W.
-  Its real part is the Kerr phase per watt and metre: a power $P$ shifts the
-  propagation constant by $\mathrm{Re}\,\gamma_\mathrm{NL}\,P$.
-- The integral runs over all three components of the mode, so it holds for
-  the strongly guided, hybrid mode of a silicon wire. The weak-guidance
-  recipe, $\gamma = k_0 n_2 / A_\mathrm{eff}$ with an area read off the power
-  flow, is wrong on such a wire by tens of percent (a third, on a 220 nm silicon slab). The one-line
-  $A_\mathrm{eff} = k_0 n_2 / \mathrm{Re}\,\gamma_\mathrm{NL}$ above is the
-  area that makes the formula true, and is meaningful when one material
-  carries the nonlinearity.
-- Every row of the grid costs the integral, not a solve: the rows between the
-  exact solves come from the reduced port mode model.
+- `gamma_nl` is the complex coefficient of
+  $\mathrm{d}A/\mathrm{d}z = i\,\gamma_\mathrm{NL}|A|^2 A$, $|A|^2$ in W: a
+  power $P$ shifts the propagation constant by
+  $\mathrm{Re}\,\gamma_\mathrm{NL}\,P$.
+- The integral runs over all three components of the mode, so it holds for a
+  silicon wire, where the weak-guidance $\gamma = k_0 n_2 / A_\mathrm{eff}$ is
+  wrong by tens of percent.
 
 ## Two-photon absorption and the figure of merit
 
 The imaginary part is two-photon absorption: $\gamma_\mathrm{TPA} =
 \mathrm{Im}\,\gamma_\mathrm{NL} \ge 0$ is the field attenuation per watt, so
-the power obeys $\mathrm{d}P/\mathrm{d}z = -2\gamma_\mathrm{TPA}P^2$. The ratio of the two
+$\mathrm{d}P/\mathrm{d}z = -2\gamma_\mathrm{TPA}P^2$. The ratio of the two
 parts is the material's figure of merit, independent of the mode:
 
 ```python
@@ -171,24 +153,17 @@ figure of merit n2/(lambda beta_TPA): 0.323, material 0.323
 ```
 
 - $\mathrm{Re}\,\gamma_\mathrm{NL}/(4\pi\gamma_\mathrm{TPA}) =
-  n_2/(\lambda\beta_\mathrm{TPA})$ when the core carries both: the page's
-  silicon has $n_2/(\lambda\beta_\mathrm{TPA})$ = 0.32, which is the
-  material's figure of merit, not the guide's. Silicon at 1.55 µm is well
-  below 1: its two-photon loss is a large part of its Kerr effect.
-- The loss grows as the square of the power: 0.38 dB/cm at 100 mW, a tenth of
-  that at 10 mW. Silicon nitride, with no two-photon absorption at 1.55 µm,
-  has none.
-- Free carriers made by the two-photon absorption absorb and change the
-  index too, with a lifetime set by the device (see "Limits").
+  n_2/(\lambda\beta_\mathrm{TPA})$ when the core carries both: 0.32 for the
+  page's silicon, well below 1, so its two-photon loss is a large part of its
+  Kerr effect.
+- The loss grows as the square of the power: 0.38 dB/cm at 100 mW.
 
 ## Three waves: phase mismatch and couplings
 
-In a four-wave mixing process a pump at $\omega_\mathrm{p}$ gives two
-sidebands at $\omega_\mathrm{p} \pm \Omega$ (signal and idler).
-`gfem.kerr_coupling` takes the three rows of a `PortMode` result and returns the
-tensor $\gamma_{abcd}$ between them, and the exact phase mismatch is
-$\Delta\beta = 2\beta_\mathrm{p} - \beta_\mathrm{s} - \beta_\mathrm{i}$ from the
-three propagation constants:
+`gfem.kerr_coupling` takes the three rows of a `PortMode` result (a pump and
+sidebands at $\omega_\mathrm{p} \pm \Omega$) and returns the tensor
+$\gamma_{abcd}$ between them; the exact phase mismatch is $\Delta\beta = 2\beta_\mathrm{p} - \beta_\mathrm{s} -
+\beta_\mathrm{i}$:
 
 ```python
 f_p = c / 1.55e-6
@@ -207,9 +182,8 @@ print(f"Delta beta exact {d_beta:.1f} rad/m, -beta_2 Omega^2 {taylor:.1f} rad/m"
 Delta beta exact 605.1 rad/m, -beta_2 Omega^2 610.4 rad/m
 ```
 
-The two differ by the fourth-order term, $-\beta_4\Omega^4/12$, that the
-group-velocity dispersion alone does not hold: at a shift of 5 THz the exact
-three-propagation-constant value is the one to use. Then the couplings:
+The two differ by the fourth-order term $-\beta_4\Omega^4/12$, so at a shift of
+5 THz use the exact value. Then the couplings:
 
 ```python
 tensor = gfem.kerr_coupling(model, trio).gamma_nl  # (3, 3, 3, 3), 1/(W m)
@@ -229,34 +203,23 @@ Kerr shift matches the mismatch at 1.71 W
 SPM equals gamma_NL of the same row: 177.04+43.67j vs 177.04+43.67j
 ```
 
-- Entry $\gamma_{abcd}$ is the coefficient of $A_b A_c \overline{A_d}$ in wave
-  $a$'s amplitude equation, summed over every index tuple with no
-  degeneracy factor. Cross-phase modulation of the signal by the pump is
-  therefore the sum of two entries, `[s, s, p, p] + [s, p, s, p]`, and it is
-  close to twice the self-phase for one mode at two frequencies (1.92 here:
-  the frequencies differ, the familiar factor 2 is exact at one). Four-wave mixing into the signal is `[s, p, p, i]`.
-- The phase mismatch with the Kerr shift of a pump of power $P_\mathrm{p}$ is
-  matched, with all three on one mode, when $\Delta\beta = 2\,\mathrm{Re}\,
-  \gamma_\mathrm{NL} P_\mathrm{p}$: the pump power that does it at this shift is
-  `d_beta / (2 * spm)`. In a guide with anomalous dispersion
-  ($\beta_2 < 0$, so $\Delta\beta > 0$), the Kerr shift cancels the
-  mismatch.
-- The cost is $K^4$ per quadrature point: pass the few waves of a process,
-  not a whole grid.
+- Cross-phase modulation of the signal by the pump is
+  `[s, s, p, p] + [s, p, s, p]` (1.92 times the self-phase here); four-wave
+  mixing into the signal is `[s, p, p, i]` ({doc}`../nonlinear-and-quantum-optics`).
+- The Kerr shift of a pump of power $P_\mathrm{p}$ matches the phases when
+  $\Delta\beta = 2\,\mathrm{Re}\,\gamma_\mathrm{NL} P_\mathrm{p}$: the power that
+  does it here is `d_beta / (2 * spm)`, possible when $\beta_2 < 0$.
+- The cost is $K^4$ per quadrature point: pass the few waves of a process.
 
 ## Parameters of a microring
 
-A ring of radius $R$ made of this guide has resonances spaced by
-$D_1 = c/(n_g R)$ in angular frequency, a second-order dispersion
-$D_2 = -(c/n_g)\,D_1^2\,\beta_2$, and a Kerr shift per photon
-$g_0 = \hbar\omega_0\,c^2\,\mathrm{Re}\,\gamma_\mathrm{NL}/(n_g^2 L)$ with
-$L = 2\pi R$. These are the numbers of the Lugiato-Lefever equation; the
-group index enters squared, not the refractive index. The quality factor of
-a ring needs its loss and its coupler, which a straight guide does not give:
-take it from a measurement or a coupler model. A ring critically coupled at
-an intrinsic quality factor $Q_\mathrm{i}$ has $\kappa = 2\omega_0/Q_\mathrm{i}$
-and a parametric threshold $P_\mathrm{th} = \kappa^2\hbar\omega_0/(8\eta g_0)$
-with $\eta = 1/2$:
+A ring of radius $R$ of this guide has resonances spaced by
+$D_1 = c/(n_g R)$, $D_2 = -(c/n_g)\,D_1^2\,\beta_2$ and a Kerr shift per photon
+$g_0 = \hbar\omega_0\,c^2\,\mathrm{Re}\,\gamma_\mathrm{NL}/(n_g^2 L)$, $L = 2\pi R$:
+the numbers of the Lugiato-Lefever equation. A ring critically coupled at an
+intrinsic quality factor $Q_\mathrm{i}$ has $\kappa = 2\omega_0/Q_\mathrm{i}$ and a
+parametric threshold $P_\mathrm{th} = \kappa^2\hbar\omega_0/(8\eta g_0)$ with
+$\eta = 1/2$ (take $Q_\mathrm{i}$ from a measurement or a coupler model):
 
 ```python
 radius = 10e-6  # m
@@ -280,33 +243,10 @@ FSR 1137.1 GHz, D2/2pi 359.02 MHz
 g0/2pi 293 Hz, threshold 10.27 mW at Q_i = 1e+05
 ```
 
-A straight guide is a first approximation of the ring's mode, and the bend
-changes it. A one-dimensional estimate of the bent guide, with constant
-indices, for the same kind of guides:
-
-| Guide | $R$ | $\Delta n_g / n_g$ | $\beta_2$ straight → bent (ps²/m) |
-| --- | --- | --- | --- |
-| Si 500 × 220 nm | 10 µm | $+1.4 \times 10^{-3}$ | −0.118 → −0.104 |
-| Si 500 × 220 nm | 5 µm | $+5.4 \times 10^{-3}$ | −0.118 → −0.063 |
-| SiN 1.6 µm | 100 µm | $+4.5 \times 10^{-4}$ | −0.062 → −0.059 |
-| SiN 1.6 µm | 23 µm | $+8 \times 10^{-3}$ | −0.062 → −0.007 |
-
-- $D_1$ from the straight guide is good to about $10^{-3}$; $D_2$ to 5 to
-  15 % at a nitride ring of 100 µm and a silicon ring of 10 µm, and it is
-  useless for a ring with a free spectral range of 1 THz. The bend also
-  hybridizes modes, which a straight solve cannot see.
-- The table is an estimate, not a result of gfem: gfem has no bent port mode.
-
-## Not in the coefficient: Raman and free carriers
-
-The coefficient is the instantaneous electronic Kerr effect and the
-two-photon absorption. The delayed Raman response of silica or nitride (a
-fraction of the nonlinearity with a response time of tens of femtoseconds)
-and the line of crystalline silicon at 15.6 THz, the free carriers that
-two-photon absorption makes, and the heating are not in it. A pulse
-simulation takes $\gamma_\mathrm{NL}$ from here and adds those with their
-own parameters; a Raman gain between two modes is a separate overlap that
-gfem does not compute.
+A straight guide approximates the ring's mode: $D_1$ is good to about
+$10^{-3}$ and $D_2$ to 5 to 15 % at a 10 µm silicon ring, and not at all for a
+ring of 1 THz free spectral range. gfem has no bent port mode; the estimates
+are on {doc}`../nonlinear-and-quantum-optics`.
 
 ## Check your results
 
@@ -327,8 +267,8 @@ clearance 1.0 um: gamma 177.04 /(W m)
 clearance 1.5 um: gamma 177.04 /(W m)
   ```
 
-  At 0.5 µm the coefficient is 0.13 % low; 1.0 µm has settled. The coefficient
-  needs less clearance than $\beta_2$ does ({doc}`waveguide-dispersion`).
+  At 0.5 µm the coefficient is 0.13 % low; 1.0 µm has settled. It needs less
+  clearance than $\beta_2$ does ({doc}`waveguide-dispersion`).
 - **The linearity in $n_2$.** `kerr_nonlinearity` reads the model's
   materials, not the solve: changing them re-reads the same mode.
 
@@ -342,41 +282,31 @@ clearance 1.5 um: gamma 177.04 /(W m)
   1.000000
   ```
 
-  Doubling $n_2$ doubles the real part, and the imaginary part, from
+  Doubling $n_2$ doubles the real part; the imaginary part, from
   $\beta_\mathrm{TPA}$, is unchanged.
-- **A finer mesh.** At 1.55 µm the page's mesh gives 177.040 + 43.674i /(W m).
-  Raising `gfem.SolverOptions(order=...)` to 4 gives 177.056 + 43.678i: the
-  coefficient moves by $10^{-4}$.
-- **Closed forms.** The integral is checked on guides that have one: a
-  uniformly filled rectangular guide and a slab (see {doc}`../verification`,
-  "Kerr nonlinearity").
+- **A finer mesh.** The page's mesh gives 177.040 + 43.674i /(W m) at 1.55 µm;
+  `gfem.SolverOptions(order=4)` gives 177.056 + 43.678i, a move of $10^{-4}$.
+- **Closed forms.** The integral is checked on a filled rectangular guide and a
+  slab ({doc}`../verification`).
 
 ## Limits
 
-- A single scalar $n_2$ and $\beta_\mathrm{TPA}$ per material: no tensor
-  $\chi^{(3)}$, so a silicon wire has the same coefficient along every
-  crystal direction. Silicon's $n_2$ depends on the crystal direction.
-  A region that is anisotropic, or has an `axes` rotation, and carries
-  either property is refused.
-- The two-photon loss only: no free-carrier absorption or dispersion, no
-  Raman, no thermal effect, and no dispersion of $n_2$ across the grid.
-- Lossy and leaky sections run, with the mode normalized to 1 W by the
-  modulus of its power; the formula holds while the attenuation is far
+- **One scalar per material.** A single $n_2$ and $\beta_\mathrm{TPA}$, no
+  tensor $\chi^{(3)}$ (silicon's $n_2$ depends on the crystal direction): an
+  anisotropic or `axes`-rotated region carrying either is refused.
+- **What is left out.** Free-carrier absorption and dispersion, Raman (the
+  delayed response of silica, the 15.6 THz line of silicon) and heating; a
+  pulse simulation takes $\gamma_\mathrm{NL}$ from here and adds them.
+- **Loss.** Lossy and leaky sections run, valid while the attenuation is far
   below the phase constant.
-- A line port of a 2D model gives the slab's value in 1/W. The Hz
-  polarization is refused, and a layered density (`Blend.pixels`) carrying
-  a Kerr property behind it too.
-- The cost of `kerr_coupling` grows as the fourth power of the number of
-  waves.
-- Under `jax.grad`, $\gamma_\mathrm{NL}$ differentiates with respect to the
-  section's materials, not the node coordinates: vary the width by finite
-  differences over a remesh.
+- **2D.** A line port gives the slab's value in 1/W; the Hz polarization and a
+  `Blend.pixels` density carrying a Kerr property are refused.
+- **Gradients.** $\gamma_\mathrm{NL}$ differentiates with respect to
+  materials, not node coordinates: vary the width by finite differences over a
+  remesh.
 
 ## Next
 
-- {doc}`waveguide-dispersion`: the group index and dispersion this page
-  uses.
-- {doc}`../conventions`: the formulas and the sign convention.
-- {doc}`port-mode-gradient`: a port mode's gradient.
-- {py:obj}`gfem.kerr_nonlinearity`, {py:obj}`gfem.kerr_coupling`,
-  {py:obj}`gfem.KerrNonlinearity`, {py:obj}`gfem.KerrCoupling`.
+{doc}`waveguide-dispersion`, {doc}`../conventions`,
+{doc}`port-mode-gradient`, {py:obj}`gfem.kerr_nonlinearity`,
+{py:obj}`gfem.kerr_coupling`.

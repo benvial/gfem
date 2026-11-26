@@ -45,7 +45,7 @@ exclude_patterns = [
     # never published, though a local checkout may keep them under docs/
     "adr",
     "agents",
-    # snippets that docs/project/scaling.md includes, not pages
+    # raw tables the scaling page links, not pages
     "project/_scaling",
 ]
 
@@ -95,6 +95,7 @@ exclude_patterns += ["_templates"]  # upstream/ copies are for diffing, not page
 html_theme = "shibuya"
 templates_path = ["_templates"]
 html_static_path = ["_static"]
+html_extra_path = ["_redirects"]
 # icons: Lucide masks, painted by gfem.css
 html_css_files = ["gfem-icons.css", "gfem.css"]
 html_js_files = [("gfem.js", {"defer": "defer"})]
@@ -107,8 +108,7 @@ html_theme_options = {
     "dark_logo": "_static/logo/gfem-lockup-dark.svg",
     "nav_links": [
         {"title": "Get started", "url": "get-started"},
-        {"title": "Tutorials", "url": "tutorials/topology"},
-        {"title": "Recipes", "url": "recipes/index"},
+        {"title": "Theory", "url": "conventions"},
         {"title": "Capabilities", "url": "capabilities"},
         {"title": "API", "url": "api/index"},
     ],
@@ -405,12 +405,6 @@ html_context["gfem_code_line"] = _code_line(DOCS.parent / "tools" / "bend3d_run.
 html_context["gfem_install"] = gfem_install
 html_context["gfem_status"] = gfem_status  # the footer and the front page
 html_context["gfem_python"] = gfem_python
-# The front-page header: Get started, Tutorials, Capabilities (no Recipes, no API).
-html_context["gfem_nav_home"] = [
-    link
-    for link in html_theme_options["nav_links"]
-    if link["title"] in {"Get started", "Tutorials", "Capabilities"}
-]
 # --- end front page ---------------------------------------------------------------
 
 

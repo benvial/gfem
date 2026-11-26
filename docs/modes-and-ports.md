@@ -74,34 +74,19 @@ carries, with the {term}`energy permittivity` weighting a law region. A
 constant permittivity set to a law's value at one frequency gives the right
 $n_\mathrm{eff}$ and the wrong $n_g$: 3 % low on a silicon wire.
 
-With loss, $\gamma = \alpha + i\beta$ is complex, and so are its
-derivatives. gfem reports the derivatives of $\gamma$ itself, written
-$n' - in''$ like `n_eff`:
-
-$$
-n_g = \frac{c}{i}\frac{\mathrm{d}\gamma}{\mathrm{d}\omega}
-    = c\frac{\mathrm{d}\beta}{\mathrm{d}\omega} - i\,c\frac{\mathrm{d}\alpha}{\mathrm{d}\omega},
-\qquad
-\beta_k = \frac{1}{i}\frac{\mathrm{d}^k\gamma}{\mathrm{d}\omega^k}
-        = \frac{\mathrm{d}^k\beta}{\mathrm{d}\omega^k} - i\,\frac{\mathrm{d}^k\alpha}{\mathrm{d}\omega^k}.
-$$
-
-The real parts describe the phase, as on a lossless guide. The imaginary
-parts say how the loss changes with frequency. A {term}`leaky mode` is read
-the same way. What no longer holds with loss is the energy picture: the
-stored energy over the power is then the speed of the energy, not
-$c\,\mathrm{d}\beta/\mathrm{d}\omega$.
+With loss, $\gamma = \alpha + i\beta$ is complex, and so are its derivatives,
+written $n' - in''$ like `n_eff` (the signs are on {doc}`conventions`). The
+real parts describe the phase, as on a lossless guide, and the imaginary parts
+say how the loss changes with frequency. What no longer holds with loss is the
+energy picture: the stored energy over the power is then the speed of the
+energy, not $c\,\mathrm{d}\beta/\mathrm{d}\omega$.
 
 The error in these values is the mesh's and the section's truncation, never
 a step. $\beta_2$ reacts to the section's edge far more than
-$n_\mathrm{eff}$ does. Around a silicon wire at its zero-dispersion width,
+$n_\mathrm{eff}$ does: around a silicon wire at its zero-dispersion width,
 0.5 µm of oxide gets $n_\mathrm{eff}$ within $3 \times 10^{-4}$ and gives
-$D$ the wrong sign, so converge $D$ in the {term}`clearance` on its own. A
-{term}`perfectly matched layer` keeps the stretch of its
-{term}`reference frequency` over the whole grid, and the derivatives are
-those of that section. A small imaginary part it adds on a lossless guide
-hints at the layer's load, but understates the error. The calculation, and
-its checks: {doc}`recipes/waveguide-dispersion`.
+$D$ the wrong sign, so converge $D$ in the {term}`clearance` on its own. The
+calculation, and its checks: {doc}`recipes/waveguide-dispersion`.
 
 These derivatives have no gradient: under `jax.grad` they raise
 {py:obj}`gfem.NonDifferentiableError`, while $\gamma$ of the same result
@@ -129,9 +114,8 @@ Q = \frac{|\omega|}{2\, \mathrm{Im}\,\omega}.
 $$
 
 The modes give the poles of a driven response, their Q and, under `jax.grad`,
-how both move with the design ({doc}`recipes/eigenmode-gradient`). The
-response itself over a band comes from a driven sweep, whose adaptive form
-reads it from a few full solves ({doc}`recipes/frequency-sweep`).
+how both move with the design ({doc}`recipes/eigenmode-gradient`). The response
+over a band comes from a driven sweep ({doc}`recipes/frequency-sweep`).
 
 On a periodic cell with a fixed Bloch wave vector, `Eigenmode(wave_vector=...)`
 gives the modes of that wave vector; one problem per wave vector traces the
@@ -155,25 +139,27 @@ structure. That is the guide's share of the spatial growth of a
 quasi-normal mode.
 
 The target must lie above the cutoff of every requested port mode. Below a
-cutoff the outgoing branch also has roots that are not resonances: an
-anti-bound root (a real one, whose field grows into the guide) or one that
-grows in time. gfem drops them with {py:obj}`gfem.AntiBoundRootWarning`. A
-root below cutoff that decays in time is a resonance and is kept.
+cutoff the outgoing branch also has roots that are not resonances (anti-bound
+ones, or ones that grow in time); gfem drops them with
+{py:obj}`gfem.AntiBoundRootWarning`. A root below cutoff that decays in time
+is a resonance and is kept.
 
 The port's $\gamma$ at the complex eigenfrequency is not reported;
 {py:obj}`gfem.PortMode` gives it at real frequencies. Each wave port reports
-its {term}`coupling Q` in `EigenmodeResult.q_port`. An example on a line:
-"A resonator loaded by a guide" in {doc}`recipes/solve-a-device`.
+its {term}`coupling Q` in `EigenmodeResult.q_port`: $Q_p = \mathrm{Re}\,\omega\,W / P_p$,
+with $W$ the mode's stored energy and $P_p$ the time-averaged power port $p$
+takes out (for a resistive lumped port the power its resistance draws, for a
+wave port the power its requested mode carries out through the face). With
+other losses, $1/Q \approx \sum_p 1/Q_p$ plus the material and wall losses,
+closer as Q grows.
 
 **Which resonances are found.** With a wave port, an `Eigenmode` solve returns
 the `n_modes` resonances with $\mathrm{Im}\,\omega \le \omega_t / 4$
 ($\omega_t = 2\pi\,$`target`, so a Q above about 2 near the target) whose
-$\mathrm{Re}\,f$ is nearest `target`. It checks that it listed every
-resonance of that strip within the farthest one's distance, so asking for
-more modes adds modes at the end and never changes the first ones. A
-resonance with a Q below about 2 is out of reach, even when it lies nearest
-`target`: find it from a `gfem.Driven` sweep. If the strip holds more modes
-than the search can list, `gfem.EigenmodeConvergenceError` says so; lower
+$\mathrm{Re}\,f$ is nearest `target`. Asking for more modes adds modes at the end and never changes the first
+ones. A resonance with a Q below about 2 is out of reach, even when it lies
+nearest `target`: find it from a `gfem.Driven` sweep. If the strip holds more
+modes than the search can list, `gfem.EigenmodeConvergenceError` says so; lower
 `n_modes` or move `target`.
 
 **Modes the ports do not absorb.** A wave port absorbs the modes it requests
@@ -196,8 +182,7 @@ on the surface with another `gfem.WavePort` and solve again; if the warning
 stays, the mode is trapped. If none propagates, the mode is trapped inside the
 model: its Q is a lower bound on the device's, so move the port away. A share
 from one half to 1 is reported, not warned: a discontinuity close to the port
-puts an evanescent tail on it that lowers both the share and the Q, and
-moving the port away restores them.
+lowers both the share and the Q, and moving the port away restores them.
 
 ## One leak, seen from both sides
 

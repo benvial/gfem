@@ -1,30 +1,18 @@
-# Heat a device with its electromagnetic loss
+# Electromagnetic heating
 
 Find how much of the power sent into a device turns into heat, where it
 lands, and how warm the device gets: the loss of each region and metal
 surface, the temperature under a drive, and the heat reaching the sink.
-{py:obj}`gfem.dissipated_power` splits a driven field's loss by region and
-sheet ({term}`dissipated power`), {py:obj}`gfem.electromagnetic_heating`
-turns a driven result and a drive into a {py:obj}`gfem.HeatSource`
-({term}`electromagnetic heating`), and {py:obj}`gfem.SteadyThermal` solves
-the heat.
-
-The device is the line of {doc}`../get-started`: two parallel plates 40 mm
-long, 6 mm wide and 1 mm apart, with a ceramic of relative permittivity 10
-between them over the middle 20 mm. Here the ceramic has a loss tangent of
-0.02, the top plate is copper, and the bottom plate is held at 300 K. The
-electromagnetic solve is full-wave and linear, at one frequency; the heat
-conduction is linear and steady, and the heat does not change the
-materials. Units are SI, phasors follow $\exp(+i\omega t)$, and temperatures
-are in kelvin ({doc}`../conventions`).
+{py:obj}`gfem.dissipated_power` ({term}`dissipated power`) splits a driven
+field's loss, and {py:obj}`gfem.electromagnetic_heating`
+({term}`electromagnetic heating`) makes a {py:obj}`gfem.HeatSource` of it. The
+device is the line of {doc}`../get-started` with a lossy ceramic
+({doc}`../conventions`).
 
 ## Loss split
 
-A kept driven field is the field for 1 W incident at its excited port, with
-every other port matched. {py:obj}`gfem.dissipated_power` gives the power
-that field dissipates in each volume region and on each surface carrying a
-{py:obj}`gfem.Conductor` or {py:obj}`gfem.Impedance`, in W: the fraction of
-the incident power each one turns into heat.
+{py:obj}`gfem.dissipated_power` gives, in W per 1 W incident at the excited
+port, the loss in each volume region and on each sheet surface.
 
 ```python
 import urllib.request
@@ -74,31 +62,15 @@ design: 0.166443
 1 - |S11|^2 - |S21|^2: 0.171263
 ```
 
-- The keys are every volume region of the solve domain, a lossless one at
-  0, and every {py:obj}`gfem.Conductor` and {py:obj}`gfem.Impedance`
-  surface. A name that is both a region and such a surface raises.
-- The loss is read from the solved field and the model's materials: the
-  loss tangent, the conductivity, a complex or anisotropic permittivity, a
-  {py:obj}`gfem.MaterialField` and a permittivity law at the field's
-  frequency. A sheet dissipates $\mathrm{Re}(1/Z_s)\, |E_t|^2/2$ per area
-  for a `Conductor` and $|E_t|^2/(2R)$ for an `Impedance`, times its fill.
-- Pass the model the field was solved with: the field does not carry its
-  materials.
-- **The sum is what S does not account for.** On a closed device whose
-  ports all have a real reference impedance, the losses add up to
-  $1 - \sum_j |S_{j1}|^2$, the power that neither returns nor reaches another
-  port. That needs every port to have a real reference impedance and to
-  sit on a uniform stretch of line: here both lumped ports have a real
-  resistance, in air. To round-off it also needs element order 3 or
-  more: at the default order 2, S read on a lumped port's faces is off by
-  about $10^{-6}$, below the six digits printed here, and a port on a
-  nonuniform stretch is off by about $10^{-5}$. On a wave port on a lossy
-  line, whose reference impedance is complex, the field is per unit
-  $|a|^2$, which is not exactly 1 W incident, and S does not close the
-  balance: read the power entering a region with {py:obj}`gfem.power_flow`
-  instead ({doc}`measurements`).
-- A region's value is minus `gfem.power_flow` out of it when no sheet lies
-  on its surface.
+- The keys are every volume region and every sheet surface; a name that is both raises.
+- Pass the model the field was solved with. A sheet dissipates
+  $\mathrm{Re}(1/Z_s)\, |E_t|^2/2$ per area for a `Conductor` and
+  $|E_t|^2/(2R)$ for an `Impedance`, times its fill.
+- **The sum is what S does not account for.** With real port reference
+  impedances on uniform stretches of line, the losses add up to
+  $1 - \sum_j |S_{j1}|^2$, to round-off at element order 3 or more. On a wave
+  port on a lossy line S does not close the balance: read the power entering a
+  region with {py:obj}`gfem.power_flow` ({doc}`measurements`).
 
 ## Heat and temperature
 
@@ -128,48 +100,17 @@ mean rise, design: 0.0159 K
 mean rise, feed: 0.1838 K
 ```
 
-- `frequency` must be one the result kept fields at. `incident_power` is a
-  mapping from port name to W; a number is enough when the result excited
-  one port only. A port the solve did not excite raises `KeyError`, naming
-  `Driven(excite=)`.
-- The heat is the drive times the dissipated power: 1 W in at `p1` puts
-  0.171 W into the device. The feed's air is lossless, yet it warms most:
-  the copper's heat over it reaches the sink through 1 mm of air.
-- {py:obj}`gfem.heat_flow` is the heat leaving the device through a
-  surface, in W, read from the solved temperature
-  ({doc}`heater-temperature`, "Where the heat goes"). In steady state all
-  of it leaves through the sink.
-- A heat source from a DC current comes from {py:obj}`gfem.joule_heating`
-  instead; {py:obj}`gfem.joule_heating` of a driven result raises
-  `TypeError`, naming `electromagnetic_heating`.
-
-## What is not heat
-
-The power a driven field loses inside the model is heat. Power that leaves
-it is not, and gets none:
-
-- what radiates out through an {py:obj}`gfem.Absorbing` face, or into a
-  {term}`perfectly matched layer`;
-- what leaves through a wave port or a Floquet port;
-- what a {py:obj}`gfem.LumpedPort`'s resistance takes: it is the load of the
-  network the port stands for, outside the model.
-
-A resistor that should heat the device is a part of the model: an
-{py:obj}`gfem.Impedance` sheet with its resistance per square, or a
-conducting volume.
+- `incident_power` maps port name to W, at a frequency the result kept. A
+  port the solve did not excite raises `KeyError`, naming `Driven(excite=)`.
+- The feed's air is lossless, yet it warms most: the copper's heat over it
+  reaches the sink through 1 mm of air.
 
 ## Where sheet heat goes
 
-A sheet's heat enters the thermal problem at its faces, and the face's
-thermal boundary decides where it goes. On an exterior face:
-
-- an {term}`insulated surface` sends all of it into the device, as here: the
-  copper's heat crosses the air to the sink;
-- a {py:obj}`gfem.FixedTemperature` face takes all of it, and the device
-  never sees it;
-- a {py:obj}`gfem.Convection` face shares it with the device.
-
-Cool the top plate with air at 10 W/m²/K:
+A sheet's heat enters at its faces. On an exterior face an
+{term}`insulated surface` sends all of it into the device, a
+{py:obj}`gfem.FixedTemperature` face takes all of it, a
+{py:obj}`gfem.Convection` face shares it. Cool the top plate with air at 10 W/m²/K:
 
 ```python
 cooled = model.replace(
@@ -186,18 +127,14 @@ out through top: 0.000353 W
 out through bottom: 0.170910 W
 ```
 
-The air above takes a fraction of a percent: 10 W/m²/K is weak beside the
-1 mm of ceramic and air below. A metal enclosure modelled as a lossy wall
-with nothing outside it is therefore "insulated outside": all of its heat
-flows into the model. Give its outside a convection, or a fixed
-temperature, when the enclosure is cooled.
+The air takes a fraction of a percent. A lossy wall with nothing outside is
+insulated: give it a convection or a fixed temperature when it is cooled.
 
 ## Coherent and incoherent drives
 
 Ports fed at one frequency in one call are a {term}`coherent drive`: their
-fields add before they dissipate, so the heat depends on their relative
-phase, set at each port's reference plane by `incident_phase` (rad). Feed
-both ends with 0.5 W each, in phase and in opposition:
+fields add before they dissipate, so the heat depends on their relative phase,
+`incident_phase` (rad). Feed both ends with 0.5 W, in phase and in opposition:
 
 ```python
 for phase in (0.0, np.pi):
@@ -225,36 +162,22 @@ p2 at 3.1416 rad: HeatSource(electromagnetic, regions=['feed', 'design'], total 
 separate tones: 0.171263 W
 ```
 
-- The line is symmetric: in phase, the two waves reach the middle of the
-  ceramic with the same phase and their fields add there; in opposition
-  they cancel there. The heat goes from 0.30 W to 0.04 W.
-- Drives that are not coherent (other tones, unrelated sources) are separate
-  heat sources: a thermal problem takes a sequence and adds them. Their sum
-  is the mean of the coherent heat over the phase.
-- A reference plane moved with `WavePort(offset=)` or
-  `result.with_offsets` moves the phase with it, as it does for S.
+- In phase the waves add in the ceramic, in opposition they cancel.
+- Incoherent drives are separate heat sources: pass a sequence.
 
 ## Cross-sections
 
-A device that does not vary along one axis is solved on a
-{term}`slab cross-section`, read with
-{py:meth}`gfem.Mesh.from_gmsh_cross_section`. Pose the driven solve on the
-slab, with its ports and walls, and give the drive per metre:
+On a {term}`slab cross-section` give the drive per metre:
 `gfem.electromagnetic_heating(slab_result, model=slab, frequency=f, incident_power_per_length=p)`
-with `p` in W/m. The heat is then per metre too, and the thermal solve on
-the same slab reads it as `power_per_length`. On a slab `incident_power=`
-raises, and on a 3D mesh `incident_power_per_length=` does.
-
-A {term}`2D model` has no heat: `dissipated_power` and
-`electromagnetic_heating` of a native 2D result raise
-`NotImplementedError`, naming the slab.
+with `p` in W/m; the heat is per metre too. On a slab `incident_power=` raises,
+and on a 3D mesh `incident_power_per_length=` does. A {term}`2D model` has no
+heat: its results raise `NotImplementedError`, naming the slab.
 
 ## Gradients
 
 The heat is differentiable, so a temperature is an objective of the
-electromagnetic design: through the driven solve, and directly through the
-loss. The mean rise of the ceramic with respect to its loss tangent, per
-element:
+electromagnetic design. The mean rise of the ceramic with respect to its loss
+tangent, per element:
 
 ```python
 import jax
@@ -291,58 +214,52 @@ sum of the gradient: 0.654832 K
 central difference:  0.654833 K
 ```
 
-- The sum of the per-element gradient is the derivative along a uniform
-  change of the loss tangent, which the central difference measures.
-- **What differentiates.** The permittivity, real or complex and per
-  axis, the loss tangent, the conductivity, a permittivity law's
-  parameters, a {py:obj}`gfem.SheetField` fill, an `Impedance`'s
+- The gradient's sum is the derivative along a uniform change of the loss tangent.
+- **What differentiates.** The permittivity, loss tangent, conductivity, a
+  law's parameters, a {py:obj}`gfem.SheetField` fill, an `Impedance`'s
   resistance, inductance and capacitance, the thermal conductivity, and the
-  drive: the incident powers and phases.
-- **A port at exactly 0 W next to a coherent partner.** The heat's cross
-  term grows as the square root of the two powers, so its derivative with
-  respect to a power of exactly 0 W is unbounded (`inf`). Start such a port
-  at a small power.
+  incident powers and phases.
+- **A port at exactly 0 W next to a coherent partner** has an `inf` derivative
+  (the cross term goes as the square root of the powers). Start it at a small power.
 - **A metal's conductivity is fixed.** A `Conductor`'s conductivity and
-  thickness raise under `jax.grad`; to design a lossy metal, vary a sheet's
-  fill or an `Impedance`'s resistance.
-- The frequency and the mesh node coordinates raise
-  {py:obj}`gfem.NonDifferentiableError`.
+  thickness raise under `jax.grad`; vary a sheet's fill or an `Impedance`'s
+  resistance.
+- The frequency and node coordinates raise {py:obj}`gfem.NonDifferentiableError`.
 
 The full table is on {doc}`../capabilities`.
 
 ## Check your results
 
-- **The loss balance.** On a device with real port references, compare the
-  sum of `dissipated_power` with $1 - \sum_j |S_{j1}|^2$, as above.
-- **The heat balance.** In steady state, `heat_flow` through every heat
-  sink adds up to `steady.power`.
-- **Convergence.** Raise `gfem.SolverOptions(order=3)` or refine the mesh
-  where the field is strong in a lossy region: the heat follows the square
-  of the field, so it converges no faster than the field itself. A metal
-  modelled as a conducting volume needs elements smaller than its skin
-  depth; a `Conductor` does not.
+- **The loss balance.** Compare the sum of `dissipated_power` with
+  $1 - \sum_j |S_{j1}|^2$, as above.
+- **The heat balance.** `heat_flow` through every heat sink adds up to
+  `steady.power` ({doc}`heater-temperature`, "Where the heat goes").
+- **Convergence.** Raise `gfem.SolverOptions(order=3)` or refine where the
+  field is strong in a lossy region. A conducting volume needs elements
+  smaller than its skin depth; a `Conductor` does not.
 
 ## Limits
 
+- **Power that leaves the model** gets no heat: what radiates through an
+  {py:obj}`gfem.Absorbing` face or a {term}`perfectly matched layer`, leaves
+  through a wave or Floquet port, or a {py:obj}`gfem.LumpedPort`'s resistance
+  takes. Model a resistor that should heat the device as an
+  {py:obj}`gfem.Impedance` sheet or a conducting volume.
 - **Magnetic loss** is not heat in this version: a region with a complex
   `mu_r` raises `NotImplementedError`, naming it.
-- **Eigenmodes** have no drive: an eigenmode result raises `TypeError`.
-- **A port mode** is a line, not a device: a port mode result raises. For the
-  loss of a line per length, use
-  {py:meth}`gfem.HeatSource.uniform` with `power_per_length=`.
+- **A port mode** is a line, not a device: its result raises. For a line's loss
+  per length use {py:meth}`gfem.HeatSource.uniform` with `power_per_length=`.
 - **An adaptive sweep's** fields heat, but their gradients raise: use
   `sweep="uniform"`.
-- **Several MPI ranks** and **mesh refinement** objectives raise, naming the
-  call.
-- The materials are constant: the heat does not change the loss, and there
-  is no electro-thermal iteration.
+- **The wrong result type** raises `TypeError`: an eigenmode result has no
+  drive, and {py:obj}`gfem.joule_heating` of a driven result names
+  `electromagnetic_heating`.
+- **Several MPI ranks**, **eigenmodes** and **mesh refinement** objectives raise, naming the call.
+- The heat does not change the loss: there is no electro-thermal iteration.
 
 ## Next
 
-- {doc}`heater-temperature`: thermal boundaries, drives and where the heat
-  goes.
+- {doc}`heater-temperature`: thermal boundaries and drives.
 - {doc}`thermal-step-response`: the same heat switched on and off.
 - {doc}`thermal-gradient`: the heat through a sink as an objective.
-- {doc}`measurements`: power through a surface and dissipated power.
-- {doc}`../conventions`: incident power, reference impedances and the sign
-  of loss.
+- {doc}`measurements`: power through a surface.

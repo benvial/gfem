@@ -68,6 +68,21 @@ class SheetField:
     `jax.grad` of a driven or eigenmode objective reaches ``fill``. Build it
     from a design density with `interpolate`.
 
+    A direct solve is insensitive to the fill. A large model on an iterative
+    solver slows when a faint inductive face (an ``Impedance`` with an
+    ``inductance``, a kinetic-inductance film) has a reactance per square
+    :math:`\omega L / w` (:math:`L` the sheet inductance per square,
+    :math:`w` the face's fill) near
+    :math:`X \approx \eta_0 \lambda_0 / (2 h (\varepsilon_1 + \varepsilon_2))`,
+    with :math:`h` the mesh size along the sheet and
+    :math:`\varepsilon_{1,2}` the relative permittivities on its two sides:
+    the sheet then resonates at the drive in a quasi-static mode about
+    :math:`2h` long, and the iterations grow several times, more on a finer
+    mesh. A solve that reaches the iteration limit raises
+    `gfem.LinearSolverConvergenceError`, naming ``direct``. Solid metal,
+    resistive films and conductors are barely affected, whatever the
+    contrast.
+
     Attributes:
         fill: One real value per face of the surface, in
             ``mesh.elements(surface)`` order, shape ``(n_faces,)``.

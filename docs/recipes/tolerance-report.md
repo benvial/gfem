@@ -1,23 +1,18 @@
-# Estimate fabrication tolerances and yield
+# Fabrication tolerance and yield
 
 A foundry gives a width as "±0.3 µm" and a substrate as $\varepsilon_r \pm 0.2$. How much do
 the S-parameters you designed for move under those spreads, which spread
 dominates, and what fraction of devices still meets the specification?
-{py:obj}`gfem.tolerance_report` answers from one solve and one adjoint pass per
-quantity, whatever the number of parameters: it differentiates your forward model
-at the nominal design and propagates the spreads through the derivatives.
-
-`model` below is the getting-started line of {doc}`../get-started`: a parallel-plate
-line 40 mm long, 6 mm wide and 1 mm high between magnetic side walls `"side"`,
-with a lumped port `p1` and `p2` at each end matched to the empty line, and a
-ceramic of $\varepsilon_r = 10$ in its middle 20 mm.
+{py:obj}`gfem.tolerance_report` differentiates your forward model at the nominal
+design and propagates the spreads through the derivatives: one solve and one
+adjoint pass per quantity, whatever the number of parameters.
 
 ## The script
 
-The parameters are the edge bias of the two side walls (every wall node moves
-by the same length, and a positive bias moves a wall into the line, so the width
-changes by minus twice the bias) and the ceramic's permittivity. The quantities are the transmitted power at 5 and
-8 GHz, which must stay above 0.75 and 0.3.
+`model` is the line of {doc}`../get-started`. The parameters are the side walls'
+edge bias (positive moves a wall into the line) and the ceramic's permittivity;
+the quantities are the transmitted power at 5 and 8 GHz, which must stay above
+0.75 and 0.3.
 
 ```python
 import dataclasses
@@ -91,25 +86,18 @@ Linearity, checked on edge bias (forward solves at ±0.0003): linear error at mo
 Mean shift: |S21|² at 5 GHz -0.00028, |S21|² at 8 GHz +3.8e-06.
 ```
 
-- `quantities` is any JAX function of a dict of named real scalars that returns a
-  dict of named real scalars. gfem never builds the model: you do, so anything
-  that differentiates can be a parameter. A complex or array value is refused;
-  take `jnp.abs`, `.real`, `jnp.angle` or `s.db()` and give one name per scalar.
+- `quantities` is any JAX function of a dict of named real scalars returning a
+  dict of named real scalars. A complex or array value is refused: take
+  `jnp.abs`, `.real`, `jnp.angle` or `s.db()`.
 - `walls(p["edge bias"])` is a {py:obj}`gfem.shape.boundary_morph` called with a
-  scalar: every moving node of the surface is displaced by that length along its
-  normal. This is the surface's **edge bias**, positive when the conductor, the
-  void or the `grows` volume grows: the side walls bound the domain, so the
-  void grows into the line ({doc}`shape-gradient`). A lumped port holds its
-  face, so the walls bend back to the ports across the first elements.
+  scalar: every moving node moves by that length along its normal, positive
+  when the conductor, void or `grows` volume grows ({doc}`shape-gradient`).
 - A {py:obj}`gfem.Material` holds constants, so the permittivity goes through a
-  {py:obj}`gfem.MaterialField.uniform` of the region, rebuilt with
-  `dataclasses.replace`, which keeps the loss tangent, permeability and
-  conductivity of the material.
-- A tolerance $t$ is the half-width of "$\pm t$" and is read as three standard
-  deviations of a Gaussian, $\sigma = t/3$: a foundry's "±0.3 µm" goes in as
-  written. The tolerance of a parameter held fixed is 0. A uniform spread
-  $\pm a$ goes in as $t = \sqrt{3}\,a$ (its standard deviation is $a/\sqrt{3}$);
-  the yield is then approximate.
+  {py:obj}`gfem.MaterialField.uniform`, rebuilt with `dataclasses.replace`.
+- A tolerance $t$ is the half-width of "$\pm t$", read as three standard
+  deviations of a Gaussian, $\sigma = t/3$; a fixed parameter has tolerance 0. A
+  uniform spread $\pm a$ goes in as $t = \sqrt{3}\,a$, and the yield is then
+  approximate.
 
 ## Reading the report
 
@@ -120,65 +108,41 @@ $$
 s_i^2 = \sum_j J_{ij}^2 \sigma_j^2,
 $$
 
-for independent parameters, and the report prints $\pm 3 s_i$ beside the
-worst case $\sum_j |J_{ij}|\, t_j$, which is the sure bound when the model is
-linear. `fail` beside it means that the worst case leaves the spec window, not
-that a device does.
+for independent parameters, and the report prints $\pm 3 s_i$ beside the worst
+case $\sum_j |J_{ij}|\, t_j$, the sure bound for a linear model.
 
-- **Effect at +tolerance** is $J_{ij} t_j$, the signed change of the quantity
-  when one parameter sits at the top of its range, with the share
-  $J_{ij}^2 \sigma_j^2 / s_i^2$ of the variance. Here the 5 GHz transmission is
-  mostly a matter of the permittivity, and the 8 GHz one of the line's width: the
-  ranking depends on the quantity, which is why the table is per quantity.
-- **Yield** of one spec is exact under the linear model,
-  $\Phi\big((f_i - l_i)/s_i\big)$ for a lower limit $l_i$, with $\Phi$ the
-  standard normal distribution function; **Cpk** is the distance from the nominal
-  value to the nearest limit in units of $3 s_i$ (1 means the limit sits at
-  $\pm 3\sigma$). A `*` marks a limit beyond $\pm 3\sigma$, where the linear model
-  was not checked.
-- **All specs** is the joint yield. With several specs it is a Monte Carlo on the
-  linear model (seeded, so the same call gives the same number), with its standard
-  error, and the Bonferroni and Fréchet bounds
-  (`joint_yield_bounds`) that any joint probability with these marginals obeys.
-- **Linearity** is a test: the parameter with the largest variance share is
-  evaluated at $\pm t$ with two more forward solves, and a quantity is flagged
-  when the linear prediction misses by more than a tenth of $\pm 3 s_i$.
-  `check_linearity=k` checks $k$ parameters and `0` turns the check off. The
-  mean shift is the average of the two evaluations against the nominal value:
-  the first correction when a response curves.
+| Entry | Meaning |
+| --- | --- |
+| `fail` | the worst case leaves the spec window, not that a device does |
+| Effect at +tolerance | $J_{ij} t_j$, with the share $J_{ij}^2 \sigma_j^2 / s_i^2$ of the variance; here 5 GHz is mostly the permittivity and 8 GHz the width |
+| Yield | $\Phi\big((f_i - l_i)/s_i\big)$ for a lower limit $l_i$, $\Phi$ the standard normal distribution function |
+| Cpk | distance to the nearest limit in units of $3 s_i$; `*` marks a limit beyond $\pm 3\sigma$ |
+| All specs | joint yield: a seeded Monte Carlo on the linear model with its standard error, and the Bonferroni and Fréchet bounds `joint_yield_bounds` |
+| Linearity | the largest-share parameter evaluated at $\pm t$ with two more solves; a quantity is flagged when the linear prediction misses by over a tenth of $\pm 3 s_i$. `check_linearity=k` checks $k$ parameters, `0` turns it off |
 
-Every field is on the returned {py:obj}`gfem.ToleranceReport`: `jacobian`,
-`effect`, `share`, `std`, `worst_case`, `yields`, `cpk`, `joint_yield`,
-`linear_error` and `nonlinear`. `report.to_markdown()` gives the same tables as
-pipe tables.
+Every field is on the returned {py:obj}`gfem.ToleranceReport`;
+`report.to_markdown()` gives the tables.
 
 ## Other parameters
 
-- **A gap.** The gap between two walls of one morph changes by $-2t$ when each
-  wall grows by $t$, and a width between two walls by $+2t$. A gap tolerance of
-  $\pm g$ is an edge-bias tolerance of $g/2$.
-- **Two surfaces.** Two independent surfaces are two morphs, one parameter each.
-  Their displacements add to first order, which is all the Jacobian reads:
+- **A gap** between two walls of one morph changes by $-2t$ when each wall grows
+  by $t$: a gap tolerance $\pm g$ is an edge-bias tolerance $g/2$.
+- **Two surfaces** are two morphs, one parameter each; displacements add to first
+  order:
   `model.mesh.with_nodes(a(p["w"]).nodes + b(p["g"]).nodes - model.mesh.imported_nodes)`.
 - **A fabrication model.** `fab(rho, beta=..., bias=p["bias"])` of a
-  {py:obj}`gfem.design.FabricationModel` takes a traced edge bias, so the bias of a
-  blurred and thresholded layer pattern is a parameter like any other.
-- **Correlation.** `correlation={("edge bias", "eps_r"): 0.5}` sets the
-  correlation coefficient of a pair of parameters; unlisted pairs are 0. The
-  variance share then has a remainder, the part that belongs to no single
-  parameter.
+  {py:obj}`gfem.design.FabricationModel` takes a traced bias.
+- **Correlation.** `correlation={("edge bias", "eps_r"): 0.5}`; unlisted pairs
+  are 0, and the variance share gets a remainder.
 
 ## Cost
 
-The report costs $1 + 2k$ forward evaluations ($k$ the number of checked
-parameters, 1 by default) and one backward pass per quantity, whatever the
-number of parameters; a backward pass costs well under a tenth of a forward
-solve for a driven $S$. Add parameters freely, and keep the quantities to the
-ones you have a spec for.
+$1 + 2k$ forward evaluations ($k$ the checked parameters, 1 by default) and one
+backward pass per quantity, whatever the number of parameters.
 
 ## Check your results
 
-The Jacobian is a derivative of the discrete solve, so compare one entry with a
+The Jacobian is a derivative of the discrete solve: compare one entry with a
 central difference:
 
 ```python
@@ -196,29 +160,24 @@ print(
 d|S21|² at 5 GHz/deps_r: report -0.30018, difference -0.30017
 ```
 
-- The report differentiates the discrete model, not the mesh's error. Compare the
-  discretization error estimate of the nominal solve ({doc}`mesh-refinement`) with
-  the distance from the nominal value to the spec and with $\pm 3 s_i$: an
-  estimate near either says the mesh, not the process, limits the answer.
-- A quantity flagged by the linearity check needs a smaller tolerance or a second
-  look: its yield is a linear-model number. Shrinking the tolerances until the
-  flag goes away shows how far the linear range extends.
+- The report differentiates the discrete model, not the mesh's error: compare
+  the nominal solve's error estimate ({doc}`mesh-refinement`) with the distance
+  to the spec and with $\pm 3 s_i$.
+- A flagged quantity needs a smaller tolerance: shrink until the flag goes away.
 
 ## Limits
 
-- The yield is a linear-model number. It is exact for a linear response, and it
-  degrades as the response curves over $\pm t$ or as a limit moves beyond
-  $\pm 3\sigma$ (`*`). It is not a Monte Carlo over re-solves of the device.
-- A parameter that the function does not read is refused by name, as is a
-  quantity that is complex, an array or not finite.
-- The function is reverse-mode differentiated, so it must go through
-  {py:obj}`gfem.solve`, and a path that does not differentiate (a solver
-  tolerance, a mesh remap) raises {py:obj}`gfem.NonDifferentiableError`.
-  `tolerance_report` returns numpy values: call it outside `jax.jit` and
-  `jax.grad`.
-- A parameter is a real scalar, and a surface offset is the same along the
-  whole surface. A roughness or a position-dependent bias is a field of
-  parameters, which this report does not treat.
+- The yield is a linear-model number, exact for a linear response, degrading as
+  it curves over $\pm t$ or a limit passes $\pm 3\sigma$ (`*`); it is not a
+  Monte Carlo over re-solves.
+- A parameter the function does not read is refused by name, as is a complex,
+  array or non-finite quantity.
+- The function is reverse-mode differentiated, so it goes through
+  {py:obj}`gfem.solve`; a path that does not differentiate raises
+  {py:obj}`gfem.NonDifferentiableError`. `tolerance_report` returns numpy
+  values: call it outside `jax.jit` and `jax.grad`.
+- A parameter is a real scalar, the same along the whole surface; a roughness is
+  a field of parameters, which this report does not treat.
 
 ## Next
 

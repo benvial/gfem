@@ -1,4 +1,4 @@
-r"""The "See S in the time domain" recipe runs and prints what the page shows.
+r"""The "TDR and time responses" recipe runs and prints what the page shows.
 
 docs/recipes/time-responses.md runs nothing at docs build time. This runs its
 blocks in order, as a reader does, on the repository's own

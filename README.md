@@ -5,7 +5,7 @@
   </picture>
 </h1>
 
-Differentiable finite-element electromagnetics for RF, microwave, mm-wave and superconducting quantum devices.
+Differentiable finite-element electromagnetics, heat and mechanics for photonic, RF, microwave and superconducting quantum devices.
 gfem runs on [NGSolve](https://ngsolve.org) for discretization and [JAX](https://jax.readthedocs.io) for
 everything differentiable.
 
@@ -69,16 +69,35 @@ result.
 
 ## Documentation
 
-The documentation is at <https://bvial.info/gfem/>. Good places to start:
+The documentation is at <https://bvial.info/gfem/>. [Get started](https://bvial.info/gfem/get-started.html)
+installs gfem, runs a first solve and differentiates it. Each physics domain opens with its tutorials:
 
-- [Get started](https://bvial.info/gfem/get-started.html): install, a first solve and its gradient.
-- [Tutorials](https://bvial.info/gfem/tutorials/topology.html): a band-stop filter, a coplanar line matched to 50 Ω, photonic
-  waveguide bends and a metagrating, each designed with gradients.
-- [Heaters and thermo-optic phase](https://bvial.info/gfem/recipes/heater-temperature.html): steady and transient
-  heat conduction, Joule heating from a DC current and heat from a driven solve's electromagnetic loss, and the
-  phase a heater puts on a waveguide, in 2D and 3D.
-- [PETSc and SLEPc](https://bvial.info/gfem/recipes/petsc-slepc.html): the PETSc and SLEPc solvers, which need a source build.
-- [Distributed solve](https://bvial.info/gfem/recipes/distributed-solve.html): one driven, electrostatic or eigenmode solve across the ranks of an MPI job.
+- [Integrated photonics](https://bvial.info/gfem/tutorials/bend.html): waveguide bends in 2D and 3D, a grating
+  coupler, dispersion and multimode ports.
+- [Nonlinear and quantum optics](https://bvial.info/gfem/recipes/waveguide-nonlinearity.html): Kerr nonlinearity,
+  second-harmonic generation and photon-pair sources.
+- [Electro-optics](https://bvial.info/gfem/tutorials/modulator.html): a lithium niobate modulator and the phase a
+  voltage puts on a waveguide.
+- [Heat and thermo-optics](https://bvial.info/gfem/tutorials/heater.html): heaters, temperature over time, heat
+  from electromagnetic loss and the phase a heater puts on a waveguide, in 2D and 3D.
+- [Mechanics and acoustics](https://bvial.info/gfem/tutorials/transducer.html): mechanical modes, piezoelectric
+  transducers, and acousto-optic and optomechanical coupling.
+- [Free-space scattering](https://bvial.info/gfem/tutorials/nanosphere.html): cross sections, far fields,
+  multipoles, dipole emission and optical force.
+- [Periodic surfaces](https://bvial.info/gfem/tutorials/metagrating.html): a metagrating, a photonic band gap, a
+  two-colour metalens, diffraction efficiencies and emissivity.
+- [RF and microwave](https://bvial.info/gfem/tutorials/topology.html): a band-stop line, a matched attenuator, a
+  coplanar line matched to 50 Ω, time-domain reflectometry and SPICE export.
+- [Resonators and qubits](https://bvial.info/gfem/tutorials/transmon.html): a transmon's dispersive shift,
+  quantum metrics and loss budgets.
+- Infrastructure: [meshes, materials and boundaries](https://bvial.info/gfem/recipes/prepare-a-mesh.html),
+  [design workflow](https://bvial.info/gfem/recipes/shape-gradient.html),
+  [solvers and scale-out](https://bvial.info/gfem/recipes/watch-a-solve.html) (GPU, PETSc and SLEPc from a source
+  build, MPI) and [results and files](https://bvial.info/gfem/recipes/measurements.html).
+- [Theory](https://bvial.info/gfem/conventions.html): the sign, unit and normalization conventions, and modes and
+  ports.
+- [Capabilities](https://bvial.info/gfem/capabilities.html): what each problem type gives and which gradients are
+  supported; [verification](https://bvial.info/gfem/verification.html) shows how each claim is checked.
 
 ## Licence
 

@@ -1,31 +1,18 @@
-# From a cell response to a metasurface
+# Metasurface from cell responses
 
-A metasurface is a large array of small cells whose shape changes slowly across
-the aperture: a lens, a beam deflector, a reflectarray. Solving it whole is out
-of reach at a millimetre, but each cell can be solved alone as if it sat in an
-infinite array of itself (the {term}`locally periodic approximation`). This
-page tabulates one cell against the one number that varies across the device
-(a {term}`cell response`, what the literature calls a unit-cell or phase
-library), places a cell of the table at every position (an
-{term}`aperture field`), propagates that field to a focal plane, and
-differentiates a figure of merit with respect to the whole parameter map. The
-helpers live in `gfem.diffraction`; the cell is a periodic cell with Floquet
-ports as in {doc}`floquet-ports` and {doc}`diffraction-efficiency`.
-
-The problem is a one-axis aperture, a row of ridges along $\hat{\mathbf{e}}_1$
-with the lines along $\hat{\mathbf{e}}_2$, lit at normal incidence from a
-substrate, in TE (the field along the lines). The ridge width $w$ is the
-parameter, and a 2D aperture of pillars differs only in the width map and the
-shape of the parameter array.
+Solve each cell of a metasurface alone, as if in an infinite array of itself (the
+{term}`locally periodic approximation`), and tabulate it against the parameter
+that varies across the device: a {term}`cell response`, what the literature calls
+a unit-cell or phase library. Place a cell at each position (an
+{term}`aperture field`), propagate to a focal plane and differentiate. Cells have
+Floquet ports ({doc}`floquet-ports`, {doc}`diffraction-efficiency`).
 
 ## Tabulate the cell
 
-`cell_response(make_cell, parameter, ...)` solves the cell at each sample of
-the parameter and keeps S together with its derivative with respect to the
-parameter. `make_cell(p, dp)` returns the cell at the plain number `p`, its
-mesh moved by `dp`, a JAX scalar that is 0 when the table is built and carries
-the derivative. The usual way to move a ridge is one mesh and a
-{py:obj}`gfem.shape.boundary_morph` of its side walls:
+A row of ridges lit in TE at normal incidence, the width $w$ the parameter.
+`make_cell(p, dp)` returns the cell at `p` with its mesh moved by `dp`, a JAX
+scalar that is 0 in the table and carries the derivative, through
+{py:obj}`gfem.shape.boundary_morph` of the walls:
 
 ```python
 import jax
@@ -70,18 +57,9 @@ def make_cell(p, dp):
     return base.replace(mesh=morph(((p - w0) + dp) * um * width_map))
 ```
 
-`dp` should move the cell by one unit of `p` per unit of `dp`, so that the stored
-derivative is per unit of the parameter. That is what the **width map** does:
-
-- A ridge's two walls each move by half the widening, so the map is $\tfrac12$
-  on every node of the moving surface.
-- A pillar's walls are four. The displacement that widens it by one moves each
-  wall plane by $\tfrac12$ outward, and a node on a vertical edge moves
-  diagonally, along $(\tfrac12, \tfrac12)$ toward the corner. The morph moves a
-  node along its own normal, so the map is the component of that displacement
-  along the normal, $\mathbf{u}\cdot\hat{\mathbf{n}}$: $\sqrt2/2$ on a vertical
-  edge and $\tfrac12$ elsewhere on the walls. A constant $\tfrac12$ would
-  under-move the edges and tilt the walls.
+The **width map** moves the cell by one unit of `p` per unit of `dp`: $\tfrac12$
+for a ridge's walls; for a pillar $\mathbf{u}\cdot\hat{\mathbf{n}}$, $\sqrt2/2$
+on a vertical edge and $\tfrac12$ elsewhere.
 
 ```python
 # the pillar's map, from the morph's own nodes and normals
@@ -91,13 +69,9 @@ u = 0.5 * np.sign(rel) * on_wall
 width_map = jnp.asarray(np.einsum("ij,ij->i", u, np.asarray(morph.normals)[:, :2]))
 ```
 
-**Check the range.** One mesh moved by a morph is smooth in the parameter, which
-is why the stored derivative interpolates so well, but the morph is bounded:
-the element beside a wall gets squeezed as the wall approaches its neighbour.
-How far it goes depends on the cell (on one structured mesh a ridge's wall moved
-1.3 elements before quality fell by a quarter, a pillar's 0.6 to 0.8), so
-measure it over your range with {py:obj}`gfem.shape.quality` instead of
-trusting a rule:
+**Check the range.** The morph squeezes the element beside a wall (a ridge's wall
+moved 1.3 elements before quality fell by a quarter, a pillar's 0.6 to 0.8).
+Measure it with {py:obj}`gfem.shape.quality`:
 
 ```python
 widths = np.linspace(0.07, 0.23, 21)  # um
@@ -107,21 +81,8 @@ for w in (widths[0], widths[-1]):
     print(w, float(jnp.min(q / q0)))  # gfem warns below a quarter
 ```
 
-Past the range, build a mesh for each sample instead: `make_cell(p, dp)` builds
-the cell at `p` (a fresh mesh, with the same topology and the same names) and
-then moves it by `dp`. The table is then as smooth as the meshes are
-converged: two meshes of the same cell differ by their discretization error,
-which Hermite interpolation cannot remove. Converge the mesh to the accuracy
-you want from the table.
-
-`cell_response` calls `make_cell` once per sample to read the cell's signature
-and once more per frequency for each solve, so $n_f + 1$ times per sample.
-When meshing is the slow part, cache it per `p` (`functools.cache` on a
-function that returns the mesh) and let `make_cell` wrap the cached mesh.
-
-Then tabulate. Excite the polarization you will light the device with, in the
-specular order of the incident face, and declare both polarizations of the
-outgoing order (the ports above do):
+Past the range, build a fresh mesh per sample in `make_cell`, cached per `p`.
+Then tabulate, exciting the polarization you will use in the specular order:
 
 ```python
 response = dif.cell_response(
@@ -134,44 +95,19 @@ response = dif.cell_response(
 )
 ```
 
-- A port is named after its surface, `"bottom (0, 0) TE"` here, as in
-  {doc}`diffraction-efficiency`.
-- `out=` writes the response after every sample. Rerun with the same `out`,
-  samples, frequencies and excited ports and the finished samples are kept, so
-  an interrupted build resumes. `response.to_json(path)` writes a response you
-  built another way and `dif.CellResponse.from_json(path)` reads it back; floats
-  round-trip bitwise, and the arrays sit in an `.npz` file beside the JSON.
-- The parameter may move the meta-atom only. A sample that changes the lattice,
-  the media, the ports or the diffraction orders is refused.
-- A response is one parameter at one incidence: normal incidence, plain
-  periodicity. Keep the pitch small enough that only the specular order
-  propagates behind the cell, or the aperture field below refuses it.
-
-**Sample spacing.** The response interpolates S between samples by piecewise
-cubic Hermite polynomials on the real and imaginary parts, with the derivative
-you stored, so the interpolation error falls as the fourth power of the
-spacing: halving it divides the error by about 16. With the phase of the
-transmission moving 13° per interval the error in $S$ was $4\times10^{-5}$ and
-with 27° per interval $6\times10^{-4}$. Space samples by the phase, not the
-width: a resonant cell turns its phase quickly over a narrow range of widths,
-and that range needs the dense samples. Check by solving one or two widths
-between samples and comparing with `response(p)`.
-
-**Cost.** For each sample and each frequency gfem solves the cell once, and then
-runs one backward pass for each real entry of the S rows it keeps and each
-excited column: with four Floquet ports (a TE and a TM port on each face), 8
-passes per excited column. A table of $n_p$ samples, $n_f$ frequencies and
-$n_c$ columns is therefore $n_p n_f$ forward solves and $8\,n_p n_f n_c$
-backward passes, which dominate the forward solves. The solve cache is
-bypassed while a table is built, because the derivative needs the factorization
-of each sample.
+- `out=` writes the response after every sample, so rerunning resumes an
+  interrupted build. `response.to_json(path)` and
+  `dif.CellResponse.from_json(path)` write and read one built another way.
+- The pitch must let only the specular order propagate.
+- Hermite interpolation falls as the spacing to the fourth power: 13° of phase
+  per interval gave $4\times10^{-5}$ in $S$, 27° gave $6\times10^{-4}$. Space
+  samples by phase, not width.
+- Each sample costs one solve and 8 backward passes per excited column.
 
 ## Evaluate and differentiate the table
 
-`response(p)` is the {py:obj}`gfem.NetworkParameters` at the parameter value `p`,
-the type of `result.s`, for every frequency of the table. It is pure JAX: it
-differentiates in `p`, in the stored arrays and under `jax.jit` and `jax.vmap`,
-and the table needs no solver once it exists.
+`response(p)` is the {py:obj}`gfem.NetworkParameters` at `p`: pure JAX, so it
+differentiates and runs under `jax.jit` and `jax.vmap`.
 
 ```python
 S = response(0.14)  # a width between two samples
@@ -179,12 +115,8 @@ S.values.shape  # (n_freq, n_ports, n_excited)
 dS = jax.jacfwd(lambda p: response(p).values)(0.14)
 ```
 
-The response does not extrapolate. A concrete `p` outside
-`[widths[0], widths[-1]]` raises `ValueError`; a traced one, inside `jax.jit` or
-`jax.vmap`, where the check cannot run, returns NaN for the out-of-range entries
-and their gradients, so an objective that left the range reads NaN instead of a
-silent clamp. An optimizer works with an unbounded variable, so map it onto the
-sampled range, once, in the objective:
+A `p` outside the range raises `ValueError` (NaN if traced). Map an unbounded
+optimizer variable onto the range once, in the objective:
 
 ```python
 lo, hi = float(widths[0]), float(widths[-1])
@@ -196,12 +128,10 @@ def width_of(x):
 
 ## Place the cells and propagate the field
 
-`aperture_field(response, parameter, outgoing, incident, polarization=...)`
-samples the device once per cell. At the centre of cell $j$ the field is the
-cell's Jones entry at its parameter times the incident polarization and an
-optional envelope: it is one plane wave per cell, as if the cell sat in an
-infinite array of itself. `propagate` carries the sampled field by the
-angular spectrum to a plane at a distance in the half-space behind the device:
+`aperture_field(response, parameter, outgoing, incident, polarization=...)` gives
+at each cell's centre its Jones entry times the incident polarization and an
+optional envelope; `propagate` carries it by the angular spectrum behind the
+device:
 
 ```python
 n = 1001  # cells along e1
@@ -219,58 +149,25 @@ out.values.shape  # (n_freq, 2, n): the components along e1 (TM) and e2 (TE)
 out.intensity.shape  # (n_freq, n): relative to the incident plane wave
 ```
 
-What to know about the two calls:
-
-- **Positions and units.** A row of $n_1$ cells sits at
-  $x_j = (j - \tfrac{n_1-1}{2})\,a_1$ from the aperture centre, with the pitch
-  $a_1$ read from the response. With an even count the axis falls between two
-  samples; an odd count puts a sample on it. The values are in power-wave
-  units relative to the incident plane wave, so $|E|^2$ of a wave that leaves
-  normally is the intensity relative to the incident one. The components are
-  those along $\hat{\mathbf{e}}_1$ (TM) and $\hat{\mathbf{e}}_2$ (TE); at normal
-  incidence they are the tangential field and each propagates on its own.
-- **Axes.** `parameter` has shape `(n1,)` (uniform along $\hat{\mathbf{e}}_2$:
-  deflectors, cylindrical lenses) or `(n1, n2)`, with `indexing="ij"`. At least two
-  cells along each axis. The aperture assumes normal incidence, a rectangular
-  lattice (the vectors at a right angle) and cells that send one plane wave
-  behind them: it refuses a response whose pitch lets another order propagate
-  in the outgoing half-space, naming the order and the wavelength it needs.
-- **Envelope and window.** `amplitude=` multiplies the incident field of each
-  cell by a complex number (Gaussian illumination, an aperture stop), with the
-  shape of `parameter`. The propagated field lives on the same grid, so to
-  look beyond the device, make the map larger than the device and give the extra
-  cells `amplitude=0`.
-- **Polarization.** `"TE"`, `"TM"`, `"RCP"`, `"LCP"` or a Jones pair, a fixed
-  value that must be among the excited columns. `"unpolarized"` is refused,
-  being an incoherent mean: propagate TE and TM, and average their intensities.
-- **Propagation.** The angular spectrum multiplies each plane wave by
-  $e^{-ik_zd}$, with $k_z = \sqrt{k^2 - q^2}$, and by a decaying exponential
-  where $q > k$. The field is zero-padded to `padding` times the aperture's width
-  (default 2) and the steepest components that would wrap around that window are
-  dropped. Against the Rayleigh-Sommerfeld integral of the same samples, padding
-  2 puts the focal spot of a lens within $1.4\times10^{-4}$ of the peak
-  amplitude and the field over the whole footprint within $1.1\times10^{-3}$, from
-  numerical aperture 0.1 to 0.8; padding 3 gives $4\times10^{-5}$ at the focal
-  spot. The Fresnel formula is not an alternative: it is wrong by 7 to 43 % in
-  amplitude at numerical aperture 0.5 to 0.8.
-- **Distance.** `distance` and `padding` are fixed numbers (`NonDifferentiableError`
-  otherwise). To scan an axis, call `propagate` for each distance. There is
-  no gradient with respect to the distance.
-- **No finer grid.** The result is on the cells' grid, one sample per pitch.
-  A sample is the field at a cell centre, so the samples carry plane waves up to
-  $|q| \le \pi/a_1$, and a pitch above $\lambda/2$ aliases the directions beyond
-  $\arcsin(\lambda/2a_1)$. A focal spot at numerical aperture above about 0.5
-  with a pitch near $\lambda/2$ is coarsely sampled: read its peak, not its
-  profile.
+- `parameter` has shape `(n1,)` or `(n1, n2)` with `indexing="ij"`; a pitch that
+  lets another order propagate is refused. Values are relative to the incident
+  wave.
+- `amplitude=` is a per-cell envelope; `amplitude=0` cells extend the window.
+- Polarization is `"TE"`, `"TM"`, `"RCP"`, `"LCP"` or a Jones pair among the
+  excited columns; `"unpolarized"` is refused: average TE and TM intensities.
+- Zero-padding to `padding` times the aperture (default 2) puts a lens's focal
+  spot within $1.4\times10^{-4}$ of the Rayleigh-Sommerfeld peak up to numerical
+  aperture 0.8; the Fresnel formula is wrong by 7 to 43 % above 0.5.
+- `distance` and `padding` are fixed (`NonDifferentiableError`).
+- A pitch above $\lambda/2$ aliases; read a focus above numerical aperture 0.5
+  by its peak.
 
 ## Objectives
 
-An objective is a few lines of JAX over the propagated field. The only helper is
-`ApertureField.intensity`, $|E_1|^2 + |E_2|^2$.
-
-**Focal intensity.** The intensity at the focus, one number per frequency, is
-the entry of `intensity` at the focal sample. The gradient with respect to the
-whole map comes from one `jax.value_and_grad`:
+An objective is a few lines of JAX over the propagated field; the one helper is
+`ApertureField.intensity`, $|E_1|^2 + |E_2|^2$. The focal intensity is the entry
+of `intensity` at the focal sample, and one `jax.value_and_grad` gives its
+gradient over the whole map:
 
 ```python
 focal_length = 100e-6  # m
@@ -287,10 +184,8 @@ def loss(x):
 value, grad = jax.jit(jax.value_and_grad(loss))(x_cells)
 ```
 
-**Strehl ratio.** The focal intensity of the design over that of an ideal lens
-with the same amplitude, whose field you build with the `ApertureField`
-constructor. A converging lens has the phase $k(\sqrt{x^2 + F^2} - F)$ for a
-field that propagates as $e^{-ik_zd}$:
+The Strehl ratio divides it by that of an ideal lens, built with the
+`ApertureField` constructor, with phase $k(\sqrt{x^2 + F^2} - F)$:
 
 ```python
 field = field_at(x_cells, 0.0)  # grid, frequencies and index of the device
@@ -307,18 +202,10 @@ ideal_focus = dif.propagate(ideal, focal_length).intensity[:, n // 2]
 strehl = focal_intensity(x_cells) / ideal_focus
 ```
 
-A Strehl ratio near 1 says the map reproduces the lens. The ideal lens has
-unit amplitude, so the ratio also counts the transmission of the cells.
-
-**Deflection efficiency.** The fraction of the incident power that leaves in a
-direction. The power of a plane wave of tangential amplitude $E_2$ (TE) is
-$|E_2|^2\cos\theta$ and of $E_1$ (TM) is $|E_1|^2/\cos\theta$, with $\theta$ its
-angle to the normal: the amplitudes are those of the tangential field, and the
-direction changes how much of it carries power through the plane. The Fourier
-transform of the aperture field splits it into plane waves, so the efficiency is
-the sum of those flux factors over the directions near the target, over the
-incident power, $\sum|u_j|^2$ for unit incident amplitude, which the Fourier
-transform of $M$ points returns divided by $M$:
+For the deflection efficiency, a wave leaving at $\theta$ carries $\cos\theta$
+(TE) or $1/\cos\theta$ (TM) times the power its tangential amplitude says, so a
+perfect ramp reads that factor, not 1. Sum over the Fourier bins near the
+target, over the incident power; for a 2D aperture use `jnp.fft.fft2`:
 
 ```python
 def deflection_efficiency(field, theta, half_width, pad=8):
@@ -342,129 +229,46 @@ def deflection_efficiency(field, theta, half_width, pad=8):
     return jnp.sum(flux * near, axis=-1) / (m * n)  # incident power: n cells
 ```
 
-The result is one efficiency per frequency, and it differentiates. Choose
-`half_width` as the width of the main lobe of the aperture, about
-$\lambda/(N a_1)$ in $\sin\theta$ for $N$ cells. A beam that leaves at
-$\theta$ carries $\cos\theta$ (TE) or $1/\cos\theta$ (TM) times the power its
-tangential amplitude says, so a perfect phase ramp reads that factor, not 1,
-before the loss from sampling the ramp once per cell.
-
-For a 2D aperture, use `jnp.fft.fft2` and the in-plane wave vector
-$\mathbf{q}$ of each bin; the flux factors keep their form, with $\theta$ the
-angle to the normal.
-
 ## When the approximation holds
 
-The locally periodic approximation assumes each cell radiates as if all its
-neighbours were itself, and it neglects the coupling to the neighbours as they
-actually are. That coupling grows with the phase step between neighbouring
-cells. The table compares a full-wave solve of one supercell, with its cells
-meshed as the single cell, against the aperture field of the same widths. It is
-a ridge of relative permittivity 5 and height 0.6 µm on glass (2.1), pitch
-0.5 µm, wavelength 1 µm, normal incidence from the glass, TE. The error is the
-largest difference over the transmitted orders in the amplitude of S, and
-the last column compares the strongest order's efficiency:
+The approximation neglects coupling to neighbours, which grows with the phase
+step. A full-wave supercell against the aperture field of the same widths
+(a ridge of permittivity 5, height 0.6 µm on glass, pitch 0.5 µm, 1 µm, TE):
 
 | widths of the cells, in µm | largest phase step between neighbours | largest amplitude error over the orders | strongest order's efficiency, solved / approximated |
 |---|---|---|---|
-| 0.24, 0.24, 0.24, 0.24 | 0° | round-off | 0.9201 / 0.9201 |
-| 0.34, 0.32, 0.26, 0.18, 0.16, 0.18, 0.26, 0.32 | 40° | 0.014 | 0.679 / 0.684 (order 0) |
-| a ramp of 8 widths, 0.06 to 0.44 | 35°, one reset of 186° | 0.051 | 0.503 / 0.483 (order +1) |
-| a ramp of 4 widths, 0.06 to 0.44 | 65°, one reset of 186° | 0.092 | 0.652 / 0.570 (order +1) |
-| six widths in no order | 157° | 0.116 | 0.125 / 0.221 (order 0) |
-| 0.06, 0.44, 0.06, 0.44 | 186° | 0.071 | 0.0144 / 0.0072 (order 0) |
+| 0.34, 0.32, 0.26, 0.18, 0.16, 0.18, 0.26, 0.32 | 40° | 0.014 | 0.679 / 0.684 |
+| a ramp of 4 widths, 0.06 to 0.44 | 65°, one reset of 186° | 0.092 | 0.652 / 0.570 |
 
-- A uniform map is exact: it is the approximation's own closed form.
-- Up to neighbour steps of about 40° the amplitude of every order is within 0.01
-  to 0.02. A 65° ramp with one reset is off by 0.1 (a deflected order 13 % low); at 100° and
-  above the approximation fails, as it does at the $2\pi$ reset of a deflector's
-  phase ramp, whose coupling is a known source of error.
-- A deflector with a steady phase step of 36° per cell (ten silicon nitride
-  ridges of pitch 0.3 µm covering $2\pi$ at 633 nm, whose widths follow the
-  table to within 10° of phase) sends 0.870 of the power into the +1 order in
-  the full-wave solve and 0.897 in the aperture field.
-- The range of phase a cell covers limits a deflector: the ridge above spans
-  186° as its width changes, so a ramp of $2\pi$ needs a reset or a different
-  cell.
-- A map optimized through the response can use steps the approximation does not
-  cover: abrupt steps between neighbours, 3 to 4 % of the neighbour pairs above
-  60° in a probe lens designed this way. A penalty on the transmission difference of
-  neighbours is a natural term in the objective, which this page does not add.
-
-## Memory and time
-
-The aperture field and the propagation are plain JAX of the parameter map, so
-the value and the gradient of an objective cost a few Fourier transforms. On
-two threads, in complex double precision, a value and gradient after the first
-(compiling) call took:
-
-| cells | padding | time | memory |
-|---|---|---|---|
-| $500 \times 500$ | 2 | 0.14 s | 0.41 GiB |
-| $1000 \times 1000$ | 2 | 0.63 s | 0.70 GiB |
-| $2000 \times 2000$ (1 mm at a pitch of 500 nm) | 2 | 1.3 to 1.5 s | 1.9 to 2.7 GiB |
-| $2000 \times 2000$ | 3 | 1.8 s | 3.4 GiB |
-
-The memory is for one component and for two, respectively; the first call adds
-the compile time (2 to 13 s). These are observations on a loaded machine. Build
-the cell response once and reuse it for every design.
+A uniform map is exact. Up to steps of about 40° every order is within 0.01 to 0.02; at 100° and above, and
+at the $2\pi$ reset of a ramp, it fails. A steady 36° step per cell (ten silicon
+nitride ridges, pitch 0.3 µm, at 633 nm) sends 0.870 into the +1 order in the
+full-wave solve and 0.897 in the aperture field. An optimized map can use steps
+beyond the approximation: penalize neighbours' transmission difference.
 
 ## Reflection and arrays
 
-For a reflectarray, name the same face for both: `outgoing == incident`. The
-cells' reflection at normal incidence is the entry used, and the field then
-propagates back into the incident half-space. Everything above applies, with the
-distance measured from the aperture into that half-space.
-
-A periodic array of identical elements, a frequency-selective surface or an
-array with feeds in its cells, does not need a table: it is one periodic cell
-solved at the angle or the frequency you want, as in {doc}`floquet-ports` (for
-the fed cell, its "A fed cell" section) and {doc}`diffraction-efficiency`.
+For a reflectarray name the same face for both, `outgoing == incident`. A 2000 × 2000
+aperture takes about 1.5 s per value and gradient.
 
 ## Check your results
 
-- **A uniform map** gives a uniform field equal to the cell's own transmission,
-  which is exact in the approximation.
-- **A table against a solve.** Solve the cell at one width between samples and
-  compare with `response(p)`. The error should shrink by about 16 when the
-  spacing halves.
-- **The approximation.** For the design you will build, solve a supercell of
-  its cells with `gfem.diffraction.floquet_ports` and compare its orders with the
-  Fourier transform of the aperture field, as in the table above, before
-  trusting a figure of merit to the third digit.
-- **The gradient.** Compare `jax.grad` of your objective with central finite
-  differences along a random direction of the map.
-- **The propagation.** For a lens, the intensity should peak where the lens
-  focuses, and `padding=3` should leave the focal intensity within the figures
-  above.
+- A uniform map gives the cell's own transmission, exactly.
+- One width between samples against `response(p)`: the error shrinks by about 16
+  when the spacing halves.
+- A supercell solved with `gfem.diffraction.floquet_ports` matches the Fourier
+  transform of the aperture field.
+- `jax.grad` against central differences.
 
 ## Limits
 
-- **One parameter.** A response has one parameter, one polarization state at the
-  excited columns, and one incidence (normal). A design that varies two things
-  from cell to cell, or rotates the cell, needs a response for each.
-- **Normal incidence.** The aperture field assumes the light arrives normal to a
-  rectangular lattice; a response sampled at an oblique incidence is refused.
-- **No neighbour coupling.** See the table above. A sharp transition between
-  neighbours, a reset, or a resonance that couples cells is beyond it.
-- **Cells that do not diffract.** A pitch at which a non-specular order
-  propagates behind the cells is refused.
-- **Scalar tangential components.** The field is the two tangential components
-  at fixed distances; the normal component and a polarization-resolved far
-  field are not computed.
-- **Observation grid.** The cell grid is the observation grid (use `amplitude=0`
-  for a wider window).
-- **No distance gradient.** The distance and padding are fixed.
-- **Co-design.** The gradient is with respect to the parameter map and the
-  envelope, not to the meta-atom's own shape or materials: a solve differentiates
-  once, and the stored derivative of S would need a second derivative of the
-  solve. To optimize the meta-atom itself, differentiate a solve of the cell
-  ({doc}`shape-gradient`). Between samples, the derivative with respect to the
-  parameter is the interpolant's, not the solve's; they agree at the samples.
+- **One parameter** at normal incidence.
+- **No neighbour coupling**: resets and sharp steps are beyond the table above.
+- **Co-design.** The gradient is with respect to the parameter map and envelope,
+  not the meta-atom's shape ({doc}`shape-gradient`).
 
 ## Next
 
 {doc}`diffraction-efficiency`, {doc}`floquet-ports`, {doc}`emissivity`,
 {doc}`../tutorials/metalens`, {doc}`shape-gradient`, {doc}`periodic-cell`,
-{py:obj}`gfem.shape.quality`,
-{py:obj}`gfem.conventions`, {doc}`../capabilities`.
+{py:obj}`gfem.shape.quality`, {py:obj}`gfem.conventions`, {doc}`../capabilities`.
