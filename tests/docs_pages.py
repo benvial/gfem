@@ -144,6 +144,36 @@ def user_pages() -> list[Path]:
     ]
 
 
+_DISPLAY = re.compile(r"^\$\$.*?\$\$[ \t]*$", re.MULTILINE | re.DOTALL)
+_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+def prose_words(text: str) -> int:
+    """The words a reader reads, as the docs budgets count them.
+
+    Fenced blocks, display math, comments, headings, labels and front matter
+    are left out; a role counts as its text and inline math as one word;
+    tables and admonitions count.
+    """
+    text = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.DOTALL)
+    text = _COMMENT.sub("", _DISPLAY.sub("", _prose(text)))
+    text = re.sub(r"\{[\w:-]+\}`([^`<]*)(<[^>]*>)?`", r"\1", text)
+    text = re.sub(r"\$[^$\n]+\$", "X", text)
+    lines = [
+        line
+        for line in text.splitlines()
+        if not line.lstrip().startswith("#")
+        and not re.fullmatch(r"\s*\(.+\)=\s*", line)
+    ]
+    return sum(1 for word in " ".join(lines).split() if re.search(r"\w", word))
+
+
+def title(text: str) -> str | None:
+    """The page's first-level heading, or None."""
+    match = re.search(r"^# (.+)$", _prose(text), re.MULTILINE)
+    return match[1].strip() if match else None
+
+
 def section(page: str, heading: str) -> str:
     """The text under ``## heading`` up to the next ``## ``."""
     pattern = rf"^## {re.escape(heading)}\n(.*?)(?=^## |\Z)"
