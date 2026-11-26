@@ -11,7 +11,7 @@ tangent.
 `model` is a resonator on a substrate, solved lossless, with metal on the
 surface `"metal"` and bare substrate on `"gaps"`. The layer numbers (3 nm,
 relative permittivity 10, loss tangent 2e-3) and the substrate's loss tangent
-are yours to supply: gfem has no defaults for them.
+are yours to supply.
 
 ```python
 import jax.numpy as jnp
@@ -33,9 +33,8 @@ t1 = 1 / (jnp.real(modes.omega) * inverse_q)  # s, per mode
 - `1 / modes.q` is the loss in the model: materials with a loss, `Conductor`
   walls, resistive sheets and ports, `Absorbing` boundaries, and the
   radiation a {term}`perfectly matched layer` absorbs
-  ({doc}`perfectly-matched-layer`). For a model with
-  none it is 0: leave it out of a differentiated objective, since `|Im omega|`
-  has a kink at zero loss.
+  ({doc}`perfectly-matched-layer`). With none it is 0: leave it out of a
+  differentiated objective, since `|Im omega|` has a kink at zero loss.
 - Each {py:obj}`gfem.interface_participation` adds one unmeshed layer: metal
   to air (`"MA"`), metal to substrate (`"MS"`) or substrate to air (`"SA"`).
   The {doc}`measurements` recipe explains the three kinds.
@@ -55,9 +54,8 @@ t1 = 1 / (jnp.real(modes.omega) * inverse_q)  # s, per mode
 - Build objectives from sums of `1 / Q` terms, never from `q` or `q_port`
   themselves: both are infinite for a lossless mode or a port the mode does
   not reach.
-- A driven device's loss split by region and metal surface, in W per 1 W
-  incident, is {py:obj}`gfem.dissipated_power` ({doc}`measurements`); the
-  $1/Q$ budget of a mode stays the eigenmode terms above.
+- A driven device's loss split by region, in W per 1 W incident, is
+  {py:obj}`gfem.dissipated_power` ({doc}`measurements`).
 
 ## T1 limits
 
@@ -69,10 +67,9 @@ A channel with contribution `1 / Q_i` limits the energy relaxation time to
 - The Purcell limit through a readout line is `q_port` of the qubit's linear
   mode on the line's resistive port, or all of `1 / q` when that port is the
   only loss in the model.
-- It is the T1 limit of the linear mode that stands for the qubit, from the
-  channels you list. Quasiparticles, flux noise and the saturation of
-  two-level systems are not in it: add them from your own estimates as further
-  `1 / Q_i` terms.
+- It is the T1 limit of the linear mode, from the channels you list.
+  Quasiparticles, flux noise and two-level-system saturation are not in it: add
+  them as further `1 / Q_i` terms.
 
 ## Gradients
 
@@ -85,20 +82,18 @@ everything differentiates except the unmeshed layers:
 - `1 / q`, `1 / q_port`, `bulk_participation` and `principal_participation`
   differentiate with respect to the node coordinates too.
 - `interface_participation` raises `gfem.NonDifferentiableError` with respect
-  to the node coordinates. To follow a layer's loss against a gap's geometry,
-  take finite differences over re-solves on meshes moved by
-  {py:obj}`gfem.shape.boundary_morph`, which keep the topology and the edge
-  cell size.
+  to the node coordinates: take finite differences over re-solves on meshes
+  moved by {py:obj}`gfem.shape.boundary_morph`, which keep the topology.
 - The layer's own thickness, permittivity and loss tangent differentiate.
 - A gradient through an infinite `q_port` raises
   `gfem.NonDifferentiableError`; differentiate `1 / q_port` instead.
 
 ## Film edges
 
-On a zero-thickness film the field at the film edge is singular, and the
-participation of a layer that reaches the edge grows without bound as the
-mesh is refined there. On a 10 µm strip it grew by about 6 to 7 % of its value
-each time the edge cells were halved. It is not a mesh-converged number:
+On a zero-thickness film the field at the edge is singular, and the
+participation of a layer that reaches it grows as the mesh is refined there: on
+a 10 µm strip by about 6 to 7 % each time the edge cells were halved. It is not
+a mesh-converged number:
 
 - quote a film-edge interface participation together with its edge cell
   size;
@@ -106,9 +101,9 @@ each time the edge cells were halved. It is not a mesh-converged number:
 - for an absolute value, take that size near the real film thickness, and
   expect a factor, not a percent.
 
-Gradients with respect to materials and fill are exact derivatives of the
-value on that mesh and inherit its mesh dependence. A layer away from film
-edges, such as a cavity wall, converges normally and needs no such care.
+Gradients are exact derivatives of the value on that mesh and inherit its
+dependence. A layer away from film edges, such as a cavity wall, converges
+normally.
 
 ## Check your results
 
