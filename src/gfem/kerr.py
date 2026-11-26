@@ -578,7 +578,9 @@ def _refuse_bent_anisotropy(waves: Any, owner: str) -> None:
     invariant about the bend's axis and the metric does not carry over.
     """
     kerr = waves.materials
-    if waves.bend is not None and (kerr.rho is not None or kerr.index is not None):
+    if getattr(waves, "bend", None) is not None and (
+        kerr.rho is not None or kerr.index is not None
+    ):
         raise NotImplementedError(
             f"{owner}: a bent port mode in a material with nonlinear_anisotropy "
             "or a birefringent index is not supported: the crystal's axes do "
