@@ -3,35 +3,21 @@
 Find how much a voltage on an electrode shifts the phase of light in a
 crystal waveguide: the change of the effective index per volt, the
 voltage-length product $V_\pi L$ of one arm and of a push-pull pair, and the
-electrodes' capacitance per length. An electrostatic solve gives the static
-field; {py:obj}`gfem.electro_optic_shift` turns it into the
-{term}`electro-optic shift` of a guided mode on a cross-section, through
-each crystal's electro-optic tensor.
+electrodes' capacitance per length, from an electrostatic solve and
+{py:obj}`gfem.electro_optic_shift` (the {term}`electro-optic shift` of a mode).
 
-The device is the section of the {doc}`modulator tutorial
-<../tutorials/modulator>`: two lithium niobate ridges on an x-cut film, one in
-each gap of a ground-signal-ground electrode pattern, at $\lambda = 1.55$ µm.
-The tutorial's {download}`tfln_section.py <../tutorials/tfln_section.py>`
-meshes it with netgen; here at twice the tutorial's edge lengths, which is
-quicker and moves the shift by under 1 %. The shift is first order in the
-static field: one mode solve gives the weights of every element, and the
-shift is their sum weighted by the change of permittivity the field causes,
-with the mode held constant. The section must be lossless.
+The device is the {doc}`modulator tutorial <../tutorials/modulator>`'s
+section, built by {download}`tfln_section.py <../tutorials/tfln_section.py>`
+at twice its edge lengths: two lithium niobate ridges in the gaps of
+ground-signal-ground electrodes, at 1.55 µm.
 
 ## A crystal with an electro-optic tensor
 
-A material's `electro_optic_tensor` is the contracted {term}`electro-optic
-tensor` $r_{Ik}$, a 6 × 3 array in m/V: rows $xx, yy, zz, yz, xz, xy$,
-columns $x, y, z$, in the frame of the material's `axes`. The rows of `axes`
-are the crystal's $x$, $y$ and $z$ in the model's coordinates. The static
-field $E_\mathrm{s}$ changes the optical permittivity by
-$\Delta\varepsilon_r = -\varepsilon_r (r \cdot E_\mathrm{s}) \varepsilon_r$
-({doc}`../conventions`, "Electro-optic shift").
-
-The electrostatic model and the optical one each have their own crystal
-material: the {term}`static permittivity` in one, the optical permittivity
-and the tensor in the other. Give both the same `axes` from one variable: the
-shift cannot check that they agree.
+A material's `electro_optic_tensor` is the 6 × 3 {term}`electro-optic tensor`
+in m/V, in the frame of its right-handed `axes` ({doc}`../conventions`,
+"Electro-optic shift"). The electrostatic model holds the
+{term}`static permittivity`, the optical one the permittivity and the tensor,
+with the same `axes` from one variable (the shift cannot check that):
 
 ```python
 import urllib.request
@@ -65,24 +51,19 @@ ln_optical = gfem.Material(
 oxide_static, oxide = gfem.Material(eps_r=3.9), gfem.Material(eps_r=1.444**2)
 ```
 
-- The tensor is a property of the material, so a region of crystal carries it
-  in every model it appears in; an element without one adds nothing to the
-  shift.
-- `axes` must be right-handed: the tensor's sign follows the crystal's
-  frame, and a left-handed set flips it without an error.
-- **Cited constants.** {py:obj}`gfem.materials.lithium_niobate` and
-  {py:obj}`gfem.materials.lithium_niobate_static` build the two crystal
-  materials from cited sources, with the clamped tensor and static
-  permittivity, as the modulator tutorial does. The coefficients typed here
-  are the unclamped set.
+- An element without a tensor adds nothing to the shift.
+- {py:obj}`gfem.materials.lithium_niobate` and
+  {py:obj}`gfem.materials.lithium_niobate_static` build the two materials from
+  cited sources with the clamped tensor, as the tutorial does; the coefficients
+  typed here are the unclamped set.
 
 ## The shift per volt
 
-The electrostatic model holds the whole section, with the electrodes left
-out of the solve (`excluded={"em": [...]}`): their surfaces carry the
-potentials. One {term}`optical window` per ridge holds the ridge and its
-surroundings out to the electrodes' inner edges, on a mesh of its own in the
-same coordinates. A wave port on its end face `"front"` carries the mode.
+The electrostatic model holds the whole section, with the electrodes out of the
+solve (`excluded={"em": [...]}`): their surfaces carry the potentials. One
+{term}`optical window` per ridge, on a mesh of its own, holds the ridge out to
+the electrodes' inner edges; a wave port on its end face `"front"` carries the
+mode.
 
 ```python
 section = tfln_section(gap=3.5 * um, width=0.9 * um, coarsen=2.0)
@@ -137,25 +118,21 @@ arm b / arm a: -1.00262
 V_pi L of arm a: 3.211 V cm
 ```
 
-- `delta_n_eff_per_volt` is $\partial n_\mathrm{eff}/\partial V$ for 1 V on
-  the terminal whose potential was given, every other terminal and the ground
-  at 0 V. The shift is linear in the drive: at $V$ volts the index moves by
-  $V$ times it, and one electrostatic solve serves every voltage.
-- `phase_per_length_per_volt` is $k_0\,\partial n_\mathrm{eff}/\partial V$
-  in rad/(V m), a phase delay; `n_eff` is the index without a field.
-- `v_pi_l` is the {term}`voltage-length product` of the arm,
-  $V_\pi L = \lambda / (2\,|\partial n_\mathrm{eff}/\partial V|)$ in V m:
-  `100 * v_pi_l` is in V cm, and an arm of length $L$ needs
-  $V_\pi = V_\pi L / L$.
-- `mode=2` picks the TE mode, the one the crystal's $r_{33}$ acts on; see
-  "Choose the window and the mode" below.
+- `delta_n_eff_per_volt` is $\partial n_\mathrm{eff}/\partial V$ for 1 V on the
+  terminal whose potential was given: the shift is linear in the drive, and one
+  electrostatic solve serves every voltage.
+- `phase_per_length_per_volt` is $k_0\,\partial n_\mathrm{eff}/\partial V$ in
+  rad/(V m).
+- `v_pi_l` is the {term}`voltage-length product`
+  $V_\pi L = \lambda / (2\,|\partial n_\mathrm{eff}/\partial V|)$ in V m (`100 *
+  v_pi_l` in V cm); an arm of length $L$ needs $V_\pi = V_\pi L / L$.
+- `mode=2` picks the TE mode, the one $r_{33}$ acts on (see the last section).
 
 ## Push-pull and several terminals
 
 The signal sits between the two arms, so its field crosses them in opposite
-directions and the two shifts have opposite signs. Driven {term}`push-pull`
-in a Mach-Zehnder interferometer, the arms' phase difference is the
-difference of the two shifts:
+directions and the two shifts have opposite signs. Driven {term}`push-pull`,
+the arms' phase difference is the difference of the two shifts:
 
 ```python
 wavelength = 1.55e-6  # m
@@ -170,14 +147,14 @@ push-pull V_pi L: 1.604 V cm
 V_pi over 2 mm: 8.02 V
 ```
 
-With several signal terminals, solve once with all of them as terminals: each
-`es.potential[name]` gives a per-volt shift, and the shifts add, each times
-its own drive.
+With several signal terminals, solve once with all of them: each
+`es.potential[name]` gives a per-volt shift, and the shifts add, each times its
+own drive.
 
 ## The electrodes' capacitance per length
 
-The same electrostatic solve gives the capacitance the drive sees. On a
-cross-section it is per metre of electrode:
+The same electrostatic solve gives the capacitance the drive sees, per metre of
+electrode on a cross-section:
 
 ```python
 print(es)
@@ -194,18 +171,12 @@ capacitance per length in pF/m:
 
 ## Choose the window and the mode
 
-- **A window out to the electrodes.** The shift weighs the mode's lateral
-  tail, where the static field is strongest, so take the window out to the
-  electrodes' inner edges. Solving the mode on the whole section instead,
-  with the electrodes excluded, puts the electrodes' surfaces in the optical
-  solve as magnetic walls: shells around metal that guide modes of their own
-  in the film, which crowd the spectrum above the ridge's. The window and the
-  whole section give shifts within a few percent (1.6 % measured on this
-  kind of ridge), the difference of their boundaries.
-- **The mode.** In this window the first mode is TM, polarized up the
-  ridge, and the TE mode is the second. Check the polarization of the mode
-  you pick from its field: the share of $|E_x|^2$ in
-  $|E_x|^2 + |E_y|^2$ over the section is near 1 for TE.
+- **A window out to the electrodes.** The shift weighs the mode's lateral tail,
+  where the static field is strongest. Solving on the whole section puts the
+  electrodes in the optical solve as magnetic walls whose shells guide spurious
+  modes; the two shifts agree within a few percent (1.6 % measured).
+- **The mode.** In this window the first mode is TM and the TE mode is the
+  second: check the share of $|E_x|^2$ in $|E_x|^2 + |E_y|^2$, near 1 for TE.
 
 ```python
 optical = window(section.window_a)
@@ -226,47 +197,34 @@ mode 2: n_eff 1.9076, TE fraction 0.994
 ```
 
 - **Closed-form checks want electric side walls.** A window's sides are
-  magnetic walls by default. Against a slab's closed form, name the window's
-  side faces and list them in the wave port's `pec_edges`: magnetic walls
-  raise a wide slab's $n_\mathrm{eff}$ by about $(\lambda / 2W)^2 / (2n)$ for
-  a width $W$.
+  magnetic walls by default; against a slab's closed form, name them and list
+  them in the wave port's `pec_edges`, since magnetic walls raise a wide slab's
+  $n_\mathrm{eff}$ by about $(\lambda / 2W)^2 / (2n)$.
 
 ## Check your results
 
-- **Mirror symmetry.** In a symmetric ground-signal-ground section the two
-  arms' shifts are equal and opposite, to the meshes' asymmetry: $3 \times
-  10^{-3}$ above, and $2.5 \times 10^{-5}$ on the tutorial's finer section.
-- **The bulk estimate.** A uniform field $V/g$ across a gap $g$ shifts a
-  TE mode's index by about $\tfrac12 n_e^3 r_{33} V / g$. The ratio of the
-  shift to it, the {term}`electro-optic overlap factor` $\Gamma$, is between
-  about 0.3 and 0.7 for a ridge in a few-µm gap: the field in the crystal is
-  weaker than $V/g$, and only part of the mode is in the crystal.
-- **Convergence.** Halve `coarsen` (or refine the meshes of your own section)
-  and raise `gfem.SolverOptions(order=...)` of the electrostatic solve: the
-  shift reads the static field's gradient, which an order-1 solve biases by
-  about 1 %.
+- **Mirror symmetry.** In a symmetric section the two arms' shifts are equal
+  and opposite to the meshes' asymmetry: $3 \times 10^{-3}$ above, $2.5 \times
+  10^{-5}$ on the tutorial's finer section.
+- **The bulk estimate.** A uniform field $V/g$ across a gap $g$ shifts a TE
+  mode's index by about $\tfrac12 n_e^3 r_{33} V / g$; the ratio of the shift to
+  it, the {term}`electro-optic overlap factor` $\Gamma$, is between 0.3 and 0.7
+  for a ridge in a few-µm gap.
+- **Convergence.** Halve `coarsen` and raise the electrostatic solve's `order`:
+  an order-1 solve biases the static field's gradient by about 1 %.
 
 ## Limits
 
-- A cross-section at DC: travelling-wave effects (velocity matching, RF loss,
-  bandwidth) are outside it, and the tensor and the static permittivity are
-  the values at the drive's frequency you give.
-- First order in the field, with the mode held constant: about $10^{-6}$ of
+- **DC cross-section.** No travelling-wave effects (velocity matching, RF loss,
+  bandwidth).
+- **First order.** In the field with the mode held constant, about $10^{-6}$ of
   the shift at $V_\pi$ for lithium niobate.
-- A lossless optical section: a complex `eps_r`, a `tan_delta` or a
-  `conductivity` in the optical model raises, and so do a 2D model and a
-  potential split across ranks.
-- The optical model does not see the electrodes: no metal absorption. Keep
-  the electrodes far enough from the mode, as the {doc}`modulator tutorial
-  <../tutorials/modulator>` does with an {term}`electrode clearance`.
+- **Lossless optics.** A complex `eps_r`, a `tan_delta` or a `conductivity`
+  raises, and so do a 2D model and a potential split across ranks.
+- **No electrodes in the optics.** No metal absorption: keep them clear of the
+  mode, as the tutorial does with an {term}`electrode clearance`.
 
 ## Next
 
-- {doc}`electro-optic-gradient`: the gradient of the shift with respect to
-  the tensor, the static permittivity, the drive and the electrode gap.
-- {doc}`../tutorials/modulator`: the push-pull modulator, its field, its
-  $V_\pi L$ against a published device, and a co-design of the gap and the
-  ridge width.
-- {doc}`thermo-optic-phase`: the same first-order shift, driven by a
-  temperature rise.
-- {doc}`../modes-and-ports`: how wave ports pick and number their modes.
+{doc}`electro-optic-gradient`, {doc}`../tutorials/modulator`,
+{doc}`thermo-optic-phase`, {doc}`../modes-and-ports`.

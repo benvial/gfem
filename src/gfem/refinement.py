@@ -133,6 +133,22 @@ class QuantityEstimator:
     its value on the meshed geometry: :math:`C_h \ge C`; an off-diagonal entry
     may lie on either side.
 
+    Where it is pessimistic (an objective at its target, a reflection near a
+    reflection zero, several modes at their target) refinement stops late,
+    never early. A wave port's own propagation constant is solved on the
+    port's 2D mesh and its error is not estimated; it enters S through
+    de-embedding offsets, so keep offsets shorter than the leads you model.
+    Below a guide's cutoff a mesh coarser than the field's decay length
+    underestimates both S and the field. An S entry whose read port is a wave
+    port with a hybrid mode in a lossy cross-section, and an objective of a
+    field measurement, an electrostatic energy, a potential mean or a
+    participation, also need an adjoint dual: outside `refine_mesh`, and on
+    the first mesh of an objective, `error_estimate` factorizes the system
+    once more with the direct solver, which on a large model may not fit in
+    memory (``max_cycles=0`` estimates through `refine_mesh` instead). A
+    participation's dual needs an isolated mode, the direct solver on the CPU
+    and ``eigen_tolerance`` at most 1e-10.
+
     Give exactly one keyword, named after the result attribute that holds
     the quantity and indexed the same way.
 
