@@ -1202,7 +1202,8 @@ def test_an_evanescent_lone_mode_raises_its_cutoff(narrow_quadrant_mesh, tan_del
         gfem.PortModeError,
         match=r"^WavePort 'p1_m2': mode 2 does not propagate in the band 55-65 GHz "
         r".* the band is below the mode's cutoff\. Start the band above the cutoff, "
-        r"pick a lower mode, or use a LumpedPort\.$",
+        r"pick a lower mode, keep the mode below cutoff with "
+        r"`allow_evanescent=True`, .* or use a LumpedPort\.$",
     ):
         gfem.solve(model, gfem.Driven(NARROW_F), options=QUADRANT_OPTIONS)
 
