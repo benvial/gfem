@@ -29,7 +29,7 @@ from gfem._dim2 import refuse_entry
 from gfem._pytree import readonly
 from gfem._sparse import Coo, coo, spd_solve
 from gfem.errors import MeshQualityError, MeshQualityWarning, RegionNotFoundError
-from gfem.mesh import _TET_EDGES, LENGTH_UNITS, Mesh, _check_unit
+from gfem.mesh import _TET_EDGES, _TRI_EDGES, LENGTH_UNITS, Mesh, _check_unit
 from gfem.model import Model, check_surface
 
 __all__ = [
@@ -140,7 +140,7 @@ def _curved_scaled_jacobian(
         norm = xp.prod(xp.stack([xp.linalg.norm(e, axis=-1) for e in edges]), axis=0)
         e1, e2, e3 = edges
         det = xp.sum(e1 * xp.cross(e2, e3), axis=-1)
-        corner = xp.min(sign[:, None] * np.sqrt(2) * det / norm, axis=1)
+        corner = xp.min(_ratio(xp, sign[:, None] * np.sqrt(2) * det, norm), axis=1)
         q = corner if q is None else xp.minimum(q, corner)
     return q
 
@@ -157,6 +157,15 @@ def _bernstein_bound(nodes, elements: np.ndarray, midnodes: np.ndarray, sign):
     e1, e2, e3 = (d[:, :, k] - d[:, :, 0] for k in (1, 2, 3))
     det = sign[:, None] * np.sum(e1 * np.cross(e2, e3), axis=-1)
     return (det @ _BERNSTEIN_INVERSE.T).min(axis=1)
+
+
+def _ratio(xp: ModuleType, numerator, norm):
+    """``numerator / norm``, 0 where ``norm`` is 0 (a collapsed edge is a flat element).
+
+    Elsewhere it is the quotient itself, so a regular element's value is the
+    plain division's. The inner ``where`` keeps the unused branch finite.
+    """
+    return xp.where(norm > 0, numerator / xp.where(norm > 0, norm, 1.0), 0.0)
 
 
 def _det(xp: ModuleType, edges) -> Any:
@@ -193,7 +202,7 @@ def _scaled_jacobian(
     for a, *others in corners:
         edges = [nodes[elements[:, k]] - nodes[elements[:, a]] for k in others]
         norm = xp.prod(xp.stack([xp.linalg.norm(e, axis=1) for e in edges]), axis=0)
-        corner = sign * factor * _det(xp, edges) / norm
+        corner = _ratio(xp, sign * factor * _det(xp, edges), norm)
         q = corner if q is None else xp.minimum(q, corner)
     return q
 
@@ -225,8 +234,12 @@ def quality(mesh: Mesh) -> jax.Array:
     :math:`e_1, e_2, e_3` the corner's three edges; that of a triangle (a 2D
     mesh) the minimum over its three corners of
     :math:`(2 / \sqrt{3}) \det(e_1, e_2) / (|e_1| |e_2|)`. A regular element
-    scores 1, a flat one 0, and one turned inside out relative to the
-    imported mesh scores below 0. Imported
+    scores 1, a flat one 0 (also one with a collapsed edge), and one turned
+    inside out relative to the imported mesh scores below 0. On a curved mesh
+    a tetrahedron scores the smallest such value over the 20 points of the
+    cubic lattice of its quadratic map and over the four corners' frames
+    (each frame's edges are the map's derivatives along them), which on a
+    straight tetrahedron is the value above. Imported
     meshes already contain poor elements (gsim meshes reach 0.015-0.05), so
     compare against ``quality`` of the imported mesh rather than an absolute
     threshold: gfem warns when an element falls below a quarter of its
@@ -281,7 +294,7 @@ def _check_quality(
     midnodes = mesh._topology.volume_midnodes  # noqa: SLF001
     q = _scaled_jacobian(np, nodes, elements, _orientation(mesh), midnodes)
     q0 = _imported_quality(mesh)
-    inverted = active & (q <= 0)
+    inverted = active & ~(q > 0)  # not (q <= 0): a NaN is bad too
     if inverted.any():
         worst = int(np.flatnonzero(inverted)[np.argmin(q[inverted])])
         what = (
@@ -456,6 +469,8 @@ class BoundaryMorph:
     _free: Coo
     _prescribed: Coo
     _nodes: np.ndarray
+    _chord: Coo | None
+    _bubble: Coo | None
 
     def __init__(
         self,
@@ -469,8 +484,14 @@ class BoundaryMorph:
         free: sp.csr_array,
         stiffness: sp.csr_array,
         ties: np.ndarray | None = None,
+        chord: sp.csr_array | None = None,
+        bubble: sp.csr_array | None = None,
     ) -> None:
-        """Internal: use `boundary_morph`."""
+        """Internal: use `boundary_morph`.
+
+        ``chord`` and ``bubble`` are the mid-edge node maps of a curved mesh
+        (`_midnode_maps`), ``None`` on a straight one.
+        """
         # Imported here so that `import gfem` does not load NGSolve.
         from gfem._linalg import factorize
 
@@ -488,6 +509,8 @@ class BoundaryMorph:
             "_free": coo(free.tocoo()),
             "_prescribed": coo(prescribed.tocoo()),
             "_nodes": readonly(nodes),
+            "_chord": None if chord is None else coo(chord.tocoo()),
+            "_bubble": None if bubble is None else coo(bubble.tocoo()),
             "n_params": len(nodes),
             "points": readonly(np.asarray(mesh.imported_nodes)[nodes]),
             "normals": readonly(normals),
@@ -534,6 +557,10 @@ class BoundaryMorph:
         rhs = self._coupling.matvec(t)
         z = spd_solve(self._reduced, self._factor, rhs)
         u = self._free.matvec(z) + self._prescribed.matvec(t)
+        if self._chord is not None and self._bubble is not None:
+            # mid-edge nodes: the mean of their corners' motion, plus the
+            # offset that puts the moving wall's own along its normal
+            u = u + self._chord.matvec(u) + self._bubble.matvec(t)
         nodes = jnp.asarray(self._x0) + u.reshape(self._x0.shape)
         mesh = jax.tree_util.tree_unflatten(self._treedef, [nodes])
         if not is_traced(t):
@@ -585,6 +612,15 @@ def boundary_morph(  # noqa: PLR0915
       keeps its plane, the line where two facets meet keeps its line, and a
       corner is held;
     - interior nodes, including those inside excluded volumes, follow.
+
+    On a curved mesh the parameters stay the corner nodes, and the normals
+    come from the quadratic triangles. A mid-edge node on the moving surface
+    whose edge has both corners moving moves by the mean of their ``t`` along
+    its own normal, :math:`\tfrac12 (t_a + t_b)\, n_m`, so a uniform ``t``
+    puts every wall node on the offset wall. Every other mid-edge node
+    follows its chord, :math:`u_m = \tfrac12 (u_a + u_b)`: interior, sliding
+    and held ones, and those of the faces a feature reads as straight (ports,
+    periodic faces, sheet designs), which therefore stay straight.
 
     On a model with `gfem.Periodic` pairs, paired nodes are tied: each tie
     class (a node and its twins across every pair: 2 on a face, 4 on a cell
@@ -699,6 +735,8 @@ def boundary_morph(  # noqa: PLR0915
     held, held_tri, _ = _held(model, ties, sliding_surfaces, fixed)
     tag = {r.name: r.tag for r in mesh.regions if r.dim == mesh.dim - 1}
     tri_tags = mesh.triangle_tags
+    # The extension is solved on the corner mesh: mid-edge nodes of a curved
+    # mesh are no unknowns of it (they are placed after it).
     in_tet = np.zeros(n_nodes, dtype=bool)
     in_tet[mesh.tetrahedra.ravel()] = True
 
@@ -718,7 +756,7 @@ def boundary_morph(  # noqa: PLR0915
     is_param = np.zeros(n_nodes, dtype=bool)
     is_param[params] = True
     movers = candidates[is_param[ties[candidates]]]
-    normals = _node_normals(
+    normals, mid_nodes, mid_normals = _node_normals(
         model,
         moving_tri=moving_tri,
         selected=np.union1d(selected, movers),
@@ -740,6 +778,18 @@ def boundary_morph(  # noqa: PLR0915
         n_nodes, slide_tris, _morph.unit_normals(x0, slide_tris), constrained, ties
     )
     stiffness = _morph.stiffness(x0, mesh.tetrahedra, extension)
+    chord = bubble = None
+    if mesh.curved:
+        chord, bubble = _midnode_maps(
+            model,
+            moving_tri=moving_tri,
+            params=params,
+            ties=ties,
+            normals=normals,
+            mid_nodes=mid_nodes,
+            mid_normals=mid_normals,
+            held=held,
+        )
     return BoundaryMorph(
         mesh=mesh,
         active=np.asarray(model._domain.active),  # noqa: SLF001
@@ -750,7 +800,110 @@ def boundary_morph(  # noqa: PLR0915
         free=free,
         stiffness=stiffness,
         ties=ties if pairings else None,
+        chord=chord,
+        bubble=bubble,
     )
+
+
+def _gated_triangles(model: Model) -> np.ndarray:
+    """Per surface triangle, whether a feature of the model reads it as straight.
+
+    Port faces (sliding ones too), periodic faces and the faces of a sheet
+    design (an `Impedance` or `Conductor` with a ``fill``) are read from their
+    corners alone, so a morph keeps their elements straight.
+    """
+    mesh = model.mesh
+    names = {s for port in model.ports for s in surfaces_of(port)}
+    for pair in model._periodic:  # noqa: SLF001
+        names |= {pair.first, pair.second}
+    for item in model.boundaries:
+        if getattr(item, "fill", None) is not None:
+            names |= set(surfaces_of(item))
+    tags = [mesh.region(name).tag for name in names]
+    return np.isin(mesh.triangle_tags, tags)
+
+
+def _midnode_maps(
+    model: Model,
+    *,
+    moving_tri: np.ndarray,
+    params: np.ndarray,
+    ties: np.ndarray,
+    normals: np.ndarray,
+    mid_nodes: np.ndarray,
+    mid_normals: np.ndarray,
+    held: np.ndarray,
+) -> tuple[sp.csr_array, sp.csr_array]:
+    r"""The maps that place the mid-edge nodes of a curved mesh after the corners.
+
+    With ``u`` the corners' displacement (zero at mid-edge nodes), the mid-edge
+    displacement is ``chord @ u + bubble @ t``: every mid-edge node follows its
+    chord, :math:`u_m = (u_a + u_b) / 2`, and a node of the moving wall whose
+    edge has both corners moving, and lies in no held or gated face, instead
+    moves :math:`(t_a + t_b)\,n_m / 2` along its own normal. ``bubble`` is
+    the difference of the two, per parameter.
+
+    Returns:
+        ``(chord, bubble)``, sparse ``(3 n, 3 n)`` and ``(3 n, n_params)``.
+    """
+    mesh = model.mesh
+    topology = mesh._topology  # noqa: SLF001
+    n_nodes = len(mesh.imported_nodes)
+    corners, mids = topology.volume_elements, topology.volume_midnodes
+    dof = np.arange(3)
+    # one row per mid-edge node: the mean of its edge's two corners
+    every = np.concatenate([mids[:, k] for k in range(len(_TET_EDGES))])
+    ends = [np.concatenate([corners[:, e[end]] for e in _TET_EDGES]) for end in (0, 1)]
+    m, first = np.unique(every, return_index=True)
+    a, b = ends[0][first], ends[1][first]
+    chord = sp.csr_array(
+        (
+            np.full(6 * len(m), 0.5),
+            (
+                np.tile((3 * m[:, None] + dof).ravel(), 2),
+                np.concatenate(
+                    [(3 * a[:, None] + dof).ravel(), (3 * b[:, None] + dof).ravel()]
+                ),
+            ),
+        ),
+        shape=(3 * n_nodes, 3 * n_nodes),
+    )
+
+    # the mid-edge nodes of the moving wall that take their own normal: both
+    # corners moving, in no held or gated face
+    wall, wall_mids = mesh.triangles[moving_tri], topology.surface_midnodes[moving_tri]
+    gated = held.copy()
+    gated[topology.surface_midnodes[_gated_triangles(model)].ravel()] = True
+    is_param = np.zeros(n_nodes, dtype=bool)
+    is_param[params] = True
+    has_normal = np.zeros(n_nodes, dtype=bool)
+    has_normal[mid_nodes] = True
+    normal_of = np.zeros((n_nodes, 3))
+    normal_of[mid_nodes] = mid_normals
+    column = np.full(n_nodes, -1)
+    column[params] = np.arange(len(params))
+    edges = [
+        (wall_mids[:, k], wall[:, i], wall[:, j]) for k, (i, j) in enumerate(_TRI_EDGES)
+    ]
+    node = np.concatenate([e[0] for e in edges])
+    end_a = np.concatenate([e[1] for e in edges])
+    end_b = np.concatenate([e[2] for e in edges])
+    moves = (
+        is_param[ties[end_a]] & is_param[ties[end_b]] & has_normal[node] & ~gated[node]
+    )
+    node, end_a, end_b = node[moves], end_a[moves], end_b[moves]
+    node, first = np.unique(node, return_index=True)  # an edge of two wall faces
+    rows, cols, vals = [], [], []
+    for end in (end_a[first], end_b[first]):
+        col = column[ties[end]]
+        rows.append((3 * node[:, None] + dof).ravel())
+        cols.append(np.repeat(col, 3))
+        vals.append((0.5 * (normal_of[node] - normals[col])).ravel())
+    bubble = sp.csr_array(
+        (np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
+        shape=(3 * n_nodes, len(params)),
+    )
+    return chord, bubble
 
 
 def _held(
@@ -790,13 +943,40 @@ def _held(
         nodes = np.unique(nodes).astype(np.int64)
         cause[nodes[cause[nodes] == ""]] = why  # the first cause stays
 
+    topology = mesh._topology  # noqa: SLF001
+    # a curved mesh holds the mid-edge nodes of its held elements too
+    surface_mids, volume_mids = topology.surface_midnodes, topology.volume_midnodes
+
+    def with_mids(corners: np.ndarray, mids: np.ndarray | None) -> np.ndarray:
+        return (
+            corners.ravel()
+            if mids is None
+            else np.concatenate([corners, mids], axis=1).ravel()
+        )
+
     for s, why in holder.items():
-        label(mesh.triangles[mesh.triangle_tags == tag[s]].ravel(), why)
+        on = mesh.triangle_tags == tag[s]
+        label(
+            with_mids(
+                mesh.triangles[on], None if surface_mids is None else surface_mids[on]
+            ),
+            why,
+        )
     layer = _pml.layer_tetrahedra(mesh, model.pml)
     if layer is not None:
-        label(mesh.tetrahedra[layer], "the perfectly matched layer")
+        label(
+            with_mids(
+                mesh.tetrahedra[layer],
+                None if volume_mids is None else volume_mids[layer],
+            ),
+            "the perfectly matched layer",
+        )
+    truncation = _truncation.truncation(model)
     label(
-        _truncation.truncation(model).layer_nodes(mesh.tetrahedra),
+        with_mids(
+            mesh.tetrahedra[truncation.layer],
+            None if volume_mids is None else volume_mids[truncation.layer],
+        ),
         "the truncation layer",
     )
     # a class is held, with one cause, if any member is
@@ -939,6 +1119,36 @@ def _select(
     return candidates[mask]
 
 
+def _quadratic_normals(x: np.ndarray, tris: np.ndarray, mids: np.ndarray) -> np.ndarray:
+    r"""Twice the area times the unit normal of curved triangles at their six nodes.
+
+    The quadratic map of a triangle with corners :math:`x_i` and mid-edge nodes
+    :math:`x_{ab}` is :math:`x = \sum_i \lambda_i (2 \lambda_i - 1) x_i +
+    \sum_{ab} 4 \lambda_a \lambda_b x_{ab}`. At each node the vector is
+    :math:`\partial_1 x \times \partial_2 x`, the tangents being the
+    derivatives along the edges from corner 0 (`_lattice_gradients`'s
+    construction), which on a straight triangle is :math:`(b - a) \times (c - a)`.
+
+    Args:
+        x: Node coordinates.
+        tris: Corner indices, ``(n, 3)``.
+        mids: Mid-edge node indices, ``(n, 3)``, column ``k`` on the edge
+            opposite corner ``k``.
+
+    Returns:
+        ``(n, 6, 3)``: the three corners, then the three mid-edge nodes.
+    """
+    points = np.concatenate([np.eye(3), 0.5 * (1 - np.eye(3))])  # barycentric
+    g = np.zeros((6, 3, 6))  # [point, coordinate, node]
+    for i in range(3):
+        g[:, i, i] = 4 * points[:, i] - 1
+    for opposite, (a, b) in enumerate(_TRI_EDGES):
+        g[:, a, 3 + opposite] = 4 * points[:, b]
+        g[:, b, 3 + opposite] = 4 * points[:, a]
+    d = np.einsum("pin,enx->epix", g, x[np.concatenate([tris, mids], axis=1)])
+    return np.cross(d[:, :, 1] - d[:, :, 0], d[:, :, 2] - d[:, :, 0])
+
+
 def _node_normals(
     model: Model,
     *,
@@ -954,7 +1164,14 @@ def _node_normals(
     ``params`` are moving nodes, ``groups`` the parameter each moves with
     (one parameter per tie class): a parameter's normal is the normalized
     sum of its nodes' area-weighted normals (on a periodic surface, the two
-    half-stars of twins form the full star).
+    half-stars of twins form the full star). On a curved mesh the normals come
+    from the quadratic triangles, at the corners and at the mid-edge nodes of
+    the faces fully inside the selection.
+
+    Returns:
+        ``(normals, mid_nodes, mid_normals)``: the parameters' unit normals,
+        and on a curved mesh the mid-edge nodes that have one, with theirs
+        (empty on a straight mesh).
     """
     mesh = model.mesh
     x0 = mesh.imported_nodes
@@ -971,16 +1188,29 @@ def _node_normals(
     use = full | (is_param[tris] & ~covered[tris]).any(axis=1)
     sign = np.zeros(len(tris))
     sign[use] = _face_signs(model, moving_tri[use], grows, moving)
-    a, b, c = (x0[tris[:, k]] for k in range(3))
-    weighted = sign[:, None] * np.cross(b - a, c - a)  # 2 x area x unit normal
+    if mesh.curved:
+        # the quadratic triangles' normals at their six nodes
+        mids = mesh._topology.surface_midnodes[moving_tri]  # noqa: SLF001
+        weighted = sign[:, None, None] * _quadratic_normals(x0, tris, mids)
+        ids = np.concatenate([tris, mids], axis=1)
+    else:
+        a, b, c = (x0[tris[:, k]] for k in range(3))
+        weighted = sign[:, None, None] * np.cross(b - a, c - a)[:, None]  # 2 A n
+        ids = tris
     total = np.zeros((2, len(x0), 3))
     area = np.zeros((2, len(x0)))
-    for k in range(3):
+    for k in range(ids.shape[1]):
+        w = weighted[:, k if mesh.curved else 0]
         for slot, faces in enumerate((full, np.ones_like(full))):
-            np.add.at(total[slot], tris[faces, k], weighted[faces])
-            np.add.at(
-                area[slot], tris[faces, k], np.linalg.norm(weighted[faces], axis=1)
-            )
+            np.add.at(total[slot], ids[faces, k], w[faces])
+            np.add.at(area[slot], ids[faces, k], np.linalg.norm(w[faces], axis=1))
+    # mid-edge nodes: the faces fully inside the selection
+    mid_nodes = np.unique(ids[:, 3:]) if mesh.curved else np.empty(0, dtype=np.int64)
+    mid_total, mid_area = total[0, mid_nodes], area[0, mid_nodes]
+    mid_length = np.linalg.norm(mid_total, axis=1)
+    mid_ok = mid_length > 1e-8 * np.maximum(mid_area, np.finfo(float).tiny)
+    mid_nodes = mid_nodes[mid_ok]
+    mid_normals = mid_total[mid_ok] / mid_length[mid_ok, None]
     slot = np.where(covered[params], 0, 1)
     n_params = int(groups.max()) + 1
     summed, summed_area = np.zeros((n_params, 3)), np.zeros(n_params)
@@ -997,7 +1227,7 @@ def _node_normals(
             "Narrow where= to one side of the feature."
         )
         raise ValueError(msg)
-    return total / length[:, None]
+    return total / length[:, None], mid_nodes, mid_normals
 
 
 def _face_signs(

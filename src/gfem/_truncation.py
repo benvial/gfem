@@ -49,10 +49,6 @@ class Truncation:
     layer: np.ndarray
     side: np.ndarray
 
-    def layer_nodes(self, tetrahedra: np.ndarray) -> np.ndarray:
-        """The node indices of the truncation layer's tetrahedra."""
-        return np.unique(np.asarray(tetrahedra)[self.layer])
-
 
 def truncation(model: Model) -> Truncation:
     """The truncation of ``model`` (see `Truncation`)."""

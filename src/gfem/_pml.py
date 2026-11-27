@@ -633,7 +633,8 @@ def check_layer_nodes(model: Any, problem: Any) -> None:
     thicknesses), so a vertex of an active tetrahedron outside the layer
     moved beyond a covered face would be stretched with the device
     material. Layer vertices may move inward: below its inner face the
-    layer is its background. Only wave problems (driven, eigenmode and
+    layer is its background. On a curved mesh the mid-edge nodes count as
+    vertices. Only wave problems (driven, eigenmode and
     port mode) stretch: the others see the background and pass.
 
     Args:
@@ -655,7 +656,11 @@ def check_layer_nodes(model: Any, problem: Any) -> None:
     is_layer[layers.elements] = True
     inner = np.flatnonzero(active & ~is_layer)
     tol = REL_TOL * float(_shortest_edges(mesh)[inner].min())
-    p = nodes[mesh.tetrahedra[inner]]  # (n, 4, 3)
+    corners = mesh.tetrahedra[inner]
+    midnodes = mesh._topology.volume_midnodes  # noqa: SLF001
+    if midnodes is not None:  # a curved mesh: the mid-edge nodes count too
+        corners = np.concatenate([corners, midnodes[inner]], axis=1)
+    p = nodes[corners]  # (n, 4 or 10, 3)
     names = {r.tag: r.name for r in mesh.regions if r.dim == 3}
     for side in layers.sides:
         past = (side.sign * (p[:, :, side.axis] - side.face) > tol).any(axis=1)
