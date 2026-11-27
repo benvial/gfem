@@ -154,7 +154,7 @@ def locate(mesh: Mesh, layout: Layout, points: np.ndarray, comm: Any = None) -> 
     if mesh.curved:
         # `_settle` and the barycentric coordinates invert the affine map: a
         # point in a curved element would read the field off by up to the sagitta
-        bent = _curved.curved_tetrahedra(mesh)[tets]
+        bent = _curved.curved_tetrahedra(mesh, _curved.moved_nodes(mesh))[tets]
         if bent.any():
             at = points[int(np.flatnonzero(bent)[0])]
             _curved.refuse_tets(

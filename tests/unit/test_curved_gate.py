@@ -196,6 +196,34 @@ def test_a_straight_move_of_the_corners_and_their_mid_nodes_keeps_the_gate(cell)
     _curved.check_moved(model)
 
 
+def _bend_heater(mesh, shift=1e-3):
+    """``mesh`` with one mid-edge node of a ``heater`` tetrahedron off its chord."""
+    nodes = np.array(mesh.nodes)
+    tet = mesh.elements("heater")[0]
+    nodes[mesh._topology.volume_midnodes[tet, 0]] += [shift, 0.0, 0.0]
+    return mesh.with_nodes(nodes), tet
+
+
+def test_a_morph_that_curves_a_heated_tetrahedron_refuses_the_power_input(cell):
+    # the heater is straight as imported, so its power input passed the gate then
+    moved, _ = _bend_heater(cell)
+    _steady(cell, "heater", power=1e-3)
+    with pytest.raises(gfem.CurvedMeshUnsupportedError) as caught:
+        _steady(moved, "heater", power=1e-3)
+    assert caught.value.feature == "heat_input"
+
+
+def test_a_morph_that_curves_a_read_tetrahedron_refuses_the_point_read(cell):
+    moved, tet = _bend_heater(cell)
+    model = _model(moved)
+    problem = gfem.Electrostatic(terminals={"w": "wall"}, ground="xhi")
+    potential = gfem.solve(model, problem).potential["w"]
+    point = _centroids(cell, [tet])
+    with pytest.raises(gfem.CurvedMeshUnsupportedError) as caught:
+        potential.at(point)
+    assert caught.value.feature == "point_read"
+
+
 # --- inputs of a solve -----------------------------------------------------------
 
 THERMAL = gfem.Material(thermal_conductivity=1.0)

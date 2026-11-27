@@ -399,13 +399,32 @@ def _all_curved(mesh: Mesh) -> bool:
     return bool(curved_tetrahedra(mesh).all())
 
 
-def _message(mesh: Mesh, key: str, read: ReadSet, count: tuple[int, int, Any]) -> str:
+def moved_nodes(mesh: Any) -> np.ndarray | None:
+    """The concrete nodes of ``mesh`` when a morph moved them, else ``None``.
+
+    The predicate cached per topology reads the imported nodes; a gate that
+    runs at a solve or a read tests these instead, since a morph may have bent
+    an element the import left straight. Traced nodes are the imported ones.
+    """
+    if is_traced(mesh.nodes):
+        return None
+    nodes = np.asarray(mesh.nodes)
+    return None if np.array_equal(nodes, mesh.imported_nodes) else nodes
+
+
+def _message(
+    mesh: Mesh,
+    key: str,
+    read: ReadSet,
+    count: tuple[int, int, Any],
+    nodes: np.ndarray | None = None,
+) -> str:
     feature = FEATURES[key]
     curved, total, first = count
     head = f"{read.what} is not available on a curved (second-order) mesh"
     n = f"{curved} of its {total} elements are curved" if total > 1 else "it is curved"
     msg = (
-        f"{head}: {n}, the first near {_where(mesh, first, None)}. "
+        f"{head}: {n}, the first near {_where(mesh, first, nodes)}. "
         f"{feature.reason} {feature.remedy}, {_REMEDY_ORDER_1}."
     )
     if _all_curved(mesh):
@@ -417,10 +436,11 @@ def _message(mesh: Mesh, key: str, read: ReadSet, count: tuple[int, int, Any]) -
     return msg
 
 
-def refuse(mesh: Any, read: ReadSet) -> None:
+def refuse(mesh: Any, read: ReadSet, nodes: np.ndarray | None = None) -> None:
     """Raise `gfem.CurvedMeshUnsupportedError` when ``read`` holds a curved element.
 
-    A no-op on a straight mesh (and on anything that is not a mesh).
+    A no-op on a straight mesh (and on anything that is not a mesh). ``nodes``
+    replace the imported ones in the test (`moved_nodes`).
 
     Raises:
         CurvedMeshUnsupportedError: An element of the set is curved; its
@@ -428,10 +448,10 @@ def refuse(mesh: Any, read: ReadSet) -> None:
     """
     if not getattr(mesh, "curved", False):
         return
-    count = _count(mesh, read, None)
+    count = _count(mesh, read, nodes)
     if count[0]:
         raise CurvedMeshUnsupportedError(
-            read.key, _message(mesh, read.key, read, count)
+            read.key, _message(mesh, read.key, read, count, nodes)
         )
 
 
@@ -442,7 +462,11 @@ def refuse_tets(mesh: Any, key: str, tets: Any, what: str | None = None) -> None
     tets = np.asarray(tets)
     if tets.dtype == bool:
         tets = np.flatnonzero(tets)
-    refuse(mesh, ReadSet(key, what or f"gfem.{key}", tets=tets.astype(int)))
+    refuse(
+        mesh,
+        ReadSet(key, what or f"gfem.{key}", tets=tets.astype(int)),
+        moved_nodes(mesh),
+    )
 
 
 def refuse_triangles(
@@ -454,7 +478,11 @@ def refuse_triangles(
     triangles = np.asarray(triangles)
     if triangles.dtype == bool:
         triangles = np.flatnonzero(triangles)
-    refuse(mesh, ReadSet(key, what or f"gfem.{key}", triangles=triangles.astype(int)))
+    refuse(
+        mesh,
+        ReadSet(key, what or f"gfem.{key}", triangles=triangles.astype(int)),
+        moved_nodes(mesh),
+    )
 
 
 def refuse_surface(
@@ -466,7 +494,11 @@ def refuse_surface(
     triangles = np.asarray(triangles, dtype=int)
     owners = np.asarray(mesh.triangle_neighbours)[triangles].ravel()
     tets = np.unique(owners[owners >= 0])
-    refuse(mesh, ReadSet(key, what or f"gfem.{key}", tets=tets, triangles=triangles))
+    refuse(
+        mesh,
+        ReadSet(key, what or f"gfem.{key}", tets=tets, triangles=triangles),
+        moved_nodes(mesh),
+    )
 
 
 def refuse_entry(mesh: Any, key: str, what: str | None = None) -> None:
