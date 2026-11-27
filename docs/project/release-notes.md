@@ -9,6 +9,7 @@ Get started:
 
 Integrated photonics:
 
+- **Mode cascades.** A device's discontinuities are solved by FEM and joined through uniform sections that carry their port modes, evanescent ones included, so a length sweep needs no new mesh or solve and differentiates in each length ({doc}`../recipes/mode-cascade`).
 - **Bent port modes.** `gfem.PortMode(..., bend=gfem.Bend(radius, outward=..., at=...))` gives a guide's loss per 90° and `gfem.junction_coupling` its coupling to a straight guide ({doc}`../recipes/waveguide-bends`).
 - **Behaviour change: a `PortMode` solve costs more.** It takes about 15 to 30 %
   longer and its result holds three more arrays, so gfem 0.2.0 cannot load a saved
