@@ -13,7 +13,7 @@ Writes, in gmsh format 4.1:
   ``outer``, ``sym``.
 - ``cell_order1.msh`` / ``cell_order2.msh``: a cube of side 3 (a shell of 26
   cells around the core) with a sphere of radius 0.3 at (1.2, 1.5, 1.5).
-  Volumes ``ball``, ``air`` (the core [0.5, 2.5]^3 outside the ball and the
+  Volumes ``ball``, ``air`` (the core :math:`[0.5, 2.5]^3` outside the ball and the
   heater), ``heater`` (x in 1.9..2.5 of the core) and ``pml`` (the shell).
   Surfaces ``xlo`` / ``xhi`` (x = 0 and 3), ``ylo`` / ``yhi`` (a periodic
   pair), ``zwall`` (z = 0 and 3), ``sheet`` (the interior face x = 1.9

@@ -126,7 +126,7 @@ def _curved_edges(xp: ModuleType, nodes, elements: np.ndarray, midnodes: np.ndar
     return xp.einsum("pin,enx->epix", xp.asarray(_GRADIENTS), x10)
 
 
-#: Tetrahedra per block of the curved work: ``(n, 20, 4, 3)`` doubles, 40 MB at this size.
+#: Tetrahedra per block of the curved work: ``(n, 20, 4, 3)`` doubles, 40 MB.
 _CHUNK = 20_000
 
 
@@ -385,11 +385,11 @@ def _warn_between_samples(
 
 
 def _check_curved_read(mesh: Mesh, path: Any) -> None:
-    """The read-time check of a curved mesh: raise on a fold, warn on a doubt.
+    r"""The read-time check of a curved mesh: raise on a fold, warn on a doubt.
 
     Raises:
-        MeshQualityError: A curved tetrahedron has a scaled Jacobian <= 0 at one
-            of the 20 lattice points.
+        MeshQualityError: A curved tetrahedron has a scaled Jacobian
+            :math:`\le 0` at one of the 20 lattice points.
     """
     topology = mesh._topology  # noqa: SLF001
     q = np.asarray(_imported_quality(mesh))
@@ -1242,7 +1242,12 @@ def _node_normals(
     mid_nodes = np.unique(ids[:, 3:]) if mesh.curved else np.empty(0, dtype=np.int64)
     mid_total, mid_area = total[0, mid_nodes], area[0, mid_nodes]
     mid_length = np.linalg.norm(mid_total, axis=1)
-    mid_ok = mid_length > 1e-8 * np.maximum(mid_area, np.finfo(float).tiny)
+    # Faces that face opposite ways cancel to round-off: each of the (at most
+    # ~16) summed vectors carries a few eps of its length, so 64 eps of their
+    # lengths' sum separates a cancelled star from a real one.
+    mid_ok = mid_length > 64 * np.finfo(float).eps * np.maximum(
+        mid_area, np.finfo(float).tiny
+    )
     mid_nodes = mid_nodes[mid_ok]
     mid_normals = mid_total[mid_ok] / mid_length[mid_ok, None]
     slot = np.where(covered[params], 0, 1)
@@ -1440,10 +1445,7 @@ def _make_cad_morph(
         msg = f"curved must be True or False, got {curved!r}."
         raise TypeError(msg)
     curved = bool(curved)
-    if curved:
-        cad = _cad.build_cad(build, values, length_unit, steps, curved=True)
-    else:
-        cad = _cad.build_cad(build, values, length_unit, steps)
+    cad = _cad.build_cad(build, values, length_unit, steps, curved=curved)
     try:
         model = make_model(cad.mesh)
     except Exception as exc:

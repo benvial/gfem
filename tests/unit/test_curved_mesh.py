@@ -162,8 +162,8 @@ def test_curved_elements_integrate_the_sphere_volume_and_faceted_ones_do_not(
     octant, octant_straight
 ):
     # Octant volume pi / 6. Measured relative errors: curved 2e-5 (the quadratic
-    # map's error at h = 0.2 is O(h^3)), faceted 1.3e-2. The bounds are the
-    # ticket's 1e-3 and 1e-2, each about 50x and 0.8x the measured values.
+    # map's error at h = 0.2 is O(h^3)), faceted 1.3e-2. The bounds 1e-3 and 1e-2
+    # sit about 50x above the curved value and 0.8x of the faceted one.
     exact = math.pi / 6
     assert abs(_volume(octant) - exact) / exact < 1e-3
     assert abs(_volume(octant_straight) - exact) / exact > 1e-2

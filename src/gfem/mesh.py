@@ -634,7 +634,7 @@ class Mesh:
         3D groups are volumes, 2D groups are surfaces. Elements outside any
         physical group, points and lines are ignored.
 
-        A file of triangles only, in one plane z = constant, is a 2D mesh
+        A file of triangles only, in one plane :math:`z = z_0`, is a 2D mesh
         (`dim` 2): z is dropped, so the nodes are (n, 2); 2D groups are its
         volumes (areas) and 1D groups its surfaces (lines), and every grouped
         line must be an edge of the triangles. To read such a file as a
@@ -657,7 +657,7 @@ class Mesh:
             ValueError: The unit is unknown, the mesh has elements of order 3
                 or more or mixes first- and second-order ones, has elements
                 other than tetrahedra and triangles (or, in 2D, triangles and
-                lines), a 2D mesh is not in one plane z = constant or has a
+                lines), a 2D mesh is not in one plane :math:`z = z_0` or has a
                 line off its triangles' edges, or its physical groups cannot be
                 addressed by name.
             CurvedMeshUnsupportedError: The file is a second-order 2D mesh
@@ -1195,8 +1195,8 @@ _TET_MID_FROM_MESHIO = [0, 2, 3, 1, 4, 5]
 # the edges opposite vertices 0, 1, 2: (1,2) (0,2) (0,1).
 _TRI_MID_FROM_MESHIO = [1, 2, 0]
 # the converse, from storage order back to meshio's
-_TET_MID_TO_MESHIO = [0, 3, 1, 2, 4, 5]
-_TRI_MID_TO_MESHIO = [2, 0, 1]
+_TET_MID_TO_MESHIO = np.argsort(_TET_MID_FROM_MESHIO)
+_TRI_MID_TO_MESHIO = np.argsort(_TRI_MID_FROM_MESHIO)
 # the plural of each kind of triangle file, in messages
 _KINDS = {"cross-section": "cross-sections", "2D mesh": "2D meshes"}
 # the dimension of each cell type a reader keeps

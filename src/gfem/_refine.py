@@ -373,8 +373,8 @@ class _Splits:
         In the face with corners ``i``, ``j``, ``k`` whose edge ``ij`` is
         split at ``m``, the new edge ``mk`` lies on the face's quadratic map
         at the node
-        $-\tfrac18(x_i + x_j) + \tfrac14 x_m + \tfrac12(x_{ik} + x_{jk})$,
-        with $x_{ik}$, $x_{jk}$ the mid-edge nodes of the other two edges.
+        :math:`-\tfrac18(x_i + x_j) + \tfrac14 x_m + \tfrac12(x_{ik} + x_{jk})`,
+        with :math:`x_{ik}`, :math:`x_{jk}` the mid-edge nodes of the other two edges.
         """
         m = self.midpoint(_keys(i, j))
         x_ik = self.x[self._edge_node(_keys(i, k))]

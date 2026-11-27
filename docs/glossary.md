@@ -1230,8 +1230,8 @@ Curved mesh
 
 Geometry floor
   The part of a result's error that comes from how the mesh represents curved
-  walls: it falls as $h^2$ with the mesh size $h$ on straight facets and as $h^4$
-  on a {term}`curved mesh`, whatever the {term}`element order`. See {doc}`verification`.
+  walls: it falls as $h^2$ with the mesh size $h$ on straight facets and as $h^3$ to $h^4$
+  on a {term}`curved mesh` (set by the wall at {term}`element order` 3). See {doc}`verification`.
 
 Absorbing boundary
   A boundary condition on a truncating surface that approximates an open,

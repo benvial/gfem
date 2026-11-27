@@ -90,7 +90,8 @@ class FieldEstimator:
     recovery), so no extra solve is needed. It is an estimate, not a bound;
     it does not include the faceting of curved surfaces on a straight-sided
     mesh (a curved mesh is solved on its quadratic geometry, which refinement
-    keeps) or the error left by the linear solve.
+    keeps, and the quadratic wall's own error is not estimated) or the error
+    left by the linear solve.
 
     With loss, the flux is the total current
     :math:`\varepsilon_\mathrm{eff} E`, :math:`\varepsilon_\mathrm{eff} =
@@ -126,7 +127,8 @@ class QuantityEstimator:
     The estimate uses the fields already solved, with no extra solve, except
     for the adjoint duals below. It does not include the faceting of curved
     surfaces on a straight-sided mesh (a curved mesh is solved on its quadratic
-    geometry, which refinement keeps) or the error left by the linear solve.
+    geometry, which refinement keeps, and the quadratic wall's own error is not
+    estimated) or the error left by the linear solve.
 
     The estimate is a magnitude in the units of ``tolerance``: relative to
     the capacitance entry, to ``omega`` or to Q, absolute for an S entry. It has

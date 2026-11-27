@@ -667,7 +667,7 @@ wall, and the solve integrates on the curved elements
 ({doc}`recipes/prepare-a-mesh`). On straight facets the {term}`geometry floor`
 of a capacitance or a resonance falls as $h^2$ whatever the element order,
 because the facets are $O(h^2)$ off the wall; on a {term}`curved mesh` it falls
-as $h^4$, so orders 2 and 3 converge as $h^4$ (at order 3 the wall, not the field, sets the error). Each
+as $h^4$, so order 2 converges as $h^3$ on the coax and $h^4$ on the sphere resonance; order 3 as $h^4$, set by the wall. Each
 case solves one gmsh mesh written at order 1 and at order 2, with the same
 corners. On the sphere at $h$ = 0.1 mm the TM$_{11}$ error at order 2 was
 $1.1 \times 10^{-3}$ on facets and $1.9 \times 10^{-6}$ curved.

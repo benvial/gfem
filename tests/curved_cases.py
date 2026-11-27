@@ -6,14 +6,14 @@ identical corners and differ only in the mid-edge nodes (put on the CAD
 surface by ``setOrder(2)``, no high-order optimisation: the step a user takes
 with ``Mesh.ElementOrder 2``):
 
-- coax: a quarter of a circular coaxial line, radii $a = 1$ and $b = 2$,
-  length $L = 0.5$ (volume ``fill``, surfaces ``inner``, ``outer`` and
+- coax: a quarter of a circular coaxial line, radii :math:`a = 1` and :math:`b = 2`,
+  length :math:`L = 0.5` (volume ``fill``, surfaces ``inner``, ``outer`` and
   ``sym``, the planes and ends, left natural). Capacitance
-  $C = \pi \varepsilon_0 L / (2 \ln(b/a))$, lengths in micrometres.
+  :math:`C = \pi \varepsilon_0 L / (2 \ln(b/a))`, lengths in micrometres.
 - sphere: one octant of a unit sphere (1 mm), volume ``ball``, surface
   ``sphere`` and the planes ``x0``, ``y0``, ``z0``. A metal sphere cavity
-  resonates at $f = c\, x / (2 \pi R)$ with $x$ a root of
-  $(x j_n(x))'$ (TM$_{n}$) or of $j_n$ (TE$_n$); PEC on the sphere and the
+  resonates at :math:`f = c\, x / (2 \pi R)` with :math:`x` a root of
+  :math:`(x j_n(x))'` (TM) or of :math:`j_n` (TE); PEC on the sphere and the
   planes the mode's field is tangential to, the others natural (PMC).
 
 gmsh is imported when a case is built, never at import, so collecting a test
@@ -143,7 +143,7 @@ def _root(f, lo, hi):
 
 
 def _d_xjn(n):
-    """The derivative of $x j_n(x)$, whose roots are the TM$_n$ resonances."""
+    """The derivative of :math:`x j_n(x)`, whose roots are the TM resonances."""
     return lambda x: (
         sps.spherical_jn(n, x) + x * sps.spherical_jn(n, x, derivative=True)
     )
@@ -165,7 +165,7 @@ TE_PEC = ("sphere", "x0", "y0")
 
 
 def frequency(k):
-    """The resonance of a root $kR = k$ on the sphere of radius ``R`` mm, Hz."""
+    """The resonance of a root :math:`kR = k` on the sphere of radius ``R`` mm, Hz."""
     return const.c * k / (2 * math.pi * R * 1e-3)
 
 
