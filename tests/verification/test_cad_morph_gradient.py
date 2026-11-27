@@ -42,3 +42,40 @@ def test_the_radius_gradient_matches_a_difference_of_two_remeshes(morph):
     difference = (plus - minus) / (2 * h)
     gap = abs(float(grad) - float(difference)) / abs(float(difference))
     assert gap < 3e-2, f"gap {gap:.2e}"
+
+
+@pytest.fixture(scope="module")
+def curved_morph():
+    pytest.importorskip("gmsh")
+    return gfem.shape.cad_morph(
+        cc.disk_build(LC), {"radius": cc.R0}, cc.make_model, curved=True
+    )
+
+
+# Reference tier: the budget below is measured across gmsh re-meshes with one
+# gmsh build, and its margin (1.19) is thinner than the spread between gmsh
+# versions' meshers. The default tier checks the curved gradient against
+# differences on one mesh (tests/unit/test_cad_morph_curved.py), where the
+# mesher does not enter.
+@pytest.mark.reference
+def test_the_curved_radius_gradient_follows_the_cad_not_the_polygon(curved_morph):
+    # The same two re-meshes (now curved) at $R_0 \pm h$, $h = 2^{-3}$ um, and
+    # the same budget $2\left[5\sigma\kappa/(\sqrt2 h) + c_2 h^2 + \beta\right]$
+    # with $\sigma = 10^{-5}$, $\kappa = 5.1$ um and $c_2 = 0.07\ \mu m^{-2}$
+    # (noise $1.4\times10^{-3}$, truncation $1.1\times10^{-3}$). On curved
+    # elements the faceting bias is gone; what is left is the discretization
+    # error's own derivative, $\beta = 3.8\times10^{-3}$ measured at this size
+    # with the default order 2 (it falls about 4x per order). The sum is
+    # $6.3\times10^{-3}$ and twice it $1.26\times10^{-2}$, under rtol =
+    # 1.5e-2: the straight disk's $3\times10^{-2}$ is no longer needed.
+    h = 2.0**-3
+    grad = jax.grad(
+        lambda r: cc.capacitance(
+            curved_morph.model.replace(mesh=curved_morph({"radius": r}))
+        )
+    )(cc.R0)
+    plus = cc.capacitance(curved_morph.remesh({"radius": cc.R0 + h}).model)
+    minus = cc.capacitance(curved_morph.remesh({"radius": cc.R0 - h}).model)
+    difference = (plus - minus) / (2 * h)
+    gap = abs(float(grad) - float(difference)) / abs(float(difference))
+    assert gap < 1.5e-2, f"gap {gap:.2e}"

@@ -71,6 +71,16 @@ def series(path: Path) -> tuple[gfem.Model, gfem.SteadyThermal]:
 SERIES_TOP = np.array([[x * 1e-6, 0.5e-6, 8e-6] for x in (0.3, 1.0, 1.7)])
 
 
+#: A curved quarter coax (tests/unit/data) and its electrostatic problem.
+ELECTROSTATIC_COAX = gfem.Electrostatic(terminals={"in": "inner"}, ground="outer")
+
+
+def _coax_quarter() -> gfem.Model:
+    path = Path(__file__).parent / "unit" / "data" / "coax_order2.msh"
+    mesh = gfem.Mesh.from_gmsh(path, length_unit="m")
+    return gfem.Model(mesh, materials={"fill": gfem.Material(eps_r=1.0)})
+
+
 def _line(directory: Path) -> gfem.Model:
     return cases.layered_line(directory)
 
@@ -83,6 +93,8 @@ def refused(key: str, directory: Path):  # noqa: PLR0911, PLR0912
     """``(model, problem, options)`` of a solve refused under ``key``."""
     direct = gfem.SolverOptions(linear_solver="direct")
     match key:
+        case "curved_mesh":
+            return _coax_quarter(), ELECTROSTATIC_COAX, direct
         case "adaptive_sweep":
             problem = gfem.Driven([1e9, 5e9], sweep="adaptive")
             return _line(directory), problem, direct
@@ -134,6 +146,7 @@ def refused(key: str, directory: Path):  # noqa: PLR0911, PLR0912
 
 #: Every case of `refused`.
 KEYS = (
+    "curved_mesh",
     "adaptive_sweep",
     "arpack",
     "thermal",

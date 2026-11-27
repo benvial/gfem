@@ -171,10 +171,10 @@ def test_entities_sharing_a_volume_name_stay_apart(two_box):
 
 
 @pytest.mark.parametrize("fmt", ["msh22", "msh41"])
-def test_second_order_mesh_raises_with_the_element_order_1_remedy(fmt):
-    with pytest.raises(ValueError, match=r"tetra10.*triangle6") as err:
-        gfem.Mesh.from_gmsh(DATA / f"cube_order2_{fmt}.msh")
-    assert "ElementOrder 1" in str(err.value)
+def test_second_order_mesh_reads_as_a_curved_mesh(fmt):
+    mesh = gfem.Mesh.from_gmsh(DATA / f"cube_order2_{fmt}.msh")
+    assert mesh.curved
+    assert mesh.volume_elements.shape[1] == 4
 
 
 @pytest.mark.parametrize("fmt", ["msh22", "msh41"])

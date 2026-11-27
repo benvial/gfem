@@ -191,7 +191,11 @@ class LayerGrid:
         fill = gfem.SheetField.interpolate(grid.to_faces(rho_bar))
 
     The map is linear and fixed (built from the mesh as given), so its
-    gradient is its transpose. Pixels that no element centroid samples get
+    gradient is its transpose. On a curved (second-order) mesh a pixel is
+    sampled at the mean of the element's corner nodes, not at a point of its
+    curved map: that is a convention of the design map, not a measurement.
+
+    Pixels that no element centroid samples get
     no gradient: the constructor warns with their count. Pixels outside a
     non-rectangular footprint are such pixels; `sampled` masks them.
 
@@ -748,7 +752,10 @@ def helmholtz_filter(
       volume region (free-form 3D designs): P1 finite elements on the
       region, a P0 load, and element averages back.
 
-    Both are linear and symmetric, so the gradient is the same filter.
+    Both are linear and symmetric, so the gradient is the same filter. On a
+    curved (second-order) mesh the filter works on the straight chords of the
+    corner nodes: the radius is measured on that polyhedral geometry, a
+    convention of the filter, not of the curved elements.
 
     Args:
         carrier: A `LayerGrid`, or the mesh of a free-form design.

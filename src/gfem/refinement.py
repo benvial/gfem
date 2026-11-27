@@ -88,8 +88,10 @@ class FieldEstimator:
     fine mesh. Each tetrahedron's indicator is the distance between the
     solved electric flux and a smoother flux recovered from it (flux
     recovery), so no extra solve is needed. It is an estimate, not a bound;
-    it does not include the faceting of curved surfaces or the error left by
-    the linear solve.
+    it does not include the faceting of curved surfaces on a straight-sided
+    mesh (a curved mesh is solved on its quadratic geometry, which refinement
+    keeps, and the quadratic wall's own error is not estimated) or the error
+    left by the linear solve.
 
     With loss, the flux is the total current
     :math:`\varepsilon_\mathrm{eff} E`, :math:`\varepsilon_\mathrm{eff} =
@@ -123,8 +125,10 @@ class QuantityEstimator:
     mesh. `ErrorEstimate.kind` names which, and each kind has its own
     measured effectivity range (verification page).
     The estimate uses the fields already solved, with no extra solve, except
-    for the adjoint duals below. It does not include
-    the faceting of curved surfaces or the error left by the linear solve.
+    for the adjoint duals below. It does not include the faceting of curved
+    surfaces on a straight-sided mesh (a curved mesh is solved on its quadratic
+    geometry, which refinement keeps, and the quadratic wall's own error is not
+    estimated) or the error left by the linear solve.
 
     The estimate is a magnitude in the units of ``tolerance``: relative to
     the capacitance entry, to ``omega`` or to Q, absolute for an S entry. It has
@@ -661,7 +665,8 @@ def refine_mesh(
     the estimate is at or below ``tolerance``, marks the fewest tetrahedra
     holding ``error_fraction`` of the squared error (Dörfler marking),
     bisects them and their neighbours until the mesh conforms (new nodes at
-    edge midpoints, physical groups and imported facets kept), and carries
+    edge midpoints, on the quadratic geometry of a curved mesh; physical
+    groups and the input's walls kept), and carries
     the model's per-element design (`MaterialField` values, sheet fills) to
     the children. Cycle 0 solves the input mesh.
 

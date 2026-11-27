@@ -453,6 +453,7 @@ def dofs(
     neighbour exchange, collective): the holders of a DOF agree.
     """
     space, ngmesh = op.space, op.built.mesh
+    node_order = op.built.node_order
     ngs_index = inverse_order(op.built.cell_order, len(elements))
     out = np.zeros(space.ndof, bool)
 
@@ -461,7 +462,7 @@ def dofs(
         out[dofs[dofs >= 0]] = True
 
     def key(node: ngs.NodeId) -> tuple[int, ...]:
-        return tuple(sorted(int(tie[v.nr]) for v in ngmesh[node].vertices))
+        return tuple(sorted(int(tie[node_order[v.nr]]) for v in ngmesh[node].vertices))
 
     keys = set()
 

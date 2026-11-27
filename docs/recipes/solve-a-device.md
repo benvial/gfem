@@ -314,7 +314,8 @@ True
 - **Low frequency.** Wave ports and iterative solvers lose digits below the
   floor and warn with {py:obj}`gfem.LowFrequencyWarning`; a device far smaller
   than the wavelength wants {py:obj}`gfem.Electrostatic`.
-- **Scope.** Straight-sided tetrahedra, linear time-invariant materials, no
+- **Scope.** Tetrahedra with straight or curved walls
+  ({doc}`prepare-a-mesh`), linear time-invariant materials, no
   time-domain solve ({doc}`../capabilities`).
 - **Eigenmodes.** Only the `n_modes` nearest `target`: ask for more and check
   the farthest lies outside your band. A lossy region with about 10 modes per

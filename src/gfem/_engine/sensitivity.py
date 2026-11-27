@@ -62,7 +62,10 @@ product); the trace terms are checked against it. Every form is integrated exact
 on straight-sided elements: on the pinned rule of degree 2p, or, for the
 curl and gradient terms (products of first derivatives, degree 2p - 2), on
 the exact rule of that degree, which gives the same values with fewer
-points.
+points. On a curved mesh no rule is exact (the integrands are rational in the
+reference coordinates): the node pass uses an order-2 velocity and every term
+on the forward's own rule, so it is the exact derivative of the discretized
+forward form, in every corner and mid-edge node.
 
 A **per-axis** leaf (a `MaterialField` with `axes`, principal values
 ``v_k`` along fixed axes ``a_k``) moves a coefficient coaxial with the
@@ -1242,7 +1245,12 @@ def _position_part(term: Term, u: Any, v: Any, slopes: list) -> list:
 
 
 def _volume_shape(
-    terms: Sequence[tuple[Term, complex]], pair: FieldPair, w: Any, elements: Any = None
+    terms: Sequence[tuple[Term, complex]],
+    pair: FieldPair,
+    w: Any,
+    elements: Any = None,
+    *,
+    forward_rule: bool = False,
 ) -> Any:
     """``int Re(sum_t theta_t sum_k T_t(left_k, right_k)) : grad W``, one pair.
 
@@ -1256,6 +1264,11 @@ def _volume_shape(
     ``int Re(theta_t ((W . grad) C u) . v)`` (curls for a curl term): its
     coefficient is read at the moved quadrature points. Such a term is
     integrated on the pinned rule, as its forward form is.
+
+    ``forward_rule`` integrates every term on the pinned rule of the forward
+    form: on a curved element the integrands are rational in the reference
+    coordinates, no rule is exact, and the form is the derivative of the
+    discretized forward form only on the forward's own rule.
     """
     gw = ngs.grad(w)
     totals: dict[bool, Any] = {}
@@ -1283,7 +1296,8 @@ def _volume_shape(
     out = None
     for derivatives, total in totals.items():
         tensor = total.real if total.is_complex else total
-        rule = quadrature.dx_derivatives if derivatives else quadrature.dx
+        shortcut = derivatives and not forward_rule
+        rule = quadrature.dx_derivatives if shortcut else quadrature.dx
         dx = rule(pair.order, definedon=pair.domain, definedonelements=elements)
         part = ngs.InnerProduct(gw, tensor) * dx
         out = part if out is None else out + part
@@ -1435,6 +1449,27 @@ def _surface_shape(
     return None if lagrangian is None else lagrangian.DiffShape(w)
 
 
+def _nodal(out: np.ndarray, values: np.ndarray, built: Any) -> None:
+    r"""Add the nodal cotangents of an order-2 shape form's values to ``out``.
+
+    ``values`` are the form's values on the hierarchical basis of NGSolve's
+    order-2 ``H1``: a vertex function is the barycentric coordinate
+    :math:`\lambda_v` and an edge function is :math:`-\tfrac12\lambda_a\lambda_b`.
+    The nodal basis is :math:`N_v = \lambda_v + 4\sum_{e \ni v}\varphi_e` and
+    :math:`N_m = -8\varphi_e`, so with :math:`L` the form's values
+
+    .. math:: \bar X_v = L_v + 4\sum_{e \ni v} L_e, \qquad \bar X_m = -8 L_e.
+    """
+    nv = len(built.node_order)
+    edges = built.edge_vertices
+    vertex = values[:nv].copy()
+    edge = values[nv : nv + len(edges)]
+    np.add.at(vertex, edges[:, 0], 4 * edge)
+    np.add.at(vertex, edges[:, 1], 4 * edge)
+    np.add.at(out, built.node_order, vertex)
+    np.add.at(out, built.edge_nodes, -8 * edge)
+
+
 def _node_pass(
     model: Model, pairs: list[FieldPair], terms: Sequence[Term], comm: Any = None
 ) -> np.ndarray:
@@ -1443,11 +1478,17 @@ def _node_pass(
     A 2D mesh gives only ``"surface"`` terms, whose ``DiffShape`` carries the
     whole transport. The form holds a load: a rank's part at each of its
     vertices, shared ones too.
+
+    On a curved mesh the velocity is ``VectorH1`` of order 2, so that it moves
+    corners and mid-edge nodes alike, every shape term is integrated on the
+    forward's rule, and the hierarchical edge values map to nodal cotangents
+    (`_nodal`).
     """
     built = discretization(model.mesh, model._periodic, comm).built  # noqa: SLF001
     n_nodes = len(model.mesh.imported_nodes)
+    curved = built.edge_nodes is not None
     with serial_spaces():
-        space = ngs.VectorH1(built.mesh, order=1)
+        space = ngs.VectorH1(built.mesh, order=2 if curved else 1)
     w = space.TestFunction()
     form = ngs.LinearForm(space)
     empty = True
@@ -1470,7 +1511,10 @@ def _node_pass(
             else:
                 volume.setdefault(id(term.elements), []).append(weighted)
         for part in (
-            *(_volume_shape(v, pair, w, v[0][0].elements) for v in volume.values()),
+            *(
+                _volume_shape(v, pair, w, v[0][0].elements, forward_rule=curved)
+                for v in volume.values()
+            ),
             _trace_shape(traces, pair, w) if traces else None,
             _surface_shape(surface, pair, w, comm) if surface else None,
         ):
@@ -1484,6 +1528,9 @@ def _node_pass(
     form.Assemble()
     # a rank with no elements has no vertices: its count is not to be inferred
     values = form.vec.FV().NumPy().reshape(dim, space.ndof // dim).T
+    if curved:
+        _nodal(out, values, built)
+        return out / built.scale
     np.add.at(out, built.node_order, values[: len(built.node_order)])
     # per metre: the engine mesh is in file units of `scale` metres
     return out / built.scale

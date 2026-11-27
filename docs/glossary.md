@@ -1222,6 +1222,17 @@ Excluded region
   typically a meshed conductor. Named by region name or by
   `gfem.enclosed_by(*surfaces)`. See {doc}`recipes/prepare-a-mesh`.
 
+Curved mesh
+  A mesh read from second-order elements (gmsh `Mesh.ElementOrder 2`), whose
+  elements bend through mid-edge nodes on the walls instead of faceting them.
+  Features that compute geometry from element corners run only on its straight
+  elements, those whose mid-edge nodes all sit at their edges' midpoints. See {doc}`recipes/prepare-a-mesh`.
+
+Geometry floor
+  The part of a result's error that comes from how the mesh represents curved
+  walls: it falls as $h^2$ with the mesh size $h$ on straight facets and as $h^3$ to $h^4$
+  on a {term}`curved mesh` (set by the wall at {term}`element order` 3). See {doc}`verification`.
+
 Absorbing boundary
   A boundary condition on a truncating surface that approximates an open,
   non-reflecting exterior, of first or second order. It reflects a wave that

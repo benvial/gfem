@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, overload
 from gfem import _mpi, _timing
 from gfem._adjoint import solve_vjp
 from gfem._checks import is_traced
+from gfem._curved import check_moved, refuse_incident
 from gfem._dim2 import refuse_solve
 from gfem._domain import physics_of
 from gfem._engine.solve_request import SolveRequest
@@ -281,6 +282,7 @@ def _solve(
             f"options must be a gfem.SolverOptions, got {type(options).__name__}."
         )
     refuse_solve(model, problem, options, comm)
+    refuse_incident(model, problem)
     resolved = _mpi.resolve_comm(comm)
     session = (
         contextlib.nullcontext()
@@ -326,10 +328,7 @@ def _solve(
                     options, resolved, solve_vjp(rule, model, leaves, request=traced)
                 )
             ), None
-        # A moved mesh must keep its periodic pairs, keep its physical
-        # elements off the layer's stretch and stay valid on the solve domain.
-        check_nodes(model.mesh.nodes, model._periodic)  # noqa: SLF001
-        check_layer_nodes(model, problem)
+        _check_moved_mesh(model, problem)
         physics = physics_of(problem)
         _check_quality(
             model.mesh,
@@ -374,6 +373,17 @@ def _end_of_failed_solve(
         error.result = partial_result(error)
     if comm is None or _mpi.is_agreed(error, _mpi.FORWARD_ERRORS):
         _end_of_solve(options, comm, None)
+
+
+def _check_moved_mesh(model: Model, problem: Any) -> None:
+    """Refuse a moved mesh that breaks a rule the solve relies on.
+
+    It must keep its periodic pairs, keep its physical elements off the layer's
+    stretch and keep the elements of gated features straight.
+    """
+    check_nodes(model.mesh.nodes, model._periodic)  # noqa: SLF001
+    check_layer_nodes(model, problem)
+    check_moved(model)
 
 
 def _end_of_solve[T](options: SolverOptions, comm: Any, outputs: T) -> T:

@@ -20,13 +20,14 @@ from types import ModuleType
 import jax.numpy as jnp
 import numpy as np
 
-from gfem.mesh import LENGTH_UNITS, Mesh, _read_gmsh
+from gfem.mesh import _TRI_MID_FROM_MESHIO, LENGTH_UNITS, Mesh, _read_gmsh
 
 #: Debian/Ubuntu packages the PyPI gmsh wheel loads at import (OpenGL and X11).
 _APT_PACKAGES = "libglu1-mesa libxcursor1 libxft2 libxinerama1 libgl1 libgomp1"
 
-#: gmsh's element type of a 3-node triangle.
+#: gmsh's element types of a 3-node and of a 6-node triangle.
 _TRIANGLE = 2
+_TRIANGLE6 = 9
 _KINDS = {0: "point", 1: "curve", 2: "surface"}
 
 
@@ -150,6 +151,47 @@ def _export_options(gmsh: ModuleType) -> Generator[None]:
     finally:
         for key, value in saved.items():
             gmsh.option.setNumber(key, value)
+
+
+@contextlib.contextmanager
+def _mesh_order(gmsh: ModuleType, *, curved: bool) -> Generator[None]:
+    """Second-order elements with untangling around the mesh generation, restored.
+
+    ``Mesh.HighOrderOptimize 1`` untangles the curved elements gmsh would
+    otherwise leave folded (the reader refuses those); a level the build chose
+    (2 to 4) is kept.
+    """
+    if not curved:
+        yield
+        return
+    keys = ("Mesh.ElementOrder", "Mesh.HighOrderOptimize")
+    saved = {key: gmsh.option.getNumber(key) for key in keys}
+    try:
+        gmsh.option.setNumber("Mesh.ElementOrder", 2)
+        gmsh.option.setNumber(
+            "Mesh.HighOrderOptimize", max(saved["Mesh.HighOrderOptimize"], 1)
+        )
+        yield
+    finally:
+        for key, value in saved.items():
+            gmsh.option.setNumber(key, value)
+
+
+def _check_order(gmsh: ModuleType) -> None:
+    """Refuse a build that left a mesh element order other than 1.
+
+    Raises:
+        ValueError: ``Mesh.ElementOrder`` is not 1 after the build.
+    """
+    order = gmsh.option.getNumber("Mesh.ElementOrder")
+    if order != 1:
+        msg = (
+            f"The build function (or the open gmsh session) left "
+            f"Mesh.ElementOrder at {order:g}. gfem sets the element order "
+            "itself: remove the option from the build, and pass curved=True "
+            "to mesh curved (second-order) elements."
+        )
+        raise ValueError(msg)
 
 
 def _run_build(build: Callable[..., object], params: Mapping[str, float]) -> None:
@@ -286,15 +328,26 @@ def _classify(gmsh: ModuleType) -> list[_Entity]:
     return found
 
 
-def _surface_triangles(gmsh: ModuleType) -> np.ndarray:
-    """Node tags of the triangles of every surface entity, grouped or not."""
-    triangles = []
+def _surface_triangles(gmsh: ModuleType) -> tuple[np.ndarray, np.ndarray | None]:
+    """Node tags of the triangles of every surface entity, grouped or not.
+
+    Returns:
+        ``(corners, midnodes)``: the corners, ``(n, 3)``, and for second-order
+        triangles the mid-edge nodes in gfem's order (column ``k`` on the edge
+        opposite corner ``k``), ``(n, 3)``; ``None`` for first-order ones.
+    """
+    corners, mids = [], []
     for _, tag in gmsh.model.getEntities(2):
         types, _, nodes = gmsh.model.mesh.getElements(2, tag)
         for kind, tags in zip(types, nodes, strict=True):
             if kind == _TRIANGLE:
-                triangles.append(np.asarray(tags, dtype=np.int64).reshape(-1, 3))
-    return np.concatenate(triangles) if triangles else np.empty((0, 3), np.int64)
+                corners.append(np.asarray(tags, dtype=np.int64).reshape(-1, 3))
+            elif kind == _TRIANGLE6:
+                six = np.asarray(tags, dtype=np.int64).reshape(-1, 6)
+                corners.append(six[:, :3])
+                mids.append(six[:, 3:][:, _TRI_MID_FROM_MESHIO])
+    out = np.concatenate(corners) if corners else np.empty((0, 3), np.int64)
+    return out, (np.concatenate(mids) if mids else None)
 
 
 def _project(gmsh: ModuleType, entities: list[_Entity]) -> list[np.ndarray]:
@@ -399,6 +452,8 @@ class CadMesh:
         dim: ``(n_nodes,)``, the dimension of the entity each node is
             classified on (0 point, 1 curve, 2 surface, 3 anywhere else).
         slide_triangles: Triangles (mesh node indices) of every surface entity.
+        slide_midnodes: Their mid-edge nodes, ``(n, 3)`` (column ``k`` on the
+            edge opposite corner ``k``), or ``None`` on a first-order mesh.
         size: The model's bounding-box diagonal in model units.
         steps: The half-step used per parameter.
         scale: Metres per model unit.
@@ -408,6 +463,7 @@ class CadMesh:
     velocity: np.ndarray
     dim: np.ndarray
     slide_triangles: np.ndarray
+    slide_midnodes: np.ndarray | None
     size: float
     steps: tuple[float, ...]
     scale: float
@@ -418,6 +474,8 @@ def build_cad(
     p0: Mapping[str, float],
     length_unit: str,
     step: Mapping[str, float] | None = None,
+    *,
+    curved: bool = False,
 ) -> CadMesh:
     r"""Mesh ``build(**p0)`` and take each parameter's design velocity.
 
@@ -430,17 +488,21 @@ def build_cad(
 
     Args:
         build: Draws the model in the current gmsh model. It must not set
-            ``Mesh.ElementOrder`` above 1: the node map and the closest-point
-            projections count the mesh's corner nodes only.
+            ``Mesh.ElementOrder``: gfem sets it.
         p0: Parameter values, in the build's units.
         length_unit: The unit of the model's coordinates.
         step: Half-steps overriding the default, per parameter.
+        curved: Mesh with second-order elements (``Mesh.ElementOrder 2`` and
+            ``Mesh.HighOrderOptimize 1``, restored afterwards; a level of 2 to
+            4 set by the build is kept). The mid-edge nodes are classified and
+            projected on the CAD like the corners.
 
     Raises:
         ImportError: gmsh is not installed.
         OSError: gmsh's library cannot load.
         ValueError: No volume, a volume in no group, a topology change or a
-            jump within a step, or nodes the reader did not keep.
+            jump within a step, a build that sets ``Mesh.ElementOrder``, or nodes
+            the reader did not keep.
     """
     gmsh = import_gmsh()
     names = tuple(p0)
@@ -448,15 +510,17 @@ def build_cad(
     with tempfile.TemporaryDirectory() as tmp, _session(gmsh) as models:
         first = models.add()
         _run_build(build, p0)
+        _check_order(gmsh)
         _check_volumes(gmsh, length_unit)
         signature = _signature(gmsh)
         box = np.asarray(gmsh.model.getBoundingBox(-1, -1))
         size = float(np.linalg.norm(box[3:] - box[:3]))
         steps = tuple(float((step or {}).get(n, default_step(size))) for n in names)
-        gmsh.model.mesh.generate(3)
+        with _mesh_order(gmsh, curved=curved):
+            gmsh.model.mesh.generate(3)
         entities = _classify(gmsh)
         reference = _Reference(gmsh, models, build, p0, first, signature, entities)
-        triangles = _surface_triangles(gmsh)
+        triangles, triangle_mids = _surface_triangles(gmsh)
         path = Path(tmp) / "cad.msh"
         with _export_options(gmsh):
             gmsh.write(str(path))
@@ -484,6 +548,7 @@ def build_cad(
         velocity=velocity.reshape(3 * len(imported), len(names)),
         dim=dim,
         slide_triangles=lookup[triangles],
+        slide_midnodes=None if triangle_mids is None else lookup[triangle_mids],
         size=size,
         steps=steps,
         scale=scale,

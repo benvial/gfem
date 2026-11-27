@@ -6,7 +6,7 @@ optimization objective without meshing the whole device finely.
 subdivides the tetrahedra holding most of it, and solves again until the
 {term}`error estimate` meets a tolerance. It returns a new model on the
 refined mesh, its result and the history of the run. Imported physical groups
-and facets are kept: gfem only subdivides them.
+and walls are kept: gfem only subdivides them.
 
 ## Refine a capacitance solve
 
@@ -242,8 +242,8 @@ How gfem checks the estimates against known answers:
   configurations that fall outside them (a lumped port across a loss jump, a
   permittivity law with $-20 < \operatorname{Re} \varepsilon < 0$), are on the
   verification page; mesh those regions finer by hand.
-- **Facets stay.** Refinement never moves facets onto a curve: mesh curved
-  surfaces finer in your mesher.
+- **Walls stay.** Facets never move onto a curve, and a {term}`curved mesh`
+  keeps its own quadratic walls: mesh curved surfaces finer in your mesher.
 - **Refusals.** `refine_mesh` raises
   {py:obj}`gfem.MeshRefinementUnsupportedError` before any solve on an
   adaptive sweep, a port mode, periodic, thermal or sourced problem, a model

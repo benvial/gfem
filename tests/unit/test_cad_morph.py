@@ -349,9 +349,9 @@ def test_remesh_reuses_the_arguments_of_the_morph(monkeypatch):
     seen = []
     build_cad = _cad.build_cad
 
-    def spy(build, p0, length_unit, step=None):
+    def spy(build, p0, length_unit, step=None, **kwargs):
         seen.append((dict(p0), length_unit, dict(step)))
-        return build_cad(build, p0, length_unit, step)
+        return build_cad(build, p0, length_unit, step, **kwargs)
 
     monkeypatch.setattr(_cad, "build_cad", spy)
     again = first.remesh({"width": 0.52})

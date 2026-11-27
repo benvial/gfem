@@ -25,7 +25,7 @@ from gfem._engine.seam_check import (
     surface_counts,
 )
 from gfem._periodic import Pairing, check_nodes, pair_names
-from gfem.mesh import LENGTH_UNITS, Mesh
+from gfem.mesh import _TET_EDGES, LENGTH_UNITS, Mesh
 
 # an explicit name: a private module path would leak into users' filters
 _log = logging.getLogger("gfem.mesh")
@@ -52,6 +52,11 @@ class EngineMesh:
         facet_order: NGSolve surface element ``i`` is gfem surface element
             ``facet_order[i]`` (a row of `gfem.Mesh.surface_elements`).
         node_order: NGSolve vertex ``i`` is gfem node ``node_order[i]``.
+        edge_nodes: On a curved mesh, NGSolve edge ``i`` carries the mid-edge
+            gfem node ``edge_nodes[i]``; ``None`` on a straight mesh.
+        edge_vertices: On a curved mesh, NGSolve edge ``i`` joins the NGSolve
+            vertices ``edge_vertices[i]`` (shape ``(n_edges, 2)``), read once at
+            the build; ``None`` on a straight mesh.
         comm: The communicator of a distributed mesh; ``None`` on one process.
         pairs: The periodic pairs as the mesh carries them: a model's pairs, or,
             under ranks, the pair swapped when the search kept the swapped
@@ -69,6 +74,8 @@ class EngineMesh:
     comm: Any = None
     pairs: tuple[Pairing, ...] = ()
     surface_spaces: dict = dataclasses.field(default_factory=dict)
+    edge_nodes: np.ndarray | None = None
+    edge_vertices: np.ndarray | None = None
 
 
 #: Partitions a periodic search may take, swaps included.
@@ -193,6 +200,8 @@ def to_ngsolve(
             f"build asked for {what}. Solve it on one process, or read the file "
             "as a slab with gfem.Mesh.from_gmsh_cross_section."
         )
+    if comm is not None and mesh.curved:
+        _mpi.refuse_feature("curved_mesh")
     if comm is not None and len(periodic) > 1:
         _mpi.refuse_feature("periodic")
     check_nodes(np.asarray(mesh.nodes, float), periodic)
@@ -202,15 +211,70 @@ def to_ngsolve(
     scale = LENGTH_UNITS[mesh.length_unit]
     points = np.asarray(mesh.nodes, float) / scale
     ngmesh, domains, tet_order, tri_order = _netgen_mesh(mesh, points, periodic)
+    ngs_mesh = ngs.Mesh(ngmesh)
+    node_order = _node_order(mesh)
+    vertices = _edge_vertices(ngs_mesh) if mesh.curved else None
     return EngineMesh(
-        mesh=ngs.Mesh(ngmesh),
+        mesh=ngs_mesh,
         scale=scale,
         domains=domains,
         cell_order=tet_order,
         facet_order=tri_order,
-        node_order=np.arange(len(points)),
+        node_order=node_order,
         pairs=periodic,
+        edge_nodes=(
+            _edge_nodes(mesh, vertices, node_order) if vertices is not None else None
+        ),
+        edge_vertices=vertices,
     )
+
+
+def _edge_vertices(built: ngs.Mesh) -> np.ndarray:
+    """The two NGSolve vertex numbers of each NGSolve edge, ``(n_edges, 2)``."""
+    return np.array([[v.nr for v in e.vertices] for e in built.edges], dtype=np.int64)
+
+
+def _edge_nodes(mesh: Mesh, vertices: np.ndarray, node_order: np.ndarray) -> np.ndarray:
+    """The mid-edge gfem node on each NGSolve edge of a curved mesh.
+
+    An edge is its two corner nodes; a tetrahedron's column ``k`` of
+    ``volume_midnodes`` is the mid node of its edge ``_TET_EDGES[k]``.
+    """
+    topology = mesh._topology  # noqa: SLF001
+    n = len(mesh.nodes)
+    corners = topology.volume_elements
+    ends = np.array(_TET_EDGES)
+    low = np.minimum(corners[:, ends[:, 0]], corners[:, ends[:, 1]])
+    high = np.maximum(corners[:, ends[:, 0]], corners[:, ends[:, 1]])
+    keys = (low * n + high).ravel()
+    order = np.argsort(keys, kind="stable")
+    # the caller passes a curved topology, which carries its mid-edge nodes
+    if topology.volume_midnodes is None:
+        msg = "A straight mesh has no mid-edge nodes."
+        raise RuntimeError(msg)
+    keys, mids = keys[order], topology.volume_midnodes.ravel()[order]
+    nodes = node_order[vertices]
+    wanted = np.minimum(nodes[:, 0], nodes[:, 1]) * n + np.maximum(
+        nodes[:, 0], nodes[:, 1]
+    )
+    index = np.minimum(np.searchsorted(keys, wanted), len(keys) - 1)
+    if not np.array_equal(keys[index], wanted):
+        raise AssertionError("an NGSolve edge is in no tetrahedron of the mesh")
+    return mids[index]
+
+
+def _node_order(mesh: Mesh) -> np.ndarray:
+    """NGSolve vertex ``i`` is gfem node ``order[i]``.
+
+    The nodes in file order on a straight mesh. A curved mesh's NGSolve vertices
+    are its corner nodes in increasing order, then its mid-edge nodes are added
+    as points beyond them (netgen counts the vertices as one more than the largest
+    corner index), so the order lists the corners only.
+    """
+    topology = mesh._topology  # noqa: SLF001
+    if topology.volume_midnodes is None:
+        return np.arange(len(mesh.nodes))
+    return np.unique(topology.volume_elements)
 
 
 def cell_domains(mesh: Mesh) -> tuple[np.ndarray, np.ndarray]:
@@ -241,6 +305,9 @@ def _netgen_mesh(
         return _netgen_mesh_2d(mesh, points)
     names = {(r.dim, r.tag): r.name for r in mesh.regions}
     ngmesh = ngm.Mesh(dim=3)  # ty: ignore[unresolved-attribute]
+    number = None
+    if mesh.curved:
+        points, number = _corners_first(mesh, points)
     ngmesh.AddPoints(np.ascontiguousarray(points))
 
     domains, tet_domain = cell_domains(mesh)
@@ -249,6 +316,11 @@ def _netgen_mesh(
     ordered = tet_domain[order]
     tet_order = order[np.argsort(ordered, kind="stable")]
     tets = mesh.tetrahedra[order]
+    volume_mid = mesh._topology.volume_midnodes  # noqa: SLF001
+    surface_mid = mesh._topology.surface_midnodes  # noqa: SLF001
+    if number is not None and volume_mid is not None:
+        # netgen's TET10: the corners, then the mid nodes on `_TET_EDGES`
+        tets = number[np.concatenate([tets, volume_mid[order]], axis=1)]
     for k, (tag, _) in enumerate(domains, start=1):
         ngmesh.SetMaterial(k, names[3, int(tag)])
         ngmesh.AddElements(dim=3, index=k, data=tets[ordered == k], base=0)
@@ -257,9 +329,14 @@ def _netgen_mesh(
     din = np.where(nb[:, 0] >= 0, tet_domain[np.maximum(nb[:, 0], 0)], 0)
     dout = np.where(nb[:, 1] >= 0, tet_domain[np.maximum(nb[:, 1], 0)], 0)
     tris = mesh.triangles.copy()
+    if number is not None and surface_mid is not None:
+        # netgen's TRIG6: the corners, then the mid nodes opposite vertices 0, 1, 2
+        tris = np.concatenate([tris, surface_mid], axis=1)
     # netgen faces point out of domin; a face with only a front side is flipped.
     flip = din == 0
-    tris[flip] = tris[flip][:, ::-1]
+    tris[flip] = _reversed_triangles(tris[flip])
+    if number is not None:
+        tris = number[tris]
     din[flip], dout[flip] = dout[flip], 0
     keys = np.stack([mesh.triangle_tags, din, dout], axis=1)
     faces, tri_face = np.unique(keys, axis=0, return_inverse=True)
@@ -274,15 +351,54 @@ def _netgen_mesh(
         ngmesh.AddElements(dim=2, index=j, data=tris[tri_face == j], base=0)
 
     # before the wrap: identifications added after it are not seen
-    point = ngm.PointId  # ty: ignore[unresolved-attribute]
-    for j, p in enumerate(periodic, start=1):
-        for first, second in zip(
-            p.first_nodes.tolist(), p.second_nodes.tolist(), strict=True
-        ):
-            ngmesh.AddPointIdentification(
-                point(nr0=first), point(nr0=second), identnr=j, type=2
-            )
+    _identify(ngmesh, mesh, periodic, number)
     return ngmesh, tuple((int(t), int(e)) for t, e in domains), tet_order, tri_order
+
+
+def _identify(
+    ngmesh: Any, mesh: Mesh, periodic: tuple[Pairing, ...], number: np.ndarray | None
+) -> None:
+    """The periodic point identifications of a netgen mesh.
+
+    netgen's points are the corners-first numbering ``number`` of a curved
+    mesh, and a mid-edge node is not one of them, so its pairs are dropped.
+    """
+    point = ngm.PointId  # ty: ignore[unresolved-attribute]
+    n_points = len(mesh.nodes) if number is None else len(_node_order(mesh))
+    for j, p in enumerate(periodic, start=1):
+        first, second = p.first_nodes, p.second_nodes
+        if number is not None:
+            first, second = number[first], number[second]
+        for a, b in zip(first.tolist(), second.tolist(), strict=True):
+            if a < n_points and b < n_points:
+                ngmesh.AddPointIdentification(
+                    point(nr0=a), point(nr0=b), identnr=j, type=2
+                )
+
+
+def _corners_first(mesh: Mesh, points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """A curved mesh's points with its corners first, and each node's new number.
+
+    The corners keep their file order (`_node_order`), then every other node
+    (mid-edge nodes, and any node in no element) follows in file order.
+    """
+    corners = _node_order(mesh)
+    rest = np.setdiff1d(np.arange(len(points)), corners)
+    order = np.concatenate([corners, rest])
+    number = np.empty(len(points), dtype=np.int64)
+    number[order] = np.arange(len(points))
+    return points[order], number
+
+
+def _reversed_triangles(tris: np.ndarray) -> np.ndarray:
+    """Triangles of 3 or 6 nodes with the opposite orientation.
+
+    The corners reverse, and each mid node stays opposite the corner it was
+    opposite, so the mid nodes reverse with them.
+    """
+    if tris.shape[1] == 3:
+        return tris[:, ::-1]
+    return tris[:, [2, 1, 0, 5, 4, 3]]
 
 
 def _netgen_mesh_2d(
@@ -614,4 +730,19 @@ def _match(
         raise ValueError("A local element has no row in the gfem.Mesh.")
     out = np.empty(len(local), dtype=np.int64)
     out[order[found] - len(candidates)] = candidates[gfem_row[found]]
+    return out
+
+
+def curved_element_volumes(mesh: Mesh) -> np.ndarray:
+    """The volume of each gfem tetrahedron of a curved mesh, in m^3.
+
+    Integrates the quadratic element map of the built NGSolve mesh and
+    returns the result in gfem tetrahedron order.
+    """
+    built = to_ngsolve(mesh)
+    volumes = np.asarray(
+        ngs.Integrate(ngs.CoefficientFunction(1), built.mesh, element_wise=True)
+    ).copy()
+    out = np.empty(len(volumes))
+    out[built.cell_order] = volumes * built.scale**3
     return out
