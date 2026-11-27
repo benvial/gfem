@@ -490,3 +490,20 @@ def test_a_heat_source_reports_the_curved_volume_it_heats():
     source = gfem.HeatSource.uniform("fill", power_density=1.0)
     power = float(gfem.solve(model, gfem.SteadyThermal(source)).power)
     assert power == pytest.approx(3 * math.pi / 4, rel=1e-4, abs=0)
+
+
+def test_the_curved_quality_is_the_same_in_blocks_and_reads_the_import_once(
+    octant, monkeypatch
+):
+    from gfem import shape
+
+    whole = np.asarray(shape.quality(octant))
+    # Blocks of 7 tetrahedra cut the octant in several; each element's arithmetic
+    # is the same, so the values agree to a few eps (the einsum may order a batch
+    # of 7 and a batch of all differently): 64 eps = 1.4e-14 covers that.
+    monkeypatch.setattr(shape, "_CHUNK", 7)
+    assert len(shape._blocks(len(octant.tetrahedra))) > 1
+    blocked = np.asarray(shape.quality(octant))
+    np.testing.assert_allclose(blocked, whole, rtol=64 * np.finfo(float).eps, atol=0)
+    # the imported quality is computed once per topology
+    assert shape._imported_quality(octant) is shape._imported_quality(octant)

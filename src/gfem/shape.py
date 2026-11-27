@@ -13,6 +13,7 @@ the docs.
 from __future__ import annotations
 
 import math
+import weakref
 from collections.abc import Callable, Mapping, Sequence
 from types import ModuleType
 from typing import Any, Literal, get_args
@@ -125,6 +126,15 @@ def _curved_edges(xp: ModuleType, nodes, elements: np.ndarray, midnodes: np.ndar
     return xp.einsum("pin,enx->epix", xp.asarray(_GRADIENTS), x10)
 
 
+#: Tetrahedra per block of the curved work: ``(n, 20, 4, 3)`` doubles, 40 MB at this size.
+_CHUNK = 20_000
+
+
+def _blocks(n: int):
+    """The slices that cut ``n`` elements into blocks of `_CHUNK`."""
+    return [slice(i, min(i + _CHUNK, n)) for i in range(0, max(n, 1), _CHUNK)]
+
+
 def _curved_scaled_jacobian(
     xp: ModuleType, nodes, elements: np.ndarray, midnodes: np.ndarray, sign
 ):
@@ -133,7 +143,17 @@ def _curved_scaled_jacobian(
     The minimum over the 20 lattice points and the four corner frames
     (`_CORNERS`) of the straight element's measure on the frame's three edge
     derivatives; on a straight tetrahedron it is `_scaled_jacobian`'s value.
+    The elements go through in blocks of `_CHUNK`, so the lattice work is
+    bounded in memory.
     """
+    parts = [
+        _curved_block(xp, nodes, elements[b], midnodes[b], sign[b])
+        for b in _blocks(len(elements))
+    ]
+    return parts[0] if len(parts) == 1 else xp.concatenate(parts)
+
+
+def _curved_block(xp: ModuleType, nodes, elements, midnodes, sign):
     d = _curved_edges(xp, nodes, elements, midnodes)
     q = None
     for a, *others in _CORNERS:
@@ -154,10 +174,13 @@ def _bernstein_bound(nodes, elements: np.ndarray, midnodes: np.ndarray, sign):
     determinant's minimum, so a bound at or below zero means the element may
     fold between the sample points.
     """
-    d = _curved_edges(np, nodes, elements, midnodes)
-    e1, e2, e3 = (d[:, :, k] - d[:, :, 0] for k in (1, 2, 3))
-    det = sign[:, None] * np.sum(e1 * np.cross(e2, e3), axis=-1)
-    return (det @ _BERNSTEIN_INVERSE.T).min(axis=1)
+    out = np.empty(len(elements))
+    for b in _blocks(len(elements)):
+        d = _curved_edges(np, nodes, elements[b], midnodes[b])
+        e1, e2, e3 = (d[:, :, k] - d[:, :, 0] for k in (1, 2, 3))
+        det = sign[b][:, None] * np.sum(e1 * np.cross(e2, e3), axis=-1)
+        out[b] = (det @ _BERNSTEIN_INVERSE.T).min(axis=1)
+    return out
 
 
 def _ratio(xp: ModuleType, numerator, norm):
@@ -217,14 +240,26 @@ def _orientation(mesh: Mesh) -> np.ndarray:
     return np.where(det < 0, -1.0, 1.0)
 
 
+#: The imported quality of each topology: a curved mesh's costs the lattice work.
+_IMPORTED: weakref.WeakKeyDictionary[Any, np.ndarray] = weakref.WeakKeyDictionary()
+
+
 def _imported_quality(mesh: Mesh) -> np.ndarray:
-    return _scaled_jacobian(
-        np,
-        mesh.imported_nodes,
-        mesh.volume_elements,
-        _orientation(mesh),
-        mesh._topology.volume_midnodes,  # noqa: SLF001
-    )
+    """`quality` at the imported nodes, computed once per topology."""
+    topology = mesh._topology  # noqa: SLF001
+    if topology not in _IMPORTED:
+        q = np.asarray(
+            _scaled_jacobian(
+                np,
+                mesh.imported_nodes,
+                mesh.volume_elements,
+                _orientation(mesh),
+                topology.volume_midnodes,
+            )
+        )
+        q.setflags(write=False)
+        _IMPORTED[topology] = q
+    return _IMPORTED[topology]
 
 
 def quality(mesh: Mesh) -> jax.Array:
