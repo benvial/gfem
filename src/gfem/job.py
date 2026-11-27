@@ -82,6 +82,7 @@ from gfem._sources import (
 from gfem.errors import LinearSolverConvergenceError
 from gfem.measurements import InterfaceParticipation
 from gfem.mesh import (
+    _MIDNODE_ARRAYS,
     _ROLE_ARRAYS,
     _TOPOLOGY_ARRAYS,
     Mesh,
@@ -659,7 +660,8 @@ def _in_memory_mesh_from_args(args: dict[str, Any]) -> Mesh:
     # a tetrahedral mesh writes no dimension and its arrays' historical names
     dim = int(args.get("dim", 3))
     arrays = {}
-    for name in _array_names(dim):
+    names = (*_array_names(dim), *(n for n, _ in _MIDNODE_ARRAYS if n in args))
+    for name in names:
         array = np.array(args[name])
         array.flags.writeable = False
         arrays[name] = array
@@ -953,6 +955,7 @@ _MESH_NAMES = (
     "section_thickness",
     "dim",
     *dict.fromkeys((*_TOPOLOGY_ARRAYS, *_ROLE_ARRAYS)),
+    *(name for name, _ in _MIDNODE_ARRAYS),
 )
 
 _codec.register(Mesh, to_args=_mesh_args, from_args=_mesh_from_args, names=_MESH_NAMES)

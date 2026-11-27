@@ -437,6 +437,28 @@ class DistributedUnsupportedError(NotImplementedError):
         return self.message
 
 
+class CurvedMeshUnsupportedError(NotImplementedError):
+    """A curved (second-order) mesh meets something that has no curved path.
+
+    Raised when a mesh is read or used, before any solve, so a script can
+    catch it and go on with `Mesh.ElementOrder 1` (straight elements).
+
+    Attributes:
+        feature: What has no curved path, e.g. ``"2d_mesh"`` (a second-order
+            2D file) or ``"cross_section"`` (a second-order cross-section).
+    """
+
+    def __init__(self, feature: str, message: str) -> None:
+        """Store the key and the message, which gives the remedy."""
+        super().__init__(feature, message)
+        self.feature = feature
+        self.message = message
+
+    def __str__(self) -> str:
+        """The message, without the key."""
+        return self.message
+
+
 class MeshRefinementUnsupportedError(NotImplementedError):
     """`gfem.refine_mesh` or `gfem.error_estimate` has no path for this problem.
 

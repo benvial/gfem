@@ -126,6 +126,10 @@ _COPIES = f"or {_RUN_COPIES}"
 
 #: Each refusal's text. The keys are `gfem.DistributedUnsupportedError.feature`.
 _REFUSALS = {
+    "curved_mesh": (
+        "A curved (second-order) mesh has no distributed path: regenerate the "
+        f"mesh with gmsh `Mesh.ElementOrder 1`, {_COPIES}."
+    ),
     "adaptive_sweep": (
         f"An adaptive sweep has no distributed path: use a uniform sweep, {_COPIES}."
     ),
@@ -360,6 +364,8 @@ def refuse(model: Any, problem: Any, options: Any) -> None:
     from gfem._floquet import floquet_ports_in
     from gfem.problems import Driven, Eigenmode, Electrostatic
 
+    if model.mesh.curved:
+        refuse_feature("curved_mesh")
     physics = physics_of(problem)
     if physics != "em":
         # thermal (steady and transient) or DC conduction: no distributed solve

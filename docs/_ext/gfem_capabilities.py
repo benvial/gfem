@@ -1204,6 +1204,7 @@ def links_gradient_errors(row: dict) -> bool:
 #: What each refusal case asks for, in the site's words. A case with no label here,
 #: or a label with no case, fails the build.
 REFUSAL_LABELS = {
+    "curved_mesh": "A curved (second-order) mesh, with any problem",
     "adaptive_sweep": '`Driven(sweep="adaptive")`, with or without `samples`',
     "arpack": '`eigen_solver="arpack"` on an `Eigenmode` problem',
     "thermal": "`SteadyThermal`",

@@ -43,6 +43,7 @@ from gfem.circuit import SaxComponent  # noqa: E402
 from gfem.electro_optic import ElectroOpticShift, electro_optic_shift  # noqa: E402
 from gfem.errors import (  # noqa: E402
     AntiBoundRootWarning,
+    CurvedMeshUnsupportedError,
     DegenerateModeError,
     DeviceMemoryWarning,
     DeviceUnavailableError,
@@ -243,6 +244,7 @@ __all__ = [
     "Convection",
     "CrossSections",
     "CurrentMoments",
+    "CurvedMeshUnsupportedError",
     "DCConduction",
     "DCConductionResult",
     "DampingFrame",

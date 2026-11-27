@@ -16,7 +16,7 @@ import numpy as np
 from gfem import _mpi
 from gfem._checks import is_traced
 from gfem._pytree import readonly
-from gfem.errors import RegionNotFoundError
+from gfem.errors import CurvedMeshUnsupportedError, RegionNotFoundError
 
 #: Supported ``length_unit`` values and their size in metres.
 LENGTH_UNITS = {"m": 1.0, "cm": 1e-2, "mm": 1e-3, "um": 1e-6, "nm": 1e-9}
@@ -51,6 +51,14 @@ _TOPOLOGY_ARRAYS = (
     "tri_tags",
     "tri_entities",
     "tri_neighbours",
+)
+
+#: The mid-edge node arrays of a curved mesh, as (stored name, `_Topology` field):
+#: a straight mesh has none, so its arrays, digest and job files are the same
+#: as before curved meshes existed.
+_MIDNODE_ARRAYS = (
+    ("tet_midnodes", "volume_midnodes"),
+    ("tri_midnodes", "surface_midnodes"),
 )
 
 # Local face k of a tetrahedron is the one opposite its vertex k.
@@ -108,6 +116,12 @@ class _Topology:
     source: Path | None = None
     section_thickness: float | None = None
     dim: int = 3
+    # Mid-edge nodes of a curved mesh: column k of ``volume_midnodes`` (n, 6) is
+    # the node on edge `_TET_EDGES`[k] of the tetrahedron, column k of
+    # ``surface_midnodes`` (n, 3) the one on the edge opposite vertex k of the
+    # triangle. Both are None on a straight mesh.
+    volume_midnodes: np.ndarray | None = None
+    surface_midnodes: np.ndarray | None = None
 
 
 def _array_names(dim: int) -> tuple[str, ...]:
@@ -116,11 +130,18 @@ def _array_names(dim: int) -> tuple[str, ...]:
 
 
 def _topology_arrays(topology: _Topology) -> dict[str, np.ndarray]:
-    """A topology's arrays by stored name (`_array_names`), in that order."""
-    return {
+    """A topology's arrays by stored name (`_array_names`), in that order.
+
+    A curved mesh's mid-edge node arrays (`_MIDNODE_ARRAYS`) come last.
+    """
+    arrays = {
         name: getattr(topology, field)
         for name, field in zip(_array_names(topology.dim), _ROLE_ARRAYS, strict=True)
     }
+    for name, field in _MIDNODE_ARRAYS:
+        if getattr(topology, field) is not None:
+            arrays[name] = getattr(topology, field)
+    return arrays
 
 
 def _topology_from_arrays(arrays, **statics) -> _Topology:
@@ -129,6 +150,7 @@ def _topology_from_arrays(arrays, **statics) -> _Topology:
     fields = {
         field: arrays[name] for name, field in zip(names, _ROLE_ARRAYS, strict=True)
     }
+    fields |= {field: arrays[name] for name, field in _MIDNODE_ARRAYS if name in arrays}
     return _Topology(**statics, **fields)
 
 
@@ -202,6 +224,7 @@ def _read_gmsh(path: Path, length_unit: str) -> _Topology:
     cells = _cells(raw, path)
     tets, tet_tags, tet_entities = cells["tetra"]
     tris, tri_tags, tri_entities = cells["triangle"]
+    tet_mid, tri_mid = cells.get("midnodes", (None, None))
     points = np.asarray(raw.points, dtype=float)
     neighbours = _triangle_neighbours(points, tets, tris, path)
     topology = _Topology(
@@ -216,15 +239,26 @@ def _read_gmsh(path: Path, length_unit: str) -> _Topology:
         surface_entities=readonly(tri_entities),
         surface_neighbours=readonly(neighbours),
         source=path.resolve(),
+        volume_midnodes=None if tet_mid is None else readonly(tet_mid),
+        surface_midnodes=None if tri_mid is None else readonly(tri_mid),
     )
     _check_tags(topology, path)
+    if tet_mid is not None:
+        _check_curved_quality(topology, path)
     return topology
+
+
+def _check_curved_quality(topology: _Topology, path: Path) -> None:
+    """Refuse a file whose curved tetrahedra are folded (`gfem.shape` measure)."""
+    from gfem.shape import _check_curved_read  # gfem.shape imports this module
+
+    _check_curved_read(Mesh(jnp.asarray(topology.imported_nodes), topology), path)
 
 
 def _is_plane(raw: meshio.Mesh) -> bool:
     """Whether a file holds a 2D mesh: triangles and no 3D element."""
     types = {block.type for block in raw.cells}
-    return "triangle" in types and not types & set(_VOLUME_TYPES)
+    return bool(types & {"triangle", "triangle6"}) and not types & set(_VOLUME_TYPES)
 
 
 def _read_plane(raw: meshio.Mesh, path: Path, length_unit: str) -> _Topology:
@@ -542,7 +576,7 @@ def _read_on_rank_0(
 
 @jax.tree_util.register_pytree_with_keys_class
 class Mesh:
-    """A straight-sided tetrahedral or triangle mesh with named regions.
+    """A tetrahedral or triangle mesh with named regions, straight or curved.
 
     Build one with `Mesh.from_gmsh` from a gmsh ``.msh`` file (format 2.2
     ASCII or 4.1), or with `Mesh.from_gmsh_cross_section` from a 2D triangle
@@ -555,6 +589,12 @@ class Mesh:
     `nodes` are (n, 2), its areas are its volumes and its lines its surfaces.
     `volume_elements` and `surface_elements` hold the elements of both kinds
     of mesh.
+
+    A second-order gmsh file (``tetra10`` and ``triangle6``; gmsh
+    ``Mesh.ElementOrder 2``) is read as a curved mesh (`curved`): `nodes` hold
+    every file node, corners and mid-edge, and a solve integrates on the
+    quadratic element map. Orders above 2, a mix of orders and a curved 2D
+    file are refused.
 
     A `Mesh` is a JAX
     `pytree <https://docs.jax.dev/en/latest/pytrees.html>`__:
@@ -614,11 +654,16 @@ class Mesh:
             The mesh, with node coordinates in metres.
 
         Raises:
-            ValueError: The unit is unknown, the mesh is second order (curved),
-                has elements other than tetrahedra and triangles (or, in 2D,
-                triangles and lines), a 2D mesh is not in one plane z =
-                constant or has a line off its triangles' edges, or its
-                physical groups cannot be addressed by name.
+            ValueError: The unit is unknown, the mesh has elements of order 3
+                or more or mixes first- and second-order ones, has elements
+                other than tetrahedra and triangles (or, in 2D, triangles and
+                lines), a 2D mesh is not in one plane z = constant or has a
+                line off its triangles' edges, or its physical groups cannot be
+                addressed by name.
+            CurvedMeshUnsupportedError: The file is a second-order 2D mesh
+                (``feature="2d_mesh"``).
+            MeshQualityError: A curved tetrahedron is folded; regenerate the
+                mesh with gmsh ``Mesh.HighOrderOptimize 1``.
             RuntimeError: Ranks asked for different paths or units.
         """
         comm = _mpi.resolve_comm(comm)
@@ -671,10 +716,12 @@ class Mesh:
         Raises:
             ValueError: The unit is unknown, the thickness is not a positive
                 length, the file holds 3D elements (read it with
-                `from_gmsh`), the section is curved or not in one plane z =
+                `from_gmsh`), the section is not in one plane z =
                 constant, a 1D group is not on the triangles' edges, a group is
                 named ``front`` or ``back``, or the groups cannot be addressed
                 by name.
+            CurvedMeshUnsupportedError: The section is second order
+                (``feature="cross_section"``).
             RuntimeError: Ranks asked for different paths, units or thicknesses.
 
         Example:
@@ -764,6 +811,15 @@ class Mesh:
         )
 
     # --- regions -------------------------------------------------------------
+
+    @property
+    def curved(self) -> bool:
+        """Whether the mesh is curved: read from a second-order gmsh file.
+
+        A curved mesh keeps the mid-edge node of every tetrahedron edge and
+        triangle edge, and solves on the quadratic element map.
+        """
+        return self._topology.volume_midnodes is not None
 
     @property
     def dim(self) -> int:
@@ -859,13 +915,20 @@ class Mesh:
 
         Tetrahedra and triangles (on a 2D mesh, triangles and lines) carry two
         cell-data arrays: ``region`` (the gmsh physical-group number) and
-        ``entity`` (the gmsh entity number).
+        ``entity`` (the gmsh entity number). A curved mesh writes second-order
+        cells, ``tetra10`` and ``triangle6`` in meshio's (VTK) node order.
         """
         t = self._topology
         kinds = ("tetra", "triangle") if t.dim == 3 else ("triangle", "line")
+        volumes, surfaces = t.volume_elements, t.surface_elements
+        volume_mid, surface_mid = t.volume_midnodes, t.surface_midnodes
+        if volume_mid is not None and surface_mid is not None:
+            kinds = ("tetra10", "triangle6")
+            volumes = np.hstack([volumes, volume_mid[:, _TET_MID_TO_MESHIO]])
+            surfaces = np.hstack([surfaces, surface_mid[:, _TRI_MID_TO_MESHIO]])
         return meshio.Mesh(
             np.asarray(self.nodes, dtype=float),
-            [(kinds[0], t.volume_elements), (kinds[1], t.surface_elements)],
+            [(kinds[0], volumes), (kinds[1], surfaces)],
             cell_data={
                 "region": [t.volume_tags, t.surface_tags],
                 "entity": [t.volume_entities, t.surface_entities],
@@ -1021,7 +1084,16 @@ _ELEMENT_ARRAYS = (
     "surface_elements",
     "surface_tags",
     "surface_entities",
+    "volume_midnodes",
+    "surface_midnodes",
 )
+
+
+def _same_array(a: np.ndarray | None, b: np.ndarray | None) -> bool:
+    """Equal arrays, or both absent (the mid-edge nodes of a straight mesh)."""
+    if a is None or b is None:
+        return a is b
+    return np.array_equal(a, b)
 
 
 def _same_topology(a: Mesh, b: Mesh) -> bool:
@@ -1037,7 +1109,7 @@ def _same_topology(a: Mesh, b: Mesh) -> bool:
         ta.dim == tb.dim
         and a.regions == b.regions
         and all(
-            np.array_equal(getattr(ta, name), getattr(tb, name))
+            _same_array(getattr(ta, name), getattr(tb, name))
             for name in _ELEMENT_ARRAYS
         )
     )
@@ -1103,11 +1175,79 @@ def _regions(
 
 
 # meshio cell types with a 3D (volume) element
-_VOLUME_TYPES = ("tetra", "hexahedron", "wedge", "pyramid")
+_VOLUME_TYPES = (
+    "tetra",
+    "tetra10",
+    "tetra20",
+    "tetra35",
+    "tetra56",
+    "hexahedron",
+    "wedge",
+    "pyramid",
+)
+# meshio's second-order simplices, by the first-order kind they curve
+_SECOND_ORDER = {"tetra10": "tetra", "triangle6": "triangle", "line3": "line"}
+# meshio's `tetra10` is VTK's order: after the corners its mid nodes are on edges
+# (0,1) (1,2) (0,2) (0,3) (1,3) (2,3), where gmsh puts (2,3) before (1,3);
+# `_TET_EDGES` lists (0,1) (0,2) (0,3) (1,2) (1,3) (2,3).
+_TET_MID_FROM_MESHIO = [0, 2, 3, 1, 4, 5]
+# meshio's `triangle6` mid nodes are on edges (0,1) (1,2) (2,0); `_TRI_EDGES` lists
+# the edges opposite vertices 0, 1, 2: (1,2) (0,2) (0,1).
+_TRI_MID_FROM_MESHIO = [1, 2, 0]
+# the converse, from storage order back to meshio's
+_TET_MID_TO_MESHIO = [0, 3, 1, 2, 4, 5]
+_TRI_MID_TO_MESHIO = [2, 0, 1]
 # the plural of each kind of triangle file, in messages
 _KINDS = {"cross-section": "cross-sections", "2D mesh": "2D meshes"}
 # the dimension of each cell type a reader keeps
 _CELL_DIM = {"tetra": 3, "triangle": 2, "line": 1}
+
+
+def _refuse_orders(types: list[str], path: Path, *, section: bool, file: str) -> None:
+    """Refuse the files gfem cannot read as a curved or a straight mesh.
+
+    Raises:
+        ValueError: A cell of order 3 or more, or first- and second-order
+            cells together (the message names the gmsh option).
+        gfem.CurvedMeshUnsupportedError: A second-order 2D file or
+            cross-section (``section``).
+    """
+    # meshio names higher-order cells by their node count (tetra20, line4, ...)
+    above = [
+        t
+        for t in types
+        if t.startswith(("tetra", "triangle", "line"))
+        and t not in ("tetra", "triangle", "line", *_SECOND_ORDER)
+    ]
+    if above:
+        raise ValueError(
+            f"{path.name} has {' / '.join(above)} elements: order 3 or more. gfem "
+            "reads second-order (curved) meshes at most. Regenerate it with gmsh "
+            '`Mesh.ElementOrder 2` (Python: gmsh.option.setNumber("Mesh.ElementOrder", '
+            "2); command line: gmsh -order 2), or `ElementOrder 1` for a "
+            "straight-sided mesh."
+        )
+    second = [t for t in types if t in _SECOND_ORDER]
+    if section and second:
+        flat = "2d_mesh" if file == "2D mesh" else "cross_section"
+        raise CurvedMeshUnsupportedError(
+            flat,
+            f"{path.name} is a second-order (curved) {file}: it has "
+            f"{' / '.join(second)} elements. gfem solves a curved mesh in 3D only: "
+            "NGSolve curves the areas but keeps the boundary segments straight, "
+            "so boundary terms would see chords. Regenerate it with gmsh "
+            '`Mesh.ElementOrder 1` (Python: gmsh.option.setNumber("Mesh.ElementOrder", '
+            "1); command line: gmsh -order 1).",
+        )
+    first = [t for t in types if t in ("tetra", "triangle")]
+    curved = [t for t in second if t != "line3"]
+    if curved and first and not section:
+        raise ValueError(
+            f"{path.name} mixes first- and second-order elements "
+            f"({' / '.join([*first, *curved])}). Regenerate it with gmsh "
+            "`Mesh.ElementOrder 2` for a curved mesh, or `ElementOrder 1` for a "
+            "straight-sided one, on the whole mesh."
+        )
 
 
 def _cells(
@@ -1117,7 +1257,9 @@ def _cells(
 
     For `Mesh.from_gmsh` tetrahedra and triangles; for a cross-section or a
     2D mesh (``section``, the ``file`` kind named in messages) triangles and
-    lines.
+    lines. A curved file (`tetra10`, `triangle6`) gives the corner nodes of its
+    cells and, under ``"midnodes"``, the tetrahedra's and triangles' mid-edge
+    nodes in the storage order of `_Topology`.
     """
     if "gmsh:physical" not in raw.cell_data:
         dims = "areas and lines" if section else "volumes and surfaces"
@@ -1128,16 +1270,10 @@ def _cells(
     width = {"triangle": 3, "line": 2} if section else {"tetra": 4, "triangle": 3}
     volume = "triangle" if section else "tetra"
     types = sorted({block.type for block in raw.cells})
-    # meshio names higher-order cells by their node count (tetra10, line3, ...).
-    curved = [t for t in types if t[-1].isdigit()]
-    if curved:
-        raise ValueError(
-            f"{path.name} is a second-order (curved) mesh: it has "
-            f"{' / '.join(curved)} elements. gfem supports straight-sided meshes "
-            "only. Regenerate it with gmsh `ElementOrder 1` (Python: "
-            'gmsh.option.setNumber("Mesh.ElementOrder", 1); command line: '
-            "gmsh -order 1)."
-        )
+    _refuse_orders(types, path, section=section, file=file)
+    # a 3D file's second-order cells; its line3 are ignored like its lines
+    curved = any(t in ("tetra10", "triangle6") for t in types)
+    full = {"tetra": 10, "triangle": 6} if curved else width
     solid = [t for t in types if t in _VOLUME_TYPES]
     if section and solid:
         raise ValueError(
@@ -1145,7 +1281,8 @@ def _cells(
             "it with gfem.Mesh.from_gmsh; Mesh.from_gmsh_cross_section reads a 2D "
             "section of triangles only."
         )
-    other = [t for t in types if t not in (*width, "line", "vertex")]
+    known = (*width, *(t for t, k in _SECOND_ORDER.items() if k in width))
+    other = [t for t in types if t not in (*known, "line", "line3", "vertex")]
     if other:
         supported = (
             f"{_KINDS[file]} of triangles only (lines on boundaries)"
@@ -1162,15 +1299,17 @@ def _cells(
         raw.cell_data["gmsh:geometrical"],
         strict=True,
     ):
-        if block.type in width:
-            parts[block.type].append((block.data, phys, geom))
+        kind = _SECOND_ORDER.get(block.type, block.type)
+        if kind in width:
+            parts[kind].append((block.data, phys, geom))
     _check_overlaps_in_cell_sets(raw, path, section=section)
-    out = {}
+    out: dict[str, tuple[np.ndarray, ...]] = {}
+    mids: dict[str, np.ndarray] = {}
     for kind, items in parts.items():
         if items:
             data, phys, geom = (np.concatenate(c) for c in zip(*items, strict=True))
         else:
-            data, phys, geom = np.empty((0, width[kind])), np.empty(0), np.empty(0)
+            data, phys, geom = np.empty((0, full[kind])), np.empty(0), np.empty(0)
         grouped = phys != 0  # gmsh writes group 0 for elements outside any group
         if kind == volume and not grouped.all():
             what = (
@@ -1183,12 +1322,20 @@ def _cells(
                 f"{what[1]} physical group. Every {what[2]} needs a named region: "
                 f"add the missing {what[3]} to a physical group in gmsh."
             )
+        data = data[grouped].astype(np.int64)
         out[kind] = (
-            data[grouped].astype(np.int64),
+            data[:, : width[kind]],
             phys[grouped].astype(np.int64),
             geom[grouped].astype(np.int64),
         )
         _check_duplicates(out[kind][0], out[kind][1], raw, kind, path)
+        if curved:
+            mids[kind] = data[:, width[kind] :]
+    if curved:
+        out["midnodes"] = (
+            mids["tetra"][:, _TET_MID_FROM_MESHIO],
+            mids["triangle"][:, _TRI_MID_FROM_MESHIO],
+        )
     return out
 
 

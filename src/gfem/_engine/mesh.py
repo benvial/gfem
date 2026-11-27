@@ -193,6 +193,8 @@ def to_ngsolve(
             f"build asked for {what}. Solve it on one process, or read the file "
             "as a slab with gfem.Mesh.from_gmsh_cross_section."
         )
+    if comm is not None and mesh.curved:
+        _mpi.refuse_feature("curved_mesh")
     if comm is not None and len(periodic) > 1:
         _mpi.refuse_feature("periodic")
     check_nodes(np.asarray(mesh.nodes, float), periodic)
@@ -208,9 +210,23 @@ def to_ngsolve(
         domains=domains,
         cell_order=tet_order,
         facet_order=tri_order,
-        node_order=np.arange(len(points)),
+        node_order=_node_order(mesh),
         pairs=periodic,
     )
+
+
+def _node_order(mesh: Mesh) -> np.ndarray:
+    """NGSolve vertex ``i`` is gfem node ``order[i]``.
+
+    The nodes in file order on a straight mesh. A curved mesh's NGSolve vertices
+    are its corner nodes in increasing order, then its mid-edge nodes are added
+    as points beyond them (netgen counts the vertices as one more than the largest
+    corner index), so the order lists the corners only.
+    """
+    topology = mesh._topology  # noqa: SLF001
+    if topology.volume_midnodes is None:
+        return np.arange(len(mesh.nodes))
+    return np.unique(topology.volume_elements)
 
 
 def cell_domains(mesh: Mesh) -> tuple[np.ndarray, np.ndarray]:
@@ -241,6 +257,9 @@ def _netgen_mesh(
         return _netgen_mesh_2d(mesh, points)
     names = {(r.dim, r.tag): r.name for r in mesh.regions}
     ngmesh = ngm.Mesh(dim=3)  # ty: ignore[unresolved-attribute]
+    number = None
+    if mesh.curved:
+        points, number = _corners_first(mesh, points)
     ngmesh.AddPoints(np.ascontiguousarray(points))
 
     domains, tet_domain = cell_domains(mesh)
@@ -249,6 +268,11 @@ def _netgen_mesh(
     ordered = tet_domain[order]
     tet_order = order[np.argsort(ordered, kind="stable")]
     tets = mesh.tetrahedra[order]
+    volume_mid = mesh._topology.volume_midnodes  # noqa: SLF001
+    surface_mid = mesh._topology.surface_midnodes  # noqa: SLF001
+    if number is not None and volume_mid is not None:
+        # netgen's TET10: the corners, then the mid nodes on `_TET_EDGES`
+        tets = number[np.concatenate([tets, volume_mid[order]], axis=1)]
     for k, (tag, _) in enumerate(domains, start=1):
         ngmesh.SetMaterial(k, names[3, int(tag)])
         ngmesh.AddElements(dim=3, index=k, data=tets[ordered == k], base=0)
@@ -257,9 +281,14 @@ def _netgen_mesh(
     din = np.where(nb[:, 0] >= 0, tet_domain[np.maximum(nb[:, 0], 0)], 0)
     dout = np.where(nb[:, 1] >= 0, tet_domain[np.maximum(nb[:, 1], 0)], 0)
     tris = mesh.triangles.copy()
+    if number is not None and surface_mid is not None:
+        # netgen's TRIG6: the corners, then the mid nodes opposite vertices 0, 1, 2
+        tris = np.concatenate([tris, surface_mid], axis=1)
     # netgen faces point out of domin; a face with only a front side is flipped.
     flip = din == 0
-    tris[flip] = tris[flip][:, ::-1]
+    tris[flip] = _reversed_triangles(tris[flip])
+    if number is not None:
+        tris = number[tris]
     din[flip], dout[flip] = dout[flip], 0
     keys = np.stack([mesh.triangle_tags, din, dout], axis=1)
     faces, tri_face = np.unique(keys, axis=0, return_inverse=True)
@@ -283,6 +312,31 @@ def _netgen_mesh(
                 point(nr0=first), point(nr0=second), identnr=j, type=2
             )
     return ngmesh, tuple((int(t), int(e)) for t, e in domains), tet_order, tri_order
+
+
+def _corners_first(mesh: Mesh, points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """A curved mesh's points with its corners first, and each node's new number.
+
+    The corners keep their file order (`_node_order`), then every other node
+    (mid-edge nodes, and any node in no element) follows in file order.
+    """
+    corners = _node_order(mesh)
+    rest = np.setdiff1d(np.arange(len(points)), corners)
+    order = np.concatenate([corners, rest])
+    number = np.empty(len(points), dtype=np.int64)
+    number[order] = np.arange(len(points))
+    return points[order], number
+
+
+def _reversed_triangles(tris: np.ndarray) -> np.ndarray:
+    """Triangles of 3 or 6 nodes with the opposite orientation.
+
+    The corners reverse, and each mid node stays opposite the corner it was
+    opposite, so the mid nodes reverse with them.
+    """
+    if tris.shape[1] == 3:
+        return tris[:, ::-1]
+    return tris[:, [2, 1, 0, 5, 4, 3]]
 
 
 def _netgen_mesh_2d(

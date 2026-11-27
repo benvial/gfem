@@ -29,7 +29,7 @@ from gfem._dim2 import refuse_entry
 from gfem._pytree import readonly
 from gfem._sparse import Coo, coo, spd_solve
 from gfem.errors import MeshQualityError, MeshQualityWarning, RegionNotFoundError
-from gfem.mesh import LENGTH_UNITS, Mesh, _check_unit
+from gfem.mesh import _TET_EDGES, LENGTH_UNITS, Mesh, _check_unit
 from gfem.model import Model, check_surface
 
 __all__ = [
@@ -60,6 +60,104 @@ _TRIANGLE_CORNERS = ((0, 1, 2), (1, 2, 0), (2, 0, 1))
 
 # --- mesh quality ------------------------------------------------------------
 
+# The 20 points of the cubic lattice of a tetrahedron, as multi-indices
+# alpha with |alpha| = 3: barycentric coordinates alpha / 3.
+_LATTICE_INDEX = np.array(
+    [
+        (a, b, c, 3 - a - b - c)
+        for a in range(4)
+        for b in range(4 - a)
+        for c in range(4 - a - b)
+    ]
+)
+_LATTICE = _LATTICE_INDEX / 3
+
+
+def _lattice_gradients() -> np.ndarray:
+    r"""The derivatives of the quadratic map along each barycentric coordinate.
+
+    Entry ``[p, i, n]`` is the weight of node ``n`` (the four corners, then the
+    mid-edge nodes in `_TET_EDGES` order) in the derivative
+    :math:`\partial x / \partial \lambda_i` at lattice point ``p``, for the map
+
+    .. math::
+        x = \sum_i \lambda_i (2 \lambda_i - 1) x_i
+            + \sum_{ab} 4 \lambda_a \lambda_b x_{ab},
+
+    with the four coordinates taken as independent.
+    A difference :math:`\partial_j x - \partial_c x` is the derivative along
+    the edge from corner :math:`c` to corner :math:`j`, and on a straight
+    tetrahedron it is :math:`x_j - x_c`.
+    """
+    g = np.zeros((len(_LATTICE), 4, 10))
+    for i in range(4):
+        g[:, i, i] = 4 * _LATTICE[:, i] - 1
+    for k, (a, b) in enumerate(_TET_EDGES):
+        g[:, a, 4 + k] = 4 * _LATTICE[:, b]
+        g[:, b, 4 + k] = 4 * _LATTICE[:, a]
+    return g
+
+
+def _bernstein_inverse() -> np.ndarray:
+    r"""The map from a cubic's 20 lattice values to its Bernstein coefficients.
+
+    The degree-3 Bernstein basis is :math:`B_\alpha = (3! / \alpha!)
+    \lambda^\alpha`. A cubic's coefficients bound its minimum from below.
+    """
+    factorial = np.array([1.0, 1.0, 2.0, 6.0])
+    weight = 6.0 / np.prod(factorial[_LATTICE_INDEX], axis=1)
+    basis = weight * np.prod(_LATTICE[:, None, :] ** _LATTICE_INDEX[None, :, :], axis=2)
+    return np.linalg.inv(basis)
+
+
+_GRADIENTS = _lattice_gradients()
+_BERNSTEIN_INVERSE = _bernstein_inverse()
+
+
+def _curved_edges(xp: ModuleType, nodes, elements: np.ndarray, midnodes: np.ndarray):
+    r"""The quadratic map's derivatives at the lattice, ``(n, 20, 4, 3)``.
+
+    Entry ``[e, p, i]`` is :math:`\partial x / \partial \lambda_i` of element
+    ``e`` at lattice point ``p`` (`_lattice_gradients`).
+    """
+    x10 = nodes[np.concatenate([elements, midnodes], axis=1)]
+    return xp.einsum("pin,enx->epix", xp.asarray(_GRADIENTS), x10)
+
+
+def _curved_scaled_jacobian(
+    xp: ModuleType, nodes, elements: np.ndarray, midnodes: np.ndarray, sign
+):
+    """The scaled Jacobian of each curved tetrahedron, times ``sign``.
+
+    The minimum over the 20 lattice points and the four corner frames
+    (`_CORNERS`) of the straight element's measure on the frame's three edge
+    derivatives; on a straight tetrahedron it is `_scaled_jacobian`'s value.
+    """
+    d = _curved_edges(xp, nodes, elements, midnodes)
+    q = None
+    for a, *others in _CORNERS:
+        edges = [d[:, :, k] - d[:, :, a] for k in others]
+        norm = xp.prod(xp.stack([xp.linalg.norm(e, axis=-1) for e in edges]), axis=0)
+        e1, e2, e3 = edges
+        det = xp.sum(e1 * xp.cross(e2, e3), axis=-1)
+        corner = xp.min(sign[:, None] * np.sqrt(2) * det / norm, axis=1)
+        q = corner if q is None else xp.minimum(q, corner)
+    return q
+
+
+def _bernstein_bound(nodes, elements: np.ndarray, midnodes: np.ndarray, sign):
+    """A lower bound of each curved tetrahedron's Jacobian determinant, times ``sign``.
+
+    The smallest Bernstein coefficient of the determinant, a cubic in the
+    element's coordinates known at the 20 lattice points. It is at most the
+    determinant's minimum, so a bound at or below zero means the element may
+    fold between the sample points.
+    """
+    d = _curved_edges(np, nodes, elements, midnodes)
+    e1, e2, e3 = (d[:, :, k] - d[:, :, 0] for k in (1, 2, 3))
+    det = sign[:, None] * np.sum(e1 * np.cross(e2, e3), axis=-1)
+    return (det @ _BERNSTEIN_INVERSE.T).min(axis=1)
+
 
 def _det(xp: ModuleType, edges) -> Any:
     """Per element, the determinant of its corner's edges (two in 2D, three in 3D)."""
@@ -70,13 +168,23 @@ def _det(xp: ModuleType, edges) -> Any:
     return xp.sum(e1 * xp.cross(e2, e3), axis=1)
 
 
-def _scaled_jacobian(xp: ModuleType, nodes, elements: np.ndarray, sign: np.ndarray):
+def _scaled_jacobian(
+    xp: ModuleType,
+    nodes,
+    elements: np.ndarray,
+    sign: np.ndarray,
+    midnodes: np.ndarray | None = None,
+):
     r"""The scaled Jacobian of each element, times ``sign``.
 
-    The minimum over a tet's corners of
+    With the mid-edge nodes of a curved mesh (``midnodes``), the minimum over
+    the cubic lattice of the curved tetrahedra (`_curved_scaled_jacobian`).
+    Otherwise the minimum over a tet's corners of
     :math:`\sqrt{2} \det(e_1, e_2, e_3) / (|e_1| |e_2| |e_3|)`, or over a
     triangle's corners of :math:`(2 / \sqrt{3}) \det(e_1, e_2) / (|e_1| |e_2|)`.
     """
+    if midnodes is not None:
+        return _curved_scaled_jacobian(xp, nodes, elements, midnodes, sign)
     triangles = elements.shape[1] == 3
     corners, factor = (
         (_TRIANGLE_CORNERS, 2 / np.sqrt(3)) if triangles else (_CORNERS, np.sqrt(2))
@@ -101,7 +209,11 @@ def _orientation(mesh: Mesh) -> np.ndarray:
 
 def _imported_quality(mesh: Mesh) -> np.ndarray:
     return _scaled_jacobian(
-        np, mesh.imported_nodes, mesh.volume_elements, _orientation(mesh)
+        np,
+        mesh.imported_nodes,
+        mesh.volume_elements,
+        _orientation(mesh),
+        mesh._topology.volume_midnodes,  # noqa: SLF001
     )
 
 
@@ -133,7 +245,11 @@ def quality(mesh: Mesh) -> jax.Array:
         ``(n_elements,)``.
     """
     return _scaled_jacobian(
-        jnp, jnp.asarray(mesh.nodes), mesh.volume_elements, _orientation(mesh)
+        jnp,
+        jnp.asarray(mesh.nodes),
+        mesh.volume_elements,
+        _orientation(mesh),
+        mesh._topology.volume_midnodes,  # noqa: SLF001
     )
 
 
@@ -162,7 +278,8 @@ def _check_quality(
     elements = mesh.volume_elements
     if active is None:
         active = np.ones(len(elements), dtype=bool)
-    q = _scaled_jacobian(np, nodes, elements, _orientation(mesh))
+    midnodes = mesh._topology.volume_midnodes  # noqa: SLF001
+    q = _scaled_jacobian(np, nodes, elements, _orientation(mesh), midnodes)
     q0 = _imported_quality(mesh)
     inverted = active & (q <= 0)
     if inverted.any():
@@ -175,6 +292,8 @@ def _check_quality(
             mesh, nodes=nodes, worst=worst, q=q, q0=q0, what=what, fatal=True
         )
         raise MeshQualityError(msg)
+    if midnodes is not None:
+        _warn_between_samples(mesh, nodes, active, stacklevel + 1, comm)
     ratio = q / q0
     poor = active & (ratio < WARN_QUALITY_RATIO)
     if poor.any():
@@ -187,6 +306,67 @@ def _check_quality(
             mesh, nodes=nodes, worst=worst, q=q, q0=q0, what=what, fatal=False
         )
         _mpi.warn(comm, msg, MeshQualityWarning, stacklevel=stacklevel + 1)
+
+
+def _warn_between_samples(
+    mesh: Mesh, nodes: np.ndarray, active: np.ndarray, stacklevel: int, comm: Any
+) -> None:
+    """Warn of curved tetrahedra whose Jacobian bound is not positive.
+
+    Their sampled values are (the caller raised on the others), so they may fold
+    only between the 20 sample points.
+    """
+    topology = mesh._topology  # noqa: SLF001
+    midnodes = topology.volume_midnodes
+    if midnodes is None:  # a straight mesh has no sample points to miss
+        return
+    bound = _bernstein_bound(nodes, mesh.volume_elements, midnodes, _orientation(mesh))
+    unsure = active & (bound <= 0)
+    if unsure.any():
+        _mpi.warn(
+            comm,
+            f"{int(unsure.sum())} curved element(s) of the mesh may be folded "
+            "between sample points: a Bernstein lower bound of their Jacobian "
+            "determinant is not positive, though it is at the 20 points of the "
+            "cubic lattice. Remedies: take a smaller step, or remesh with gmsh "
+            "`Mesh.HighOrderOptimize 1`.",
+            MeshQualityWarning,
+            stacklevel=stacklevel + 1,
+        )
+
+
+def _check_curved_read(mesh: Mesh, path: Any) -> None:
+    """The read-time check of a curved mesh: raise on a fold, warn on a doubt.
+
+    Raises:
+        MeshQualityError: A curved tetrahedron has a scaled Jacobian <= 0 at one
+            of the 20 lattice points.
+    """
+    topology = mesh._topology  # noqa: SLF001
+    q = np.asarray(_imported_quality(mesh))
+    folded = ~(q > 0)  # also a NaN: an edge of zero length
+    if folded.any():
+        value = np.where(np.isnan(q), -np.inf, q)
+        worst = int(np.flatnonzero(folded)[np.argmin(value[folded])])
+        centroid = mesh.imported_nodes[topology.volume_elements[worst]].mean(axis=0)
+        unit = mesh.length_unit
+        where = ", ".join(f"{c / LENGTH_UNITS[unit]:.4g}" for c in centroid)
+        raise MeshQualityError(
+            f"{path.name}: {int(folded.sum())} curved tetrahedra are folded (the "
+            "scaled Jacobian of the quadratic map is <= 0 at a sample point). "
+            f"The worst, element {worst}, is at ({where}) {unit} with value "
+            f"{q[worst]:.3g}. Mesh the curved geometry with gmsh "
+            "`Mesh.HighOrderOptimize 1` (Python: "
+            'gmsh.option.setNumber("Mesh.HighOrderOptimize", 1)), or with a '
+            "smaller mesh size on the curved walls."
+        )
+    _warn_between_samples(
+        mesh,
+        mesh.imported_nodes,
+        np.ones(len(q), dtype=bool),
+        stacklevel=4,
+        comm=None,
+    )
 
 
 def _quality_message(
@@ -211,7 +391,10 @@ def _quality_message(
     centroid = nodes[element].mean(axis=0) / scale
     k = len(element)
     edges = [np.linalg.norm(x0[i] - x0[j]) for i in range(k) for j in range(i + 1, k)]
-    moved = np.linalg.norm(nodes[element] - x0, axis=1).max()
+    held = element
+    if mesh._topology.volume_midnodes is not None:  # noqa: SLF001
+        held = np.concatenate([element, mesh._topology.volume_midnodes[worst]])  # noqa: SLF001
+    moved = np.linalg.norm(nodes[held] - mesh.imported_nodes[held], axis=1).max()
     where = ", ".join(f"{c:.4g}" for c in centroid)
     if fatal:
         effect = "The solve would be meaningless on this mesh."
