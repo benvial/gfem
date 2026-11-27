@@ -1094,6 +1094,8 @@ _codec.register(
         beta_2=None,
         beta_3=None,
         bend=None,
+        allow_evanescent=False,
+        polarity=None,
     ),
 )
 _codec.register(

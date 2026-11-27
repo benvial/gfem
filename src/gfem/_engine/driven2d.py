@@ -187,6 +187,10 @@ class Driven2DRule(DrivenRule):
         mesh, active = model.mesh, model._domain.active  # noqa: SLF001
         self.regions = tuple(r for r in mesh.volumes if active[mesh.elements(r)].any())
         self.wave_ports = tuple(p.name for p in model.ports if isinstance(p, WavePort))
+        #: The wave ports by name, for the fields a port mode result echoes.
+        self._wave_port_specs = {
+            p.name: p for p in model.ports if isinstance(p, WavePort)
+        }
         self.lumped_loads = ()
         self.modes = {p.name: p.mode for p in model.ports if isinstance(p, WavePort)}
         self.offsets = tuple(

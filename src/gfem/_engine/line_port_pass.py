@@ -39,7 +39,7 @@ from gfem._engine.port_mode_adjoint import (
 )
 from gfem._engine.port_mode_normalization import normalize_rows
 from gfem._engine.port_rows import Mode, ModeValues, Row, RowInputs, sample_factor
-from gfem._sweep.port_mode import _wavenumbers
+from gfem._sweep.port_mode import _branch_gamma, _wavenumbers
 
 __all__ = ["LineFaceForms", "line_face", "line_pullback_row"]
 
@@ -247,7 +247,7 @@ def line_face(
                 lam, x = polish(
                     pencil[0], pencil[1], lam, x, factor=factors[sample], who=who(k)
                 )
-                gam = 1j * np.sqrt(-lam + 0j)
+                gam = _branch_gamma(lam)
             norm = normalize_rows(
                 fields,
                 mass,

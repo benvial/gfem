@@ -775,8 +775,9 @@ class PortMode:
             `jax.jit` or `jax.vmap` from their arguments; pass a fixed value.
 
     `gfem.solve` raises `PortModeError` when the mode is below cutoff
-    somewhere in the band (naming the estimated cutoff) or degenerate, or
-    follows the same mode as another wave port of its surface, and
+    somewhere in the band (naming the estimated cutoff; a port with
+    ``allow_evanescent=True`` keeps it, on a line port of a 2D mesh) or
+    degenerate, or follows the same mode as another wave port of its surface, and
     warns with `PortModeTrackingWarning` when it crosses another mode. The
     2D problem always runs SuperLU and SciPy on the CPU, so it ignores
     `SolverOptions.device`, ``linear_solver`` and ``eigen_solver``, as a

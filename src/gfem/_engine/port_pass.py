@@ -73,7 +73,12 @@ from gfem._engine.port_mode_shape import ShapeForm, chain_to_nodes, voltage_eule
 from gfem._engine.port_rows import Mode, ModeValues, Row, RowInputs, sample_factor
 from gfem._engine.sensitivity import Integrated
 from gfem._engine.wave_ports import PortSurfaceCoupling
-from gfem._sweep.port_mode import _voltage_row, _voltage_rule, _wavenumbers
+from gfem._sweep.port_mode import (
+    _branch_gamma,
+    _voltage_row,
+    _voltage_rule,
+    _wavenumbers,
+)
 from gfem.errors import PortModeError
 
 if TYPE_CHECKING:
@@ -864,7 +869,7 @@ class PortPass:
                 lam, x = polish(
                     pencil[0], pencil[1], lam, x, factor=factor, who=_who(face, k)
                 )
-                gam = 1j * np.sqrt(-lam + 0j)
+                gam = _branch_gamma(lam)
             reference = stored
             norm = normalize_rows(
                 context.fields,

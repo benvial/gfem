@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     import skrf.network
     import xarray
 
+    from gfem._boundaries import Polarity
     from gfem._engine.line_mode import ModeSpace
     from gfem._line_section import LineSection
     from gfem._pml import PML
@@ -951,6 +952,10 @@ class PortModeResult:
             ``beta_2``, ``beta_3`` and ``D`` are per unit length of the
             reference arc of radius :math:`R`, and :math:`\nu = -i\gamma R`
             is the propagation constant per radian.
+        allow_evanescent: Whether the port keeps its mode below cutoff
+            (`gfem.WavePort`). Where it is below cutoff :math:`\mathrm{Re}\,\gamma > 0`
+            and ``n_g``, ``beta_2``, ``beta_3`` and ``D`` are NaN.
+        polarity: The port's polarity arrow (`gfem.WavePort`), or ``None``.
     """
 
     port: str
@@ -967,6 +972,8 @@ class PortModeResult:
     beta_2: jax.Array | None = None
     beta_3: jax.Array | None = None
     bend: Bend | None = None
+    allow_evanescent: bool = False
+    polarity: Polarity | None = None
 
     @property
     def n_eff(self) -> jax.Array:
@@ -2453,8 +2460,9 @@ class DrivenResult:
         Raises:
             KeyError: A name is not a port of this result.
             ValueError: A named port is not a wave or Floquet port (it has no
-                propagation constant), or a distance is negative or not
-                finite.
+                propagation constant), a distance is negative or not finite,
+                or the port keeps a mode below cutoff
+                (``allow_evanescent``) and the shift is nonzero.
             NonDifferentiableError: A distance is computed inside
                 `jax.grad`, `jax.jit` or `jax.vmap`: offsets are fixed
                 values, like ``WavePort.offset``.
@@ -2485,6 +2493,16 @@ class DrivenResult:
                 raise ValueError(
                     f"with_offsets: the offset of port {name!r} must be >= 0 m, "
                     f"got {distance}."
+                )
+            if (
+                name in self.port_modes
+                and self.port_modes[name].allow_evanescent
+                and distance != old[name]
+            ):
+                raise ValueError(
+                    f"with_offsets: port {name!r} keeps a mode below cutoff "
+                    "(allow_evanescent): shifting its plane would scale the "
+                    "pseudo-wave by a growing exponential."
                 )
             new[name] = distance
         factor = jnp.stack(

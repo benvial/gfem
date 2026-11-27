@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, ClassVar, Literal
 
 import jax
@@ -694,7 +694,7 @@ class LumpedPort:
 
 @dataclasses.dataclass(frozen=True)
 class WavePort:
-    """A wave port on an exterior surface, fed by its port mode.
+    r"""A wave port on an exterior surface, fed by its port mode.
 
     Several wave ports on one surface each request a different mode (a
     shared port surface). A propagating mode no port on the surface requests
@@ -746,12 +746,20 @@ class WavePort:
             solve raises `gfem.PortModeError` where the field read there is
             below :math:`10^{-2}` of the port's peak, at any frequency. ``None``: the
             default sign (see `gfem.conventions`).
+        allow_evanescent: The mode may be below cutoff (evanescent) at
+            frequencies of the band, on a line port of a 2D mesh. Its row and
+            column of S are then pseudo-waves that carry no power, so
+            :math:`|S|` may exceed 1, and :math:`n_\mathrm{eff} = -i\alpha/k_0`
+            with :math:`\gamma = \alpha > 0`. Set by `WavePort.kept_modes`.
+            Without it a mode below cutoff raises `gfem.PortModeError`.
 
     Raises:
         ValueError: ``mode`` is not a positive integer, ``offset`` is negative,
             ``voltage_path`` is not two or more 3-vectors, ``polarity`` is
-            not a point of 2 or 3 finite coordinates and a direction, or both
-            ``polarity`` and ``voltage_path`` are given.
+            not a point of 2 or 3 finite coordinates and a direction, both
+            ``polarity`` and ``voltage_path`` are given, or
+            ``allow_evanescent`` comes with a ``voltage_path`` or a nonzero
+            ``offset``.
         NonDifferentiableError: ``offset``, ``voltage_path`` or
             ``polarity`` is computed inside `jax.grad`, `jax.jit` or
             `jax.vmap`.
@@ -764,6 +772,7 @@ class WavePort:
     voltage_path: tuple[tuple[float, float, float], ...] | None = None
     pec_edges: tuple[str, ...] = ()
     polarity: Polarity | None = None
+    allow_evanescent: bool = False
     _physics: ClassVar[str] = "em"
 
     def __post_init__(self) -> None:
@@ -797,6 +806,75 @@ class WavePort:
                     "defines a voltage)."
                 )
             object.__setattr__(self, "polarity", _polarity(self.polarity, owner))
+        if self.allow_evanescent and self.voltage_path is not None:
+            raise ValueError(
+                f"{owner}: allow_evanescent does not combine with a voltage_path: "
+                "a mode below cutoff carries no power, so it defines no voltage."
+            )
+        if self.allow_evanescent and offset != 0:
+            raise ValueError(
+                f"{owner}: allow_evanescent does not combine with an offset: "
+                "moving the plane of a mode below cutoff would scale its "
+                "pseudo-wave by a growing exponential."
+            )
+
+    @classmethod
+    def kept_modes(
+        cls,
+        section: str,
+        surface: str,
+        modes: int,
+        *,
+        pec_edges: Iterable[str] | str = (),
+        polarity: Mapping[int, Polarity] | None = None,
+    ) -> tuple[WavePort, ...]:
+        r"""The internal plane ports of a uniform section: modes :math:`1..N`.
+
+        Returns one wave port per kept mode on ``surface``, named
+        ``f"{section}@{m}"``, each with ``mode=m`` and
+        ``allow_evanescent=True``. A mode cascade joins the ports of two
+        blocks that carry the same section name.
+
+        Args:
+            section: The section's name, without ``"@"``.
+            surface: The port surface of the plane.
+            modes: The number :math:`N` of kept modes, >= 1.
+            pec_edges: As ``WavePort.pec_edges``, for every port.
+            polarity: ``{rank: (point, direction)}``, as ``WavePort.polarity``
+                of the port of that rank; ranks without an entry keep the
+                default sign.
+
+        Raises:
+            ValueError: ``modes`` is below 1, ``section`` contains ``"@"``, or
+                a ``polarity`` key falls outside :math:`1..N`.
+        """
+        if isinstance(modes, bool) or not isinstance(modes, (int, np.integer)):
+            raise TypeError(f"kept_modes: modes must be an integer, got {modes!r}.")
+        if modes < 1:
+            raise ValueError(f"kept_modes: modes must be >= 1, got {modes}.")
+        if not isinstance(section, str) or "@" in section:
+            raise ValueError(
+                f"kept_modes: the section name must be a string without '@' "
+                f"(ports are named 'section@rank'), got {section!r}."
+            )
+        pol = dict(polarity or {})
+        bad = sorted(k for k in pol if k not in range(1, int(modes) + 1))
+        if bad:
+            raise ValueError(
+                f"kept_modes: polarity keys must be mode ranks 1..{int(modes)}, "
+                f"got {bad}."
+            )
+        return tuple(
+            cls(
+                f"{section}@{m}",
+                surface,
+                mode=m,
+                pec_edges=pec_edges,  # ty: ignore[invalid-argument-type]
+                polarity=pol.get(m),
+                allow_evanescent=True,
+            )
+            for m in range(1, int(modes) + 1)
+        )
 
 
 def _polarity(value: Any, owner: str) -> Polarity:
