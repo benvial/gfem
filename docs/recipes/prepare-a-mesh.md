@@ -216,7 +216,7 @@ raises `ValueError` naming the file and the remedy:
 
 - Straight-sided tetrahedra only. Refinement never moves facets onto a
   curve: mesh curved surfaces finer in gmsh ({doc}`mesh-refinement`, Limits).
-- gfem generates no mesh and reads no CAD file: geometry, meshing and region
+- gfem reads no CAD file: geometry, meshing and region
   names are gmsh's, or gsim's ({doc}`gsim`).
 - The whole mesh is read into memory on every process.
 
@@ -228,3 +228,5 @@ raises `ValueError` naming the file and the remedy:
 - {doc}`gsim`: a mesh and its configuration from a GDS layout.
 - {doc}`shape-gradient`: move the mesh's nodes to change the shape, and
   keep its elements well shaped.
+- {doc}`cad-parameter-gradient`: to differentiate with respect to the script's
+  dimensions, write it as a build function.

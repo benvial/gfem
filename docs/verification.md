@@ -40,6 +40,7 @@ PETSc.
 | PETSc and SLEPc cells of the matrix | Finite differences | {gfem-test}`tests/verification/test_gradient_matrix.py` | Twice a week |
 | CAD parameters: strip width and height, same-mesh and remeshed differences | Fourth-order central differences; differences of remeshed solves | {gfem-test}`tests/unit/test_cad_morph_gradient.py` | Every change |
 | CAD parameters: cylinder radius, remeshed differences | Differences of remeshed solves, faceting bias allowed | {gfem-test}`tests/verification/test_cad_morph_gradient.py` | Every change |
+| Recipe's CAD parameter gradient | Differences of remeshed solves | {gfem-test}`tests/unit/test_docs_cad_parameter_gradient_recipe.py` | Every change |
 
 ## Wave ports and shared port surfaces
 

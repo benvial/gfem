@@ -118,6 +118,7 @@ An extra goes in brackets after `gfem` in the same install line:
 | `log` | Coloured log lines and progress rows while a solve runs; see {doc}`recipes/watch-a-solve`. | all |
 | `sax` | SAX, to place solves in SAX circuits ({py:obj}`gfem.SaxComponent`); gfem builds the S dictionary without it. | all |
 | `skrf` | scikit-rf, to export S as a scikit-rf network (`.to_skrf()`). | all |
+| `gmsh` | gmsh, to mesh and differentiate a parametric model you draw ({doc}`recipes/cad-parameter-gradient`). On Linux the gmsh wheel needs system OpenGL and X11 libraries. | all |
 
 On a platform outside its list, an extra installs nothing and gfem solves with
 the plain install's CPU solvers.

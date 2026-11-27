@@ -9,6 +9,8 @@ samples) and eigenmode problems (eigenfrequencies and participation
 ratios). A shape design is a JAX function from a few parameters to moved
 node coordinates, usually through {py:obj}`gfem.shape.boundary_morph`. A wave
 port's face moves too when the morph names the port in `sliding_ports`.
+For the dimensions of a gmsh model you draw, {py:obj}`gfem.shape.cad_morph` builds the map from named CAD
+parameters ({doc}`cad-parameter-gradient`).
 
 ## Widen a strip
 
@@ -110,7 +112,8 @@ How gfem itself is checked: {doc}`../verification`.
 
 ## Next
 
-{py:obj}`gfem.shape.boundary_morph`, {py:obj}`gfem.shape.quality`;
+{py:obj}`gfem.shape.boundary_morph`, {py:obj}`gfem.shape.quality`,
+{doc}`cad-parameter-gradient`;
 {py:meth}`gfem.Mesh.with_nodes` for a node map of your own, on any mesh
 (the {doc}`transducer recipe <piezoelectric-gradient>` differentiates a transducer through one);
 {doc}`s-parameter-gradient`, {doc}`capacitance-gradient`,

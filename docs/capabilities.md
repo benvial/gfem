@@ -121,6 +121,7 @@ feature also runs in 2D.
 |---|---|---|---|---|
 | Layer patterns to GDS | {py:obj}`gfem.design.LayerPattern`, {py:obj}`gfem.design.write_gds` | n/a | No; call it on the final design | {doc}`recipes/fabricable-layout` |
 | Tolerance report | {py:obj}`gfem.tolerance_report` | No | n/a | {doc}`recipes/tolerance-report` |
+| CAD parameters | {py:obj}`gfem.shape.cad_morph`, {py:obj}`gfem.shape.CadMorph` | Yes | Yes (node coordinates of every problem); needs `gfem[gmsh]` | {doc}`recipes/cad-parameter-gradient` |
 
 ### Results and files
 

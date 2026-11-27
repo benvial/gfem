@@ -159,6 +159,7 @@ recipes/fit-measured-data
 :caption: Design workflow
 
 recipes/shape-gradient
+recipes/cad-parameter-gradient
 recipes/robust-optimization
 recipes/tolerance-report
 recipes/remesh-and-restart
