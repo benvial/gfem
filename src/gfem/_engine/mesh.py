@@ -332,15 +332,29 @@ def _netgen_mesh(
         ngmesh.AddElements(dim=2, index=j, data=tris[tri_face == j], base=0)
 
     # before the wrap: identifications added after it are not seen
-    point = ngm.PointId  # ty: ignore[unresolved-attribute]
-    for j, p in enumerate(periodic, start=1):
-        for first, second in zip(
-            p.first_nodes.tolist(), p.second_nodes.tolist(), strict=True
-        ):
-            ngmesh.AddPointIdentification(
-                point(nr0=first), point(nr0=second), identnr=j, type=2
-            )
+    _identify(ngmesh, mesh, periodic, number)
     return ngmesh, tuple((int(t), int(e)) for t, e in domains), tet_order, tri_order
+
+
+def _identify(
+    ngmesh: Any, mesh: Mesh, periodic: tuple[Pairing, ...], number: np.ndarray | None
+) -> None:
+    """The periodic point identifications of a netgen mesh.
+
+    netgen's points are the corners-first numbering ``number`` of a curved
+    mesh, and a mid-edge node is not one of them, so its pairs are dropped.
+    """
+    point = ngm.PointId  # ty: ignore[unresolved-attribute]
+    n_points = len(mesh.nodes) if number is None else len(_node_order(mesh))
+    for j, p in enumerate(periodic, start=1):
+        first, second = p.first_nodes, p.second_nodes
+        if number is not None:
+            first, second = number[first], number[second]
+        for a, b in zip(first.tolist(), second.tolist(), strict=True):
+            if a < n_points and b < n_points:
+                ngmesh.AddPointIdentification(
+                    point(nr0=a), point(nr0=b), identnr=j, type=2
+                )
 
 
 def _corners_first(mesh: Mesh, points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
