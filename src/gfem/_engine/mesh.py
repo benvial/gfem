@@ -731,3 +731,18 @@ def _match(
     out = np.empty(len(local), dtype=np.int64)
     out[order[found] - len(candidates)] = candidates[gfem_row[found]]
     return out
+
+
+def curved_element_volumes(mesh: Mesh) -> np.ndarray:
+    """The volume of each gfem tetrahedron of a curved mesh, in m^3.
+
+    Integrates the quadratic element map of the built NGSolve mesh and
+    returns the result in gfem tetrahedron order.
+    """
+    built = to_ngsolve(mesh)
+    volumes = np.asarray(
+        ngs.Integrate(ngs.CoefficientFunction(1), built.mesh, element_wise=True)
+    ).copy()
+    out = np.empty(len(volumes))
+    out[built.cell_order] = volumes * built.scale**3
+    return out

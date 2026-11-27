@@ -221,7 +221,7 @@ Resonators and qubits:
 
 Meshes, materials and boundaries:
 
-- **Curved meshes.** `gfem.Mesh.from_gmsh` reads a second-order gmsh mesh as curved elements, so on curved walls order 2 converges as $h^3$ on the coax and $h^4$ on the sphere resonance, and order 3 as $h^4$ (set by the wall), against $h^2$ on straight facets ({doc}`../recipes/prepare-a-mesh`).
+- **Curved meshes.** `gfem.Mesh.from_gmsh` reads a second-order gmsh mesh as curved elements, so solves converge at the element order on curved walls instead of stalling at second order on straight facets ({doc}`../recipes/prepare-a-mesh`).
 - **Behaviour change: periodic cross-sections pair by coordinates.** A cross-section
   meshed periodically in gmsh pairs under `gfem.Periodic` on any node numbering, and
   its values move by up to 4e-4 relative. Rerun your cross-section results

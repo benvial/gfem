@@ -78,6 +78,6 @@ def test_the_check_numbers_agree(ran):
 def test_the_page_names_its_extra_and_its_faceting_note():
     text = PAGE.read_text(encoding="utf-8")
     assert "gfem[gmsh]" in text
-    assert r"0.2\,(\ell/R)^2" in text
+    assert r"0.18\,(\ell/R)^2" in text
     for name in FORBIDDEN:
         assert name.lower() not in text.lower(), name

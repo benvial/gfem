@@ -131,18 +131,12 @@ def _tet_volumes(mesh: Mesh) -> np.ndarray:
 
 def _curved_volumes(mesh: Mesh) -> np.ndarray:
     """The volume of each gfem tetrahedron of a curved mesh, m^3, at its host nodes."""
-    import ngsolve as ngs
-
-    from gfem._engine.mesh import to_ngsolve
+    from gfem._engine.mesh import curved_element_volumes
     from gfem.mesh import _at_imported_nodes
 
-    built = to_ngsolve(_at_imported_nodes(mesh) if is_traced(mesh.nodes) else mesh)
-    volumes = np.asarray(
-        ngs.Integrate(ngs.CoefficientFunction(1), built.mesh, element_wise=True)
-    ).copy()
-    out = np.empty(len(volumes))
-    out[built.cell_order] = volumes * built.scale**3
-    return out
+    return curved_element_volumes(
+        _at_imported_nodes(mesh) if is_traced(mesh.nodes) else mesh
+    )
 
 
 def _triangle_areas(mesh: Mesh) -> np.ndarray:
