@@ -151,7 +151,8 @@ def test_swapped_modes_are_refused(plain):
 
 def test_polarity_points_at_different_positions_across_a_node_disagree(conforming):
     # mode 2 has its node near y = 1.2 (measured on the field): read at 0.5 in A
-    # and at 1.5 in B, the polarity says the fields agree and the pairing says they are opposite
+    # and at 1.5 in B, the polarity says the fields agree and the pairing
+    # says they are opposite
     up = polarity_points(X_A, RANKS)
     up[2] = ((X_A * 1e-6, 0.5e-6), "+z")
     also_up = polarity_points(X_B, RANKS)
