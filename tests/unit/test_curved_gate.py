@@ -400,6 +400,67 @@ def test_an_incident_field_runs_when_every_physical_element_is_straight(straight
     assert result is not None
 
 
+def _second_order(first, out):
+    """Re-write a first-order gmsh file at order 2: mid nodes on the chords."""
+    gmsh = pytest.importorskip("gmsh")
+    gmsh.initialize()
+    try:
+        gmsh.option.setNumber("General.Terminal", 0)
+        gmsh.open(str(first))
+        gmsh.model.mesh.setOrder(2)
+        gmsh.option.setNumber("Mesh.MshFileVersion", 4.1)
+        gmsh.write(str(out))
+    finally:
+        gmsh.finalize()
+    return out
+
+
+@pytest.fixture(scope="module")
+def cube_scattering(tmp_path_factory):
+    """A solved plane-wave column on a dielectric cube in a layer, order 2.
+
+    The mesh is straight (the incident gate lets the solve run) but curved in
+    format; the cube is the scatterer of `current_moments`.
+    """
+    import multipole_cases as mc
+
+    tmp = tmp_path_factory.mktemp("cube_scattering")
+    first = mc.cube(tmp / "first.msh", centred=True)
+    model = mc.portless_scatterer_model(_second_order(first, tmp / "second.msh"))
+    assert model.mesh.curved
+    problem = gfem.Driven(299792458.0 / 1e-6, sources=PLANE, keep_fields=True)
+    options = gfem.SolverOptions(order=2, linear_solver="direct")
+    return model, gfem.solve(model, problem, options=options)
+
+
+@pytest.mark.parametrize(
+    ("key", "call"),
+    [
+        ("multipoles", lambda r, m: gfem.multipoles(r, "te", model=m)),
+        ("current_moments", lambda r, m: gfem.current_moments(r, "te", model=m)),
+        ("cross_sections", lambda r, m: gfem.cross_sections(r, "te", model=m)),
+    ],
+)
+def test_the_incident_field_measurements_refuse_on_curved_elements(
+    cube_scattering, monkeypatch, key, call
+):
+    # The incident gate stops a solve on a curved physical element, so a result
+    # that reaches these entries sits on a straight mesh. Mark every element
+    # curved after the solve (the predicate is the gate's only input) to reach
+    # the measurement's own gate: the truncation layer or the scatterer.
+    model, result = cube_scattering
+    mesh = model.mesh
+    n_tet, n_tri = len(mesh.tetrahedra), len(mesh.triangles)
+    monkeypatch.setattr(
+        _curved,
+        "_bent_edges",
+        lambda *_a, **_k: (np.ones((n_tet, 6), bool), np.ones((n_tri, 3), bool)),
+    )
+    with pytest.raises(gfem.CurvedMeshUnsupportedError) as caught:
+        call(result, model)
+    assert caught.value.feature == key
+
+
 # --- the table --------------------------------------------------------------------
 
 

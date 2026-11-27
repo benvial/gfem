@@ -25,6 +25,7 @@ import scipy.sparse as sp
 from gfem import _cad, _morph, _mpi, _periodic, _pml, _truncation
 from gfem._boundaries import WavePort, surfaces_of
 from gfem._checks import is_traced
+from gfem._curved import gated_triangles
 from gfem._dim2 import refuse_entry
 from gfem._pytree import readonly
 from gfem._sparse import Coo, coo, spd_solve
@@ -805,24 +806,6 @@ def boundary_morph(  # noqa: PLR0915
     )
 
 
-def _gated_triangles(model: Model) -> np.ndarray:
-    """Per surface triangle, whether a feature of the model reads it as straight.
-
-    Port faces (sliding ones too), periodic faces and the faces of a sheet
-    design (an `Impedance` or `Conductor` with a ``fill``) are read from their
-    corners alone, so a morph keeps their elements straight.
-    """
-    mesh = model.mesh
-    names = {s for port in model.ports for s in surfaces_of(port)}
-    for pair in model._periodic:  # noqa: SLF001
-        names |= {pair.first, pair.second}
-    for item in model.boundaries:
-        if getattr(item, "fill", None) is not None:
-            names |= set(surfaces_of(item))
-    tags = [mesh.region(name).tag for name in names]
-    return np.isin(mesh.triangle_tags, tags)
-
-
 def _edge_ends(topology: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Each mid-edge node of a curved mesh, with the two corners of its edge."""
     corners, mids = topology.volume_elements, topology.volume_midnodes
@@ -889,7 +872,7 @@ def _midnode_maps(
     # corners moving, in no held or gated face
     wall, wall_mids = mesh.triangles[moving_tri], topology.surface_midnodes[moving_tri]
     gated = held.copy()
-    gated[topology.surface_midnodes[_gated_triangles(model)].ravel()] = True
+    gated[topology.surface_midnodes[gated_triangles(model)].ravel()] = True
     is_param = np.zeros(n_nodes, dtype=bool)
     is_param[params] = True
     has_normal = np.zeros(n_nodes, dtype=bool)
@@ -1599,7 +1582,7 @@ def _place_cad_midnodes(
     w = w.reshape(n_nodes, 3, n_params).copy()
     w[m] = chord[m]
     gated = np.zeros(n_nodes, dtype=bool)
-    gated[topology.surface_midnodes[_gated_triangles(model)].ravel()] = True
+    gated[topology.surface_midnodes[gated_triangles(model)].ravel()] = True
     own = (cad.dim[m] <= 2) & ~held[m] & ~gated[m]  # classified on the CAD
     # surface nodes: the normal of the quadratic triangle at the mid-edge node
     vectors = _quadratic_normals(x_model, cad.slide_triangles, cad.slide_midnodes)

@@ -525,9 +525,7 @@ def _sets(
             key = "floquet_port"
         elif isinstance(item, Periodic):
             key = "periodic"
-        elif (
-            isinstance(item, (Conductor, Impedance)) and item.fill is not None
-        ) or (
+        elif (isinstance(item, (Conductor, Impedance)) and item.fill is not None) or (
             isinstance(item, Absorbing) and _beside_anisotropic(mesh, item, materials)
         ):
             key = "sheet_frame"
@@ -549,6 +547,20 @@ def _sets(
                     faces=(owners, columns),
                 )
             )
+    return out
+
+
+def gated_triangles(model: Any) -> np.ndarray:
+    """Per surface triangle, whether a gated item of the model reads it as straight.
+
+    The union of the triangle sets `refuse_model` and `check_moved` test, so a
+    morph that keeps these faces straight (`gfem.shape`) keeps them exactly
+    where the gate would refuse a curved element.
+    """
+    mesh = model.mesh
+    out = np.zeros(len(mesh.triangles), dtype=bool)
+    for read in _sets(mesh, model.boundaries, model.ports, model.pml, model.materials):
+        out[read.triangles] = True
     return out
 
 

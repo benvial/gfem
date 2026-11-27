@@ -18,6 +18,7 @@ import scipy.constants
 
 import gfem
 from gfem import _pml
+from gfem._curved import gated_triangles
 from gfem.mesh import _TET_EDGES, _TRI_EDGES
 
 DATA = Path(__file__).parent / "data"
@@ -254,19 +255,35 @@ def test_jit_and_grad_through_a_curved_morph_agree_with_eager_and_differences(mo
 
 
 def test_the_faces_of_a_sliding_wave_port_keep_their_mid_edge_nodes_on_their_chords():
-    # A gated surface's mid-edge nodes follow their chords even where they lie
-    # on the moving wall (the rim edges). Tolerance 64 eps X, as above.
-    ports = [gfem.WavePort("p", "sym")]
-    model = _model("coax_order2", ports=ports)
+    # The port face is the flat plane x = 0 of the coax; two of its edges lie on
+    # the moving wall ``inner`` (the rim). Its mid-edge nodes follow their chords
+    # even there, where the wall's own rule would move them along the wall's
+    # normal. Tolerance 64 eps X, as above, X = 2 m the largest coordinate; the
+    # displacement is O(0.02) so its chord mean carries a few eps of X as well.
+    ports = [gfem.WavePort("p", "port")]
+    model = _model("coax_split_order2", ports=ports)
     m = gfem.shape.boundary_morph(model, "inner", sliding_ports=["p"])
     t = 0.02 * (1 + np.sin(np.arange(m.n_params)))
     u = np.asarray(m(t).nodes) - np.asarray(model.mesh.imported_nodes)
     topology = model.mesh._topology
-    on = topology.surface_tags == model.mesh.region("sym").tag
+    on = topology.surface_tags == model.mesh.region("port").tag
     corners, mids = topology.surface_elements[on], topology.surface_midnodes[on]
+    rim = np.isin(corners, _wall_nodes(model.mesh, "inner")).any()
+    assert rim, "the port face must touch the moving wall for this check to bite"
+    # the rim nodes really move, so the check compares nonzero displacements
+    assert np.abs(u[corners]).max() > 1e-3
     for k, (a, b) in enumerate(_TRI_EDGES):
         chord = (u[corners[:, a]] + u[corners[:, b]]) / 2
         np.testing.assert_allclose(u[mids[:, k]], chord, rtol=0, atol=64 * EPS * 2.0)
+
+
+def test_a_wave_port_on_a_face_with_curved_rim_arcs_refuses():
+    # The ends of the coax are flat but their rims are circular arcs: the face's
+    # mid-edge nodes leave their chords, so the gate refuses the port (the morph
+    # rule above applies to straight faces only).
+    with pytest.raises(gfem.CurvedMeshUnsupportedError) as caught:
+        _model("coax_order2", ports=[gfem.WavePort("p", "sym")])
+    assert caught.value.feature == "wave_port"
 
 
 def test_the_mid_edge_nodes_of_a_held_surface_do_not_move(curved):
@@ -302,3 +319,37 @@ def test_check_layer_nodes_counts_a_mid_edge_node_past_a_stretched_face(curved):
     )
     with pytest.raises(ValueError, match="past the inner face"):
         _pml.check_layer_nodes(model, gfem.Driven(np.array([1e9])))
+
+
+def test_the_morph_keeps_straight_every_face_the_gate_reads_as_straight():
+    # One list of gated faces: a port, a periodic pair, a sheet design and an
+    # absorbing face beside an anisotropic material (flat faces of the cell).
+    mesh = gfem.Mesh.from_gmsh(DATA / "cell_order2.msh", length_unit="m")
+    air = gfem.Material()
+    model = gfem.Model(
+        mesh,
+        materials={
+            "ball": air,
+            "air": air,
+            "heater": air,
+            "pml": gfem.Material(eps_r=(2.0, 2.0, 3.0)),
+        },
+        ports=[gfem.LumpedPort("l", "xlo", direction="+z")],
+        boundaries=[
+            gfem.Periodic(("ylo", "yhi")),
+            gfem.Conductor(
+                "sheet",
+                5.8e7,
+                fill=gfem.SheetField(fill=np.ones(len(mesh.elements("sheet")))),
+            ),
+            gfem.Absorbing("xhi"),
+        ],
+    )
+    gated = gated_triangles(model)
+    expected = np.zeros(len(mesh.triangles), bool)
+    for name in ("xlo", "ylo", "yhi", "sheet", "xhi"):
+        expected[mesh.elements(name)] = True
+    np.testing.assert_array_equal(gated, expected)
+    # faces no feature reads from corners are free to follow the wall
+    assert not gated[mesh.elements("wall")].any()
+    assert not gated[mesh.elements("zwall")].any()
