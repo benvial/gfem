@@ -470,3 +470,23 @@ def test_a_first_order_field_on_a_curved_mesh_is_exported_in_cut_elements():
         (block,) = out.cells
         cells[key] = len(block.data) // len(mesh.tetrahedra)
     assert cells == {"curved": 8, "straight": 1}
+
+
+# --- volumes --------------------------------------------------------------------
+
+
+def test_a_heat_source_reports_the_curved_volume_it_heats():
+    # A quarter annulus of radii 1 and 2 and length 1 m holds 3 pi / 4 m^3. The
+    # chords of the order-1 twin cut 2.7e-3 of it off; the curved elements' own
+    # volumes miss it by 3.4e-6 (measured). A reported power of 1 W/m^3 times the
+    # volume is that number, and 1e-4 sits 34x above the curved error and 27x
+    # under the faceted one.
+    mesh = _read("coax_order2")
+    model = gfem.Model(
+        mesh,
+        materials={"fill": gfem.Material(thermal_conductivity=1.0)},
+        boundaries=[gfem.FixedTemperature("outer", temperature=300.0)],
+    )
+    source = gfem.HeatSource.uniform("fill", power_density=1.0)
+    power = float(gfem.solve(model, gfem.SteadyThermal(source)).power)
+    assert power == pytest.approx(3 * math.pi / 4, rel=1e-4, abs=0)

@@ -116,11 +116,31 @@ def _per_length_remedy(
 
 
 def _tet_volumes(mesh: Mesh) -> np.ndarray:
-    """Volume of each tetrahedron in m^3, from host node positions."""
+    """Volume of each tetrahedron in m^3, from host node positions.
+
+    A curved tetrahedron's volume is the integral of its quadratic map, the one
+    the solves assemble with, not that of its four corners.
+    """
     nodes = mesh.imported_nodes if is_traced(mesh.nodes) else np.asarray(mesh.nodes)
+    if mesh.curved:
+        return _curved_volumes(mesh)
     p = nodes[mesh.tetrahedra]
     a, b, c = p[:, 1] - p[:, 0], p[:, 2] - p[:, 0], p[:, 3] - p[:, 0]
     return np.abs(np.einsum("ij,ij->i", np.cross(a, b), c)) / 6.0
+
+
+def _curved_volumes(mesh: Mesh) -> np.ndarray:
+    """The volume of each gfem tetrahedron of a curved mesh, m^3, at its host nodes."""
+    import ngsolve as ngs
+
+    from gfem._engine.mesh import to_ngsolve
+    from gfem.mesh import _at_imported_nodes
+
+    built = to_ngsolve(_at_imported_nodes(mesh) if is_traced(mesh.nodes) else mesh)
+    volumes = np.asarray(ngs.Integrate(1, built.mesh, element_wise=True)).copy()
+    out = np.empty(len(volumes))
+    out[built.cell_order] = volumes * built.scale**3
+    return out
 
 
 def _triangle_areas(mesh: Mesh) -> np.ndarray:
