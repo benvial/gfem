@@ -147,11 +147,11 @@ def test_a_bad_mesh_raises_with_its_remedy(case, tmp_path):
 @pytest.mark.parametrize(
     ("fixture", "phrase"),
     [
-        ("cube_order2_msh41.msh", "second-order"),
+        ("octant_order3.msh", "ElementOrder 2"),
         ("cube_overlap_msh41.msh", "more than one"),
     ],
 )
-def test_a_curved_or_overlapping_mesh_raises(fixture, phrase):
+def test_a_high_order_or_overlapping_mesh_raises(fixture, phrase):
     with pytest.raises(ValueError, match=phrase):
         gfem.Mesh.from_gmsh(DATA / fixture)
 
