@@ -814,7 +814,7 @@ class Mesh:
 
     @property
     def curved(self) -> bool:
-        """Whether the mesh is curved: read from a second-order gmsh file.
+        """Whether the mesh is curved, read from a second-order gmsh file.
 
         A curved mesh keeps the mid-edge node of every tetrahedron edge and
         triangle edge, and solves on the quadratic element map.

@@ -1015,3 +1015,20 @@ def test_the_test_role_renders_inside_a_pipe_table_cell(tmp_path):
 def test_the_test_role_with_a_missing_target_fails_the_build(tmp_path, target):
     status, _ = _build_test_role_page(tmp_path, f"See :gfem-test:`{target}`.")
     assert status != 0
+
+
+def test_the_limits_row_names_every_curved_mesh_feature():
+    # Each gated feature's docs label (`_curved.FEATURES`) appears in the
+    # Limits row "Curved meshes", so a new gated feature cannot be left
+    # undocumented.
+    from gfem import _curved
+
+    rows = [
+        line
+        for line in (REPO / "docs" / "capabilities.md").read_text().splitlines()
+        if line.startswith("| **Curved meshes**")
+    ]
+    assert len(rows) == 1
+    row = rows[0].lower()
+    missing = [f.label for f in _curved.FEATURES.values() if f.label.lower() not in row]
+    assert not missing, missing

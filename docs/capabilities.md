@@ -114,6 +114,7 @@ feature also runs in 2D.
 | Dispersive materials | {py:obj}`gfem.PermittivityLaw` | No | Matrix (law parameters) | {doc}`recipes/dispersive-materials` |
 | Material library and fit | {py:mod}`gfem.materials`, {py:obj}`gfem.fit_permittivity` | n/a | n/a | {doc}`recipes/fit-measured-data` |
 | Perfectly matched layer | {py:obj}`gfem.PML` | Yes | Yes, not layer parameters | {doc}`recipes/perfectly-matched-layer` |
+| Curved meshes | {py:obj}`gfem.Mesh.from_gmsh` of second-order elements, {py:attr}`gfem.Mesh.curved` | Yes | Yes, every corner and mid-edge node | {doc}`recipes/prepare-a-mesh` |
 
 ### Design workflow
 
@@ -183,6 +184,7 @@ returning a wrong value:
 | **Floquet ports** | Uniform driven sweep, direct or BDDC; homogeneous lossless half-space; no incidence gradient | {doc}`recipes/floquet-ports` |
 | **Periodic surfaces** | No gradient in the angle; power balance needs a port per propagating order; aperture fields at normal incidence | {doc}`recipes/diffraction-efficiency` |
 | **Perfectly matched layers** | Box shells only; no error estimates; refuses `"bddc_gmres"` | {doc}`recipes/perfectly-matched-layer` |
+| **Curved meshes** | 3D, second order, one process. On curved elements, wave ports, lumped ports, Floquet ports, periodic pairs, perfectly matched layers, sheet frames, point reads, incident fields, multipoles, current moments, cross sections, beam coupling, heat inputs, far field and interface participation raise {py:obj}`gfem.CurvedMeshUnsupportedError`, and differentiate along motions that keep their elements straight; optical force raises on any curved mesh | {doc}`recipes/prepare-a-mesh` |
 | **Free space** | 3D only; needs a perfectly matched layer or absorbing faces; refused on periodic models and the adaptive sweep | {doc}`recipes/incident-fields` |
 | **Multipoles** | Incident-field columns, homogeneous lossless background; not differentiable by nodes | {doc}`recipes/multipoles` |
 | **Unrequested port modes** | A propagating mode no port requests is partly reflected, not converted | {doc}`modes-and-ports` |

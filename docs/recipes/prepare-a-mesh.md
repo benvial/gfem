@@ -1,7 +1,7 @@
 # Mesh preparation
 
 Build the mesh of your own device and solve on it. gfem reads a
-[gmsh](https://gmsh.info) `.msh` file of straight-sided tetrahedra whose
+[gmsh](https://gmsh.info) `.msh` file of tetrahedra whose
 volumes and surfaces are grouped into named {term}`regions <region>` (gmsh's
 physical groups); the model refers to the geometry only by those names.
 
@@ -148,6 +148,31 @@ If that is too much, refine where the field varies fastest: in gmsh
 (`"Mesh.MeshSizeMax"`, or a size field near edges and gaps) or with gfem's
 own refinement ({doc}`mesh-refinement`).
 
+## Curved walls
+
+Straight tetrahedra facet a curved wall, so a capacitance or a resonance
+improves only as $h^2$ with the mesh size $h$, whatever the
+{term}`element order`: the {term}`geometry floor`. Set
+`gmsh.option.setNumber("Mesh.ElementOrder", 2)` before `generate`, and gfem
+reads a {term}`curved mesh`, whose mid-edge nodes lie on the wall: at orders 2
+and 3 the error falls as $h^4$ ({ref}`verification <verification-curved-walls>`).
+
+```python
+coax = gfem.Mesh.from_gmsh("coax.msh", length_unit="mm")
+print(coax.curved)
+```
+
+```text
+True
+```
+
+Features that compute geometry from element corners (ports, periodic walls,
+layers, incident fields, field reads; {doc}`../capabilities`, Limits) run where
+their own elements are straight, as on a flat face with straight edges, and
+raise {py:obj}`gfem.CurvedMeshUnsupportedError` elsewhere; so does a curved 2D
+mesh. Keep gmsh's `"Mesh.HighOrderOptimize"` option at 0 or 1 so that elements off the wall
+stay straight.
+
 ## Metals: a surface or an excluded volume
 
 A thin metal whose thickness you do not resolve is a named surface with a
@@ -202,8 +227,7 @@ raises `ValueError` naming the file and the remedy:
 
 - No physical groups at all: group and name the volumes and surfaces, then
   export again.
-- A second-order (curved) mesh: regenerate it with
-  `gmsh.option.setNumber("Mesh.ElementOrder", 1)`.
+- Order 3 and above, or mixed orders: set `"Mesh.ElementOrder"` to 1 or 2.
 - Hexahedra, prisms or pyramids: gfem reads tetrahedra only, with
   triangles on surfaces.
 - Tetrahedra outside any volume group: add every volume to a group.
@@ -214,8 +238,6 @@ raises `ValueError` naming the file and the remedy:
 
 ## Limits
 
-- Straight-sided tetrahedra only. Refinement never moves facets onto a
-  curve: mesh curved surfaces finer in gmsh ({doc}`mesh-refinement`, Limits).
 - gfem reads no CAD file: geometry, meshing and region
   names are gmsh's, or gsim's ({doc}`gsim`).
 - The whole mesh is read into memory on every process.
