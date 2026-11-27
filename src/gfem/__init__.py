@@ -122,6 +122,7 @@ from gfem.measurements import (  # noqa: E402
     strain,
 )
 from gfem.mesh import Mesh, Region  # noqa: E402
+from gfem.mode_cascade import CascadeResult, cascade  # noqa: E402
 from gfem.model import (  # noqa: E402
     PEC,
     PMC,
@@ -240,6 +241,7 @@ __all__ = [
     "BandDiagram",
     "Bend",
     "BrillouinGain",
+    "CascadeResult",
     "Conductor",
     "Convection",
     "CrossSections",
@@ -371,6 +373,7 @@ __all__ = [
     "band_diagram",
     "beam_coupling",
     "brillouin_gain",
+    "cascade",
     "characteristic_impedance",
     "conventions",
     "cross_sections",
