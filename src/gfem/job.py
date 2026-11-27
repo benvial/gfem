@@ -1059,7 +1059,9 @@ for _cls in (
     _codec.register(_cls)
 _codec.register(EigenmodeResult, to_args=_with_layer_args)
 # a polarity only when set, so a port without one is written as before
-_codec.register(WavePort, to_args=_unset_omitted(WavePort, polarity=None))
+_codec.register(
+    WavePort, to_args=_unset_omitted(WavePort, polarity=None, allow_evanescent=False)
+)
 _codec.register(
     Field,
     to_args=_field_args,

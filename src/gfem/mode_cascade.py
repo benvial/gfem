@@ -33,8 +33,8 @@ if TYPE_CHECKING:
 __all__ = ["CascadeResult", "cascade"]
 
 # A joined pair must model one guide: |gamma_A - gamma_B| / k0 beyond this
-# means two different cross-sections (a tenth of the measured spread between
-# two discretizations of one guide is 4e-5, so the margin is about 230).
+# means two different cross-sections. Two discretizations of one guide differ
+# by up to 4e-5 (measured), so this leaves a margin of about 250.
 _MISMATCH = 1e-2
 
 # two blocks carry the same mode when the mass-normalized overlap of their
@@ -88,8 +88,11 @@ class CascadeResult:
             n = np.shape(self.gamma[name])[-1]
             try:
                 where = f"{float(np.asarray(length)):.6g} m"
-            except (TypeError, jax.errors.TracerArrayConversionError):
+            except jax.errors.TracerArrayConversionError:
                 where = "traced length"
+            except TypeError:  # a concrete batch of lengths (vmap)
+                low, high = np.min(length), np.max(length)
+                where = f"{low:.6g} to {high:.6g} m"
             parts.append(f"{name!r} ({n} modes, {where})")
         sections = ", ".join(parts) if parts else "no sections"
         f = self.s.frequency
@@ -144,8 +147,10 @@ def cascade(
     ends of the mode carry a ``polarity`` (`gfem.WavePort`) it is
     :math:`t_m = \mathrm{sign}(\hat d_A \cdot \hat z)\,
     \mathrm{sign}(\hat d_B \cdot \hat z)`, with or without a trace. Inside
-    `jax.grad`, `jax.jit` or `jax.vmap` the blocks carry no port fields, so a
-    mode without a polarity on both ends cannot be aligned: give
+    `jax.grad`, `jax.jit` or `jax.vmap` the blocks solved inside the
+    transformation carry no port fields (blocks solved outside it keep them),
+    so a mode of such blocks without a polarity on both ends cannot be
+    aligned: give
     ``WavePort.kept_modes(..., polarity={m: (point, direction)})``.
 
     Args:
@@ -159,9 +164,10 @@ def cascade(
         The cascade's `CascadeResult`.
 
     Raises:
-        ValueError: The blocks' frequencies differ; a block does not have
-            every port excited; a section name contains ``"@"``; a section's
-            ports sit in no block, one block or three or more; its ends carry
+        ValueError: ``sections`` is not a mapping; there are no blocks; the
+            blocks' frequencies differ; a block does not have every port
+            excited; a section name contains ``"@"``; a section's ports sit
+            in no block, one block or three or more; its ends carry
             different numbers of modes, ranks other than :math:`1..N`, or a
             port that is not a wave port mode; a port name other than a
             section's occurs in two or more blocks (join through
@@ -170,14 +176,22 @@ def cascade(
             solved different polarizations; a length is not a scalar, is
             negative, not finite or complex; the last kept mode propagates
             at some frequency; the two ends' propagation constants differ by
-            more than :math:`10^{-2} k_0`; a mode has no polarity on both
-            ends and no port fields to align (outside a transformation).
+            more than :math:`10^{-2} k_0`; a section's two planes do not face
+            each other; a mode's polarity direction is not along :math:`z`;
+            a section joins plane (3D) ports; the two blocks do not carry the
+            same mode (the overlap of its fields is below 0.95); the gauge of
+            a mode is undetermined or changes sign across the band; the
+            polarity and the pairing gauge of a mode disagree; a mode has no
+            polarity on both ends and no port fields to align (outside a
+            transformation).
         NonDifferentiableError: As the last case, inside `jax.grad`,
             `jax.jit` or `jax.vmap`.
 
-    Checks that read values (the voltage path, the lengths, propagation
-    and index mismatch) run only on concrete values: run the cascade once
-    outside the transformation to have them all.
+    Checks that read values (the voltage path, the lengths, propagation and
+    index mismatch, the planes' normals, the overlap and sign of the fields,
+    and the polarity cross-check) run only on concrete values, so blocks
+    solved inside a transformation skip the field checks: run the cascade
+    once outside the transformation to have them all.
     """
     blocks = list(blocks)
     if not isinstance(sections, Mapping):
@@ -191,8 +205,11 @@ def cascade(
     _check_joined(blocks, plan)
     lengths = _lengths(sections)
     traced = is_traced(blocks) or any(is_traced(v) for v in lengths.values())
-    _check_values(blocks, plan)
-    gauge = _gauges(blocks, plan, traced)
+    # the value checks and the gauge read only the blocks, never the lengths:
+    # computed eagerly they stay concrete under jax.jit and jax.vmap
+    with jax.ensure_compile_time_eval():
+        _check_values(blocks, plan)
+        gauge = _gauges(blocks, plan, traced)
     return _join(blocks, plan, lengths, gauge)
 
 
@@ -414,6 +431,8 @@ def _check_normals(blocks: list[Block], sec: _Section) -> None:
             na, nb = np.asarray(fa.normal), np.asarray(fb.normal)
         except NonDifferentiableError:
             continue
+        # antiparallel up to 1e-6 in the cosine (an angle of about 1.4e-3 rad):
+        # far above the round-off of unit normals, far below any tilted plane
         if float(na @ nb) > -1 + 1e-6:
             raise ValueError(
                 f"cascade: the planes of section {sec.name!r} do not face each "
@@ -483,12 +502,33 @@ def _overlap_grid(a: Any, b: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return points_a, points_a + gap[:, None] * normal, weights
 
 
+def _line_weight(field: Any, frequency: Any, points: np.ndarray) -> np.ndarray:
+    r"""``(n_freq, n_points)``: the line weight :math:`w=\sum_j \theta_j w_j`.
+
+    :math:`w` is :math:`1/\mu_r` for Ez and :math:`1/\varepsilon_r(\omega)` for
+    Hz: the weight under which the modes of one line are orthogonal. The points
+    lie inside one segment each (the Gauss pieces are cut at the line's nodes).
+    """
+    space = field._space  # noqa: SLF001
+    section = space.section
+    omega = 2 * np.pi * np.asarray(frequency, float)
+    t = section.to_local(points)[0]
+    ends = np.asarray(section.points, float)[np.asarray(section.segments, int)]
+    order = np.argsort(ends.min(axis=1))
+    low = ends.min(axis=1)[order]
+    segment = order[np.searchsorted(low, t, side="right") - 1]
+    values = np.array(space.weight_values)[:, segment]
+    return space.weights(omega) @ values
+
+
 def _pairing_sign(section: str, m: int, a: PortModeResult, b: PortModeResult) -> float:
     r"""The sign :math:`t_m` aligning mode ``m`` of block B to A, from their fields.
 
     :math:`t_m = \mathrm{sign}\,\mathrm{Re}(r_m \kappa_A/\kappa_B)` with
-    :math:`r_m = \int e_A e_B / \int e_A^2`, per frequency (the overlaps are
-    unconjugated, as the reciprocity pairing is).
+    :math:`r_m = \int w e_A e_B / \int w e_A^2`, per frequency (the overlaps
+    are unconjugated, as the reciprocity pairing is), :math:`w` the weight of
+    block A's line (:math:`1/\varepsilon_r` for Hz, under which its modes are
+    orthogonal).
     """
     fa, fb = _field(a), _field(b)
     if len(fa.normal) != 2:
@@ -498,7 +538,12 @@ def _pairing_sign(section: str, m: int, a: PortModeResult, b: PortModeResult) ->
         )
     pa, pb, w = _overlap_grid(fa, fb)
     ea, eb = np.asarray(fa.at(pa)), np.asarray(fb.at(pb))
-    iaa, ibb, iab = (ea * ea) @ w, (eb * eb) @ w, (ea * eb) @ w
+    wt = _line_weight(fa, a.frequency, pa) * w
+    iaa, ibb, iab = (
+        (ea * ea * wt).sum(-1),
+        (eb * eb * wt).sum(-1),
+        (ea * eb * wt).sum(-1),
+    )
     c = iab / np.sqrt(iaa * ibb)
     if (np.abs(c) < _SAME_MODE).any():
         raise ValueError(
@@ -521,7 +566,7 @@ def _pairing_sign(section: str, m: int, a: PortModeResult, b: PortModeResult) ->
             f"section {section!r}: split the band or fix the sign with a "
             "polarity (WavePort.kept_modes(..., polarity={m: (point, direction)}))."
         )
-    return float(jax.lax.stop_gradient(signs[0]))
+    return float(signs[0])
 
 
 def _z_sign(mode: PortModeResult) -> float:

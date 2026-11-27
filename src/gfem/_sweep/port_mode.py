@@ -2138,6 +2138,13 @@ class _Greedy:
             key=lambda k: self.modes[k],
         )
         n, mode, who = len(self.f), self.modes[k], self._who(k)
+        if self._opted(k):
+            return PortModeError(
+                f"{who}: the cross-section yields only {len(first.lam)} mode(s) "
+                f"(propagating and evanescent) at {hertz(self.f[0])}, fewer "
+                f"than the {mode} kept: refine the port line or keep fewer "
+                "modes."
+            )
         remedy = self._remedy("Start the band above the cutoff, pick a lower mode")
         top = self._solve(n - 1) if n > 1 else first
         n_top = self._n_propagating(top, n - 1)

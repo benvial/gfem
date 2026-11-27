@@ -102,7 +102,7 @@ def device_mesh(x0: float, x1: float, mmi: tuple[float, float]) -> gfem.Mesh:
     lines.append("$EndElements")
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "mmi.msh"
-        path.write_text("\n".join(lines) + "\n")
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return gfem.Mesh.from_gmsh(path, length_unit="um")
 
 

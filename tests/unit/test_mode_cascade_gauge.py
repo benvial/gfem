@@ -134,8 +134,8 @@ def _swap_fields(block, i, j):
     """Block with the port fields of modes ``i`` and ``j`` exchanged (labels stay)."""
     modes = dict(block.port_modes)
     a, b = modes[f"s@{i}"], modes[f"s@{j}"]
-    modes[f"s@{i}"] = dataclasses.replace(a, e_field=b.e_field)
-    modes[f"s@{j}"] = dataclasses.replace(b, e_field=a.e_field)
+    modes[f"s@{i}"] = dataclasses.replace(a, e_field=b.e_field, h_field=b.h_field)
+    modes[f"s@{j}"] = dataclasses.replace(b, e_field=a.e_field, h_field=a.h_field)
     return dataclasses.replace(block, port_modes=modes)
 
 
@@ -147,6 +147,43 @@ def test_swapped_modes_are_refused(plain):
     with pytest.raises(ValueError, match="do not carry the same mode 2") as err:
         gfem.cascade([a, _swap_fields(b, 2, 3)], {"s": LENGTH})
     assert "section 's'" in str(err.value)
+
+
+def test_swapped_hz_modes_are_refused(conforming):
+    # an Hz guide's modes are orthogonal under the 1/eps weight, not the unit
+    # one (unweighted off-diagonal overlaps reach 0.2 here, 0.75 at a contrast
+    # of 12): the overlap is weighted by block A's line weight, which makes
+    # different modes orthogonal (below 5e-4 measured), far from the 0.95 of one mode
+    a, b = solve_step(step_models(conforming, n=N), "Hz")
+    with pytest.raises(ValueError, match="do not carry the same mode 2"):
+        gfem.cascade([a, _swap_fields(b, 2, 3)], {"s": LENGTH})
+
+
+@pytest.mark.parametrize("polarization", ["Ez", "Hz"])
+def test_jit_and_vmap_of_fem_blocks_without_polarity_match_eager(
+    conforming, polarization
+):
+    # the value checks and the gauge read only the blocks: under jit and vmap
+    # they stay concrete, and the blocks' fields serve the pairing gauge
+    blocks = solve_step(step_models(conforming, n=N), polarization)
+
+    def f(length):
+        return gfem.cascade(list(blocks), {"s": length}).s.values
+
+    lengths = jnp.array([0.2e-6, LENGTH])
+    eager = np.stack([np.asarray(f(x)) for x in lengths])
+    # jit and eager are different float programs (fused against op by op): the
+    # S entries are bounded by 1 and the sums are over N = 6 modes, so a few
+    # eps; the gate is the 1e-13 of the other gauge checks
+    np.testing.assert_allclose(
+        np.asarray(jax.jit(f)(LENGTH)), eager[1], rtol=0, atol=1e-13
+    )
+    np.testing.assert_allclose(
+        np.asarray(jax.vmap(f)(lengths)), eager, rtol=0, atol=1e-13
+    )
+    np.testing.assert_allclose(
+        np.asarray(jax.jit(jax.vmap(f))(lengths)), eager, rtol=0, atol=1e-13
+    )
 
 
 def test_polarity_points_at_different_positions_across_a_node_disagree(conforming):

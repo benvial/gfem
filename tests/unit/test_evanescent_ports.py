@@ -128,6 +128,15 @@ def test_a_port_that_has_not_opted_in_names_the_remedy_below_cutoff(uniform):
         port_mode(uniform, [0.6 * FC2, 1.3 * FC2], 2, evanescent=False)
 
 
+def test_a_kept_mode_beyond_the_modes_the_line_yields_is_not_a_cutoff(uniform):
+    # the line has about 80 DOFs: a mode of rank 500 is not a matter of cutoff
+    # and the port already has the opt-in, so the message must not suggest it
+    with pytest.raises(PortModeError, match=r"yields only .*keep fewer") as err:
+        port_mode(uniform, [F_ABOVE], 500)
+    assert "allow_evanescent" not in str(err.value)
+    assert "cutoff" not in str(err.value)
+
+
 # --- the branch helper -------------------------------------------------------------
 
 
@@ -172,6 +181,7 @@ def test_kept_modes_builds_the_section_ports():
     "call",
     [
         lambda: gfem.WavePort.kept_modes("s", "plane", 0),
+        lambda: gfem.WavePort.kept_modes("s", "plane", 1.5),
         lambda: gfem.WavePort.kept_modes("s@a", "plane", 2),
         lambda: gfem.WavePort.kept_modes(
             "s", "plane", 2, polarity={3: ((0.0, 0.0), "+z")}
@@ -187,7 +197,15 @@ def test_kept_modes_builds_the_section_ports():
         ),
         lambda: gfem.WavePort("p", "left", allow_evanescent=True, offset=1e-6),
     ],
-    ids=["modes0", "at-sign", "key-high", "key-low", "voltage_path", "offset"],
+    ids=[
+        "modes0",
+        "modes-float",
+        "at-sign",
+        "key-high",
+        "key-low",
+        "voltage_path",
+        "offset",
+    ],
 )
 def test_the_value_refusals(call):
     with pytest.raises(ValueError):

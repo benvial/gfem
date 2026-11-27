@@ -175,6 +175,11 @@ N = 10  max |S - S_full| = 9.5e-08
 N = 12  max |S - S_full| = 5.6e-08
 ```
 
+From $N = 10$ the difference stops falling near $5\times10^{-8}$: the blocks and
+the full device are meshed separately, so what remains is the difference
+between the two meshes, not a dropped mode; it falls with the mesh size or the
+element order.
+
 ## Differentiate in the length
 
 `jax.grad` of $T$ in the length goes through the cascade's linear solve:

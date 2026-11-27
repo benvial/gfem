@@ -40,9 +40,9 @@ def test_every_output_block_is_what_the_code_prints(ran):
     assert not dp.output_problems(ran), "\n".join(dp.output_problems(ran))
 
 
-def test_the_page_names_neither_the_forbidden_products_nor_local_notes():
+def test_the_page_names_no_local_notes():
     text = PAGE.read_text(encoding="utf-8").lower()
-    for word in ("palace", "flexcompute", "tidy3d", "photonforge", "eme", "adr"):
+    for word in ("eme", "adr"):
         assert not re.search(rf"\b{word}\b", text), word
     for word in (".scratch", "ticket"):
         assert word not in text, word

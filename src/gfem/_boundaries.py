@@ -845,11 +845,14 @@ class WavePort:
                 default sign.
 
         Raises:
-            ValueError: ``modes`` is below 1, ``section`` contains ``"@"``, or
-                a ``polarity`` key falls outside :math:`1..N`.
+            ValueError: ``modes`` is not an integer or is below 1, ``section``
+                contains ``"@"``, or a ``polarity`` key falls outside
+                :math:`1..N`.
         """
         if isinstance(modes, bool) or not isinstance(modes, (int, np.integer)):
-            raise TypeError(f"kept_modes: modes must be an integer, got {modes!r}.")
+            raise ValueError(  # noqa: TRY004 - as WavePort(mode=...)
+                f"kept_modes: modes must be an integer, got {modes!r}."
+            )
         if modes < 1:
             raise ValueError(f"kept_modes: modes must be >= 1, got {modes}.")
         if not isinstance(section, str) or "@" in section:
