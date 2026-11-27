@@ -538,6 +538,6 @@ def test_every_key_raised_in_the_package_is_in_the_table():
     source = DATA.parents[2] / "src" / "gfem"
     raised = set()
     for path in source.rglob("*.py"):
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         raised |= set(re.findall(r"CurvedMeshUnsupportedError\(\s*\"(\w+)\"", text))
     assert raised <= set(_curved.FEATURES) | {"2d_mesh", "cross_section"}
