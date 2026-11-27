@@ -34,6 +34,7 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.special import sph_harm_y, spherical_jn
 
+from gfem import _curved as curved
 from gfem import _incident
 from gfem._background import Background, lossless
 from gfem._boundaries import PMC, WavePort, surfaces_of
@@ -679,7 +680,7 @@ def _expand(
 def _build_layer(fields: list[Field], model: Model, incident: bool) -> Layer:
     """The far-field layer on its default side (the layer touching the truncation)."""
     concrete = concrete_field(fields[0])
-    return engine("far_field").exterior_layer(
+    layer = engine("far_field").exterior_layer(
         concrete,
         model,
         None,
@@ -687,6 +688,13 @@ def _build_layer(fields: list[Field], model: Model, incident: bool) -> Layer:
         nodes=np.asarray(concrete.mesh.nodes),
         incident=incident,
     )
+    curved.refuse_tets(
+        model.mesh,
+        "multipoles",
+        layer.tetrahedra,
+        "The far-field layer of gfem.multipoles",
+    )
+    return layer
 
 
 def _column_coefficients(
@@ -1121,6 +1129,9 @@ def _induced_moments(
     r""":math:`p_0` and :math:`T` per frequency, each ``(n_freq, 3)``."""
     engine_ = importlib.import_module("gfem._engine.multipoles")
     rows = engine_.elements(model, background)
+    curved.refuse_tets(
+        model.mesh, "current_moments", rows, "The scatterer of gfem.current_moments"
+    )
     p0 = np.zeros((len(fields), 3), complex)
     t = np.zeros((len(fields), 3), complex)
     if len(rows) == 0:

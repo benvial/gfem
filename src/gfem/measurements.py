@@ -70,6 +70,7 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.constants as const
 
+from gfem import _curved as curved
 from gfem import _mpi, _objective, _probe
 from gfem._adjoint.measure import measure
 from gfem._beam_coupling import beam_coupling
@@ -333,6 +334,12 @@ def interface_participation(
         )
     layer = () if modes.pml is None else modes.pml.regions
     geometry = _surface_geometry(field, surfaces, layer)
+    curved.refuse_surface(
+        field.mesh,
+        "interface_participation",
+        geometry.triangles,
+        "gfem.interface_participation",
+    )
     _refuse_law_sides(modes.materials, field.mesh, geometry, surfaces)
     coefficients = jnp.stack([f.coefficients for f in modes.e_fields])
     energy = _layer_energy(
@@ -1193,6 +1200,9 @@ def optical_force(
     from gfem.model import Model
 
     refuse_entry(getattr(field, "mesh", None), "optical_force")
+    curved.refuse_entry(
+        getattr(field, "mesh", None), "optical_force", "gfem.optical_force"
+    )
     if not isinstance(field, Field):
         raise TypeError(
             f"optical_force needs a gfem.Field, got {type(field).__name__}."
@@ -1811,6 +1821,12 @@ def cross_sections(
             )
         pf = importlib.import_module("gfem._engine.power_flow")
         where = pf.surface_of(field, truncation(model).side, model)
+        curved.refuse_tets(
+            model.mesh,
+            "cross_sections",
+            where.layer,
+            "The truncation layer of gfem.cross_sections",
+        )
         xs.check_truncation_layer(model, background, where)
         xs.check_side(model, where, "cross_sections")
         from gfem._power_flow import balance

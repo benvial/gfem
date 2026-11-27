@@ -323,6 +323,7 @@ def _rebuild(
 
 
 def _forward(rule: Any, model: Any, *, keep: bool, request: SolveRequest) -> tuple:
+    from gfem._curved import check_moved
     from gfem._materials import check_field_values
     from gfem._periodic import check_nodes
     from gfem._pml import check_layer_nodes
@@ -335,6 +336,7 @@ def _forward(rule: Any, model: Any, *, keep: bool, request: SolveRequest) -> tup
     # off the layer's stretch and stay valid on the solve domain.
     check_nodes(model.mesh.nodes, model._periodic)  # noqa: SLF001
     check_layer_nodes(model, rule.problem)
+    check_moved(model)
     _check_quality(
         model.mesh,
         model._domain_of(getattr(rule, "physics", "em")).active,  # noqa: SLF001

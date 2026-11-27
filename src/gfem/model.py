@@ -33,6 +33,7 @@ from gfem._boundaries import (
     surfaces_of,
 )
 from gfem._checks import check_fixed, is_traced
+from gfem._curved import refuse_model as refuse_curved
 from gfem._dim2 import refuse_model
 from gfem._domain import EMDomain, em_domain, enclosed_entities, physics_of
 from gfem._floquet import (
@@ -421,6 +422,17 @@ class Model:
                 f"{type(pml).__name__}; write pml=gfem.PML(('pml_x', 'pml_y'))."
             )
         by = _excluded_by_physics(excluded)
+        if mesh.curved:
+            # before any check that reads corner geometry; malformed arguments
+            # are left to the checks below
+            listed = (list, tuple)
+            refuse_curved(
+                mesh,
+                tuple(boundaries) if isinstance(boundaries, listed) else (),
+                tuple(ports) if isinstance(ports, listed) else (),
+                pml,
+                materials if isinstance(materials, dict) else {},
+            )
         if mesh.dim == 2:
             items = (*_as_tuple(boundaries, "boundaries"), *_as_tuple(ports, "ports"))
             refuse_model(mesh, items, by, pml)

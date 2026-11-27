@@ -30,6 +30,7 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.constants as const
 
+from gfem import _curved as curved
 from gfem import _incident, _pml
 from gfem._adjoint.measure import measure
 from gfem._checks import check_fixed, is_traced
@@ -356,6 +357,12 @@ def far_field(
         background,
         nodes=np.asarray(concrete.mesh.nodes),
         incident=incident,
+    )
+    curved.refuse_tets(
+        model.mesh,
+        "far_field",
+        layer.tetrahedra,
+        "The far-field layer of gfem.far_field",
     )
     pf = importlib.import_module("gfem._engine.power_flow")
     where = pf.surface_of(concrete, layer.inside, model)
