@@ -222,6 +222,10 @@ _REFUSALS = {
         f"Mesh refinement has no distributed path: refine on one process, {_COPIES}, "
         "then solve the refined model on ranks."
     ),
+    "cad_morph": (
+        "gfem.shape.cad_morph builds the CAD model with gmsh, which is not "
+        "distributed; build and optimize on one process"
+    ),
 }
 
 

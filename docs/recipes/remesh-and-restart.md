@@ -1,6 +1,6 @@
 # Remeshing a shape design
 
-Remesh a shape design at its current geometry and restart the optimization from it. A shape design moves the nodes of one imported mesh and never changes its topology, so a long optimization can outrun the mesh. gfem does not make meshes: you regenerate the layout and mesh (here with gdsfactory and gsim) and restart. The [shape tutorial](../tutorials/shape.ipynb) runs a whole optimization on one mesh; {doc}`shape-gradient` explains the gradients.
+Remesh a shape design at its current geometry and restart the optimization from it. A shape design moves the nodes of one imported mesh and never changes its topology, so a long optimization can outrun the mesh. Here you regenerate the layout and mesh (with gdsfactory and gsim) and restart; a gmsh model you draw yourself remeshes in one call, `morph.remesh(p)` ({doc}`cad-parameter-gradient`). The [shape tutorial](../tutorials/shape.ipynb) runs a whole optimization on one mesh; {doc}`shape-gradient` explains the gradients.
 
 ## 1. Parametrize smoothly
 
@@ -154,4 +154,4 @@ optimizer = make_optimizer(x0=q_base)  # fresh state: no history from the old me
 ## Next
 
 {py:obj}`gfem.shape.boundary_morph`, {py:obj}`gfem.shape.quality`,
-{doc}`shape-gradient`, {doc}`gsim`, the [shape tutorial](../tutorials/shape.ipynb).
+{doc}`shape-gradient`, {doc}`cad-parameter-gradient`, {doc}`gsim`, the [shape tutorial](../tutorials/shape.ipynb).

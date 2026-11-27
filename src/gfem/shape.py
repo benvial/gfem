@@ -1,16 +1,19 @@
-"""Shape optimization: boundary morphs and mesh quality.
+"""Shape optimization: boundary and CAD morphs and mesh quality.
 
 A shape design moves the nodes of the imported mesh. `boundary_morph` builds
 a fixed linear map from normal displacements of a surface's nodes to the node
-coordinates of a moved mesh, and `quality` measures how far the move has
-degraded each element. There is no remeshing: when a design moves too far,
-remesh at the current geometry and restart (see the "remesh and restart"
-recipe in the docs).
+coordinates of a moved mesh, and `cad_morph` one from the named parameters of
+a parametric gmsh model; `quality` measures how far a move has degraded each
+element. A morph is linear, so when a design moves too far the mesh must be
+made again at the current geometry: a CAD morph remeshes in one call
+(`CadMorph.remesh`), a boundary morph needs the remesh-and-restart recipe in
+the docs.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import math
+from collections.abc import Callable, Mapping, Sequence
 from types import ModuleType
 from typing import Any, Literal, get_args
 
@@ -19,22 +22,24 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as sp
 
-from gfem import _morph, _mpi, _periodic, _pml, _truncation
+from gfem import _cad, _morph, _mpi, _periodic, _pml, _truncation
 from gfem._boundaries import WavePort, surfaces_of
 from gfem._checks import is_traced
 from gfem._dim2 import refuse_entry
 from gfem._pytree import readonly
 from gfem._sparse import Coo, coo, spd_solve
 from gfem.errors import MeshQualityError, MeshQualityWarning, RegionNotFoundError
-from gfem.mesh import LENGTH_UNITS, Mesh
+from gfem.mesh import LENGTH_UNITS, Mesh, _check_unit
 from gfem.model import Model, check_surface
 
 __all__ = [
     "WARN_QUALITY_RATIO",
     "BoundaryMorph",
+    "CadMorph",
     "MeshQualityError",
     "MeshQualityWarning",
     "boundary_morph",
+    "cad_morph",
     "quality",
 ]
 
@@ -366,22 +371,6 @@ class BoundaryMorph:
 jax.tree_util.register_static(BoundaryMorph)
 
 
-def _layer_nodes(model: Model) -> np.ndarray:
-    """The nodes a morph holds at the truncation.
-
-    The nodes of the perfectly matched layer's tetrahedra (the layer's
-    stretch is fixed at the imported mesh), and of the truncation layer (the
-    physical tetrahedra touching the layer or a `gfem.Absorbing` face), where
-    the far field, the cross sections and the beam coupling read the field
-    by default: the moved model keeps both as declared.
-    """
-    held = [_truncation.truncation(model).layer_nodes(model.mesh.tetrahedra)]
-    layer = _pml.layer_tetrahedra(model.mesh, model.pml)
-    if layer is not None:
-        held.append(np.unique(model.mesh.tetrahedra[layer]))
-    return np.unique(np.concatenate(held)).astype(np.int64)
-
-
 def boundary_morph(  # noqa: PLR0915
     model: Model,
     moving: str,
@@ -524,21 +513,9 @@ def boundary_morph(  # noqa: PLR0915
     n_nodes = len(x0)
     # paired nodes move together: one displacement per tie class
     ties = _periodic.tie_classes(n_nodes, pairings)
-    held_surfaces = {
-        s
-        for port in model.ports
-        for s in surfaces_of(port)
-        if s not in sliding_surfaces
-    }
-    held_surfaces |= set(fixed)
+    held, held_tri, _ = _held(model, ties, sliding_surfaces, fixed)
     tag = {r.name: r.tag for r in mesh.regions if r.dim == mesh.dim - 1}
     tri_tags = mesh.triangle_tags
-    held_tri = np.isin(tri_tags, [tag[s] for s in held_surfaces])
-    held = np.zeros(n_nodes, dtype=bool)
-    held[
-        ties[np.concatenate([mesh.triangles[held_tri].ravel(), _layer_nodes(model)])]
-    ] = True
-    held = held[ties]  # a class is held if any member is
     in_tet = np.zeros(n_nodes, dtype=bool)
     in_tet[mesh.tetrahedra.ravel()] = True
 
@@ -593,10 +570,72 @@ def boundary_morph(  # noqa: PLR0915
     )
 
 
+def _held(
+    model: Model,
+    ties: np.ndarray,
+    sliding_surfaces: set[str],
+    fixed: Sequence[str] = (),
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The nodes a morph holds, the faces that hold them, and why.
+
+    Held are the nodes of the ports' surfaces (except the sliding ones), of
+    the ``fixed`` surfaces, of the tetrahedra of a perfectly matched layer
+    (its stretch is fixed at the imported mesh) and of the truncation layer
+    (the physical tetrahedra touching the layer or a `gfem.Absorbing` face,
+    where the far field, the cross sections and the beam coupling read the
+    field); a tie class is held if any member is.
+
+    Returns:
+        ``(held, held_tri, cause)``: a mask per node, a mask per surface
+        triangle of the held-surface faces, and per node a label of what holds
+        it (``""`` when free), the same on every member of a tie class.
+    """
+    mesh = model.mesh
+    n_nodes = len(mesh.imported_nodes)
+    holder: dict[str, str] = {}
+    for port in model.ports:
+        for s in surfaces_of(port):
+            if s not in sliding_surfaces:
+                holder.setdefault(s, f"port {port.name!r}")
+    for s in fixed:
+        holder.setdefault(s, f"fixed surface {s!r}")
+    tag = {r.name: r.tag for r in mesh.regions if r.dim == mesh.dim - 1}
+    held_tri = np.isin(mesh.triangle_tags, [tag[s] for s in holder])
+    cause = np.full(n_nodes, "", dtype=object)
+
+    def label(nodes: np.ndarray, why: str) -> None:
+        nodes = np.unique(nodes).astype(np.int64)
+        cause[nodes[cause[nodes] == ""]] = why  # the first cause stays
+
+    for s, why in holder.items():
+        label(mesh.triangles[mesh.triangle_tags == tag[s]].ravel(), why)
+    layer = _pml.layer_tetrahedra(mesh, model.pml)
+    if layer is not None:
+        label(mesh.tetrahedra[layer], "the perfectly matched layer")
+    label(
+        _truncation.truncation(model).layer_nodes(mesh.tetrahedra),
+        "the truncation layer",
+    )
+    # a class is held, with one cause, if any member is
+    named = np.flatnonzero(cause != "")
+    by_class = np.full(n_nodes, "", dtype=object)
+    classes, first = np.unique(ties[named], return_index=True)
+    by_class[classes] = cause[named[first]]  # the first member's cause
+    cause = by_class[ties]
+    return cause != "", held_tri, cause
+
+
 def _sliding_surfaces(
-    model: Model, names: Sequence[str], moving: str, fixed: Sequence[str]
+    model: Model,
+    names: Sequence[str],
+    moving: str | None = None,
+    fixed: Sequence[str] = (),
 ) -> set[str]:
-    """The surfaces of the wave ports named in ``sliding_ports``, after checks."""
+    """The surfaces of the wave ports named in ``sliding_ports``, after checks.
+
+    ``moving`` and ``fixed`` are the morph's moving and held surfaces, which a
+    sliding face may be neither of; a morph that names none passes neither.
+    """
     ports = {p.name: p for p in model.ports}
     waves = [p.name for p in model.ports if isinstance(p, WavePort)]
     surfaces: set[str] = set()
@@ -834,3 +873,676 @@ def _sides(model: Model, faces: np.ndarray) -> str:
         for row in nb
     }
     return ", ".join(f"{a} | {b}" for a, b in sorted(pairs))
+
+
+# --- CAD morph ----------------------------------------------------------------
+
+#: A velocity below this fraction of its parameter's largest counts as zero
+#: where the design must not move a node (a held node, a sliding port's
+#: normal, a periodic twin). A node whose entity does not move projects to
+#: itself to round-off, about eps / h, far below it; the 2e-6 relative error of
+#: a closest point on an approximated curve scales with the motion, so it
+#: cannot appear on an entity that does not move.
+_STILL = 1e-6
+
+#: A parameter whose largest velocity times its step is below this fraction
+#: of the model's size moves nothing: its morph gradient would be zero while
+#: remeshing gives mesh noise (a mesh-size parameter, say). A real motion is
+#: at least the kernel's own tolerance, 1e-7 of a unit-size model; the closest
+#: point of an entity that does not move differs by round-off, 1e-15 of the
+#: size, so 1e-12 separates the two.
+_DEAD = 1e-12
+
+
+def _check_cad_arguments(
+    *,
+    build: Any,
+    p0: Any,
+    make_model: Any,
+    length_unit: str,
+    step: Any,
+    sliding_ports: Any,
+    extension: str,
+) -> tuple[dict[str, float], dict[str, float], tuple[str, ...]]:
+    """The checked ``p0``, ``step`` and ``sliding_ports`` of `cad_morph`."""
+    if not callable(build):
+        msg = f"build must be a function of the parameters, got {build!r}."
+        raise TypeError(msg)
+    if not callable(make_model):
+        msg = (
+            f"make_model must be a function from a Mesh to a Model, got {make_model!r}."
+        )
+        raise TypeError(msg)
+    if isinstance(sliding_ports, str) or not isinstance(sliding_ports, (list, tuple)):
+        msg = (
+            f"sliding_ports= takes a list or tuple of wave port names, got "
+            f"{sliding_ports!r}."
+        )
+        raise TypeError(msg)
+    _check_unit(length_unit)
+    if extension not in _EXTENSIONS:
+        msg = f"Unknown extension {extension!r}; use 'elastic' or 'laplace'."
+        raise ValueError(msg)
+    if not isinstance(p0, Mapping) or len(p0) == 0:
+        msg = (
+            f"p0 must be a non-empty mapping from parameter name to value, got {p0!r}."
+        )
+        raise ValueError(msg)
+    values = {}
+    for name, value in p0.items():
+        if not isinstance(name, str) or not name.isidentifier():
+            msg = (
+                f"Parameter names must be Python identifiers (build is called as "
+                f"build(**params)), got {name!r}."
+            )
+            raise ValueError(msg)
+        if is_traced(value):
+            msg = (
+                f"p0[{name!r}] is traced by JAX: the CAD model is built from "
+                "concrete values; call cad_morph outside jax transformations."
+            )
+            raise TypeError(msg)
+        values[name] = float(value)
+        if not math.isfinite(values[name]):
+            msg = f"p0[{name!r}] = {value!r} is not finite."
+            raise ValueError(msg)
+    steps = {}
+    for name, h in (step or {}).items():
+        if name not in values:
+            msg = (
+                f"step names {name!r}, which is not a parameter. "
+                f"Known: {_names(values)}."
+            )
+            raise ValueError(msg)
+        steps[name] = float(h)
+        if not (math.isfinite(steps[name]) and steps[name] > 0):
+            msg = f"step[{name!r}] = {h!r} must be a positive, finite step."
+            raise ValueError(msg)
+    return values, steps, tuple(sliding_ports)
+
+
+def _names(values: Any) -> str:
+    return ", ".join(repr(n) for n in values)
+
+
+def _make_cad_morph(
+    build: Callable[..., object],
+    p0: Mapping[str, float],
+    make_model: Callable[[Mesh], Model],
+    *,
+    length_unit: str,
+    step: Mapping[str, float] | None,
+    sliding_ports: Sequence[str],
+    extension: Extension,
+) -> CadMorph:
+    """`cad_morph` and `CadMorph.remesh`: refuse ranks, check, mesh, extend."""
+    # Before anything imports gmsh: it is not distributed.
+    if _mpi.resolve_comm(None) is not None:
+        _mpi.refuse_feature("cad_morph")
+    values, steps, ports = _check_cad_arguments(
+        build=build,
+        p0=p0,
+        make_model=make_model,
+        length_unit=length_unit,
+        step=step,
+        sliding_ports=sliding_ports,
+        extension=extension,
+    )
+    cad = _cad.build_cad(build, values, length_unit, steps)
+    try:
+        model = make_model(cad.mesh)
+    except Exception as exc:
+        exc.add_note(f"gfem.shape.cad_morph called make_model on the mesh at {values}")
+        raise
+    if not isinstance(model, Model):
+        msg = (
+            f"make_model must return a gfem.Model, got {type(model).__name__}. "
+            "Build it on the mesh it is given: gfem.Model(mesh, materials=..., "
+            "...)."
+        )
+        raise TypeError(msg)
+    if not np.array_equal(model.mesh.imported_nodes, cad.mesh.imported_nodes):
+        msg = (
+            "make_model must build its model on the mesh it is given (the "
+            "design velocities belong to its nodes); the model's mesh has other "
+            "nodes."
+        )
+        raise ValueError(msg)
+    w = _extend(model, cad, tuple(values), ports, extension)
+    return CadMorph(
+        model=model,
+        names=tuple(values),
+        p0=tuple(values.values()),
+        displacement=w,
+        length_unit=length_unit,
+        extension=extension,
+        active=np.asarray(model._domain.active),  # noqa: SLF001
+        remesh_with=(build, make_model, dict(steps), ports),
+    )
+
+
+def _extend(
+    model: Model,
+    cad: _cad.CadMesh,
+    names: tuple[str, ...],
+    sliding_ports: tuple[str, ...],
+    extension: Extension,
+) -> np.ndarray:
+    """``W``, ``(3 n, n_p)``, metres per parameter unit, after the design checks."""
+    mesh = model.mesh
+    x0 = np.asarray(mesh.imported_nodes)
+    n_nodes, n_params = len(x0), len(names)
+    scale = cad.scale
+    pairings = model._periodic  # noqa: SLF001
+    ties = _periodic.tie_classes(n_nodes, pairings)
+    sliding = _sliding_surfaces(model, sliding_ports)
+    held, _, cause = _held(model, ties, sliding)
+    in_tet = np.zeros(n_nodes, dtype=bool)
+    in_tet[mesh.tetrahedra.ravel()] = True
+    velocity = cad.velocity.reshape(n_nodes, 3, n_params)
+    speed = np.linalg.norm(velocity, axis=1)  # (n_nodes, n_params)
+    top = speed.max(axis=0)
+    unit = mesh.length_unit
+    where = x0 / scale
+    for k, name in enumerate(names):
+        if top[k] * cad.steps[k] <= _DEAD * cad.size:
+            msg = (
+                f"Parameter {name!r} moves nothing: its largest design velocity "
+                f"is {top[k]:.3g} {unit} per unit, so a step of {cad.steps[k]:.3g} "
+                f"moves the model by less than {_DEAD:g} of its size. Its "
+                "gradient would be zero (a mesh-size parameter, say). Remove it "
+                "from p0, or change what the build draws with it."
+            )
+            raise ValueError(msg)
+    tolerance = _STILL * top
+    _check_held(
+        velocity=velocity,
+        speed=speed,
+        tolerance=tolerance,
+        held=held | ~in_tet,
+        cause=np.where(in_tet, cause, "belonging to no element"),
+        where=where,
+        names=names,
+        unit=unit,
+    )
+    _check_sliding(
+        model=model,
+        velocity=velocity,
+        tolerance=tolerance,
+        sliding_ports=sliding_ports,
+        names=names,
+        unit=unit,
+    )
+    _check_periodic(
+        velocity=velocity,
+        tolerance=tolerance,
+        ties=ties,
+        where=where,
+        names=names,
+        unit=unit,
+    )
+    members = np.flatnonzero(ties != np.arange(n_nodes))
+    velocity[members] = velocity[ties[members]]
+    velocity[held | ~in_tet] = 0.0
+    x_model = x0 / scale
+    # A CAD vertex has no freedom, and neither has a curve node whose
+    # incident surface normals are coplanar (a patch edge on a flat face): the
+    # surface leaves it free in its plane, where the energy minimisation would
+    # cancel the design velocity. Its closest-point tangential motion along
+    # the curve is ~0 to first order, so W = V is the conservative choice.
+    free = _morph.free_directions(
+        n_nodes,
+        cad.slide_triangles,
+        _morph.unit_normals(x_model, cad.slide_triangles),
+        held | ~in_tet | (cad.dim == 0),
+        ties,
+        curves=cad.dim == 1,
+    )
+    stiffness = _morph.stiffness(x_model, mesh.tetrahedra, extension)
+    w = _morph.vector_extension(
+        stiffness, free, velocity.reshape(3 * n_nodes, n_params)
+    )
+    return w * scale
+
+
+def _check_held(
+    *,
+    velocity: np.ndarray,
+    speed: np.ndarray,
+    tolerance: np.ndarray,
+    held: np.ndarray,
+    cause: np.ndarray,
+    where: np.ndarray,
+    names: tuple[str, ...],
+    unit: str,
+) -> None:
+    """Refuse a parameter that moves a node the morph holds."""
+    for k, name in enumerate(names):
+        moved = np.where(held, speed[:, k], 0.0)
+        node = int(np.argmax(moved))
+        if moved[node] > tolerance[k]:
+            msg = (
+                f"Parameter {name!r} moves a node held by {cause[node]}: "
+                f"at ({_xyz(where[node])}) {unit} the design velocity is "
+                f"({_xyz(velocity[node, :, k])}) {unit} per unit, the largest of "
+                f"{int((moved > tolerance[k]).sum())} held node(s) it moves. "
+                "A held node stays where the imported mesh has it, so the morph "
+                "would carry out a different design than the CAD. Keep the "
+                "feature off the layer or the port; keep the PML and truncation "
+                "geometry independent of the parameter; for a wave port, name it "
+                "in sliding_ports=."
+            )
+            raise ValueError(msg)
+
+
+def _check_sliding(
+    *,
+    model: Model,
+    velocity: np.ndarray,
+    tolerance: np.ndarray,
+    sliding_ports: tuple[str, ...],
+    names: tuple[str, ...],
+    unit: str,
+) -> None:
+    """Refuse a parameter that moves the reference plane of a sliding port."""
+    mesh = model.mesh
+    x0 = np.asarray(mesh.imported_nodes)
+    ports = {p.name: p for p in model.ports}
+    tag = {r.name: r.tag for r in mesh.regions if r.dim == mesh.dim - 1}
+    for port_name in sliding_ports:
+        tags = [tag[s] for s in surfaces_of(ports[port_name])]
+        faces = mesh.triangles[np.isin(mesh.triangle_tags, tags)]
+        normals = _morph.unit_normals(x0, faces)
+        along = np.abs(np.einsum("td,tcdk->tck", normals, velocity[faces]))
+        for k, name in enumerate(names):
+            worst = int(np.argmax(along[:, :, k].max(axis=1)))
+            corner = int(np.argmax(along[worst, :, k]))
+            if along[worst, corner, k] > tolerance[k]:
+                node = faces[worst, corner]
+                msg = (
+                    f"Parameter {name!r} moves the plane of sliding port "
+                    f"{port_name!r}: at node ({_xyz(x0[node] / LENGTH_UNITS[unit])}) "
+                    f"{unit} its normal velocity is {along[worst, corner, k]:.3g} "
+                    f"{unit} per unit. A port keeps its reference plane where it "
+                    "is declared. Keep the parameter from moving that face (move "
+                    "the surfaces that meet it), or remove the port from "
+                    "sliding_ports= to hold it, which refuses any motion at it."
+                )
+                raise ValueError(msg)
+
+
+def _check_periodic(
+    *,
+    velocity: np.ndarray,
+    tolerance: np.ndarray,
+    ties: np.ndarray,
+    where: np.ndarray,
+    names: tuple[str, ...],
+    unit: str,
+) -> None:
+    """Refuse a parameter whose velocity differs between tied nodes."""
+    twins = np.flatnonzero(ties != np.arange(len(ties)))
+    if not len(twins):
+        return
+    gap = np.linalg.norm(velocity[twins] - velocity[ties[twins]], axis=1)
+    for k, name in enumerate(names):
+        i = int(np.argmax(gap[:, k]))
+        if gap[i, k] > tolerance[k]:
+            a, b = twins[i], ties[twins[i]]
+            msg = (
+                f"Parameter {name!r} breaks the periodicity or changes the "
+                f"period, which is static: the paired nodes at ({_xyz(where[b])}) "
+                f"and ({_xyz(where[a])}) {unit} have design velocities "
+                f"({_xyz(velocity[b, :, k])}) and ({_xyz(velocity[a, :, k])}) "
+                f"{unit} per unit. Keep the parameter off the paired faces and "
+                "off the cell's dimensions, or move both faces of a pair alike."
+            )
+            raise ValueError(msg)
+
+
+def _xyz(v: np.ndarray) -> str:
+    return ", ".join(f"{c:.4g}" for c in v)
+
+
+class CadMorph:
+    r"""A parametric CAD model, meshed, as a linear map from parameters to meshes.
+
+    Build it with `cad_morph`. Calling it with a dict of parameter values
+    returns the moved `Mesh`::
+
+        moved = morph({"width": 0.55})
+        model = morph.model.replace(mesh=moved)
+
+    The map is :math:`x(p) = x_0 + W (p - p_0)`: the velocity of every node
+    with respect to every parameter, :math:`W`, is solved once at the
+    parameters the morph was built at, so the same ``p`` always gives the same
+    mesh. It is linear in ``p`` and differentiable with JAX (``grad``, ``jit``,
+    ``vmap``, ``jvp``): `jax.grad` of an objective returns a dict with the
+    parameters' names, each a derivative per parameter unit.
+
+    The geometry follows the CAD only to first order in :math:`p - p_0`, and
+    the mesh keeps its elements, which distort. When a design moves too far
+    (`gfem.shape.quality`, or the quality warnings), restart at the current
+    values with `CadMorph.remesh`.
+
+    Attributes:
+        names: The parameter names, in the order of ``p0`` (the columns of
+            :math:`W`).
+        n_params: The number of parameters.
+        model: The model `cad_morph`'s ``make_model`` made on the mesh at the
+            first parameters.
+        velocities: A read-only array ``(n_nodes, 3)`` per parameter name;
+            what the parameter moves, in metres per parameter unit (a column of
+            :math:`W`).
+        length_unit: The unit of the build's lengths (and of length
+            parameters).
+        extension: ``"elastic"`` or ``"laplace"``.
+    """
+
+    names: tuple[str, ...]
+    n_params: int
+    model: Model
+    length_unit: str
+    extension: Extension
+    _p0: tuple[float, ...]
+    _treedef: Any
+    _x0: np.ndarray
+    _w: np.ndarray
+    _active: np.ndarray
+    _columns: dict[str, np.ndarray]
+    _build: Callable[..., object]
+    _make_model: Callable[[Mesh], Model]
+    _step: dict[str, float]
+    _sliding_ports: tuple[str, ...]
+
+    def __init__(
+        self,
+        *,
+        model: Model,
+        names: tuple[str, ...],
+        p0: tuple[float, ...],
+        displacement: np.ndarray,
+        length_unit: str,
+        extension: Extension,
+        active: np.ndarray,
+        remesh_with: tuple[Callable[..., object], Callable[[Mesh], Model], dict, tuple],
+    ) -> None:
+        """Internal: use `cad_morph`."""
+        mesh = model.mesh
+        x0 = np.asarray(mesh.imported_nodes)
+        build, make_model, step, sliding_ports = remesh_with
+        values = {
+            "names": names,
+            "n_params": len(names),
+            "model": model,
+            "length_unit": length_unit,
+            "extension": extension,
+            "_p0": p0,
+            "_treedef": jax.tree_util.tree_structure(mesh),
+            "_x0": x0,
+            "_w": readonly(displacement),
+            "_active": active,
+            "_columns": {
+                name: readonly(displacement[:, k].reshape(-1, 3))
+                for k, name in enumerate(names)
+            },
+            "_build": build,
+            "_make_model": make_model,
+            "_step": step,
+            "_sliding_ports": sliding_ports,
+        }
+        for name, value in values.items():
+            object.__setattr__(self, name, value)
+
+    @property
+    def p0(self) -> dict[str, float]:
+        """The parameter values the morph was built at, a new dict on each access."""
+        return dict(zip(self.names, self._p0, strict=True))
+
+    @property
+    def velocities(self) -> dict[str, np.ndarray]:
+        """Read-only motion of the mesh per parameter, metres per parameter unit.
+
+        This is the extended field :math:`W` of every node, not only the design
+        velocities: its values on the boundary entities are the design
+        velocities, and the volume nodes follow them.
+        """
+        return dict(self._columns)
+
+    def _vector(self, p: Mapping[str, Any]) -> list[Any]:
+        """The parameter values of ``p``, the missing ones at ``p0``."""
+        if not isinstance(p, Mapping):
+            msg = (
+                "A CAD morph takes its parameters as a dict from name to value, "
+                f"got {type(p).__name__}. Known names: {_names(self.names)}."
+            )
+            raise TypeError(msg)
+        unknown = [k for k in p if k not in self.names]
+        if unknown:
+            msg = (
+                f"Unknown parameter(s) {_names(unknown)}. Known names: "
+                f"{_names(self.names)}."
+            )
+            raise ValueError(msg)
+        return [p.get(n, v) for n, v in zip(self.names, self._p0, strict=True)]
+
+    def __call__(self, p: Mapping[str, Any]) -> Mesh:
+        r"""The mesh at ``p``: :math:`x_0 + W (p - p_0)`.
+
+        With concrete values (not under a JAX transformation), the moved
+        mesh's quality is checked at once; under ``jit`` or ``grad`` the check
+        runs when the mesh is solved on.
+
+        Args:
+            p: Parameter values by name, in the build's units. Names left out
+                keep their first value.
+
+        Returns:
+            The moved mesh, which shares the imported mesh's topology.
+
+        Raises:
+            ValueError: A name is not a parameter, or a value is not a scalar.
+            MeshQualityError: An element of the solve domain is inverted.
+
+        Warns:
+            MeshQualityWarning: An element fell below a quarter of its
+                imported quality.
+        """
+        values = self._vector(p)
+        for name, value in zip(self.names, values, strict=True):
+            if jnp.ndim(value) != 0:
+                msg = (
+                    f"Parameter {name!r} must be a scalar, got an array of "
+                    f"shape {jnp.shape(value)}."
+                )
+                raise ValueError(msg)
+        t = jnp.stack([jnp.asarray(v, dtype=jnp.float64) for v in values])
+        delta = t - jnp.asarray(self._p0, dtype=jnp.float64)
+        nodes = jnp.asarray(self._x0) + (jnp.asarray(self._w) @ delta).reshape(
+            self._x0.shape
+        )
+        mesh = jax.tree_util.tree_unflatten(self._treedef, [nodes])
+        if not is_traced(t):
+            _check_quality(mesh, self._active, stacklevel=2)
+        return mesh
+
+    def remesh(self, p: Mapping[str, float]) -> CadMorph:
+        """Rebuild, remesh and re-linearize the CAD model at ``p``.
+
+        A new morph from the same build function, ``make_model``, units,
+        steps, sliding ports and extension; its ``p0`` is ``p`` (absolute, so
+        parameters need no offset bookkeeping). Rebuild the objective on the
+        new morph's `model`, reset an optimizer's history, and compare
+        objective values only within one mesh.
+
+        Args:
+            p: Parameter values by name, concrete. Names left out keep this
+                morph's ``p0``.
+
+        Returns:
+            The new morph.
+
+        Raises:
+            TypeError: ``p`` is traced by JAX: remeshing rebuilds the CAD model.
+            ValueError: A name is not a parameter, or the rebuild is refused as
+                `cad_morph` refuses it.
+        """
+        if is_traced(p):
+            msg = (
+                "remesh rebuilds the CAD model; call it outside jax "
+                "transformations with concrete values"
+            )
+            raise TypeError(msg)
+        values = dict(zip(self.names, self._vector(p), strict=True))
+        return _make_cad_morph(
+            self._build,
+            values,
+            self._make_model,
+            length_unit=self.length_unit,
+            step=self._step,
+            sliding_ports=self._sliding_ports,
+            extension=self.extension,
+        )
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        msg = (
+            "CadMorph is immutable; build a new one with gfem.shape.cad_morph() "
+            "or CadMorph.remesh()"
+        )
+        raise AttributeError(msg)
+
+    def __repr__(self) -> str:
+        build = getattr(self._build, "__name__", repr(self._build))
+        return (
+            f"CadMorph(build={build}, p0={self.p0!r}, "
+            f"length_unit={self.length_unit!r}, extension={self.extension!r})"
+        )
+
+
+jax.tree_util.register_static(CadMorph)
+
+
+def cad_morph(
+    build: Callable[..., object],
+    p0: Mapping[str, float],
+    make_model: Callable[[Mesh], Model],
+    *,
+    length_unit: str = "um",
+    step: Mapping[str, float] | None = None,
+    sliding_ports: Sequence[str] = (),
+    extension: Extension = "elastic",
+) -> CadMorph:
+    r"""Mesh a parametric gmsh model and morph its mesh with its CAD parameters.
+
+    Builds the CAD model at ``p0`` with ``build(**p0)``, meshes it, reads the
+    mesh (metres, in memory), makes the model with ``make_model(mesh)``, and
+    takes each parameter's design velocity by rebuilding the geometry at
+    :math:`p_0 \pm h`. The mesh follows by the mesh extension. The returned
+    morph maps parameter values to moved meshes linearly, fixed at ``p0``:
+    :math:`x(p) = x_0 + W (p - p_0)`. ::
+
+        def build(width, height):  # micrometres
+            occ = gmsh.model.occ
+            ...
+            occ.synchronize()
+            gmsh.model.addPhysicalGroup(3, [core], name="core")
+
+
+        morph = gfem.shape.cad_morph(build, {"width": 0.5, "height": 0.3}, make_model)
+        grad = jax.grad(lambda p: loss(morph.model.replace(mesh=morph(p))))(morph.p0)
+
+    The build function's contract:
+
+    - gfem calls ``build(**params)`` with Python floats, in an empty current
+      gmsh model that it created. The build draws with the OCC kernel
+      (``gmsh.model.occ``; the built-in geometry kernel is not supported and
+      not detected), calls ``synchronize()``, and returns nothing.
+    - It names physical groups with ``addPhysicalGroup(dim, tags, name=...)``:
+      3D groups become the volume regions and 2D groups the surface regions
+      ``make_model`` refers to (lower dimensions are ignored). Every 3D entity
+      must be in a volume group.
+    - It sets its own mesh sizes (options, fields, ``setSize``): they are
+      physics the user owns. Options it sets stay set in a gmsh session the
+      user opened.
+    - It never calls ``initialize``, ``finalize``, ``model.add``,
+      ``model.remove``, ``model.setCurrent``, ``mesh.generate`` or ``write``:
+      gfem meshes at ``p0`` only, and only rebuilds the geometry at
+      :math:`p_0 \pm h`.
+    - It is deterministic: equal parameters give equal entities and tags.
+    - A model with `gfem.Periodic` pairs needs
+      ``gmsh.model.mesh.setPeriodic(2, ...)`` on each pair of faces in the
+      build, so the two faces mesh alike.
+    - Parameters are lengths in ``length_unit``; give a parameter of another
+      kind (an angle) a ``step`` in its own unit.
+
+    Each parameter's velocity is that of the mesh nodes on points, curves and
+    surfaces, taken as the central difference of their closest points on the
+    same entity of the model rebuilt at :math:`p_0 \pm h` (default
+    :math:`h = 2^{\operatorname{round}(\log_2(\varepsilon^{1/3} L))}`, with
+    :math:`L` the model's bounding-box diagonal). Nodes in a volume get none.
+    The extension carries it into the volume: the velocity is prescribed in
+    the directions the CAD determines (the normal of a face, the two normals of
+    an edge, all of a corner), and a node slides freely in the directions the
+    CAD leaves open, as :math:`W = V + B z` with
+    :math:`B^\top K B\, z = -B^\top K V` (:math:`K` the stiffened extension).
+    The nodes of a perfectly matched layer, of the elements touching the
+    truncation, of port surfaces (except wave ports named in
+    ``sliding_ports``) and in no element are held; the CAD must not move them.
+    ``W`` is a dense array of :math:`24\, n_\mathrm{nodes}\, n_\mathrm{params}` bytes.
+
+    gmsh is an optional dependency (``pip install 'gfem[gmsh]'``). gfem uses
+    the gmsh session the user opened, adding and removing models of its own and
+    restoring the current one, or opens a quiet one that reads no
+    configuration file and finalizes it. The velocity of an edge that gmsh
+    approximates by a spline (the intersection of two curved surfaces) is
+    accurate to about two parts in a million.
+
+    Args:
+        build: The function of named parameters that draws the model. It must
+            not set ``Mesh.ElementOrder`` above 1 (first-order meshes only).
+        p0: The parameter values to mesh at, by name. The order fixes
+            :math:`W`'s columns. Names are Python identifiers.
+        make_model: Makes the `Model` (materials, boundaries, ports) from the
+            mesh. Its declarations do not depend on the parameters except
+            through the mesh.
+        length_unit: The unit of the build's coordinates, one of
+            `gfem.mesh.LENGTH_UNITS`.
+        step: Half-steps :math:`h` per parameter in its own unit, overriding
+            the default; names left out keep it.
+        sliding_ports: Wave ports whose faces slide in their plane instead of
+            being held, as in `boundary_morph`. Lumped and Floquet ports stay
+            held.
+        extension: ``"elastic"`` (default) or ``"laplace"``, as in
+            `boundary_morph`.
+
+    Returns:
+        The morph: call it with parameter values to get the moved mesh.
+
+    Raises:
+        ImportError: gmsh is not installed.
+        OSError: gmsh's library cannot load (the PyPI wheel needs system
+            OpenGL and X11 libraries).
+        ValueError: A name is not an identifier, a value or step is not
+            finite or positive, the unit or extension is unknown; the build
+            made no 3D entity, or left one out of every volume group; the
+            topology of the build changes within :math:`p_0 \pm h` (use a
+            smaller ``step``), or a node jumps there; gmsh's nodes do not map
+            onto the mesh read; a parameter moves nothing; moves a node a
+            perfectly matched layer, the truncation or a port holds (keep the
+            feature off it; for a wave port, name it in ``sliding_ports``);
+            moves the plane of a sliding port; or breaks a periodic pair or
+            changes the period.
+        TypeError: ``make_model`` returns no `Model`, or ``sliding_ports`` is a
+            string.
+        DistributedUnsupportedError: Launched above one process: the CAD model
+            is built with gmsh, which is not distributed.
+    """
+    return _make_cad_morph(
+        build,
+        p0,
+        make_model,
+        length_unit=length_unit,
+        step=step,
+        sliding_ports=sliding_ports,
+        extension=extension,
+    )

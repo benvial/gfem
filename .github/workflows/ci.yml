@@ -117,6 +117,10 @@ jobs:
         version: ${{ env.UV_VERSION }}
         python-version: ${{ matrix.python }}
         enable-cache: true
+    - name: System libraries for gmsh
+      if: runner.os == 'Linux' && env.RUN_TIER == 'true'
+      # The PyPI gmsh wheel loads OpenGL and X11 libraries at import.
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libglu1-mesa libxcursor1 libxft2 libxinerama1 libgl1 libgomp1
     - name: Install
       if: env.RUN_TIER == 'true'
       # viz: Field.to_pyvista is unit-tested (no rendering, no display needed)
@@ -164,6 +168,9 @@ jobs:
         python-version: "3.12"
         enable-cache: true
         cache-suffix: ${{ matrix.extra }}
+    - name: System libraries for gmsh
+      # The PyPI gmsh wheel loads OpenGL and X11 libraries at import.
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libglu1-mesa libxcursor1 libxft2 libxinerama1 libgl1 libgomp1
     - name: Install
       run: uv sync --locked ${{ matrix.extra && '--extra mkl' || '' }}
     - name: MKL is live
@@ -207,6 +214,10 @@ jobs:
         enable-cache: true
         # its own cache: the unit job's key has no mkl wheels (setup-uv README)
         cache-suffix: mkl
+    - name: System libraries for gmsh
+      if: runner.os == 'Linux'
+      # The PyPI gmsh wheel loads OpenGL and X11 libraries at import.
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libglu1-mesa libxcursor1 libxft2 libxinerama1 libgl1 libgomp1
     - name: Install
       run: uv sync --locked --extra viz --extra mkl
     - name: MKL is live
@@ -240,6 +251,9 @@ jobs:
         enable-cache: true
         # its own cache: the unit job's key has no simulator wheels
         cache-suffix: netlist
+    - name: System libraries for gmsh
+      # The PyPI gmsh wheel loads OpenGL and X11 libraries at import.
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libglu1-mesa libxcursor1 libxft2 libxinerama1 libgl1 libgomp1
     - name: Install
       run: uv sync --locked --group netlist
     - name: Simulators are live
@@ -276,8 +290,8 @@ jobs:
         python-version: "3.12"
         enable-cache: true
         cache-suffix: mpi
-    - name: Open MPI
-      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev
+    - name: Open MPI and the system libraries for gmsh
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev libglu1-mesa libxcursor1 libxft2 libxinerama1 libgl1 libgomp1
     - name: Install
       run: uv sync --locked --extra mpi
     - name: MPI is usable
@@ -357,6 +371,9 @@ jobs:
       with:
         version: ${{ env.UV_VERSION }}
         python-version: "3.12"
+    - name: System libraries for gmsh
+      # The PyPI gmsh wheel loads OpenGL and X11 libraries at import.
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libglu1-mesa libxcursor1 libxft2 libxinerama1 libgl1 libgomp1
     - name: Install
       # Resolving lowest rewrites uv.lock; put it back, as tests read the lock.
       run: |
@@ -536,6 +553,10 @@ jobs:
         version: ${{ env.UV_VERSION }}
         python-version: ${{ inputs.python }}
         enable-cache: true
+    - name: System libraries for gmsh
+      if: runner.os == 'Linux'
+      # The PyPI gmsh wheel loads OpenGL and X11 libraries at import.
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libglu1-mesa libxcursor1 libxft2 libxinerama1 libgl1 libgomp1
     - name: Install
       env:
         EXTRAS: ${{ inputs.extras }}

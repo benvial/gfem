@@ -151,3 +151,24 @@ def test_ngsolve_is_imported_only_by_the_engine():
     assert any(p.parent.name == "_eigen" for p in modules)
     offenders = [str(p.relative_to(root)) for p in modules if "ngsolve" in _imports(p)]
     assert offenders == []
+
+
+def test_gmsh_is_imported_only_by_the_cad_module():
+    # gmsh is an optional extra: one lazy import site, so a missing or broken
+    # package gets one error message and `import gfem` never needs it.
+    root = Path(gfem.__file__).parent
+    cad = root / "_cad.py"
+    assert cad.exists()
+    assert "gmsh" in _dynamic_imports(cad)
+    offenders = [
+        str(p.relative_to(root))
+        for p in root.rglob("*.py")
+        if p != cad and "gmsh" in (_imports(p) | _dynamic_imports(p))
+    ]
+    assert offenders == []
+    assert "gmsh" not in _imports(cad)
+
+
+def test_importing_gfem_and_its_shape_module_leaves_gmsh_out():
+    out = _run_fresh("import sys, gfem, gfem.shape; print('gmsh' in sys.modules)")
+    assert out == "False"

@@ -235,6 +235,7 @@ Meshes, materials and boundaries:
 
 Design workflow:
 
+- **CAD parameters.** `gfem.shape.cad_morph` differentiates results with respect to the named dimensions of a gmsh model you draw, and `CadMorph.remesh` rebuilds its mesh at new values; the extra is `gfem[gmsh]` ({doc}`../recipes/cad-parameter-gradient`).
 - **Tolerance report.** `gfem.tolerance_report` gives the spread, the worst case and
   the linearized yield of named quantities under named tolerances
   ({doc}`../recipes/tolerance-report`).

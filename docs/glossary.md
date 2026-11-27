@@ -1480,6 +1480,12 @@ Truncation layer
 ```{glossary}
 :sorted:
 
+CAD morph
+  The fixed linear map from named CAD parameters to moved mesh coordinates, built by rebuilding a {term}`build function`'s geometry around the meshed values. It is the counterpart of a {term}`boundary morph` for a gmsh model you draw. See {doc}`recipes/cad-parameter-gradient`.
+
+Build function
+  Your Python function that draws a parametric gmsh model from keyword CAD parameters, names its physical groups and sets its mesh sizes. gfem calls it, meshes the result and calls it again to remesh. See {doc}`recipes/cad-parameter-gradient`.
+
 Layer pattern
   The polygons where a {term}`layer grid` design is solid: the part of the
   grid's footprint where the filtered density reaches the projection threshold,
