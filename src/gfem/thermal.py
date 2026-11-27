@@ -137,7 +137,9 @@ def _curved_volumes(mesh: Mesh) -> np.ndarray:
     from gfem.mesh import _at_imported_nodes
 
     built = to_ngsolve(_at_imported_nodes(mesh) if is_traced(mesh.nodes) else mesh)
-    volumes = np.asarray(ngs.Integrate(1, built.mesh, element_wise=True)).copy()
+    volumes = np.asarray(
+        ngs.Integrate(ngs.CoefficientFunction(1), built.mesh, element_wise=True)
+    ).copy()
     out = np.empty(len(volumes))
     out[built.cell_order] = volumes * built.scale**3
     return out

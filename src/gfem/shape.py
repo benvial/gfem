@@ -905,9 +905,11 @@ def _midnode_maps(
 
     # the mid-edge nodes of the moving wall that take their own normal: both
     # corners moving, in no held or gated face
-    wall, wall_mids = mesh.triangles[moving_tri], topology.surface_midnodes[moving_tri]
+    # a curved mesh's topology carries its mid-edge nodes
+    surface_mids = _curved_only(topology.surface_midnodes)
+    wall, wall_mids = mesh.triangles[moving_tri], surface_mids[moving_tri]
     gated = held.copy()
-    gated[topology.surface_midnodes[gated_triangles(model)].ravel()] = True
+    gated[surface_mids[gated_triangles(model)].ravel()] = True
     is_param = np.zeros(n_nodes, dtype=bool)
     is_param[params] = True
     has_normal = np.zeros(n_nodes, dtype=bool)
@@ -1183,6 +1185,14 @@ def _quadratic_normals(x: np.ndarray, tris: np.ndarray, mids: np.ndarray) -> np.
     return np.cross(d[:, :, 1] - d[:, :, 0], d[:, :, 2] - d[:, :, 0])
 
 
+def _curved_only(midnodes: np.ndarray | None) -> np.ndarray:
+    """The mid-edge node array of a curved mesh, which a straight one lacks."""
+    if midnodes is None:
+        msg = "A straight mesh has no mid-edge nodes."
+        raise RuntimeError(msg)
+    return midnodes
+
+
 def _node_normals(
     model: Model,
     *,
@@ -1192,7 +1202,7 @@ def _node_normals(
     grows: str | None,
     moving: str,
     groups: np.ndarray,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Unit normal per parameter, oriented by the sign convention.
 
     ``params`` are moving nodes, ``groups`` the parameter each moves with
@@ -1224,7 +1234,9 @@ def _node_normals(
     sign[use] = _face_signs(model, moving_tri[use], grows, moving)
     if mesh.curved:
         # the quadratic triangles' normals at their six nodes
-        mids = mesh._topology.surface_midnodes[moving_tri]  # noqa: SLF001
+        surface_mids = mesh._topology.surface_midnodes  # noqa: SLF001
+        surface_mids = _curved_only(surface_mids)
+        mids = surface_mids[moving_tri]
         weighted = sign[:, None, None] * _quadratic_normals(x0, tris, mids)
         ids = np.concatenate([tris, mids], axis=1)
     else:
@@ -1501,7 +1513,9 @@ def _extend(
     corner_in_tet[mesh.tetrahedra.ravel()] = True
     in_tet = corner_in_tet.copy()
     if mesh.curved:
-        in_tet[mesh._topology.volume_midnodes.ravel()] = True  # noqa: SLF001
+        volume_mids = mesh._topology.volume_midnodes  # noqa: SLF001
+        volume_mids = _curved_only(volume_mids)
+        in_tet[volume_mids.ravel()] = True
     velocity = cad.velocity.reshape(n_nodes, 3, n_params)
     speed = np.linalg.norm(velocity, axis=1)  # (n_nodes, n_params)
     top = speed.max(axis=0)
@@ -1619,11 +1633,15 @@ def _place_cad_midnodes(
     w = w.reshape(n_nodes, 3, n_params).copy()
     w[m] = chord[m]
     gated = np.zeros(n_nodes, dtype=bool)
-    gated[topology.surface_midnodes[gated_triangles(model)].ravel()] = True
+    gated[_curved_only(topology.surface_midnodes)[gated_triangles(model)].ravel()] = (
+        True
+    )
     own = (cad.dim[m] <= 2) & ~held[m] & ~gated[m]  # classified on the CAD
     # surface nodes: the normal of the quadratic triangle at the mid-edge node
-    vectors = _quadratic_normals(x_model, cad.slide_triangles, cad.slide_midnodes)
-    ids = cad.slide_midnodes.ravel()
+    slide_mids = cad.slide_midnodes
+    slide_mids = _curved_only(slide_mids)
+    vectors = _quadratic_normals(x_model, cad.slide_triangles, slide_mids)
+    ids = slide_mids.ravel()
     nodes, first = np.unique(ids, return_index=True)
     vector = vectors[:, 3:].reshape(-1, 3)[first]
     length = np.linalg.norm(vector, axis=1)
@@ -1699,7 +1717,9 @@ def _check_sliding(
         faces = mesh.triangles[on]
         normals = _morph.unit_normals(x0, faces)
         if mesh.curved:  # the mid-edge nodes of the face are checked as well
-            faces = np.concatenate([faces, mesh._topology.surface_midnodes[on]], axis=1)  # noqa: SLF001
+            surface_mids = mesh._topology.surface_midnodes  # noqa: SLF001
+            surface_mids = _curved_only(surface_mids)
+            faces = np.concatenate([faces, surface_mids[on]], axis=1)
         along = np.abs(np.einsum("td,tcdk->tck", normals, velocity[faces]))
         for k, name in enumerate(names):
             worst = int(np.argmax(along[:, :, k].max(axis=1)))

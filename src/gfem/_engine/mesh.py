@@ -248,6 +248,10 @@ def _edge_nodes(mesh: Mesh, vertices: np.ndarray, node_order: np.ndarray) -> np.
     high = np.maximum(corners[:, ends[:, 0]], corners[:, ends[:, 1]])
     keys = (low * n + high).ravel()
     order = np.argsort(keys, kind="stable")
+    # the caller passes a curved topology, which carries its mid-edge nodes
+    if topology.volume_midnodes is None:
+        msg = "A straight mesh has no mid-edge nodes."
+        raise RuntimeError(msg)
     keys, mids = keys[order], topology.volume_midnodes.ravel()[order]
     nodes = node_order[vertices]
     wanted = np.minimum(nodes[:, 0], nodes[:, 1]) * n + np.maximum(
