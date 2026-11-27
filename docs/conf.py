@@ -219,6 +219,7 @@ nitpick_ignore = [
             "Polarity",  # WavePort.polarity: a point and a direction
             "Circuit",  # SaxComponent's circuit kind, "optical" or "rf"
             "gfem._circuit_ports.Circuit",
+            "gfem._boundaries.Polarity",  # PortModeResult.polarity
         )
     ],
     # The private base of the dispersion terms (shown as "Bases:"), and the
