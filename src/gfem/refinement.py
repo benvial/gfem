@@ -664,7 +664,7 @@ def refine_mesh(
     holding ``error_fraction`` of the squared error (Dörfler marking),
     bisects them and their neighbours until the mesh conforms (new nodes at
     edge midpoints, on the quadratic geometry of a curved mesh; physical
-    groups and imported facets kept), and carries
+    groups and the input's walls kept), and carries
     the model's per-element design (`MaterialField` values, sheet fills) to
     the children. Cycle 0 solves the input mesh.
 
