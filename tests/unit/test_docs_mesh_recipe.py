@@ -31,6 +31,7 @@ def ran(tmp_path_factory):
     workdir = tmp_path_factory.mktemp("prepare_a_mesh")
     shutil.copy(GUIDE_MESH, workdir / "my_line.msh")
     shutil.copy(DATA / "two_box_msh41.msh", workdir / "chip.msh")
+    shutil.copy(DATA / "coax_order2.msh", workdir / "coax.msh")
     examples = dp.run_page(PAGE, workdir, skip=(GMSH_SECTION,))
     return examples, workdir
 
@@ -147,7 +148,7 @@ def test_a_bad_mesh_raises_with_its_remedy(case, tmp_path):
 @pytest.mark.parametrize(
     ("fixture", "phrase"),
     [
-        ("octant_order3.msh", "ElementOrder 2"),
+        ("octant_order3.msh", "order 3 or more"),
         ("cube_overlap_msh41.msh", "more than one"),
     ],
 )
@@ -161,13 +162,33 @@ def test_the_page_lists_each_bad_mesh():
     listed = dp.section(page, "What a bad mesh raises")
     for words in (
         "No physical groups",
-        "second-order",
+        "Order 3 and above",
         "Hexahedra",
         "outside any volume group",
         "without a name",
         "two groups",
     ):
         assert words in listed, words
+
+
+def test_a_second_order_file_reads_as_a_curved_mesh_not_a_refusal():
+    # The page's curved block reads coax.msh; a cube written at order 2 keeps
+    # flat faces, so its mid-edge nodes sit on the chords.
+    assert gfem.Mesh.from_gmsh(DATA / "coax_order2.msh").curved
+    cube = gfem.Mesh.from_gmsh(DATA / "cube_order2_msh41.msh")
+    assert cube.curved
+
+
+def test_the_curved_block_prints_true(ran):
+    examples, _ = ran
+    (printed,) = [e.printed for e in examples if e.section == "Curved walls"]
+    assert printed.strip() == "True"
+
+
+def test_the_page_no_longer_calls_the_mesh_straight_sided_only():
+    page = PAGE.read_text(encoding="utf-8")
+    assert "Straight-sided tetrahedra only" not in page
+    assert "second-order (curved) mesh: regenerate" not in page
 
 
 # -- The script, where gmsh is installed --------------------------------------

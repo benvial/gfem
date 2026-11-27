@@ -441,7 +441,7 @@ class CurvedMeshUnsupportedError(NotImplementedError):
     """A curved (second-order) mesh meets something that has no curved path.
 
     Raised when a mesh is read or used, before any solve, so a script can
-    catch it and go on with `Mesh.ElementOrder 1` (straight elements).
+    catch it and go on with ``Mesh.ElementOrder 1`` (straight elements).
 
     Attributes:
         feature: What has no curved path, e.g. ``"2d_mesh"`` (a second-order

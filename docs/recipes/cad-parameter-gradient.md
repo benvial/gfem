@@ -135,8 +135,12 @@ jax.grad 5.04 aF/um, remeshed 5.06 aF/um
 Curved walls. On a curved boundary, `jax.grad` is the derivative of the faceted
 mesh, whose facet count stays fixed. It falls short of remeshed differences by
 about $0.2\,(\ell/R)^2$, where $\ell$ is the mesh size and $R$ the radius of
-curvature: 2.5 % on a cylinder at $\ell/R = 0.375$. Refine the curved wall if
-the two must agree closely.
+curvature: 2.5 % on a cylinder at $\ell/R = 0.375$. Pass `curved=True` to
+`cad_morph` to mesh second-order elements instead ({doc}`prepare-a-mesh`): the
+mid-edge nodes of a wall move on the CAD surface, so the gradient follows the
+{term}`curved mesh` and the facet shortfall is gone. A build function that sets
+the gmsh element order itself is refused; `remesh` keeps `curved`. Features
+that raise on curved elements still do ({doc}`../capabilities`, Limits).
 
 How gfem itself is checked: {doc}`../verification`.
 

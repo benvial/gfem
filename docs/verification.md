@@ -40,6 +40,7 @@ PETSc.
 | PETSc and SLEPc cells of the matrix | Finite differences | {gfem-test}`tests/verification/test_gradient_matrix.py` | Twice a week |
 | CAD parameters: strip width and height, same-mesh and remeshed differences | Fourth-order central differences; differences of remeshed solves | {gfem-test}`tests/unit/test_cad_morph_gradient.py` | Every change |
 | CAD parameters: cylinder radius, remeshed differences | Differences of remeshed solves, faceting bias allowed | {gfem-test}`tests/verification/test_cad_morph_gradient.py` | Every change |
+| CAD parameters on a curved mesh: disk radius with `curved=True` | Differences of curved remeshed solves, no faceting bias | {gfem-test}`tests/verification/test_cad_morph_gradient.py` | Every change |
 | Recipe's CAD parameter gradient | Differences of remeshed solves | {gfem-test}`tests/unit/test_docs_cad_parameter_gradient_recipe.py` | Every change |
 
 ## Wave ports and shared port surfaces
@@ -663,10 +664,10 @@ below a fifth of every error checked.
 
 A mesh written with gmsh `Mesh.ElementOrder 2` puts each mid-edge node on the
 wall, and the solve integrates on the curved elements
-({doc}`recipes/prepare-a-mesh`). On straight facets the error of a capacitance
-or a resonance falls as $h^2$ whatever the element order, because the facets
-are $O(h^2)$ off the wall; on a curved mesh it falls as $h^4$, so orders 2 and
-3 converge as $h^4$ (at order 3 the wall, not the field, sets the error). Each
+({doc}`recipes/prepare-a-mesh`). On straight facets the {term}`geometry floor`
+of a capacitance or a resonance falls as $h^2$ whatever the element order,
+because the facets are $O(h^2)$ off the wall; on a {term}`curved mesh` it falls
+as $h^4$, so orders 2 and 3 converge as $h^4$ (at order 3 the wall, not the field, sets the error). Each
 case solves one gmsh mesh written at order 1 and at order 2, with the same
 corners. On the sphere at $h$ = 0.1 mm the TM$_{11}$ error at order 2 was
 $1.1 \times 10^{-3}$ on facets and $1.9 \times 10^{-6}$ curved.
@@ -677,6 +678,9 @@ $1.1 \times 10^{-3}$ on facets and $1.9 \times 10^{-6}$ curved.
 | Metal sphere cavity, one eighth with symmetry walls: lowest resonance (TM$_{11}$) on three sizes at order 2 | Closed form from the first root of $(x\, j_1(x))'$; error $\propto h^4$ curved, $h^2$ straight | {gfem-test}`tests/verification/test_curved_meshes.py` | Every change |
 | Metal sphere cavity: TM$_{21}$ and TE$_{11}$ resonances at order 2 | Closed forms from roots of $(x\, j_2(x))'$ and $j_1(x)$ | {gfem-test}`tests/verification/test_curved_meshes.py` | Every change |
 | Order 3 on finer meshes: the error set by the wall | Error $\propto h^4$; the sphere's error equals its mesh's volume deficit over three | {gfem-test}`tests/verification/test_curved_meshes.py` | Before release |
+| Node gradients on a curved mesh: random corner and mid-edge nodes, and a direction along each kind | Central differences | {gfem-test}`tests/unit/test_curved_node_gradient.py` | Every change |
+| Curved mesh bisected over three cycles | Volume and area of the input mesh; one mid node per edge | {gfem-test}`tests/unit/test_refine_curved.py` | Every change |
+| Each feature that reads element corners, on straight and curved elements | Runs on straight elements; the named error, its key and remedy on curved ones | {gfem-test}`tests/unit/test_curved_gate.py` | Every change |
 
 ## The p-multigrid solver
 

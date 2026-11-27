@@ -221,6 +221,7 @@ Resonators and qubits:
 
 Meshes, materials and boundaries:
 
+- **Curved meshes.** `gfem.Mesh.from_gmsh` reads a second-order gmsh mesh as curved elements, so at element orders 2 and 3 a capacitance or resonance on curved walls converges with the fourth power of the mesh size, not its square ({doc}`../recipes/prepare-a-mesh`).
 - **Behaviour change: periodic cross-sections pair by coordinates.** A cross-section
   meshed periodically in gmsh pairs under `gfem.Periodic` on any node numbering, and
   its values move by up to 4e-4 relative. Rerun your cross-section results
