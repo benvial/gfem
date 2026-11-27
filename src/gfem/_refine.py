@@ -15,6 +15,11 @@ its parent's node order with one vertex replaced by the midpoint, so it keeps
 the parent's orientation; unrefined elements keep their relative order, old
 nodes keep their indices and midpoints are appended.
 
+A curved mesh (quadratic elements) keeps its geometry: a split edge's midpoint
+is the edge's existing mid-edge node, and the mid-edge nodes of the new edges
+are placed on the parent's quadratic map, so every child's map is the parent's
+restricted to it.
+
 `refine_model` refines a whole `Model`: it refuses traced leaves,
 checks the quality of a moved mesh, bisects it at its current coordinates and
 copies each parent's per-element design values to its children with
@@ -40,12 +45,14 @@ from gfem._materials import (
 )
 from gfem._pytree import readonly
 from gfem.errors import NonDifferentiableError
-from gfem.mesh import _TET_EDGES, Mesh, _Topology, _triangle_neighbours
+from gfem.mesh import _TET_EDGES, _TRI_EDGES, Mesh, _Topology, _triangle_neighbours
 from gfem.model import Model
 from gfem.shape import _check_quality
 
 _TET_EDGE_PAIRS = np.array(_TET_EDGES)
 _TRI_EDGE_PAIRS = np.array([(0, 1), (0, 2), (1, 2)])
+# The same edges as `_TRI_EDGES` (edge k opposite vertex k), for mid-edge nodes.
+_TRI_EDGE_OPPOSITE = np.array(_TRI_EDGES)
 # Edge key: the smaller node id times this, plus the larger.
 _KEY_BASE = np.int64(1) << 31
 
@@ -91,7 +98,12 @@ def bisect(mesh: Mesh, marked) -> tuple[Mesh, Refinement]:
             f"marked must be a boolean array of shape ({len(tets)},), one entry "
             f"per tetrahedron; got {marked.dtype} of shape {marked.shape}."
         )
+    old = mesh._topology  # noqa: SLF001
     splits = _Splits(np.asarray(mesh.nodes, dtype=float))
+    if old.volume_midnodes is not None:
+        splits.use_mid_nodes(
+            tets, old.volume_midnodes, old.surface_elements, old.surface_midnodes
+        )
     first = tets[marked]
     splits.add(np.unique(_longest_edge_keys(splits.x, first, _TET_EDGE_PAIRS)))
     tets, tet_parents = _bisect_cells(
@@ -102,7 +114,10 @@ def bisect(mesh: Mesh, marked) -> tuple[Mesh, Refinement]:
         splits, tris, np.arange(len(tris)), _TRI_EDGE_PAIRS, grow=False
     )
     x = splits.x
-    old = mesh._topology  # noqa: SLF001
+    tet_mid = tri_mid = None
+    if splits.curved:
+        tet_mid = readonly(splits.edge_mids(tets, _TET_EDGE_PAIRS))
+        tri_mid = readonly(splits.edge_mids(tris, _TRI_EDGE_OPPOSITE))
     topology = _Topology(
         length_unit=old.length_unit,
         imported_nodes=readonly(x),
@@ -119,6 +134,8 @@ def bisect(mesh: Mesh, marked) -> tuple[Mesh, Refinement]:
         source=None,
         # bisection keeps the extrusion length of a cross-section
         section_thickness=old.section_thickness,
+        volume_midnodes=tet_mid,
+        surface_midnodes=tri_mid,
     )
     refinement = Refinement(
         tetrahedron_parents=readonly(tet_parents),
@@ -301,6 +318,73 @@ class _Splits:
         self.x = nodes
         self.keys = np.empty(0, np.int64)
         self.mids = np.empty(0, np.int64)
+        # a curved mesh's mid-edge node of every edge, by sorted edge key
+        self.curved = False
+        self.edge_keys = np.empty(0, np.int64)
+        self.edge_nodes = np.empty(0, np.int64)
+
+    def use_mid_nodes(self, tets, tet_mid, tris, tri_mid) -> None:
+        """Start from a curved mesh: record the mid-edge node of each edge."""
+        self.curved = True
+        keys = np.concatenate(
+            [
+                _keys(
+                    tets[:, _TET_EDGE_PAIRS[:, 0]], tets[:, _TET_EDGE_PAIRS[:, 1]]
+                ).ravel(),
+                _keys(
+                    tris[:, _TRI_EDGE_OPPOSITE[:, 0]], tris[:, _TRI_EDGE_OPPOSITE[:, 1]]
+                ).ravel(),
+            ]
+        )
+        self.edge_keys, first = np.unique(keys, return_index=True)
+        self.edge_nodes = np.concatenate([tet_mid.ravel(), tri_mid.ravel()])[first]
+
+    def edge_mids(self, cells: np.ndarray, pairs: np.ndarray) -> np.ndarray:
+        """Per cell, the mid-edge node of each local edge in ``pairs``."""
+        keys = _keys(cells[:, pairs[:, 0]], cells[:, pairs[:, 1]])
+        return self._edge_node(keys)
+
+    def _edge_node(self, keys: np.ndarray) -> np.ndarray:
+        i = np.searchsorted(self.edge_keys, keys)
+        if not (self.edge_keys[np.minimum(i, len(self.edge_keys) - 1)] == keys).all():
+            raise RuntimeError("A curved mesh edge has no mid-edge node.")
+        return self.edge_nodes[i]
+
+    def _place(self, keys: np.ndarray, points: np.ndarray) -> None:
+        """Give each edge key without a mid-edge node one, at ``points``.
+
+        The first point wins for a key given twice: the tetrahedra sharing a
+        face compute the same node, to round-off, from the same parent map.
+        """
+        i = np.minimum(np.searchsorted(self.edge_keys, keys), len(self.edge_keys) - 1)
+        new = self.edge_keys[i] != keys
+        keys, points = keys[new], points[new]
+        keys, first = np.unique(keys, return_index=True)
+        ids = len(self.x) + np.arange(len(keys))
+        self.x = np.concatenate([self.x, points[first]])
+        all_keys = np.concatenate([self.edge_keys, keys])
+        order = np.argsort(all_keys, kind="stable")
+        self.edge_keys = all_keys[order]
+        self.edge_nodes = np.concatenate([self.edge_nodes, ids])[order]
+
+    def add_face_nodes(self, i, j, k) -> None:
+        r"""Mid-edge nodes of the edges joining the split edge's midpoint to ``k``.
+
+        In the face with corners ``i``, ``j``, ``k`` whose edge ``ij`` is
+        split at ``m``, the new edge ``mk`` lies on the face's quadratic map
+        at the node
+        $-\tfrac18(x_i + x_j) + \tfrac14 x_m + \tfrac12(x_{ik} + x_{jk})$,
+        with $x_{ik}$, $x_{jk}$ the mid-edge nodes of the other two edges.
+        """
+        m = self.midpoint(_keys(i, j))
+        x_ik = self.x[self._edge_node(_keys(i, k))]
+        x_jk = self.x[self._edge_node(_keys(j, k))]
+        point = (
+            -(self.x[i] + self.x[j]) / 8
+            + self.x[self._edge_node(_keys(i, j))] / 4
+            + (x_ik + x_jk) / 2
+        )
+        self._place(_keys(m, k), point)
 
     def has(self, keys: np.ndarray) -> np.ndarray:
         if not len(self.keys):
@@ -312,10 +396,20 @@ class _Splits:
         return self.mids[np.searchsorted(self.keys, keys)]
 
     def add(self, keys: np.ndarray) -> None:
-        """Split these new edges (unique, sorted keys): append their midpoints."""
+        """Split these new edges (unique, sorted keys): append their midpoints.
+
+        On a curved mesh the midpoint is the edge's mid-edge node, and the
+        mid-edge nodes of its two halves are appended.
+        """
         a, b = keys // _KEY_BASE, keys % _KEY_BASE
-        mids = len(self.x) + np.arange(len(keys))
-        self.x = np.concatenate([self.x, 0.5 * (self.x[a] + self.x[b])])
+        if self.curved:
+            mids = self._edge_node(keys)
+            xa, xb, xm = self.x[a], self.x[b], self.x[mids]
+            self._place(_keys(a, mids), 3 / 8 * xa - xb / 8 + 3 / 4 * xm)
+            self._place(_keys(mids, b), 3 / 8 * xb - xa / 8 + 3 / 4 * xm)
+        else:
+            mids = len(self.x) + np.arange(len(keys))
+            self.x = np.concatenate([self.x, 0.5 * (self.x[a] + self.x[b])])
         all_keys = np.concatenate([self.keys, keys])
         order = np.argsort(all_keys, kind="stable")
         self.keys = all_keys[order]
@@ -365,8 +459,19 @@ def _bisect_cells(splits: _Splits, cells, parents, pairs, *, grow: bool):
                 )
             splits.add(np.unique(keys[new]))
         mid = splits.midpoint(keys)
+        if grow and splits.curved:
+            _face_nodes(splits, hit, rows, i, j)
         first, second = hit.copy(), hit.copy()
         first[rows, j] = mid
         second[rows, i] = mid
         cells = np.concatenate([cells[~active], first, second])
         parents = np.concatenate([parents[~active], parents[active], parents[active]])
+
+
+def _face_nodes(splits: _Splits, hit, rows, i, j) -> None:
+    """Mid-edge nodes of the new edges the bisection of ``hit`` on (i, j) makes."""
+    for c in range(hit.shape[1]):
+        other = (c != i) & (c != j)
+        splits.add_face_nodes(
+            hit[rows[other], i[other]], hit[rows[other], j[other]], hit[rows[other], c]
+        )
