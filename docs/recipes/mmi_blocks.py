@@ -62,14 +62,18 @@ def device_mesh(x0: float, x1: float, mmi: tuple[float, float]) -> gfem.Mesh:
     for part in parts:
         cladding = cladding - part
     cladding.faces.name = "clad"
-    shape = Glue([cladding, *parts])
+    return mesh_of(Glue([cladding, *parts]), x0, x1)
+
+
+def mesh_of(shape, x0: float, x1: float, width: float = WIDTH) -> gfem.Mesh:
+    """Mesh a 2D netgen ``shape`` on ``[x0, x1]``, ``width`` tall: ``"side"`` walls."""
     for edge in shape.edges:
         c = edge.center
         if abs(c.x - x0) < 1e-9:
             edge.name = "left"
         elif abs(c.x - x1) < 1e-9:
             edge.name = "right"
-        elif min(abs(c.y), abs(c.y - WIDTH)) < 1e-9:
+        elif min(abs(c.y), abs(c.y - width)) < 1e-9:
             edge.name = "side"
     mesh = ngs.Mesh(OCCGeometry(shape, dim=2).GenerateMesh(maxh=H_CLAD))
     nodes = [v.point for v in mesh.vertices]

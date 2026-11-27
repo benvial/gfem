@@ -189,10 +189,14 @@ def lines(marks, h):
 def box_mesh(path, xs, ys, region, *, ports=("left", "right")):
     """Structured triangles on ``xs`` x ``ys`` (um), PEC ``side`` top and bottom.
 
-    ``region(xc, yc)`` names a cell; the end lines are ``ports``.
+    ``region(xc, yc)`` names a cell; the end lines are ``ports``. A 2D ``ys``
+    of shape ``(len(xs), ny)`` gives each column its own nodes (a sheared
+    grid), the cell named at the mean of its four corners.
     """
-    nx, ny = len(xs), len(ys)
-    nodes = np.c_[np.repeat(xs, ny), np.tile(ys, nx), np.zeros(nx * ny)]
+    nx, ny = len(xs), np.shape(ys)[-1]
+    sheared = np.ndim(ys) == 2
+    columns = ys if sheared else np.tile(ys, (nx, 1))
+    nodes = np.c_[np.repeat(xs, ny), np.ravel(columns), np.zeros(nx * ny)]
 
     def idx(i, j):
         return i * ny + j
@@ -201,7 +205,13 @@ def box_mesh(path, xs, ys, region, *, ports=("left", "right")):
     for i in range(nx - 1):
         for j in range(ny - 1):
             a, b, d, e = idx(i, j), idx(i + 1, j), idx(i + 1, j + 1), idx(i, j + 1)
-            name = region(0.5 * (xs[i] + xs[i + 1]), 0.5 * (ys[j] + ys[j + 1]))
+            yc = 0.25 * (
+                columns[i, j]
+                + columns[i, j + 1]
+                + columns[i + 1, j]
+                + columns[i + 1, j + 1]
+            )
+            name = region(0.5 * (xs[i] + xs[i + 1]), yc)
             tris += [(a, b, d), (a, d, e)]
             names += [name, name]
     segs = [(idx(i, 0), idx(i + 1, 0)) for i in range(nx - 1)]
@@ -525,3 +535,115 @@ def mmi_block_models(
         mmi_model(mesh_a, a, eps_core=eps_core),
         mmi_model(mesh_b, b, eps_core=eps_core),
     )
+
+
+# --- FEM blocks: a linear taper as a staircase ------------------------------------
+
+#: The taper: the step's box whose core ``[Y0, Y0 + w]`` widens linearly from
+#: ``TAPER_W0`` to ``TAPER_W1`` (um) over ``TAPER_L``, between leads
+#: ``TAPER_LEAD`` long. A staircase of ``m`` segments of constant width (the
+#: smooth width at the segment's midpoint) is ``m + 1`` width steps.
+TAPER_W0, TAPER_W1, TAPER_L, TAPER_LEAD = 0.5, 0.9, 16.0, 1.0
+
+
+def taper_width(x):
+    """The core's width (um) of the smooth taper at ``x`` (um)."""
+    t = np.clip((np.asarray(x) - TAPER_LEAD) / TAPER_L, 0.0, 1.0)
+    return TAPER_W0 + (TAPER_W1 - TAPER_W0) * t
+
+
+def taper_full_mesh(path: Path, *, h: float = 0.1):
+    """The smooth taper: its core edge is a straight line on the sheared nodes."""
+    x1 = TAPER_LEAD + TAPER_L
+    xs = lines([0.0, TAPER_LEAD, x1, x1 + TAPER_LEAD], h)
+    # every column has the same number of nodes, spacing at most ``h`` at the
+    # widest core and the narrowest upper cladding
+    n_low, n_core = math.ceil(Y0 / h), math.ceil(TAPER_W1 / h)
+    n_up = math.ceil((A - Y0 - TAPER_W0) / h)
+    columns = np.array(
+        [
+            np.unique(
+                np.concatenate(
+                    [
+                        np.linspace(0.0, Y0, n_low + 1),
+                        np.linspace(Y0, Y0 + w, n_core + 1),
+                        np.linspace(Y0 + w, A, n_up + 1),
+                    ]
+                )
+            )
+            for w in taper_width(xs)
+        ]
+    )
+    return box_mesh(
+        path,
+        xs,
+        columns,
+        lambda x, y: "core" if Y0 < y < Y0 + float(taper_width(x)) else "clad",
+    )
+
+
+def taper_full_model(mesh):
+    """The smooth taper with lead ports ``in`` and ``out`` (as the blocks')."""
+    x_end = 2 * TAPER_LEAD + TAPER_L
+    return gfem.Model(
+        mesh,
+        materials=_step_materials(EPS_CORE, 0.0),
+        boundaries=[gfem.PEC("side")],
+        ports=[_lead_port("in", "left", 0.0), _lead_port("out", "right", x_end)],
+    )
+
+
+def staircase_widths(m: int) -> np.ndarray:
+    """The ``m + 2`` widths (um) of the lead, ``m`` midpoint segments, the lead."""
+    mid = TAPER_LEAD + (np.arange(m) + 0.5) * TAPER_L / m
+    return np.concatenate([[TAPER_W0], taper_width(mid), [TAPER_W1]])
+
+
+def taper_blocks(directory: Path, m: int, n: int, d: float, *, h: float = 0.1):
+    """The ``m + 1`` models of the width steps of an ``m``-segment staircase.
+
+    Step ``k`` at ``x_k = TAPER_LEAD + k L / m`` is solved on its own between
+    planes ``d`` um either side of it, with ``n`` kept modes of the section
+    ``s{k}`` on its left and ``s{k + 1}`` on its right; the first has the
+    lead ``in`` on its left end, the last ``out`` on its right. The planes
+    of consecutive blocks are ``L / m - 2 d`` apart.
+    """
+    widths = staircase_widths(m)
+    models = []
+    for k in range(m + 1):
+        x_k = TAPER_LEAD + k * TAPER_L / m
+        left = 0.0 if k == 0 else x_k - d
+        right = x_k + TAPER_LEAD if k == m else x_k + d
+        w_l, w_r = widths[k], widths[k + 1]
+        mesh = box_mesh(
+            directory / f"step{k}.msh",
+            lines([left, x_k, right], h),
+            lines([0.0, Y0, Y0 + w_l, Y0 + w_r, A], h),
+            lambda x, y, x_k=x_k, w_l=w_l, w_r=w_r: (
+                "core" if Y0 < y < Y0 + (w_l if x < x_k else w_r) else "clad"
+            ),
+        )
+        ports = (
+            [_lead_port("in", "left", 0.0)]
+            if k == 0
+            else list(gfem.WavePort.kept_modes(f"s{k}", "left", n))
+        )
+        ports += (
+            [_lead_port("out", "right", right)]
+            if k == m
+            else gfem.WavePort.kept_modes(f"s{k + 1}", "right", n)
+        )
+        models.append(
+            gfem.Model(
+                mesh,
+                materials=_step_materials(EPS_CORE, 0.0),
+                boundaries=[gfem.PEC("side")],
+                ports=ports,
+            )
+        )
+    return models
+
+
+def taper_sections(m: int, d: float) -> dict:
+    """The sections' plane-to-plane lengths (m) of `taper_blocks`."""
+    return {f"s{k}": (TAPER_L / m - 2 * d) * 1e-6 for k in range(1, m + 1)}

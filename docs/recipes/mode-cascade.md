@@ -180,6 +180,67 @@ the full device are meshed separately, so what remains is the difference
 between the two meshes, not a dropped mode; it falls with the mesh size or the
 element order.
 
+## Tapers
+
+A linear taper is a staircase of width steps. {download}`taper_blocks.py <taper_blocks.py>`
+widens a 0.5 µm guide to 0.9 µm over 16 µm; $M$ segments take the width at
+their midpoints, so the taper is $M + 1$ steps, each solved once between planes
+`PLANE` $= 0.2$ µm either side of it and joined by sections
+$16/M - 2\,\mathrm{PLANE}$ long:
+
+```python
+urllib.request.urlretrieve(url.replace("mmi_blocks", "taper_blocks"), "taper_blocks.py")
+import taper_blocks as tb  # noqa: E402
+
+PLANE = 0.2  # um from each step to its planes
+
+
+def lead(name, surface, x):
+    return gfem.WavePort(name, surface, polarity=((x * 1e-6, 1.003e-6), "+z"))
+
+
+def staircase(m, kept=6):
+    models = []
+    for k in range(m + 1):
+        ports = (
+            [lead("in", "left", 0.0)]
+            if k == 0
+            else list(gfem.WavePort.kept_modes(f"s{k}", "left", kept))
+        )
+        ports += (
+            [lead("out", "right", 2 * tb.LEAD + tb.LENGTH)]
+            if k == m
+            else list(gfem.WavePort.kept_modes(f"s{k + 1}", "right", kept))
+        )
+        models.append(solve(tb.step_block(k, m, PLANE), ports))
+    lengths = {f"s{k}": (tb.LENGTH / m - 2 * PLANE) * 1e-6 for k in range(1, m + 1)}
+    return gfem.cascade(models, sections=lengths).s
+
+
+def through(s):
+    return np.asarray(s.values)[0, s.ports.index("out"), s.ports.index("in")]
+
+
+smooth = through(
+    solve(tb.full_taper(), [lead("in", "left", 0.0), lead("out", "right", 18.0)]).s
+)
+for m in (4, 8, 16, 32):
+    print(
+        f"M = {m:2d}: {m + 1:2d} blocks, |T - T_full| = {abs(through(staircase(m)) - smooth):.1e}"
+    )
+```
+
+```text
+M =  4:  5 blocks, |T - T_full| = 7.6e-02
+M =  8:  9 blocks, |T - T_full| = 1.1e-02
+M = 16: 17 blocks, |T - T_full| = 1.9e-03
+M = 32: 33 blocks, |T - T_full| = 3.7e-04
+```
+
+The error falls about as $M^{-2.5}$ with each doubling of the steps: a staircase
+converges in steps as well as in kept modes. The reflection does not follow: a
+staircase with segments about half a guided wavelength long is a grating.
+
 ## Differentiate in the length
 
 `jax.grad` of $T$ in the length goes through the cascade's linear solve:
