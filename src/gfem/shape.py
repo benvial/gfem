@@ -823,6 +823,38 @@ def _gated_triangles(model: Model) -> np.ndarray:
     return np.isin(mesh.triangle_tags, tags)
 
 
+def _edge_ends(topology: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Each mid-edge node of a curved mesh, with the two corners of its edge."""
+    corners, mids = topology.volume_elements, topology.volume_midnodes
+    every = np.concatenate([mids[:, k] for k in range(len(_TET_EDGES))])
+    ends = [np.concatenate([corners[:, e[end]] for e in _TET_EDGES]) for end in (0, 1)]
+    m, first = np.unique(every, return_index=True)
+    return m, ends[0][first], ends[1][first]
+
+
+def _chord_map(
+    m: np.ndarray, a: np.ndarray, b: np.ndarray, n_nodes: int
+) -> sp.csr_array:
+    """The sparse ``(3 n, 3 n)`` map from node displacements to chord means.
+
+    Row ``3 m + i`` of a mid-edge node ``m`` on the edge ``a``-``b`` holds
+    :math:`1/2` at columns ``3 a + i`` and ``3 b + i``; all other rows are zero.
+    """
+    dof = np.arange(3)
+    return sp.csr_array(
+        (
+            np.full(6 * len(m), 0.5),
+            (
+                np.tile((3 * m[:, None] + dof).ravel(), 2),
+                np.concatenate(
+                    [(3 * a[:, None] + dof).ravel(), (3 * b[:, None] + dof).ravel()]
+                ),
+            ),
+        ),
+        shape=(3 * n_nodes, 3 * n_nodes),
+    )
+
+
 def _midnode_maps(
     model: Model,
     *,
@@ -849,25 +881,9 @@ def _midnode_maps(
     mesh = model.mesh
     topology = mesh._topology  # noqa: SLF001
     n_nodes = len(mesh.imported_nodes)
-    corners, mids = topology.volume_elements, topology.volume_midnodes
     dof = np.arange(3)
-    # one row per mid-edge node: the mean of its edge's two corners
-    every = np.concatenate([mids[:, k] for k in range(len(_TET_EDGES))])
-    ends = [np.concatenate([corners[:, e[end]] for e in _TET_EDGES]) for end in (0, 1)]
-    m, first = np.unique(every, return_index=True)
-    a, b = ends[0][first], ends[1][first]
-    chord = sp.csr_array(
-        (
-            np.full(6 * len(m), 0.5),
-            (
-                np.tile((3 * m[:, None] + dof).ravel(), 2),
-                np.concatenate(
-                    [(3 * a[:, None] + dof).ravel(), (3 * b[:, None] + dof).ravel()]
-                ),
-            ),
-        ),
-        shape=(3 * n_nodes, 3 * n_nodes),
-    )
+    m, a, b = _edge_ends(topology)
+    chord = _chord_map(m, a, b, n_nodes)
 
     # the mid-edge nodes of the moving wall that take their own normal: both
     # corners moving, in no held or gated face
@@ -1387,6 +1403,7 @@ def _make_cad_morph(
     step: Mapping[str, float] | None,
     sliding_ports: Sequence[str],
     extension: Extension,
+    curved: bool = False,
 ) -> CadMorph:
     """`cad_morph` and `CadMorph.remesh`: refuse ranks, check, mesh, extend."""
     # Before anything imports gmsh: it is not distributed.
@@ -1401,7 +1418,14 @@ def _make_cad_morph(
         sliding_ports=sliding_ports,
         extension=extension,
     )
-    cad = _cad.build_cad(build, values, length_unit, steps)
+    if not isinstance(curved, (bool, np.bool_)):
+        msg = f"curved must be True or False, got {curved!r}."
+        raise TypeError(msg)
+    curved = bool(curved)
+    if curved:
+        cad = _cad.build_cad(build, values, length_unit, steps, curved=True)
+    else:
+        cad = _cad.build_cad(build, values, length_unit, steps)
     try:
         model = make_model(cad.mesh)
     except Exception as exc:
@@ -1431,6 +1455,7 @@ def _make_cad_morph(
         extension=extension,
         active=np.asarray(model._domain.active),  # noqa: SLF001
         remesh_with=(build, make_model, dict(steps), ports),
+        curved=curved,
     )
 
 
@@ -1450,8 +1475,13 @@ def _extend(
     ties = _periodic.tie_classes(n_nodes, pairings)
     sliding = _sliding_surfaces(model, sliding_ports)
     held, _, cause = _held(model, ties, sliding)
-    in_tet = np.zeros(n_nodes, dtype=bool)
-    in_tet[mesh.tetrahedra.ravel()] = True
+    # The extension is solved on the corners: a mid-edge node of a curved mesh
+    # is no unknown of it (it is placed after it), though it is in an element.
+    corner_in_tet = np.zeros(n_nodes, dtype=bool)
+    corner_in_tet[mesh.tetrahedra.ravel()] = True
+    in_tet = corner_in_tet.copy()
+    if mesh.curved:
+        in_tet[mesh._topology.volume_midnodes.ravel()] = True  # noqa: SLF001
     velocity = cad.velocity.reshape(n_nodes, 3, n_params)
     speed = np.linalg.norm(velocity, axis=1)  # (n_nodes, n_params)
     top = speed.max(axis=0)
@@ -1497,6 +1527,10 @@ def _extend(
     members = np.flatnonzero(ties != np.arange(n_nodes))
     velocity[members] = velocity[ties[members]]
     velocity[held | ~in_tet] = 0.0
+    if mesh.curved:
+        # the mid-edge design velocities enter after the corner solve
+        mid_velocity = velocity.copy()
+        velocity[~corner_in_tet] = 0.0
     x_model = x0 / scale
     # A CAD vertex has no freedom, and neither has a curve node whose
     # incident surface normals are coplanar (a patch edge on a flat face): the
@@ -1507,7 +1541,7 @@ def _extend(
         n_nodes,
         cad.slide_triangles,
         _morph.unit_normals(x_model, cad.slide_triangles),
-        held | ~in_tet | (cad.dim == 0),
+        held | ~corner_in_tet | (cad.dim == 0),
         ties,
         curves=cad.dim == 1,
     )
@@ -1515,7 +1549,84 @@ def _extend(
     w = _morph.vector_extension(
         stiffness, free, velocity.reshape(3 * n_nodes, n_params)
     )
+    if mesh.curved:
+        w = _place_cad_midnodes(
+            model, cad, w, mid_velocity, held=held, x_model=x_model, n_params=n_params
+        )
     return w * scale
+
+
+def _place_cad_midnodes(
+    model: Model,
+    cad: _cad.CadMesh,
+    w: np.ndarray,
+    velocity: np.ndarray,
+    *,
+    held: np.ndarray,
+    x_model: np.ndarray,
+    n_params: int,
+) -> np.ndarray:
+    r"""``w`` with the mid-edge nodes of a curved mesh placed after the corner solve.
+
+    Every mid-edge node follows its chord, :math:`W_m = (W_a + W_b)/2`, except
+    a node classified on the CAD (a surface or a curve) in no held or gated
+    face, which takes its own design velocity :math:`V_m` in the directions the
+    CAD fixes: :math:`W_m = P V_m + (I - P)\,\tfrac12 (W_a + W_b)`. On a surface
+    :math:`P = n n^\mathsf{T}` with :math:`n` the normal of the quadratic
+    triangle at the node; on a curve :math:`P = I - \hat e \hat e^\mathsf{T}`
+    with :math:`\hat e` the chord direction, which is the tangent of the
+    quadratic edge at its midpoint. The corners slide along the CAD, so only
+    the part across it is the CAD's.
+
+    Args:
+        model: The model, on the curved mesh.
+        cad: The meshed CAD model.
+        w: ``(3 n, n_params)`` corner displacements (zero at mid-edge nodes).
+        velocity: ``(n, 3, n_params)`` design velocities with the held ones
+            zeroed.
+        held: Nodes the morph holds.
+        x_model: Node coordinates, model units.
+        n_params: The number of parameters.
+
+    Returns:
+        ``w`` with the mid-edge rows filled.
+    """
+    mesh = model.mesh
+    topology = mesh._topology  # noqa: SLF001
+    n_nodes = len(x_model)
+    m, a, b = _edge_ends(topology)
+    chord = (_chord_map(m, a, b, n_nodes) @ w).reshape(n_nodes, 3, n_params)
+    w = w.reshape(n_nodes, 3, n_params).copy()
+    w[m] = chord[m]
+    gated = np.zeros(n_nodes, dtype=bool)
+    gated[topology.surface_midnodes[_gated_triangles(model)].ravel()] = True
+    own = (cad.dim[m] <= 2) & ~held[m] & ~gated[m]  # classified on the CAD
+    # surface nodes: the normal of the quadratic triangle at the mid-edge node
+    vectors = _quadratic_normals(x_model, cad.slide_triangles, cad.slide_midnodes)
+    ids = cad.slide_midnodes.ravel()
+    nodes, first = np.unique(ids, return_index=True)
+    vector = vectors[:, 3:].reshape(-1, 3)[first]
+    length = np.linalg.norm(vector, axis=1)
+    normal = np.zeros((n_nodes, 3))
+    normal[nodes] = vector / np.maximum(length, np.finfo(float).tiny)[:, None]
+    # curve nodes: the chord direction
+    chord_direction = x_model[b] - x_model[a]
+    tangent = np.zeros((n_nodes, 3))
+    tangent[m] = (
+        chord_direction
+        / np.maximum(np.linalg.norm(chord_direction, axis=1), np.finfo(float).tiny)[
+            :, None
+        ]
+    )
+    for dim, direction in ((2, normal), (1, tangent)):
+        sel = m[own & (cad.dim[m] == dim)]
+        d = direction[sel][:, :, None]
+        c, v = chord[sel], velocity[sel]
+        if dim == 2:  # P = n n^T: the CAD's part is across the surface
+            w[sel] = c + d * np.sum(d * (v - c), axis=1, keepdims=True)
+        else:  # P = I - e e^T: the CAD's part is across the curve
+            w[sel] = v + d * np.sum(d * (c - v), axis=1, keepdims=True)
+    return w.reshape(3 * n_nodes, n_params)
 
 
 def _check_held(
@@ -1564,8 +1675,11 @@ def _check_sliding(
     tag = {r.name: r.tag for r in mesh.regions if r.dim == mesh.dim - 1}
     for port_name in sliding_ports:
         tags = [tag[s] for s in surfaces_of(ports[port_name])]
-        faces = mesh.triangles[np.isin(mesh.triangle_tags, tags)]
+        on = np.isin(mesh.triangle_tags, tags)
+        faces = mesh.triangles[on]
         normals = _morph.unit_normals(x0, faces)
+        if mesh.curved:  # the mid-edge nodes of the face are checked as well
+            faces = np.concatenate([faces, mesh._topology.surface_midnodes[on]], axis=1)  # noqa: SLF001
         along = np.abs(np.einsum("td,tcdk->tck", normals, velocity[faces]))
         for k, name in enumerate(names):
             worst = int(np.argmax(along[:, :, k].max(axis=1)))
@@ -1650,6 +1764,8 @@ class CadMorph:
         length_unit: The unit of the build's lengths (and of length
             parameters).
         extension: ``"elastic"`` or ``"laplace"``.
+        curved: Whether the mesh has second-order elements (``cad_morph``'s
+            ``curved``); `remesh` keeps it.
     """
 
     names: tuple[str, ...]
@@ -1657,6 +1773,7 @@ class CadMorph:
     model: Model
     length_unit: str
     extension: Extension
+    curved: bool
     _p0: tuple[float, ...]
     _treedef: Any
     _x0: np.ndarray
@@ -1679,6 +1796,7 @@ class CadMorph:
         extension: Extension,
         active: np.ndarray,
         remesh_with: tuple[Callable[..., object], Callable[[Mesh], Model], dict, tuple],
+        curved: bool = False,
     ) -> None:
         """Internal: use `cad_morph`."""
         mesh = model.mesh
@@ -1690,6 +1808,7 @@ class CadMorph:
             "model": model,
             "length_unit": length_unit,
             "extension": extension,
+            "curved": curved,
             "_p0": p0,
             "_treedef": jax.tree_util.tree_structure(mesh),
             "_x0": x0,
@@ -1815,6 +1934,7 @@ class CadMorph:
             step=self._step,
             sliding_ports=self._sliding_ports,
             extension=self.extension,
+            curved=self.curved,
         )
 
     def __setattr__(self, name: str, value: Any) -> None:
@@ -1828,7 +1948,8 @@ class CadMorph:
         build = getattr(self._build, "__name__", repr(self._build))
         return (
             f"CadMorph(build={build}, p0={self.p0!r}, "
-            f"length_unit={self.length_unit!r}, extension={self.extension!r})"
+            f"length_unit={self.length_unit!r}, extension={self.extension!r}"
+            f"{', curved=True' if self.curved else ''})"
         )
 
 
@@ -1844,6 +1965,7 @@ def cad_morph(
     step: Mapping[str, float] | None = None,
     sliding_ports: Sequence[str] = (),
     extension: Extension = "elastic",
+    curved: bool = False,
 ) -> CadMorph:
     r"""Mesh a parametric gmsh model and morph its mesh with its CAD parameters.
 
@@ -1910,9 +2032,27 @@ def cad_morph(
     approximates by a spline (the intersection of two curved surfaces) is
     accurate to about two parts in a million.
 
+    With ``curved=True`` the mesh has second-order elements: gfem sets gmsh's
+    ``Mesh.ElementOrder 2`` and ``Mesh.HighOrderOptimize 1`` (a level of 2 to 4
+    set by the build is kept) around the meshing and restores them. gmsh puts
+    each boundary mid-edge node on the CAD, so the mesh follows the curved
+    walls and the gradient with it: on a straight mesh the morph moves a
+    polygon and its gradient is the polygon's derivative, which falls short of
+    the CAD's by about :math:`0.18\,(\ell/R)^2` at a wall of radius :math:`R`
+    meshed at size :math:`\ell`; on a curved mesh it follows the CAD to the
+    discretization error. A mid-edge node on a CAD surface or curve takes the
+    design velocity :math:`V_m` across it and its chord's mean along it,
+    :math:`W_m = P V_m + (I - P)\,\tfrac12 (W_a + W_b)` (:math:`P` the
+    projector on the surface normal, or across the curve), and every other
+    mid-edge node (in a volume, on a port, periodic or sheet face, or held)
+    follows its chord, :math:`W_m = \tfrac12 (W_a + W_b)`. Features that read
+    straight elements only still refuse a curved mesh at the solve. The mesh
+    has about seven times the nodes of the straight one, and so does the dense
+    ``W``.
+
     Args:
         build: The function of named parameters that draws the model. It must
-            not set ``Mesh.ElementOrder`` above 1 (first-order meshes only).
+            not set ``Mesh.ElementOrder``: gfem sets it, with ``curved``.
         p0: The parameter values to mesh at, by name. The order fixes
             :math:`W`'s columns. Names are Python identifiers.
         make_model: Makes the `Model` (materials, boundaries, ports) from the
@@ -1927,6 +2067,8 @@ def cad_morph(
             held.
         extension: ``"elastic"`` (default) or ``"laplace"``, as in
             `boundary_morph`.
+        curved: Mesh with second-order elements (see above); `CadMorph.remesh`
+            keeps it. The default is straight.
 
     Returns:
         The morph: call it with parameter values to get the moved mesh.
@@ -1939,14 +2081,15 @@ def cad_morph(
             finite or positive, the unit or extension is unknown; the build
             made no 3D entity, or left one out of every volume group; the
             topology of the build changes within :math:`p_0 \pm h` (use a
-            smaller ``step``), or a node jumps there; gmsh's nodes do not map
+            smaller ``step``), or a node jumps there; the build sets
+            ``Mesh.ElementOrder`` (use ``curved=True``); gmsh's nodes do not map
             onto the mesh read; a parameter moves nothing; moves a node a
             perfectly matched layer, the truncation or a port holds (keep the
             feature off it; for a wave port, name it in ``sliding_ports``);
             moves the plane of a sliding port; or breaks a periodic pair or
             changes the period.
-        TypeError: ``make_model`` returns no `Model`, or ``sliding_ports`` is a
-            string.
+        TypeError: ``make_model`` returns no `Model`, ``sliding_ports`` is a
+            string, or ``curved`` is not a bool.
         DistributedUnsupportedError: Launched above one process: the CAD model
             is built with gmsh, which is not distributed.
     """
@@ -1958,4 +2101,5 @@ def cad_morph(
         step=step,
         sliding_ports=sliding_ports,
         extension=extension,
+        curved=curved,
     )
