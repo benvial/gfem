@@ -57,15 +57,28 @@ def import_gmsh() -> ModuleType:
 
 #: Export options set around the write and restored: MSH 4.1 keeps the node
 #: numbering the reader relies on (gmsh 5 defaults to 4.2), binary keeps every
-#: coordinate exact, and only the grouped elements are saved.
-_EXPORT_OPTIONS = {"Mesh.MshFileVersion": 4.1, "Mesh.Binary": 1, "Mesh.SaveAll": 0}
+#: coordinate exact, only the grouped elements are saved, the coordinates are
+#: not scaled (the node map compares them with the model's) and no parametric
+#: coordinates are appended to the node block.
+_EXPORT_OPTIONS = {
+    "Mesh.MshFileVersion": 4.1,
+    "Mesh.Binary": 1,
+    "Mesh.SaveAll": 0,
+    "Mesh.ScalingFactor": 1,
+    "Mesh.SaveParametric": 0,
+}
 
 #: A projected node that moves by more than this many steps did not follow
-#: its entity: the closest point landed elsewhere.
+#: its entity: the closest point landed elsewhere. A node on its entity moves
+#: by at most the entity's speed times the step, a few steps for any design
+#: whose speed is a few lengths per unit; a hop to another entity is a
+#: distance of the model's features, thousands of steps of 1e-5 of its size.
 _JUMP = 1e3
 
 #: The node map is trusted when gmsh's tag - 1 lands within this fraction of
-#: the model's size of the node's coordinates.
+#: the model's size of the node's coordinates. The file holds gmsh's doubles
+#: and the scaling adds a rounding of 1e-16 relative, so a true map is off by
+#: 1e-15 of the size at most; a wrong one by a mesh spacing, 1e-2 of it.
 _MAP_TOLERANCE = 1e-12
 
 _model_names = itertools.count()
@@ -303,9 +316,13 @@ def default_step(size: float) -> float:
     :math:`h = 2^{\operatorname{round}(\log_2(\varepsilon^{1/3} L))}` balances
     the second-order truncation of the difference against the
     :math:`\varepsilon L / h` round-off of the coordinates, and a power of two
-    keeps :math:`p_0 \pm h` free of extra rounding.
+    keeps :math:`p_0 \pm h` free of extra rounding. It is floored at
+    :math:`2^{-17}` model units: the kernel treats points closer than
+    :math:`10^{-7}` as one, and :math:`2^{-17} \approx 7.6\times10^{-6}` is 76
+    times that, so a small device drawn in large units does not step below it.
     """
-    return 2.0 ** round(math.log2(np.finfo(float).eps ** (1 / 3) * size))
+    step = 2.0 ** round(math.log2(np.finfo(float).eps ** (1 / 3) * size))
+    return max(step, 2.0**-17)
 
 
 # --- the node map ------------------------------------------------------------
@@ -318,10 +335,10 @@ def node_map(
     coords: np.ndarray,
     size: float,
 ) -> np.ndarray:
-    """The index in the read mesh of each gmsh node: tag - 1, or its coordinates.
+    r"""The index in the read mesh of each gmsh node: tag - 1, or its coordinates.
 
     The reader keeps the file's node order and gmsh writes tags 1..n in order,
-    so tag - 1 is the index; it is checked against the coordinates, and
+    so :math:`\mathrm{tag} - 1` is the index; it is checked against the coordinates, and
     when it fails the nodes are matched by exactly equal coordinates (the
     binary file holds the doubles gmsh had, and both sides are scaled the same
     way), refusing when that is ambiguous or incomplete too.
@@ -379,6 +396,8 @@ class CadMesh:
         velocity: ``(3 n_nodes, n_params)``, model units per parameter unit:
             the velocity of the nodes classified on points, curves and
             surfaces, zero elsewhere.
+        dim: ``(n_nodes,)``, the dimension of the entity each node is
+            classified on (0 point, 1 curve, 2 surface, 3 anywhere else).
         slide_triangles: Triangles (mesh node indices) of every surface entity.
         size: The model's bounding-box diagonal in model units.
         steps: The half-step used per parameter.
@@ -387,6 +406,7 @@ class CadMesh:
 
     mesh: Mesh
     velocity: np.ndarray
+    dim: np.ndarray
     slide_triangles: np.ndarray
     size: float
     steps: tuple[float, ...]
@@ -409,7 +429,9 @@ def build_cad(
     before this returns, and the session is closed (or gfem's models removed).
 
     Args:
-        build: Draws the model in the current gmsh model.
+        build: Draws the model in the current gmsh model. It must not set
+            ``Mesh.ElementOrder`` above 1: the node map and the closest-point
+            projections count the mesh's corner nodes only.
         p0: Parameter values, in the build's units.
         length_unit: The unit of the model's coordinates.
         step: Half-steps overriding the default, per parameter.
@@ -455,9 +477,12 @@ def build_cad(
         velocity[index, :, k] = (np.concatenate(plus) - np.concatenate(minus)) / width
     lookup = np.full(int(tags.max()) + 1, -1, dtype=np.int64)
     lookup[tags] = index
+    dim = np.full(len(imported), 3, dtype=np.int64)
+    dim[index] = np.concatenate([np.full(len(e.tags), e.dim) for e in entities])
     return CadMesh(
         mesh=mesh,
         velocity=velocity.reshape(3 * len(imported), len(names)),
+        dim=dim,
         slide_triangles=lookup[triangles],
         size=size,
         steps=steps,

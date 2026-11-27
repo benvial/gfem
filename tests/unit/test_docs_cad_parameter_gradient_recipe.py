@@ -9,8 +9,6 @@ gradient against a central difference of remeshed solves.
 import docs_pages as dp
 import pytest
 
-pytest.importorskip("gmsh")
-
 PAGE = dp.DOCS / "recipes" / "cad-parameter-gradient.md"
 TARGET = 42.0  # aF
 FORBIDDEN = ("Palace", "Flexcompute", "Tidy3D", "PhotonForge")
@@ -18,6 +16,13 @@ FORBIDDEN = ("Palace", "Flexcompute", "Tidy3D", "PhotonForge")
 
 @pytest.fixture(scope="module")
 def ran(tmp_path_factory):
+    # Inside the fixture, not at module level: collecting this file must not
+    # import gmsh in jobs that have no system libraries for it. Only a missing
+    # module skips; a library that fails to load is an error.
+    try:
+        import gmsh  # noqa: F401
+    except ImportError:
+        pytest.skip("gmsh is not installed")
     workdir = tmp_path_factory.mktemp("cad_parameter_gradient")
     return dp.run_page(PAGE, workdir)
 

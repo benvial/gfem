@@ -31,7 +31,8 @@ def test_the_radius_gradient_matches_a_difference_of_two_remeshes(morph):
     # number of facets fixed, so its gradient is the derivative of a polygon
     # and falls short of the smooth trend by $\beta = 0.18(\mathrm{lc}/R)^2
     # = 1.2\times10^{-2}$ (measured +1.0e-2 to +1.2e-2 over three draws).
-    # The sum is $1.45\times10^{-2}$, so rtol = 3e-2 leaves a margin of 2.1.
+    # The sum is $1.45\times10^{-2}$, so the budget 2 x 1.45e-2 = 2.9e-2 sits
+    # under rtol = 3e-2 (rtol is at least twice the sum, true margin 1.03).
     h = 2.0**-3
     grad = jax.grad(
         lambda r: cc.capacitance(morph.model.replace(mesh=morph({"radius": r})))

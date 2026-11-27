@@ -1,12 +1,12 @@
-"""Parametric CAD geometries shared by the CAD morph tests.
+r"""Parametric CAD geometries shared by the CAD morph tests.
 
-A dielectric core in a 2 x 2 x 1 um box (micrometres, the build's unit), the
+A dielectric core in a $2 \times 2 \times 1$ um box (micrometres, the build's unit), the
 terminal on the top face and the ground on the bottom face; the objective is
 the self-capacitance of the top terminal in aF.
 
-- strip: the core spans the box along x, ``width`` wide about y = 1, ``height``
-  tall from z = ``Z0``.
-- disk: a cylinder of ``radius`` about (1, 1), from z = ``Z0`` to ``Z0 + T0``.
+- strip: the core spans the box along $x$, ``width`` wide about $y = 1$,
+  ``height`` tall from $z = Z_0$.
+- disk: a cylinder of ``radius`` about $(1, 1)$, from $z = Z_0$ to $Z_0 + T_0$.
 
 The mesh size is the factory's argument, so one module can mesh the same
 geometry coarsely or finely. gmsh is imported when a build runs, never at
@@ -26,6 +26,12 @@ W0, T0, Z0, R0 = 0.5, 0.3, 0.3, 0.4
 #: gmsh's bounding boxes of OCC entities are padded by the kernel's tolerance
 #: (1e-7 um), so a face is "at z" within this.
 PAD = 1e-6
+
+#: Nodes are matched to the design's entities within this, micrometres: the
+#: coordinates are exact to about 1e-15 and a projected node is off by under
+#: 1e-11, while the finest spacing the tests mesh with is 0.0375 um, so 1e-9
+#: neither misses a node on an entity nor catches one off it.
+MATCH = 1e-9
 
 #: The box, micrometres.
 BOX = (2.0, 2.0, 1.0)
@@ -95,15 +101,15 @@ def capacitance(model):
     return gfem.solve(model, PROBLEM, options=OPTIONS).capacitance[0, 0] * 1e18
 
 
-def strip_velocity(x, width):
-    """The strip's design velocity of ``width`` at nodes ``x`` (um), ``(n, 3)``.
+def strip_velocity(x, width, height):
+    r"""The strip's design velocity of ``width`` at nodes ``x`` (um), ``(n, 3)``.
 
-    The side walls ``y = 1 +- width / 2`` (and their edges and corners, which
-    lie on them) move by half a unit each way.
+    The side walls $y = 1 \pm w / 2$ (and their edges and corners, which
+    lie on them) move by half a unit each way. ``height`` is the build's.
     """
     v = np.zeros_like(x)
-    wall = (np.abs(np.abs(x[:, 1] - 1) - width / 2) < 1e-9) & (
-        (x[:, 2] > Z0 - 1e-9) & (x[:, 2] < Z0 + T0 + 1e-9)
+    wall = (np.abs(np.abs(x[:, 1] - 1) - width / 2) < MATCH) & (
+        (x[:, 2] > Z0 - MATCH) & (x[:, 2] < Z0 + height + MATCH)
     )
     v[wall, 1] = 0.5 * np.sign(x[wall, 1] - 1)
     return v
@@ -116,7 +122,7 @@ def disk_velocity(x, radius):
     the end caps' interior nodes stay in their planes.
     """
     r = x[:, :2] - 1
-    on = np.abs(np.linalg.norm(r, axis=1) - radius) < 1e-9
+    on = np.abs(np.linalg.norm(r, axis=1) - radius) < MATCH
     v = np.zeros_like(x)
     v[on, :2] = r[on] / radius
     return v

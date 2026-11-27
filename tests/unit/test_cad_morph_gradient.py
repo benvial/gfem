@@ -69,7 +69,8 @@ def test_the_width_gradient_matches_a_difference_of_two_remeshes(morph):
     # bias $\beta \le 3.5\times10^{-3}$ between the morph gradient and the
     # smooth re-meshed trend (measured +0.5e-3 to +3.3e-3 over six draws).
     # Noise 2.8e-3, truncation 1.6e-3 and bias 3.5e-3 sum to $7.9\times10^{-3}$,
-    # so rtol = 2e-2 leaves a margin of 2.5. A structural error in the
+    # so the budget 2 x 7.9e-3 = 1.58e-2 sits under rtol = 2e-2 (rtol is at
+    # least twice the sum, true margin 2e-2 / 1.58e-2 = 1.27). A structural error in the
     # velocities moves the gradient by 40 % or more. A new geometry needs its
     # $\sigma$ measured first, with a sweep of re-meshes.
     h = 2.0**-3

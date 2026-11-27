@@ -82,6 +82,8 @@ def free_directions(
     slide_normals: np.ndarray,
     constrained: np.ndarray,
     ties: np.ndarray | None = None,
+    *,
+    curves: np.ndarray | None = None,
 ) -> sp.csr_array:
     """The map from free coordinates to node displacements, ``(3 n_nodes, k)``.
 
@@ -93,10 +95,19 @@ def free_directions(
     node) makes each tie class move as one: it is constrained if any member
     is, its sliding constraint stacks the normals of every member's sliding
     triangles, and its columns are written into every member's rows.
+
+    ``curves`` flags nodes that lie on a curve of a CAD model: when the
+    triangles around one span less than a line's worth of normals (rank below
+    2, a patch edge on a flat face), the surface does not determine the
+    direction along it, so the node gets no free coordinate rather than a
+    plane to drift in.
     """
     ties = np.arange(n_nodes) if ties is None else np.asarray(ties)
     class_constrained = np.zeros(n_nodes, dtype=bool)
     np.logical_or.at(class_constrained, ties, constrained)
+    class_curve = np.zeros(n_nodes, dtype=bool)
+    if curves is not None:
+        np.logical_or.at(class_curve, ties, curves)
     # the representatives of the free classes
     free = np.flatnonzero(~class_constrained & (ties == np.arange(n_nodes)))
     on_slide = np.zeros(n_nodes, dtype=bool)
@@ -114,6 +125,8 @@ def free_directions(
         normals = corner_normal[starts[v] : starts[v + 1]]
         _, s, vt = np.linalg.svd(normals)
         rank = int((s > _RANK_TOL * s[0]).sum())
+        if class_curve[v] and rank < 2:
+            continue  # a curve node of flat surroundings: no free direction
         if rank < 3:
             basis[int(v)] = vt[rank:].T  # (3, 3 - rank), orthonormal
     # the members of each class, by representative

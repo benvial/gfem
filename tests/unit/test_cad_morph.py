@@ -1,11 +1,23 @@
-"""The lazy gmsh import of the CAD layer."""
+"""The CAD layer and `gfem.shape.cad_morph`: the lazy gmsh import, the design
+velocities, the extended displacement and its gradient, remeshing and the
+refusals."""
 
 import importlib
+import signal
 import sys
+import tempfile
+from pathlib import Path
 
+import cad_cases as cc
+import jax
+import jax.numpy as jnp
+import numpy as np
 import pytest
+import scipy.sparse as sp
 
-from gfem import _cad
+import gfem
+from gfem import _cad, _morph, _mpi
+from gfem.mesh import LENGTH_UNITS
 
 
 def test_a_missing_gmsh_says_which_extra_to_install(monkeypatch):
@@ -66,20 +78,6 @@ def test_import_gmsh_returns_the_module_and_an_occ_box_meshes(gmsh):
 
 # --- the CAD morph -------------------------------------------------------------
 
-import signal  # noqa: E402
-import tempfile  # noqa: E402
-from pathlib import Path  # noqa: E402
-
-import cad_cases as cc  # noqa: E402
-import jax  # noqa: E402
-import jax.numpy as jnp  # noqa: E402
-import numpy as np  # noqa: E402
-import scipy.sparse as sp  # noqa: E402
-
-import gfem  # noqa: E402
-from gfem import _morph, _mpi  # noqa: E402
-from gfem.mesh import LENGTH_UNITS  # noqa: E402
-
 UM = LENGTH_UNITS["um"]
 P0 = {"width": cc.W0, "height": cc.T0}
 EPS = np.finfo(float).eps
@@ -124,11 +122,11 @@ def test_the_strip_velocities_are_the_side_walls_moving_by_half_a_unit():
     # is far below the 0.5 that tells a wall from a node at rest.
     atol = 1e-9
     np.testing.assert_allclose(
-        v[:, :, 0], cc.strip_velocity(x, cc.W0), rtol=0, atol=atol
+        v[:, :, 0], cc.strip_velocity(x, cc.W0, cc.T0), rtol=0, atol=atol
     )
     top = np.zeros_like(x)
-    on_top = (np.abs(x[:, 2] - (cc.Z0 + cc.T0)) < 1e-9) & (
-        np.abs(x[:, 1] - 1) < cc.W0 / 2 + 1e-9
+    on_top = (np.abs(x[:, 2] - (cc.Z0 + cc.T0)) < cc.MATCH) & (
+        np.abs(x[:, 1] - 1) < cc.W0 / 2 + cc.MATCH
     )
     top[on_top, 2] = 1.0
     np.testing.assert_allclose(v[:, :, 1], top, rtol=0, atol=atol)
@@ -165,14 +163,14 @@ def test_a_step_override_is_used_for_that_parameter_only():
 
 def test_the_velocity_is_in_metres_per_unit_and_a_wall_keeps_its_normal_part(morph):
     x = np.asarray(morph.model.mesh.imported_nodes) / UM
-    wall = cc.strip_velocity(x, cc.W0)[:, 1] != 0
+    wall = cc.strip_velocity(x, cc.W0, cc.T0)[:, 1] != 0
     # A wall slides in its plane, so its y component is the design velocity
     # (half a unit, in m per um) to the projection's round-off (1e-16 of
     # the velocity scale 1e-6 m/um) and the slide basis's orthonormality
     # (1e-16 relative).
     y = morph.velocities["width"][:, 1]
     np.testing.assert_allclose(
-        y[wall], UM * cc.strip_velocity(x, cc.W0)[wall, 1], rtol=1e-9, atol=0
+        y[wall], UM * cc.strip_velocity(x, cc.W0, cc.T0)[wall, 1], rtol=1e-9, atol=0
     )
 
 
@@ -287,7 +285,10 @@ def test_the_velocities_are_read_only_columns_of_the_displacement(morph):
         with pytest.raises(ValueError, match="read-only"):
             v[0, 0] = 1.0
     # one unit of width moves the wall by half a unit, 0.5 um
-    assert np.abs(morph.velocities["width"]).max() == pytest.approx(0.5 * UM, rel=1e-6)
+    # The plane projection's error is 1e-11 um/um on the 0.5 um/um wall (2e-11
+    # relative); 1e-9 clears it by two orders and is far below the factor 2 a
+    # mis-scaled wall would show.
+    assert np.abs(morph.velocities["width"]).max() == pytest.approx(0.5 * UM, rel=1e-9)
 
 
 def test_unknown_parameter_names_list_the_known_ones(morph):
@@ -316,6 +317,8 @@ def test_remesh_restarts_at_the_new_values_and_keeps_them_absolute(morph):
     y = mesh.imported_nodes[nodes, 1]
     # the core is 0.55 um wide: its y extent is the difference of two
     # coordinates near 1.2e-6 m, accurate to an ulp (2e-22 m).
+    # abs 1e-18 m: a coordinate near 1 um = 1e-6 m has an ulp of 2e-22 m, so
+    # a difference of two is exact to 1e-21; 1e-18 is 1e-12 of the 0.55 um span.
     assert np.ptp(y) == pytest.approx(0.55 * UM, abs=1e-18)
     assert np.array_equal(np.asarray(new(new.p0).nodes), mesh.imported_nodes)
 
@@ -515,7 +518,9 @@ def with_pair(mesh):
 
 @pytest.mark.usefixtures("gmsh")
 def test_a_parameter_that_moves_a_held_port_node_is_refused_with_its_holder():
-    with pytest.raises(ValueError, match=r"Parameter 'width'.*port 'p' holds") as info:
+    with pytest.raises(
+        ValueError, match=r"Parameter 'width'.*held by port 'p'"
+    ) as info:
         gfem.shape.cad_morph(stretch_build(0.3), STRETCH, with_port)
     message = str(info.value)
     assert "sliding_ports=" in message
@@ -816,4 +821,105 @@ def test_the_vector_extension_solves_for_the_free_directions_only():
     resid = free.T @ (stiffness @ w)
     assert np.abs(resid).max() <= 1e-12 * np.abs(stiffness @ w).max() * 1e2
     coefficients, *_ = np.linalg.lstsq(free.toarray(), w - velocity, rcond=None)
+    # lstsq on columns of orthonormal unit vectors is exact to a few eps; the
+    # solve's relative error is at most cond * eps = 1e2 * 2.2e-16 on values of
+    # order 1, so 1e-10 clears it by four orders and a wrong span shows at 1.
     np.testing.assert_allclose(free @ coefficients, w - velocity, rtol=0, atol=1e-10)
+
+
+# --- curve nodes of flat surroundings and nodes in no element ----------------
+
+
+def patch_build(*, fragmented):
+    """A box with a ``width`` wide patch on its top face, or a floating line."""
+
+    def build(width):
+        gm = _cad.import_gmsh()
+        occ = gm.model.occ
+        box = occ.addBox(0, 0, 0, 2, 2, 1)
+        if fragmented:
+            patch = occ.addRectangle(0.5, 1 - width / 2, 1, 1.0, width)
+            occ.fragment([(3, box)], [(2, patch)])
+        else:
+            # a line inside the box, apart from its mesh: its nodes are in no
+            # element
+            occ.addPoint(1, 1 - width / 2, 0.5, tag=100)
+            occ.addPoint(1, 1 + width / 2, 0.5, tag=101)
+            occ.addLine(100, 101, tag=100)
+        occ.synchronize()
+        gm.model.addPhysicalGroup(
+            3, [t for _, t in gm.model.getEntities(3)], name="clad"
+        )
+        if fragmented:
+            # the patch is the surface narrower than the box in y, at z = 1
+            flat = [
+                t
+                for _, t in gm.model.getEntities(2)
+                if (bb := gm.model.getBoundingBox(2, t))[4] - bb[1] < 1.9
+                and abs(bb[2] - 1) < cc.PAD
+            ]
+            gm.model.addPhysicalGroup(2, flat, name="patch")
+        else:
+            gm.model.addPhysicalGroup(1, [100], name="wire")
+        gm.option.setNumber("Mesh.MeshSizeMax", 0.25)
+
+    return build
+
+
+def clad_model(mesh):
+    return gfem.Model(mesh, materials={"clad": gfem.Material()})
+
+
+@pytest.mark.usefixtures("gmsh")
+def test_a_patch_outline_on_a_flat_face_keeps_its_design_velocity():
+    w0 = 0.6
+    build = patch_build(fragmented=True)
+    cad = _cad.build_cad(build, {"width": w0}, "um")
+    morph = gfem.shape.cad_morph(build, {"width": w0}, clad_model)
+    x = np.asarray(morph.model.mesh.imported_nodes) / UM
+    v = cad.velocity.reshape(-1, 3)
+    w = morph.velocities["width"] / UM
+    outline = (
+        (np.abs(x[:, 2] - 1) < cc.MATCH)
+        & (np.abs(np.abs(x[:, 1] - 1) - w0 / 2) < cc.MATCH)
+        & (x[:, 0] > 0.5 - cc.MATCH)
+        & (x[:, 0] < 1.5 + cc.MATCH)
+    )
+    assert np.count_nonzero(outline) >= 6
+    assert np.abs(v[outline, 1]).min() == pytest.approx(0.5, abs=1e-9)
+    # W = V on the outline to the round-off of the closest-point difference,
+    # eps |x| / h = 2.2e-16 * 2 / 2^-16 = 3e-11 um/um at worst, the same
+    # bound as the design velocities (1e-9 clears it).
+    np.testing.assert_allclose(w[outline], v[outline], rtol=0, atol=1e-9)
+    # d(area)/d(width) of the patch is its length, 1 um; the outline nodes
+    # carry the area, and the map is linear in the parameter, so the
+    # difference over 0.05 is exact to the round-off of the areas
+    # (eps * 0.6 / 0.05 = 3e-15 per um) times the node count's summation
+    # error; 1e-9 relative to 1 um is far above it.
+    mesh = morph.model.mesh
+    tag = next(r.tag for r in mesh.regions if r.name == "patch")
+    faces = mesh.triangles[mesh.triangle_tags == tag]
+
+    def area(nodes):
+        a, b, c = (np.asarray(nodes)[faces[:, i]] for i in range(3))
+        return 0.5 * np.linalg.norm(np.cross(b - a, c - a), axis=1).sum() / UM**2
+
+    step = 0.05
+    slope = (
+        area(morph({"width": w0 + step}).nodes) - area(morph.model.mesh.imported_nodes)
+    ) / step
+    assert slope == pytest.approx(1.0, rel=0, abs=1e-9)
+
+
+@pytest.mark.usefixtures("gmsh")
+def test_a_parameter_that_moves_a_node_in_no_element_is_refused():
+    with pytest.raises(
+        ValueError, match=r"Parameter 'width'.*held by belonging to no element"
+    ):
+        gfem.shape.cad_morph(patch_build(fragmented=False), {"width": 0.6}, clad_model)
+
+
+def test_the_default_step_is_floored_for_a_small_model_in_large_units():
+    # a model 0.5 units across: eps^(1/3) L = 3e-6 would round to 2^-18
+    assert _cad.default_step(0.5) == 2.0**-17
+    assert _cad.default_step(3.0) == 2.0**-16

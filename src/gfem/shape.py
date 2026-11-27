@@ -617,9 +617,10 @@ def _held(
         "the truncation layer",
     )
     # a class is held, with one cause, if any member is
-    named = np.flatnonzero(cause != "")[::-1]
+    named = np.flatnonzero(cause != "")
     by_class = np.full(n_nodes, "", dtype=object)
-    by_class[ties[named]] = cause[named]  # the last write is the first member
+    classes, first = np.unique(ties[named], return_index=True)
+    by_class[classes] = cause[named[first]]  # the first member's cause
     cause = by_class[ties]
     return cause != "", held_tri, cause
 
@@ -886,7 +887,10 @@ _STILL = 1e-6
 
 #: A parameter whose largest velocity times its step is below this fraction
 #: of the model's size moves nothing: its morph gradient would be zero while
-#: remeshing gives mesh noise (a mesh-size parameter, say).
+#: remeshing gives mesh noise (a mesh-size parameter, say). A real motion is
+#: at least the kernel's own tolerance, 1e-7 of a unit-size model; the closest
+#: point of an entity that does not move differs by round-off, 1e-15 of the
+#: size, so 1e-12 separates the two.
 _DEAD = 1e-12
 
 
@@ -1055,8 +1059,8 @@ def _extend(
         velocity=velocity,
         speed=speed,
         tolerance=tolerance,
-        held=held,
-        cause=cause,
+        held=held | ~in_tet,
+        cause=np.where(in_tet, cause, "belonging to no element"),
         where=where,
         names=names,
         unit=unit,
@@ -1081,12 +1085,18 @@ def _extend(
     velocity[members] = velocity[ties[members]]
     velocity[held | ~in_tet] = 0.0
     x_model = x0 / scale
+    # A CAD vertex has no freedom, and neither has a curve node whose
+    # incident surface normals are coplanar (a patch edge on a flat face): the
+    # surface leaves it free in its plane, where the energy minimisation would
+    # cancel the design velocity. Its closest-point tangential motion along
+    # the curve is ~0 to first order, so W = V is the conservative choice.
     free = _morph.free_directions(
         n_nodes,
         cad.slide_triangles,
         _morph.unit_normals(x_model, cad.slide_triangles),
-        held | ~in_tet,
+        held | ~in_tet | (cad.dim == 0),
         ties,
+        curves=cad.dim == 1,
     )
     stiffness = _morph.stiffness(x_model, mesh.tetrahedra, extension)
     w = _morph.vector_extension(
@@ -1112,7 +1122,7 @@ def _check_held(
         node = int(np.argmax(moved))
         if moved[node] > tolerance[k]:
             msg = (
-                f"Parameter {name!r} moves a node that {cause[node]} holds: "
+                f"Parameter {name!r} moves a node held by {cause[node]}: "
                 f"at ({_xyz(where[node])}) {unit} the design velocity is "
                 f"({_xyz(velocity[node, :, k])}) {unit} per unit, the largest of "
                 f"{int((moved > tolerance[k]).sum())} held node(s) it moves. "
@@ -1291,7 +1301,12 @@ class CadMorph:
 
     @property
     def velocities(self) -> dict[str, np.ndarray]:
-        """Read-only displacement per parameter, in metres per parameter unit."""
+        """Read-only motion of the mesh per parameter, metres per parameter unit.
+
+        This is the extended field :math:`W` of every node, not only the design
+        velocities: its values on the boundary entities are the design
+        velocities, and the volume nodes follow them.
+        """
         return dict(self._columns)
 
     def _vector(self, p: Mapping[str, Any]) -> list[Any]:
@@ -1473,7 +1488,7 @@ def cad_morph(
     The nodes of a perfectly matched layer, of the elements touching the
     truncation, of port surfaces (except wave ports named in
     ``sliding_ports``) and in no element are held; the CAD must not move them.
-    ``W`` is a dense array of ``24 n_nodes n_params`` bytes.
+    ``W`` is a dense array of :math:`24\, n_\mathrm{nodes}\, n_\mathrm{params}` bytes.
 
     gmsh is an optional dependency (``pip install 'gfem[gmsh]'``). gfem uses
     the gmsh session the user opened, adding and removing models of its own and
@@ -1483,7 +1498,8 @@ def cad_morph(
     accurate to about two parts in a million.
 
     Args:
-        build: The function of named parameters that draws the model.
+        build: The function of named parameters that draws the model. It must
+            not set ``Mesh.ElementOrder`` above 1 (first-order meshes only).
         p0: The parameter values to mesh at, by name. The order fixes
             :math:`W`'s columns. Names are Python identifiers.
         make_model: Makes the `Model` (materials, boundaries, ports) from the
