@@ -167,6 +167,7 @@ METHOD_KEYS = (
     "error_estimate",
     "mesh_refinement",
     "mode_field_gradient",
+    "cad_morph",
 )
 #: The refusal keys no public call reaches, so no page lists them.
 GUARD_KEYS: tuple[str, ...] = ()

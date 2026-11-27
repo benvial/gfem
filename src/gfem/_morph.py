@@ -162,3 +162,36 @@ def prescribed(
     cols = np.repeat(column, 3)
     values = normals[column].ravel()
     return sp.csr_array((values, (rows, cols)), shape=(3 * n_nodes, p))
+
+
+def vector_extension(
+    stiffness: sp.csr_array, free: sp.csr_array, velocity: np.ndarray
+) -> np.ndarray:
+    r"""The displacement field :math:`W = V + B z` of prescribed node velocities.
+
+    :math:`V` prescribes the components a design determines and :math:`B`
+    (``free``, from `free_directions`) spans the directions each node may
+    still move in, so :math:`z` minimizes the extension energy of :math:`W`
+    over them: :math:`(B^\top K B) z = -B^\top K V`. Every column of ``velocity``
+    shares one factorization, dropped before returning.
+
+    Args:
+        stiffness: :math:`K`, ``(3 n, 3 n)`` (`stiffness`).
+        free: :math:`B`, ``(3 n, k)``.
+        velocity: :math:`V`, ``(3 n, n_p)``, one column per parameter.
+
+    Returns:
+        :math:`W`, ``(3 n, n_p)``.
+    """
+    # Imported here so that `import gfem` does not load NGSolve.
+    from gfem._linalg import factorize
+
+    velocity = np.asarray(velocity, dtype=float)
+    reduced = (free.T @ stiffness @ free).tocoo()
+    rhs = -(free.T @ (stiffness @ velocity))
+    handle = factorize(reduced)
+    try:
+        z = handle.solve(np.asarray(rhs, dtype=float))
+    finally:
+        handle.free()
+    return velocity + free @ z

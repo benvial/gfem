@@ -1239,6 +1239,7 @@ REFUSAL_LABELS = {
         "A gradient through an `Eigenmode` result's mode field: `q_port`, the "
         "participations, `e_fields`, `interface_participation`"
     ),
+    "cad_morph": "`gfem.shape.cad_morph`, `CadMorph.remesh`",
 }
 
 
