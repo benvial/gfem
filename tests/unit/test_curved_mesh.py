@@ -449,3 +449,24 @@ def test_with_nodes_on_a_curved_mesh_accepts_a_small_move(octant):
         warnings.simplefilter("error")
         moved = octant.with_nodes(np.asarray(octant.nodes) * 1.01)
     assert moved.curved
+
+
+# --- field export ------------------------------------------------------------
+
+
+def test_a_first_order_field_on_a_curved_mesh_is_exported_in_cut_elements():
+    # An order-1 field is cut once (the element itself) on a straight mesh and at
+    # least twice along each edge on a curved one, so a bent element is not
+    # written as its flat chord tetrahedron: 8 sub-tetrahedra of the lattice with
+    # n = 2 per element against 1.
+    options = gfem.SolverOptions(order=1)
+    cells = {}
+    for key, name in (("curved", "coax_order2"), ("straight", "coax_order1")):
+        mesh = _read(name)
+        model = gfem.Model(mesh, materials={"fill": gfem.Material(eps_r=1.0)})
+        out = (
+            gfem.solve(model, QUARTER_COAX, options=options).potential["in"].to_meshio()
+        )
+        (block,) = out.cells
+        cells[key] = len(block.data) // len(mesh.tetrahedra)
+    assert cells == {"curved": 8, "straight": 1}

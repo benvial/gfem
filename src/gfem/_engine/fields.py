@@ -644,7 +644,7 @@ def sample(
             mesh, field.support, excluded, field.space, field.order, comm=comm
         )[0]
     _check_size(field, fes, width)
-    n = max(field.order, 1)
+    n = max(field.order, 2 if mesh.curved else 1)
     flat = mesh.dim == 2
     ref, sub = _triangle_lattice(n) if flat else _lattice(n)
     rule = ngs.IntegrationRule([tuple(p) for p in ref], [0.0] * len(ref))
