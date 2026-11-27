@@ -237,9 +237,9 @@ M = 16: 17 blocks, |T - T_full| = 1.9e-03
 M = 32: 33 blocks, |T - T_full| = 3.7e-04
 ```
 
-The error falls about as $M^{-2.5}$ with each doubling of the steps: a staircase
-converges in steps as well as in kept modes. The reflection does not follow: a
-staircase with segments about half a guided wavelength long is a grating.
+The error in $T$ falls about as $M^{-2.5}$: a staircase converges in its steps
+as well as in its kept modes. Its reflection does not, because segments about
+half a guided wavelength long make a grating.
 
 ## Differentiate in the length
 
