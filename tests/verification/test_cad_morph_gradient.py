@@ -52,6 +52,12 @@ def curved_morph():
     )
 
 
+# Reference tier: the budget below is measured across gmsh re-meshes with one
+# gmsh build, and its margin (1.19) is thinner than the spread between gmsh
+# versions' meshers. The default tier checks the curved gradient against
+# differences on one mesh (tests/unit/test_cad_morph_curved.py), where the
+# mesher does not enter.
+@pytest.mark.reference
 def test_the_curved_radius_gradient_follows_the_cad_not_the_polygon(curved_morph):
     # The same two re-meshes (now curved) at $R_0 \pm h$, $h = 2^{-3}$ um, and
     # the same budget $2\left[5\sigma\kappa/(\sqrt2 h) + c_2 h^2 + \beta\right]$
