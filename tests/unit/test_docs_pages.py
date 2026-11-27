@@ -177,6 +177,9 @@ def test_get_started_next_steps_pick_pages_of_the_site_tree():
 
 USER_TERMS = (
     "Bent port mode",
+    "Mode cascade",
+    "Kept mode",
+    "Evanescent port mode",
     "Bend loss",
     "Junction coupling",
     "Reference radius",

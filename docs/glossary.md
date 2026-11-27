@@ -161,6 +161,22 @@ Loss tangent
 Non-differentiable quantity
   A result value or model input that gfem refuses to differentiate in a given
   version, raising an error instead of returning a zero gradient. See {doc}`capabilities`.
+
+Mode cascade
+  A device solved by finite elements only at its discontinuities, the blocks
+  joined through uniform sections that carry each {term}`kept mode` as
+  $e^{-\gamma\ell}$ (`gfem.cascade`). A length sweep needs no new solve. See
+  {doc}`recipes/mode-cascade`.
+
+Kept mode
+  One of the modes, propagating or evanescent, that a block's plane port
+  carries into a section (`WavePort.kept_modes`). Keep every propagating
+  mode and the near-cutoff evanescent ones. See {doc}`recipes/mode-cascade`.
+
+Evanescent port mode
+  A mode of a port's guide below cutoff that a {term}`wave port` can request
+  (`WavePort(allow_evanescent=True)`). Its row of S is a pseudo-wave that
+  carries no power. See {doc}`recipes/mode-cascade`.
 ```
 
 ## Integrated photonics
