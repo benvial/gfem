@@ -215,8 +215,13 @@ def test_equal_principal_values_give_the_isotropic_s_and_cotangents(axes_line):
     per_axis, axes_grad = jax.value_and_grad(objective)(equal)
     # measured on MN5: S 7.3e-15 relative, cotangents 1.1e-15 .. 1.5e-15;
     # gauged (the default), up to 5.9e-15; threaded, the cotangents move
-    # run to run (3e-15 .. 9.5e-15 locally, 1.03e-14 on CI runners)
-    assert abs(float(per_axis) - float(iso)) <= 3e-14 * abs(float(iso))
+    # run to run (3e-15 .. 9.5e-15 locally, 1.03e-14 on CI runners); S reached
+    # 3.3e-14 on the Open MPI CI runner (a different threaded assembly order).
+    # Both paths sum the same element contributions in different orders, so the
+    # gap is a few ulps times the conditioning of the solve: 1e-13 keeps a
+    # factor 3 over the largest spread seen and stays far below any modelling
+    # difference between the tensor and isotropic paths (1e-9 or more)
+    assert abs(float(per_axis) - float(iso)) <= 1e-13 * abs(float(iso))
     for name, g in iso_grad.items():
         assert _relative(axes_grad[name].sum(axis=1), g) <= 5e-14, name
 
