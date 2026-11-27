@@ -1251,6 +1251,9 @@ cuda12 = [
 cuda13 = [
     { name = "nvmath-python", extra = ["cu13"], marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-4-gfem-cuda13') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-4-gfem-cuda13') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
 ]
+gmsh = [
+    { name = "gmsh", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
+]
 log = [
     { name = "rich", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
 ]
@@ -1276,7 +1279,7 @@ xarray = [
 [package.dev-dependencies]
 dev = [
     { name = "gdstk", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
-    { name = "gfem", extra = ["sax", "skrf"], marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
+    { name = "gfem", extra = ["gmsh", "sax", "skrf"], marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
     { name = "pytest", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
     { name = "pytest-cov", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
     { name = "rich", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
@@ -1313,7 +1316,7 @@ site = [
 ]
 test = [
     { name = "gdstk", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
-    { name = "gfem", extra = ["sax", "skrf"], marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
+    { name = "gfem", extra = ["gmsh", "sax", "skrf"], marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
     { name = "pytest", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
     { name = "pytest-cov", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
     { name = "rich", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'darwin' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'linux' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13') or (sys_platform == 'win32' and extra == 'extra-4-gfem-cuda12' and extra == 'extra-4-gfem-cuda13')" },
@@ -1323,6 +1326,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "contourpy", specifier = ">=1.3" },
+    { name = "gmsh", marker = "extra == 'gmsh'", specifier = ">=4.15" },
     { name = "jax", specifier = ">=0.8.3" },
     { name = "meshio", specifier = ">=5.3.5" },
     { name = "mkl", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'mkl') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'mkl')", specifier = ">=2026.2" },
@@ -1338,12 +1342,12 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.15" },
     { name = "xarray", marker = "extra == 'xarray'", specifier = ">=2024.10" },
 ]
-provides-extras = ["cuda12", "cuda13", "log", "mkl", "mpi", "sax", "skrf", "viz", "xarray"]
+provides-extras = ["cuda12", "cuda13", "gmsh", "log", "mkl", "mpi", "sax", "skrf", "viz", "xarray"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "gdstk", specifier = ">=0.9.61" },
-    { name = "gfem", extras = ["sax", "skrf"] },
+    { name = "gfem", extras = ["gmsh", "sax", "skrf"] },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-cov", specifier = ">=6.0" },
     { name = "rich", specifier = ">=14.2" },
@@ -1380,11 +1384,22 @@ site = [
 ]
 test = [
     { name = "gdstk", specifier = ">=0.9.61" },
-    { name = "gfem", extras = ["sax", "skrf"] },
+    { name = "gfem", extras = ["gmsh", "sax", "skrf"] },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-cov", specifier = ">=6.0" },
     { name = "rich", specifier = ">=14.2" },
     { name = "xarray", specifier = ">=2024.10" },
+]
+
+[[package]]
+name = "gmsh"
+version = "4.15.2"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/19/a6/f3f74f53234c812ffa0191ce2aceb0811ea82bdf12867a73bebb03f28f7a/gmsh-4.15.2-py2.py3-none-macosx_10_15_x86_64.whl", hash = "sha256:9f5a97b6633e40be331cb777ab571cef96e6ff5979bb7b20aad2438724ca417b", size = 40171095, upload-time = "2026-03-24T19:33:46.37Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/b4/0d25938ad62ea4db6bcbdecbc77c72d05d8a6a679abe4addcd86167ffd77/gmsh-4.15.2-py2.py3-none-macosx_12_0_arm64.whl", hash = "sha256:f6649b3e59f49272e7ee8ab282ecb4d1a6e0d627e86cf3e3b1a83fd07417e4f8", size = 36427761, upload-time = "2026-03-24T19:33:51.161Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/d4/336becb1488ac4fbab205043987128839c8c62d54e2036b7e887bd009040/gmsh-4.15.2-py2.py3-none-manylinux_2_24_x86_64.whl", hash = "sha256:4076a948ce22625330d1413d4982e22b5c69fc2f0f7951f5df64c778cf54108c", size = 40006930, upload-time = "2026-03-24T19:33:55.549Z" },
+    { url = "https://files.pythonhosted.org/packages/78/e9/63c763c0d75544680800651d5ea8c7c3203ae4b5e054706f19a54021a7fb/gmsh-4.15.2-py2.py3-none-win_amd64.whl", hash = "sha256:7b36083bb410fa27c5d0e052929d1a9844a5b09169d66017b72b41aabd49d711", size = 42235999, upload-time = "2026-03-24T19:34:00.529Z" },
 ]
 
 [[package]]

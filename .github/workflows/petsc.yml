@@ -75,6 +75,9 @@ jobs:
       with:
         path: wheelhouse
         key: ${{ steps.wheelhouse.outputs.cache-primary-key }}
+    - name: System libraries for gmsh
+      # The PyPI gmsh wheel loads OpenGL and X11 libraries at import.
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libglu1-mesa libxcursor1 libxft2 libxinerama1 libgl1 libgomp1
     - name: Install
       # Later steps use `uv run --no-sync`: a sync would remove the wheels.
       run: |
@@ -107,9 +110,9 @@ jobs:
         python-version: "3.12"
         enable-cache: true
         cache-suffix: mpi
-    - name: Open MPI, bison and flex
+    - name: Open MPI, bison, flex and the system libraries for gmsh
       # apt's Open MPI 4.1.6 is MareNostrum 5's version.
-      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev bison flex
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev bison flex libglu1-mesa libxcursor1 libxft2 libxinerama1 libgl1 libgomp1
     - name: Record the image and compiler
       run: |
         echo "IMAGE_OS=$ImageOS" >> "$GITHUB_ENV"

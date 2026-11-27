@@ -11,6 +11,10 @@ OSI-licensed: only the optional extras below pull proprietary vendor wheels.
 
 - `cuda12` and `cuda13` pull NVIDIA's proprietary runtime wheels (cuDSS and
   the CUDA runtime, under NVIDIA's licences).
+- `gmsh` pulls gmsh (GPL-2.0-or-later, with an exception for Netgen, METIS,
+  OpenCASCADE and ParaView only). gfem stays MIT and imports gmsh only when
+  `gfem.shape.cad_morph` asks; shipping an environment or a frozen application
+  that contains gmsh is redistribution under the GPL's terms.
 - `mkl` pulls Intel MKL, TBB and TCM under the Intel Simplified Software
   License, and Intel's OpenMP runtime (`intel-openmp`, `intel-cmplr-lib-ur`)
   under the **Intel End User License Agreement for Developer Tools**. That

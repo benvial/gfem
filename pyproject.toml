@@ -51,6 +51,11 @@ cuda12 = [
 cuda13 = [
   "nvmath-python[cu13]>=1.0,<1.1; (sys_platform == 'linux' and platform_machine == 'x86_64') or sys_platform == 'win32'",
 ]
+# gmsh, to build CAD models from parametric build functions (`gfem.shape.cad_morph`).
+# gfem imports it lazily and only there. GPL-2.0-or-later (with an exception for
+# Netgen, METIS, OpenCASCADE and ParaView); see docs/project/licence.md. The PyPI
+# wheel needs system OpenGL and X11 libraries on Linux.
+gmsh = ["gmsh>=4.15"]
 # rich for the log display's lines and progress rows (`gfem.log.enable`); without
 # it the display falls back to plain text.
 log = ["rich>=14.2"]
@@ -113,7 +118,7 @@ site = [
   "trame-pyvista",
   "trame-vtk",
 ]
-test = ["gdstk>=0.9.61", "gfem[sax,skrf]", "pytest>=8.3", "pytest-cov>=6.0", "rich>=14.2", "xarray>=2024.10"]
+test = ["gdstk>=0.9.61", "gfem[gmsh,sax,skrf]", "pytest>=8.3", "pytest-cov>=6.0", "rich>=14.2", "xarray>=2024.10"]
 
 [build-system]
 requires = ["uv_build>=0.13,<0.14"]
