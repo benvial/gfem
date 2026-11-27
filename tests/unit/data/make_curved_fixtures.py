@@ -17,10 +17,16 @@ Writes, in gmsh format 4.1:
   heater), ``heater`` (x in 1.9..2.5 of the core) and ``pml`` (the shell).
   Surfaces ``xlo`` / ``xhi`` (x = 0 and 3), ``ylo`` / ``yhi`` (a periodic
   pair), ``zwall`` (z = 0 and 3), ``sheet`` (the interior face x = 1.9
-  between air and heater) and ``wall`` (the sphere). Mesh size 0.4, 0.2 on
-  the sphere, with no high-order optimization, which would spread curvature
-  to far elements. Only the elements touching the sphere are curved, so every
-  flat outer face, the ``heater`` and the ``pml`` shell are straight.
+  between air and heater) and ``wall`` (the sphere).
+  Mesh size 0.4 in the core and 0.2 on the sphere (`CELL_CORE`, `CELL_FINE`),
+  and 2 at the corners of the shell (`CELL_COARSE`), which needs no
+  resolution: a third the size of a uniform 0.4 mesh. No high-order
+  optimization, which would spread curvature to far elements. Only the
+  elements touching the sphere are curved, so every flat outer face, the
+  ``heater`` and the ``pml`` shell are straight.
+- ``coax_split_order2.msh``: the same line at order 2 with the plane x = 0
+  split off ``sym`` as surface ``port``: a flat face whose edges are straight
+  lines, two of them on the curved walls ``inner`` and ``outer``.
 - ``octant_order3.msh``: the octant at order 3, which gfem refuses.
 - ``octant_mixed.msh``: tetra10 volumes with first-order ``triangle`` faces,
   which gfem refuses.
@@ -31,6 +37,15 @@ from pathlib import Path
 import gmsh
 
 HERE = Path(__file__).parent
+#: The mesh size (m) at the cell's corners away from the sphere.
+CELL_COARSE = 2.0
+#: The sphere's centre and radius (m).
+BALL_CENTRE = (1.2, 1.5, 1.5)
+BALL_RADIUS = 0.3
+#: The mesh size (m) at the core's corners.
+CELL_CORE = 0.4
+#: The mesh size (m) on the sphere.
+CELL_FINE = 0.2
 
 
 def _mesh(
@@ -93,7 +108,7 @@ def _octant() -> None:
     _name_octant()
 
 
-def _coax() -> None:
+def _coax(split: bool = False) -> None:
     outer = gmsh.model.occ.addCylinder(
         0, 0, 0, 0, 0, 1, 2.0, angle=3.141592653589793 / 2
     )
@@ -103,16 +118,24 @@ def _coax() -> None:
     gmsh.model.occ.cut([(3, outer)], [(3, inner)])
     gmsh.model.occ.synchronize()
     gmsh.model.addPhysicalGroup(3, [t for _, t in gmsh.model.getEntities(3)], 1, "fill")
-    inner_s, outer_s, sym = [], [], []
+    inner_s, outer_s, sym, port = [], [], [], []
     for _, tag in gmsh.model.getEntities(2):
         if gmsh.model.getType(2, tag) == "Plane":
-            sym.append(tag)
+            x, _, z = gmsh.model.occ.getCenterOfMass(2, tag)
+            # split: the plane x = 0 is a port face whose rim lines are straight
+            (port if split and x < 1e-9 and 1e-9 < z < 1 - 1e-9 else sym).append(tag)
             continue
         x, y, _ = gmsh.model.occ.getCenterOfMass(2, tag)
         (inner_s if (x * x + y * y) ** 0.5 < 1.5 else outer_s).append(tag)
     gmsh.model.addPhysicalGroup(2, inner_s, 2, "inner")
     gmsh.model.addPhysicalGroup(2, outer_s, 3, "outer")
     gmsh.model.addPhysicalGroup(2, sym, 4, "sym")
+    if split:
+        gmsh.model.addPhysicalGroup(2, port, 5, "port")
+
+
+def _coax_split() -> None:
+    _coax(split=True)
 
 
 def _name_cell_surfaces() -> list[int]:
@@ -162,14 +185,16 @@ def _cell() -> None:
         for k in range(3)
     ]
     heater = occ.addBox(1.9, 0.5, 0.5, 0.6, 2, 2)
-    ball = occ.addSphere(1.2, 1.5, 1.5, 0.3)
+    ball = occ.addSphere(*BALL_CENTRE, BALL_RADIUS)
     occ.fragment([(3, c) for c in cells], [(3, heater), (3, ball)])
     occ.synchronize()
     groups: dict[str, list[int]] = {"ball": [], "air": [], "heater": [], "pml": []}
     for _, tag in gmsh.model.getEntities(3):
         box = gmsh.model.getBoundingBox(3, tag)
-        if all(box[i] > 0.89 and box[3 + i] < 1.81 for i in range(3)) and all(
-            box[3 + i] - box[i] < 0.61 for i in range(3)
+        if all(
+            box[i] > BALL_CENTRE[i] - BALL_RADIUS - 1e-6
+            and box[3 + i] < BALL_CENTRE[i] + BALL_RADIUS + 1e-6
+            for i in range(3)
         ):
             groups["ball"].append(tag)
         elif min(box[:3]) < 0.4 or max(box[3:]) > 2.6:
@@ -179,11 +204,15 @@ def _cell() -> None:
     for k, (name, tags) in enumerate(groups.items(), start=1):
         gmsh.model.addPhysicalGroup(3, tags, k, name)
     wall = _name_cell_surfaces()
-    # a fine mesh on the sphere, coarse elsewhere
+    # a fine mesh on the sphere, coarse elsewhere (the shell dominates the count)
+    for _, tag in gmsh.model.getEntities(0):
+        x = gmsh.model.getValue(0, tag, [])
+        core = all(0.5 - 1e-9 <= c <= 2.5 + 1e-9 for c in x)
+        gmsh.model.mesh.setSize([(0, tag)], CELL_CORE if core else CELL_COARSE)
     for _, tag in gmsh.model.getBoundary(
         [(2, t) for t in wall], combined=False, oriented=False, recursive=True
     ):
-        gmsh.model.mesh.setSize([(0, tag)], 0.2)
+        gmsh.model.mesh.setSize([(0, tag)], CELL_FINE)
 
 
 def _cell_periodic() -> None:
@@ -212,9 +241,18 @@ def main() -> None:
     _mesh(_octant, "octant_order2", 2, 0.2)
     _mesh(_coax, "coax_order1", 1, 0.5)
     _mesh(_coax, "coax_order2", 2, 0.5)
+    _mesh(_coax_split, "coax_split_order2", 2, 0.5)
     _mesh(_octant, "octant_order3", 3, 0.5)
-    _mesh(_cell, "cell_order1", 1, 0.4, periodic=_cell_periodic, fine=0.2, optimize=0)
-    _mesh(_cell, "cell_order2", 2, 0.4, periodic=_cell_periodic, fine=0.2, optimize=0)
+    for order in (1, 2):
+        _mesh(
+            _cell,
+            f"cell_order{order}",
+            order,
+            CELL_COARSE,
+            periodic=_cell_periodic,
+            fine=CELL_FINE,
+            optimize=0,
+        )
 
 
 if __name__ == "__main__":
