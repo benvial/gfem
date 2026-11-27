@@ -81,7 +81,9 @@ def fits(morph, p):
 
 
 def report(p, c, grad):
-    print(f"w = {p['width']:.4f} um: C = {float(c):.4f} aF, dC/dw = {float(grad['width']):.4f} aF/um")
+    print(
+        f"w = {p['width']:.4f} um: C = {float(c):.4f} aF, dC/dw = {float(grad['width']):.4f} aF/um"
+    )
 
 
 target = 42.0  # aF
@@ -121,7 +123,9 @@ noise.
 h = 0.125  # um, about a tenth of the strip width
 up, down = (morph.remesh({"width": p["width"] + s * h}) for s in (1, -1))
 difference = (capacitance(up.p0, up) - capacitance(down.p0, down)) / (2 * h)
-print(f"jax.grad {float(grad['width']):.2f} aF/um, remeshed {float(difference):.2f} aF/um")
+print(
+    f"jax.grad {float(grad['width']):.2f} aF/um, remeshed {float(difference):.2f} aF/um"
+)
 ```
 
 ```text
