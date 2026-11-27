@@ -490,14 +490,6 @@ def test_a_missing_polarity_is_a_value_error_and_non_differentiable_under_grad()
         jax.grad(objective)(1e-6)
 
 
-def test_the_field_gauge_is_a_later_step():
-    a, b = _fresnel()
-    a = _with_mode(a, "s@1", polarity=None, e_field=_Plane((1.0, 0.0)))
-    b = _with_mode(b, "s@1", polarity=None, e_field=_Plane((-1.0, 0.0)))
-    with pytest.raises(NotImplementedError, match="pairing-sign gauge"):
-        gfem.cascade([a, b], {"s": 1e-6})
-
-
 # --- transformations ------------------------------------------------------------
 
 

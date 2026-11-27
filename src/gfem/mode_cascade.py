@@ -37,6 +37,11 @@ __all__ = ["CascadeResult", "cascade"]
 # two discretizations of one guide is 4e-5, so the margin is about 230).
 _MISMATCH = 1e-2
 
+# two blocks carry the same mode when the mass-normalized overlap of their
+# fields exceeds this: the same mode of two discretizations of one guide
+# overlaps to 1 - O(h^2p), and the nearest other mode of a guide to well below
+_SAME_MODE = 0.95
+
 # the propagating threshold of the port mode sweeps, in units of k0
 _PROPAGATES = 1e-6
 
@@ -420,11 +425,103 @@ def _check_normals(blocks: list[Block], sec: _Section) -> None:
 # --- gauge --------------------------------------------------------------------
 
 
-def _field_gauge(
-    section: str, m: int, a: PortModeResult, b: PortModeResult, frequency: tuple
-) -> float:
-    """The sign aligning mode ``m`` of block B to block A from their port fields."""
-    raise NotImplementedError("pairing-sign gauge")
+def _concrete(mode: PortModeResult) -> bool:
+    """The mode carries a port field with its basis and coordinates (not traced)."""
+    field = _field(mode)
+    return field is not None and getattr(field, "_vector", None) is None
+
+
+def _kappa(mode: PortModeResult) -> np.ndarray:
+    r"""``(n_freq,)``: the pseudo-wave scale of a mode, from its concrete field.
+
+    :math:`\kappa = \sqrt{p(\omega)\,\gamma\,u^\mathsf{T} M(\omega) u}`,
+    principal root, with the expression of the solve (the port without a
+    voltage path): the engine recomputes it from the stored field, so a block
+    solved outside a transformation needs no copy of it.
+    """
+    field = _field(mode)
+    space, basis, coords = field._space, field._basis, field._coords  # noqa: SLF001
+    omega = 2 * np.pi * np.asarray(mode.frequency, float)
+    gamma = np.asarray(mode.gamma, complex) * space.section.scale
+    pairing = [
+        space.pairing(basis @ c, g, w)
+        for c, g, w in zip(coords, gamma, omega, strict=True)
+    ]
+    return np.sqrt(np.array(pairing) + 0j)
+
+
+def _overlap_grid(a: Any, b: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    r"""Gauss points on block A's port line, the same points on B's, and weights.
+
+    The line is cut at the nodes of both ends (B's nodes mapped along the
+    common transverse coordinate), and each piece takes ``order + 1`` Gauss
+    points. On a piece both fields are polynomials of degree at most ``order``,
+    so their product, of degree :math:`2 \cdot \mathrm{order}`, is integrated
+    exactly (Gauss with :math:`n` points is exact to degree :math:`2n - 1`),
+    whether or not the two meshes conform. B's points are A's translated along
+    the normal onto B's plane.
+
+    Returns:
+        ``(points_a (n, 2), points_b (n, 2), weights (n,))``; the points in
+        metres, the weights in A's local length unit.
+    """
+    sa, sb = a._space.section, b._space.section  # noqa: SLF001
+    order = max(a._space.order, b._space.order)  # noqa: SLF001
+    ta = np.asarray(sa.points, float)
+    nodes_b = sa.to_local(sb.to_global(np.asarray(sb.points, float)))[0]
+    lo, hi = ta.min(), ta.max()
+    tol = 1e-9 * (hi - lo)
+    cuts = np.unique(np.concatenate([ta, np.clip(nodes_b, lo, hi)]))
+    cuts = cuts[np.r_[True, np.diff(cuts) > tol]]
+    x, w = np.polynomial.legendre.leggauss(order + 1)
+    left, right = cuts[:-1, None], cuts[1:, None]
+    t = (0.5 * (right - left) * x + 0.5 * (right + left)).ravel()
+    weights = (0.5 * (right - left) * w).ravel()
+    points_a = sa.to_global(t)
+    normal = np.asarray(sa.normal, float)
+    gap = (np.asarray(sb.origin, float) * sb.scale - points_a) @ normal
+    return points_a, points_a + gap[:, None] * normal, weights
+
+
+def _pairing_sign(section: str, m: int, a: PortModeResult, b: PortModeResult) -> float:
+    r"""The sign :math:`t_m` aligning mode ``m`` of block B to A, from their fields.
+
+    :math:`t_m = \mathrm{sign}\,\mathrm{Re}(r_m \kappa_A/\kappa_B)` with
+    :math:`r_m = \int e_A e_B / \int e_A^2`, per frequency (the overlaps are
+    unconjugated, as the reciprocity pairing is).
+    """
+    fa, fb = _field(a), _field(b)
+    if len(fa.normal) != 2:
+        raise ValueError(
+            f"cascade: section {section!r} joins plane ports; a field gauge "
+            "needs 2D line ports."
+        )
+    pa, pb, w = _overlap_grid(fa, fb)
+    ea, eb = np.asarray(fa.at(pa)), np.asarray(fb.at(pb))
+    iaa, ibb, iab = (ea * ea) @ w, (eb * eb) @ w, (ea * eb) @ w
+    c = iab / np.sqrt(iaa * ibb)
+    if (np.abs(c) < _SAME_MODE).any():
+        raise ValueError(
+            f"cascade: the two blocks do not carry the same mode {m} at section "
+            f"{section!r}: the overlap |c_{m}| of its fields is "
+            f"{np.abs(c).min():.3g} (below {_SAME_MODE}); check the ranks of "
+            "the kept modes and the sections' guides."
+        )
+    q = iab / iaa * _kappa(a) / _kappa(b)
+    if (np.abs(q.real) < 0.5 * np.abs(q)).any():
+        raise ValueError(
+            f"cascade: gauge undetermined for mode {m} of section {section!r}: "
+            f"r_m kappa_A / kappa_B = {q[np.argmin(np.abs(q.real) / np.abs(q))]:.3g} "
+            "is closer to the imaginary than to the real axis."
+        )
+    signs = np.sign(q.real)
+    if (signs != signs[0]).any():
+        raise ValueError(
+            f"cascade: gauge changes sign across the band for mode {m} of "
+            f"section {section!r}: split the band or fix the sign with a "
+            "polarity (WavePort.kept_modes(..., polarity={m: (point, direction)}))."
+        )
+    return float(jax.lax.stop_gradient(signs[0]))
 
 
 def _z_sign(mode: PortModeResult) -> float:
@@ -448,10 +545,17 @@ def _gauges(
         for m in range(1, sec.n + 1):
             a = blocks[sec.a].port_modes[sec.port(m)]
             b = blocks[sec.b].port_modes[sec.port(m)]
+            both = _concrete(a) and _concrete(b)
             if a.polarity is not None and b.polarity is not None:
                 t[m - 1] = _z_sign(a) * _z_sign(b)
-            elif _field(a) is not None and _field(b) is not None:
-                t[m - 1] = _field_gauge(sec.name, m, a, b, blocks[sec.a].s.frequency)
+                if both and _pairing_sign(sec.name, m, a, b) != t[m - 1]:
+                    raise ValueError(
+                        f"cascade: the polarity and the pairing gauge of mode {m} "
+                        f"of section {sec.name!r} disagree: put both polarity "
+                        "points at the same transverse position."
+                    )
+            elif both:
+                t[m - 1] = _pairing_sign(sec.name, m, a, b)
             else:
                 remedy = (
                     f"give both ends of mode {m} a polarity: "

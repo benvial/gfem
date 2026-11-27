@@ -9,13 +9,13 @@ kept modes couple, solved at order 2 on a structured triangle mesh.
 """
 
 import cmath
-import itertools
 import math
 import warnings
 
 import numpy as np
 import pytest
 import structured_meshes as sm
+from cascade_cases import box_mesh, lines
 from scipy.constants import c
 
 import gfem
@@ -24,43 +24,6 @@ from gfem.errors import PortModeError
 
 OPTIONS = gfem.SolverOptions(order=2, linear_solver="direct", threads=1)
 EPS_CLAD, EPS_CORE = 1.444**2, 2.0**2
-
-
-def _lines(marks, h):
-    pieces = [
-        np.linspace(a, b, max(2, math.ceil((b - a) / h) + 1))
-        for a, b in itertools.pairwise(marks)
-    ]
-    return np.unique(np.round(np.concatenate(pieces), 12))
-
-
-def box_mesh(path, xs, ys, region, *, ports=("left", "right")):
-    """Structured triangles on ``xs`` x ``ys`` (um), PEC ``side`` top and bottom.
-
-    ``region(xc, yc)`` names a cell; the end lines are ``ports``.
-    """
-    nx, ny = len(xs), len(ys)
-    nodes = np.c_[np.repeat(xs, ny), np.tile(ys, nx), np.zeros(nx * ny)]
-
-    def idx(i, j):
-        return i * ny + j
-
-    tris, names = [], []
-    for i in range(nx - 1):
-        for j in range(ny - 1):
-            a, b, d, e = idx(i, j), idx(i + 1, j), idx(i + 1, j + 1), idx(i, j + 1)
-            name = region(0.5 * (xs[i] + xs[i + 1]), 0.5 * (ys[j] + ys[j + 1]))
-            tris += [(a, b, d), (a, d, e)]
-            names += [name, name]
-    segs = [(idx(i, 0), idx(i + 1, 0)) for i in range(nx - 1)]
-    segs += [(idx(i, ny - 1), idx(i + 1, ny - 1)) for i in range(nx - 1)]
-    segs += [(idx(0, j), idx(0, j + 1)) for j in range(ny - 1)]
-    segs += [(idx(nx - 1, j), idx(nx - 1, j + 1)) for j in range(ny - 1)]
-    seg_names = (
-        ["side"] * (2 * (nx - 1)) + [ports[0]] * (ny - 1) + [ports[1]] * (ny - 1)
-    )
-    mesh = (nodes, np.array(tris), names, np.array(segs), seg_names)
-    return gfem.Mesh.from_gmsh(sm.write_msh22(path, mesh), length_unit="um")
 
 
 # --- the uniform box: closed forms ------------------------------------------------
@@ -72,7 +35,7 @@ WIDTH = 1.0  # um
 def uniform(tmp_path_factory):
     path = tmp_path_factory.mktemp("uniform") / "box.msh"
     mesh = box_mesh(
-        path, _lines([0.0, 1.0], 0.1), _lines([0.0, WIDTH], 0.025), lambda *_: "fill"
+        path, lines([0.0, 1.0], 0.1), lines([0.0, WIDTH], 0.025), lambda *_: "fill"
     )
     return mesh
 
@@ -279,8 +242,8 @@ N_KEPT = 6
 def step_block(tmp_path_factory):
     """Lead core [Y0, Y1] for x < 1, section core [Y0, Y2] after; N_KEPT per end."""
     h = 0.1
-    xs = _lines([0.0, 1.0, 2.0], h)
-    ys = _lines([0.0, Y0, Y1, Y2, A], h)
+    xs = lines([0.0, 1.0, 2.0], h)
+    ys = lines([0.0, Y0, Y1, Y2, A], h)
 
     def region(x, y):
         top = Y1 if x < 1.0 else Y2
