@@ -138,14 +138,15 @@ def test_children_keep_tags_entities_and_parents_as_on_a_straight_mesh(cycles):
 def test_each_parent_keeps_its_own_curved_volume(octant):
     # Not only the total: the children of every parent fill that parent's
     # curved volume. Element volumes are ~1e-3 of the total; the same
-    # round-off argument as above holds per element, relative 1e-12.
+    # round-off argument as above holds per element: a few hundred eps (~1e-13),
+    # and 1e-10 leaves three decades for platform-dependent reduction order.
     fine, ref = bisect(octant, _marked(octant, 5))
     coarse_v = np.asarray(ngs.Integrate(1, to_ngsolve(octant).mesh, element_wise=True))
     fine_v = np.asarray(ngs.Integrate(1, to_ngsolve(fine).mesh, element_wise=True))
     summed = np.bincount(
         ref.tetrahedron_parents, weights=fine_v, minlength=len(coarse_v)
     )
-    np.testing.assert_allclose(summed, coarse_v, rtol=1e-12, atol=0)
+    np.testing.assert_allclose(summed, coarse_v, rtol=1e-10, atol=0)
 
 
 def test_the_new_nodes_are_not_chord_midpoints(octant):

@@ -1461,7 +1461,7 @@ def _nodal(out: np.ndarray, values: np.ndarray, built: Any) -> None:
     .. math:: \bar X_v = L_v + 4\sum_{e \ni v} L_e, \qquad \bar X_m = -8 L_e.
     """
     nv = len(built.node_order)
-    edges = np.array([[v.nr for v in e.vertices] for e in built.mesh.edges])
+    edges = built.edge_vertices
     vertex = values[:nv].copy()
     edge = values[nv : nv + len(edges)]
     np.add.at(vertex, edges[:, 0], 4 * edge)

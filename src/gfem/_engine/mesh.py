@@ -54,6 +54,9 @@ class EngineMesh:
         node_order: NGSolve vertex ``i`` is gfem node ``node_order[i]``.
         edge_nodes: On a curved mesh, NGSolve edge ``i`` carries the mid-edge
             gfem node ``edge_nodes[i]``; ``None`` on a straight mesh.
+        edge_vertices: On a curved mesh, NGSolve edge ``i`` joins the NGSolve
+            vertices ``edge_vertices[i]`` (shape ``(n_edges, 2)``), read once at
+            the build; ``None`` on a straight mesh.
         comm: The communicator of a distributed mesh; ``None`` on one process.
         pairs: The periodic pairs as the mesh carries them: a model's pairs, or,
             under ranks, the pair swapped when the search kept the swapped
@@ -72,6 +75,7 @@ class EngineMesh:
     pairs: tuple[Pairing, ...] = ()
     surface_spaces: dict = dataclasses.field(default_factory=dict)
     edge_nodes: np.ndarray | None = None
+    edge_vertices: np.ndarray | None = None
 
 
 #: Partitions a periodic search may take, swaps included.
@@ -209,6 +213,7 @@ def to_ngsolve(
     ngmesh, domains, tet_order, tri_order = _netgen_mesh(mesh, points, periodic)
     ngs_mesh = ngs.Mesh(ngmesh)
     node_order = _node_order(mesh)
+    vertices = _edge_vertices(ngs_mesh) if mesh.curved else None
     return EngineMesh(
         mesh=ngs_mesh,
         scale=scale,
@@ -217,11 +222,19 @@ def to_ngsolve(
         facet_order=tri_order,
         node_order=node_order,
         pairs=periodic,
-        edge_nodes=_edge_nodes(mesh, ngs_mesh, node_order) if mesh.curved else None,
+        edge_nodes=(
+            _edge_nodes(mesh, vertices, node_order) if vertices is not None else None
+        ),
+        edge_vertices=vertices,
     )
 
 
-def _edge_nodes(mesh: Mesh, built: ngs.Mesh, node_order: np.ndarray) -> np.ndarray:
+def _edge_vertices(built: ngs.Mesh) -> np.ndarray:
+    """The two NGSolve vertex numbers of each NGSolve edge, ``(n_edges, 2)``."""
+    return np.array([[v.nr for v in e.vertices] for e in built.edges], dtype=np.int64)
+
+
+def _edge_nodes(mesh: Mesh, vertices: np.ndarray, node_order: np.ndarray) -> np.ndarray:
     """The mid-edge gfem node on each NGSolve edge of a curved mesh.
 
     An edge is its two corner nodes; a tetrahedron's column ``k`` of
@@ -236,12 +249,14 @@ def _edge_nodes(mesh: Mesh, built: ngs.Mesh, node_order: np.ndarray) -> np.ndarr
     keys = (low * n + high).ravel()
     order = np.argsort(keys, kind="stable")
     keys, mids = keys[order], topology.volume_midnodes.ravel()[order]
-    pairs = np.array([[v.nr for v in e.vertices] for e in built.edges])
-    nodes = node_order[pairs]
+    nodes = node_order[vertices]
     wanted = np.minimum(nodes[:, 0], nodes[:, 1]) * n + np.maximum(
         nodes[:, 0], nodes[:, 1]
     )
-    return mids[np.searchsorted(keys, wanted)]
+    index = np.minimum(np.searchsorted(keys, wanted), len(keys) - 1)
+    if not np.array_equal(keys[index], wanted):
+        raise AssertionError("an NGSolve edge is in no tetrahedron of the mesh")
+    return mids[index]
 
 
 def _node_order(mesh: Mesh) -> np.ndarray:
