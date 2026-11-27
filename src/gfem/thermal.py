@@ -34,6 +34,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from gfem._checks import check_fixed, is_traced, static_float
+from gfem._curved import refuse_tets, refuse_triangles
 from gfem._pytree import register_fields
 from gfem.errors import (
     NonDifferentiableError,
@@ -236,6 +237,7 @@ class HeatSource:
         if self._density is not None:
             if self._density.shape != (n,):
                 raise self._other_mesh(self._density.shape[0], n)
+            self._refuse_curved(mesh)
             return self._density
         for name in self.regions:
             if name not in mesh.volumes:
@@ -258,7 +260,9 @@ class HeatSource:
         for name in self.regions:
             inside[mesh.elements(name)] = True
         if self._quantity == "power_density":
+            # a density needs no volume: it is accepted on a curved element
             return jnp.where(jnp.asarray(inside), self._amount, 0.0)
+        refuse_tets(mesh, "heat_input", inside, f"HeatSource on {list(self.regions)}")
         volume = float(_tet_volumes(mesh)[inside].sum())
         if section:
             # the slab total is the per-length power times the thickness
@@ -278,7 +282,30 @@ class HeatSource:
             return jnp.zeros(n, jnp.float64)
         if self._face_density.shape != (n,):
             raise self._other_mesh(self._face_density.shape[0], n, "faces")
+        self._refuse_curved(mesh, faces=True)
         return self._face_density
+
+    def _refuse_curved(self, mesh: Mesh, *, faces: bool = False) -> None:
+        """Refuse a heat source built from a solve on curved elements.
+
+        Its densities are powers divided by straight volumes and areas, so the
+        source's tetrahedra (its regions) and its triangles (those with face
+        heat) must be straight. Traced densities count every triangle.
+        """
+        if not mesh.curved:
+            return
+        what = f"The {self._kind} HeatSource on {list(self.regions)}"
+        if not faces:
+            inside = np.zeros(len(mesh.tetrahedra), bool)
+            for name in self.regions:
+                inside[mesh.elements(name)] = True
+            refuse_tets(mesh, "heat_input", inside, what)
+            return
+        density = self._face_density
+        held = np.ones(len(mesh.triangles), bool)
+        if not is_traced(density):
+            held = np.asarray(density) != 0
+        refuse_triangles(mesh, "heat_input", held, what + " (face heat)")
 
     def _other_mesh(self, held: int, n: int, what: str = "elements") -> ValueError:
         """The error of a source built on another mesh than the thermal one."""

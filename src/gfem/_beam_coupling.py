@@ -28,6 +28,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from gfem import _curved as curved
 from gfem._adjoint.measure import measure
 from gfem._checks import is_traced
 from gfem._dim2 import refuse_entry
@@ -218,6 +219,12 @@ def beam_coupling(
         nodes = np.asarray(concrete.mesh.nodes)
         layer = engine("beam_coupling").coupling_layer(
             concrete, model, names, beam, frequency, nodes=nodes, incident=incident
+        )
+        curved.refuse_tets(
+            model.mesh,
+            "beam_coupling",
+            layer.tetrahedra,
+            "The coupling layer of gfem.beam_coupling",
         )
         reference = None
         if isinstance(beam, IncidentField):

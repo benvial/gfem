@@ -37,7 +37,7 @@ from typing import Any
 import ngsolve as ngs
 import numpy as np
 
-from gfem import _mpi
+from gfem import _curved, _mpi
 from gfem._engine.fields import LENGTH_POWER, dof_shape, fe_space
 from gfem._engine.mesh import EngineMesh, inverse_order
 from gfem.mesh import Mesh
@@ -151,6 +151,15 @@ def locate(mesh: Mesh, layout: Layout, points: np.ndarray, comm: Any = None) -> 
     if not inside.all():
         k = int(np.flatnonzero(~inside)[0])
         raise _mpi.agreed(outside_support(mesh, layout, int(tets[k]), points[k]))
+    if mesh.curved:
+        # `_settle` and the barycentric coordinates invert the affine map: a
+        # point in a curved element would read the field off by up to the sagitta
+        bent = _curved.curved_tetrahedra(mesh)[tets]
+        if bent.any():
+            at = points[int(np.flatnonzero(bent)[0])]
+            _curved.refuse_tets(
+                mesh, "point_read", tets, f"A point read at {_fmt(at)} m"
+            )
     return Located(tets, bary)
 
 
