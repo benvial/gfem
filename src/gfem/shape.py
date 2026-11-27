@@ -366,22 +366,6 @@ class BoundaryMorph:
 jax.tree_util.register_static(BoundaryMorph)
 
 
-def _layer_nodes(model: Model) -> np.ndarray:
-    """The nodes a morph holds at the truncation.
-
-    The nodes of the perfectly matched layer's tetrahedra (the layer's
-    stretch is fixed at the imported mesh), and of the truncation layer (the
-    physical tetrahedra touching the layer or a `gfem.Absorbing` face), where
-    the far field, the cross sections and the beam coupling read the field
-    by default: the moved model keeps both as declared.
-    """
-    held = [_truncation.truncation(model).layer_nodes(model.mesh.tetrahedra)]
-    layer = _pml.layer_tetrahedra(model.mesh, model.pml)
-    if layer is not None:
-        held.append(np.unique(model.mesh.tetrahedra[layer]))
-    return np.unique(np.concatenate(held)).astype(np.int64)
-
-
 def boundary_morph(  # noqa: PLR0915
     model: Model,
     moving: str,
@@ -524,21 +508,9 @@ def boundary_morph(  # noqa: PLR0915
     n_nodes = len(x0)
     # paired nodes move together: one displacement per tie class
     ties = _periodic.tie_classes(n_nodes, pairings)
-    held_surfaces = {
-        s
-        for port in model.ports
-        for s in surfaces_of(port)
-        if s not in sliding_surfaces
-    }
-    held_surfaces |= set(fixed)
+    held, held_tri, _ = _held(model, ties, sliding_surfaces, fixed)
     tag = {r.name: r.tag for r in mesh.regions if r.dim == mesh.dim - 1}
     tri_tags = mesh.triangle_tags
-    held_tri = np.isin(tri_tags, [tag[s] for s in held_surfaces])
-    held = np.zeros(n_nodes, dtype=bool)
-    held[
-        ties[np.concatenate([mesh.triangles[held_tri].ravel(), _layer_nodes(model)])]
-    ] = True
-    held = held[ties]  # a class is held if any member is
     in_tet = np.zeros(n_nodes, dtype=bool)
     in_tet[mesh.tetrahedra.ravel()] = True
 
@@ -593,10 +565,71 @@ def boundary_morph(  # noqa: PLR0915
     )
 
 
+def _held(
+    model: Model,
+    ties: np.ndarray,
+    sliding_surfaces: set[str],
+    fixed: Sequence[str] = (),
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The nodes a morph holds, the faces that hold them, and why.
+
+    Held are the nodes of the ports' surfaces (except the sliding ones), of
+    the ``fixed`` surfaces, of the tetrahedra of a perfectly matched layer
+    (its stretch is fixed at the imported mesh) and of the truncation layer
+    (the physical tetrahedra touching the layer or a `gfem.Absorbing` face,
+    where the far field, the cross sections and the beam coupling read the
+    field); a tie class is held if any member is.
+
+    Returns:
+        ``(held, held_tri, cause)``: a mask per node, a mask per surface
+        triangle of the held-surface faces, and per node a label of what holds
+        it (``""`` when free), the same on every member of a tie class.
+    """
+    mesh = model.mesh
+    n_nodes = len(mesh.imported_nodes)
+    holder: dict[str, str] = {}
+    for port in model.ports:
+        for s in surfaces_of(port):
+            if s not in sliding_surfaces:
+                holder.setdefault(s, f"port {port.name!r}")
+    for s in fixed:
+        holder.setdefault(s, f"fixed surface {s!r}")
+    tag = {r.name: r.tag for r in mesh.regions if r.dim == mesh.dim - 1}
+    held_tri = np.isin(mesh.triangle_tags, [tag[s] for s in holder])
+    cause = np.full(n_nodes, "", dtype=object)
+
+    def label(nodes: np.ndarray, why: str) -> None:
+        nodes = np.unique(nodes).astype(np.int64)
+        cause[nodes[cause[nodes] == ""]] = why  # the first cause stays
+
+    for s, why in holder.items():
+        label(mesh.triangles[mesh.triangle_tags == tag[s]].ravel(), why)
+    layer = _pml.layer_tetrahedra(mesh, model.pml)
+    if layer is not None:
+        label(mesh.tetrahedra[layer], "the perfectly matched layer")
+    label(
+        _truncation.truncation(model).layer_nodes(mesh.tetrahedra),
+        "the truncation layer",
+    )
+    # a class is held, with one cause, if any member is
+    named = np.flatnonzero(cause != "")[::-1]
+    by_class = np.full(n_nodes, "", dtype=object)
+    by_class[ties[named]] = cause[named]  # the last write is the first member
+    cause = by_class[ties]
+    return cause != "", held_tri, cause
+
+
 def _sliding_surfaces(
-    model: Model, names: Sequence[str], moving: str, fixed: Sequence[str]
+    model: Model,
+    names: Sequence[str],
+    moving: str | None = None,
+    fixed: Sequence[str] = (),
 ) -> set[str]:
-    """The surfaces of the wave ports named in ``sliding_ports``, after checks."""
+    """The surfaces of the wave ports named in ``sliding_ports``, after checks.
+
+    ``moving`` and ``fixed`` are the morph's moving and held surfaces, which a
+    sliding face may be neither of; a morph that names none passes neither.
+    """
     ports = {p.name: p for p in model.ports}
     waves = [p.name for p in model.ports if isinstance(p, WavePort)]
     surfaces: set[str] = set()
