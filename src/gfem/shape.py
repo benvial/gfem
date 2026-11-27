@@ -1221,7 +1221,7 @@ class CadMorph:
         n_params: The number of parameters.
         model: The model `cad_morph`'s ``make_model`` made on the mesh at the
             first parameters.
-        velocities: Per parameter name, a read-only array ``(n_nodes, 3)``:
+        velocities: A read-only array ``(n_nodes, 3)`` per parameter name;
             what the parameter moves, in metres per parameter unit (a column of
             :math:`W`).
         length_unit: The unit of the build's lengths (and of length
@@ -1291,7 +1291,7 @@ class CadMorph:
 
     @property
     def velocities(self) -> dict[str, np.ndarray]:
-        """Per parameter, what it moves: ``(n_nodes, 3)``, metres per unit."""
+        """Read-only displacement per parameter, in metres per parameter unit."""
         return dict(self._columns)
 
     def _vector(self, p: Mapping[str, Any]) -> list[Any]:
