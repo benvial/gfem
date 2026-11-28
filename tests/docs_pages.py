@@ -77,6 +77,9 @@ MESHES = {
     MESH_URL.replace("tutorials/data/line.msh", "recipes/wire_section.py"): DOCS
     / "recipes"
     / "wire_section.py",
+    MESH_URL.replace("tutorials/data/line.msh", "recipes/resonator_meshes.py"): DOCS
+    / "recipes"
+    / "resonator_meshes.py",
 }
 
 _FENCE = re.compile(

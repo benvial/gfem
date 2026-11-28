@@ -138,6 +138,7 @@ Mechanics and acoustics:
   differentiable ({doc}`../recipes/optomechanical-coupling`).
 - **Brillouin gain.** `gfem.brillouin_gain` gives the forward and backward gain of
   a guide's mechanical modes, with its parts ({doc}`../recipes/brillouin-gain`).
+- **3D mechanical modes and anchor loss.** `gfem.MechanicalEigenmode` solves 3D bodies and takes `pml=gfem.PML(...)` for the Q of anchors and leaky modes, differentiable in the materials and the node coordinates ({doc}`../recipes/mechanical-resonators`).
 
 Free-space scattering:
 

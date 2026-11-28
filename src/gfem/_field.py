@@ -470,7 +470,7 @@ class FieldMap(Mapping[str, Field]):
         wavenumber: The axial wavenumber :math:`q` (rad/m) of a displacement
             :math:`u(x, y)\,e^{-iqz}` of a 2D section, whose :math:`\partial_z`
             is :math:`-iq` (`gfem.strain` adds it); 0 for a field that does not
-            vary along :math:`z`.
+            vary along :math:`z`, and for a field of a 3D mesh.
     """
 
     def __init__(

@@ -77,6 +77,7 @@ physics/mechanics-and-acoustics
 tutorials/transducer
 tutorials/acousto-optic
 recipes/mechanical-modes
+recipes/mechanical-resonators
 recipes/piezoelectric-admittance
 recipes/piezoelectric-gradient
 recipes/acousto-optic-shift

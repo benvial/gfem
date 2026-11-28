@@ -635,10 +635,9 @@ Mechanical domain
 
 Mechanical eigenmode
   A source-free solution of linear elasticity on a 2D section, varying as
-  $e^{-iqz}$ along its normal: a complex angular frequency and a displacement
-  normalized to 1 J/m ({py:class}`gfem.MechanicalEigenmode`). A material with
-  a piezoelectric tensor couples the potential to it. See
-  {doc}`recipes/mechanical-modes`.
+  $e^{-iqz}$ along its normal, or on a 3D body: a complex angular frequency and a
+  displacement normalized to 1 J/m or 1 J ({py:class}`gfem.MechanicalEigenmode`). See
+  {doc}`recipes/mechanical-resonators`.
 
 Axial wavenumber
   The real propagation constant $q$ in rad/m along $z$ of a
@@ -659,14 +658,18 @@ Line electrode
   It is named as a terminal or as ground by its line. See {doc}`recipes/piezoelectric-admittance`.
 
 Clamped surface
-  A line of a piezoelectric section where the displacement is held at zero
-  (`clamped=`). Every other boundary is traction-free. See {doc}`recipes/piezoelectric-admittance`.
+  A line of a section or a surface of a 3D body where the displacement is held at zero
+  (`clamped=`). Every other boundary is traction-free. See {doc}`recipes/mechanical-resonators`.
+
+Anchor loss
+  The energy a resonator loses as sound radiated into its supports, and the $Q$
+  it sets. A {term}`perfectly matched layer` in the support computes it. See {doc}`recipes/mechanical-resonators`.
 
 Damping frame
   An absorbing edge region where the stiffness becomes
   $c (1 + i(1/Q_m + \eta r^2))$, with $r$ the normalised depth and $\eta$ its {term}`loss factor <Loss factor (of a damping frame)>`
   ({py:obj}`gfem.DampingFrame`). It absorbs the sound that leaves a
-  piezoelectric section, as a {term}`perfectly matched layer` does light. See {doc}`tutorials/transducer`.
+  section or a body, as a {term}`perfectly matched layer` does light. See {doc}`tutorials/transducer`.
 
 Loss factor (of a damping frame)
   The loss $\eta$ that a {term}`damping frame` adds to the stiffness at its outer
@@ -1274,7 +1277,7 @@ Air box
 
 Perfectly matched layer
   A meshed shell of volume regions around the {term}`air box` that absorbs
-  outgoing waves at any angle (`gfem.PML`); short form PML. Each layer region
+  outgoing light, or sound in a {term}`mechanical eigenmode`, at any angle (`gfem.PML`); short form PML. Each layer region
   keeps the material it continues, and the fields inside it are not physical.
   See {doc}`recipes/perfectly-matched-layer`.
 
@@ -1301,8 +1304,9 @@ Physical region
 
 PML mode
   A mode that lives in a {term}`perfectly matched layer` rather than in the
-  device, and moves when the layer changes. Eigenmode and port mode solves
-  drop it. See {doc}`recipes/perfectly-matched-layer`.
+  device, and moves when the layer changes. Eigenmode, port mode and mechanical
+  eigenmode solves drop it, a mechanical one by its sensitivity to the stretch
+  against its radiation decay rate. See {doc}`recipes/perfectly-matched-layer`.
 
 2D model
   A {term}`model` whose mesh is a plane of triangles: neither the structure

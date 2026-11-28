@@ -12,7 +12,7 @@ import dataclasses
 import itertools
 import math
 from collections.abc import Mapping, Sequence
-from typing import Any, ClassVar, Literal, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, get_args
 
 import jax
 import numpy as np
@@ -32,6 +32,9 @@ from gfem._sources import (
 )
 from gfem._text import hertz_band
 from gfem.thermal import HeatSource, Trace, _check_finite
+
+if TYPE_CHECKING:
+    from gfem._pml import PML
 
 __all__ = [
     "DCConduction",
@@ -1597,10 +1600,11 @@ _FRAME_FIXED = (
 
 @dataclasses.dataclass(frozen=True, init=False)
 class DampingFrame:
-    r"""The regions that absorb the acoustic waves leaving a piezoelectric section.
+    r"""The regions that absorb the acoustic waves leaving a section or a body.
 
-    Pass one as ``gfem.Piezoelectric(..., damping_frame=...)``, naming every
-    frame region. Each region keeps its layer's material in ``materials``
+    Pass one as ``gfem.Piezoelectric(..., damping_frame=...)`` or
+    ``gfem.MechanicalEigenmode(..., damping_frame=...)``, naming every frame
+    region. Each region keeps its layer's material in ``materials``
     (the lithium niobate frame region holds the lithium niobate): the frame
     multiplies its stiffness by :math:`1 + i\eta r^2`, added to the
     material's own :math:`1/Q_m`, so that the stiffness is
@@ -1615,11 +1619,12 @@ class DampingFrame:
 
     The geometry is read from the imported mesh, as `gfem.PML` reads its
     own: the interior box is the bounding box of the mechanical-domain
-    triangles outside the frame regions. A frame triangle beyond one of the
-    box's edges has :math:`r` = the distance past the edge over the frame's
-    extent on that side; in a corner the depths add as :math:`r_x^2 + r_y^2`.
-    Mesh the frame as rectangles around the interior box, every region on one
-    side ending on one straight line. The depth follows the material
+    elements outside the frame regions. A frame element beyond one of the
+    box's sides has :math:`r` = the distance past the side over the frame's
+    extent on that side; in a corner the depths add as :math:`r_x^2 + r_y^2`
+    (:math:`r_x^2 + r_y^2 + r_z^2` in a 3D body). Mesh the frame as boxes
+    around the interior box (rectangles in a section), every region on one
+    side ending on one straight plane (line). The depth follows the material
     points when the nodes move.
 
     For a plane wave at normal incidence, a frame of thickness :math:`L` in
@@ -1632,8 +1637,8 @@ class DampingFrame:
     wavelengths.
 
     Attributes:
-        regions: The frame's area region names, a string or a sequence of
-            strings.
+        regions: The frame's area or volume region names, a string or a
+            sequence of strings.
         loss_factor: :math:`\eta`, the loss factor added at the frame's outer
             edge, finite and > 0.
 
@@ -1873,13 +1878,14 @@ def _clamped_components(value: Any) -> tuple[tuple[str, str], ...]:
 
 @dataclasses.dataclass(frozen=True, init=False)
 class MechanicalEigenmode:
-    r"""The mechanical modes of a 2D section nearest a target frequency.
+    r"""The mechanical modes of a 2D section or a 3D body nearest a target frequency.
 
     Finds the source-free solutions of linear elasticity on a native 2D mesh
     (`gfem.Mesh.from_gmsh` of a triangle-only file) for fields
     :math:`u(x, y)\,e^{i\omega t - iqz}` that propagate along :math:`z` with the
-    axial wavenumber ``wavenumber`` :math:`q`: complex angular frequencies
-    :math:`\omega` and displacements :math:`u` (three components) with
+    axial wavenumber ``wavenumber`` :math:`q`, or on a tetrahedral mesh for the
+    modes :math:`u(x, y, z)\,e^{i\omega t}` of a body: complex angular
+    frequencies :math:`\omega` and displacements :math:`u` (three components) with
 
     .. math::
 
@@ -1896,21 +1902,26 @@ class MechanicalEigenmode:
     :math:`c`, ``mass_density`` :math:`\rho` and ``mechanical_quality_factor``
     :math:`Q_m`; every region of the mechanical domain (every volume not in
     ``excluded["mechanical"]``) needs a stiffness and a density. Every line
-    is traction-free except the ``clamped`` ones.
+    (surface of a 3D body) is traction-free except the ``clamped`` ones.
 
     The ``n_modes`` modes whose frequency :math:`\mathrm{Re}\,\omega / 2\pi`
     is nearest ``target`` are returned, nearest first. Each is normalized to
-    :math:`\tfrac12 (\mathrm{Re}\,\omega)^2 \int \rho\,|u|^2\,dA = 1` J/m,
-    with its largest displacement coefficient real and positive. A section
-    that is free at :math:`q = 0` has rigid-body motions at :math:`\omega = 0`:
-    they are not returned.
+    :math:`\tfrac12 (\mathrm{Re}\,\omega)^2 \int \rho\,|u|^2\,dA = 1` J/m for
+    a section and to the same integral over the volume, 1 J, for a body, with
+    its largest displacement coefficient real and positive. A section that is
+    free at :math:`q = 0` and a free body have rigid-body motions at
+    :math:`\omega = 0`: they are not returned.
 
     A model whose mechanical-domain materials carry a nonzero piezoelectric
     tensor couples the potential to the displacement: the potential joins the
     unknowns on the electromagnetic domain, as in `gfem.Piezoelectric`, the
     lines and areas of ``ground`` (and any `gfem.PEC` line) hold it at zero,
     and ``result.potential(mode)`` returns it, in V, scaled with the
-    displacement. At :math:`q = 0` an ungrounded section's constant potential
+    displacement; a body takes the whole potential gradient, so keep the
+    electromagnetic domain to the solid and a thin gap. A coupled body costs
+    one factorization per mode plus one (each mode is refined on its own
+    shifted matrix), so ask for the modes you need. At :math:`q = 0` an
+    ungrounded section's (or body's) constant potential
     is fixed by pinning one DOF per connected component (the potential is
     defined up to that constant).
 
@@ -1923,37 +1934,66 @@ class MechanicalEigenmode:
             )
             result = gfem.solve(model, problem)
 
+        The :math:`Q` a resonator's anchor sets, with the support ended by a
+        layer region ``layer`` (a frame run estimates it, then the layer is
+        the absorber)::
+
+            frame = gfem.DampingFrame(["layer"])
+            estimate = gfem.solve(
+                model, gfem.MechanicalEigenmode(f_eb, n_modes=4, damping_frame=frame)
+            )
+            best = int(np.argmax(estimate.q))
+            problem = gfem.MechanicalEigenmode(
+                float(estimate.frequency[best]),
+                pml=gfem.PML(["layer"]),
+                target_quality_factor=float(estimate.q[best]),
+            )
+            result = gfem.solve(model, problem)
+
     Args:
         target: The frequency to search around, Hz.
         n_modes: How many modes.
         wavenumber: The axial wavenumber :math:`q`, rad/m, finite and real;
             the modes' phase is :math:`e^{-iqz}`, so a mode with
             :math:`q > 0` travels along :math:`+z` where its group velocity
-            is positive.
-        clamped: Where the displacement is fixed. A line name or a sequence
-            of names fixes all three components there; a mapping from a name
-            to a string of components of ``"xyz"`` (the lab axes) fixes
-            those, for a symmetry plane or a guide with sliding walls. Each
-            line must border the mechanical domain.
-        ground: Line or area names held at 0 V; only for a model with a
-            piezoelectric region.
+            is positive. A 3D body has none: leave it 0.
+        clamped: Where the displacement is fixed. A line (3D: surface) name
+            or a sequence of names fixes all three components there; a mapping
+            from a name to a string of components of ``"xyz"`` (the lab axes)
+            fixes those, for a symmetry plane, rollers or a guide with sliding
+            walls. Each must border the mechanical domain.
+        ground: Line or area (3D: surface or volume) names held at 0 V; only
+            for a model with a piezoelectric region.
         damping_frame: A `DampingFrame` naming the absorbing edge regions, or
             ``None``.
+        pml: A `gfem.PML` naming the volume regions (areas of a section) that
+            absorb the radiated waves, or ``None``; exclusive with
+            ``damping_frame``.
+        target_quality_factor: With ``pml``, the quality factor :math:`Q_t`
+            the search expects: the shift is
+            :math:`\omega_t^2 (1 + i/Q_t)`, so a leaky mode that a real shift
+            hides behind the layer's near-real modes is found; ``None``: a real
+            shift.
 
     Raises:
         ValueError: ``target`` is not a finite positive number, ``n_modes`` is
             not an integer >= 1, ``wavenumber`` is not a finite real number,
-            or a ``clamped`` component string is empty or not made of ``x``,
-            ``y`` and ``z``.
+            a ``clamped`` component string is empty or not made of ``x``,
+            ``y`` and ``z``, ``damping_frame`` and ``pml`` are both given,
+            or ``target_quality_factor`` is not > 0 or is given without
+            ``pml``.
         TypeError: A name is not a string, ``clamped`` is not a name, a
-            sequence of names or a mapping, or ``damping_frame`` is not a
-            `DampingFrame`.
-        NonDifferentiableError: ``target`` or ``wavenumber`` is computed
-            inside `jax.grad`, `jax.jit` or `jax.vmap` from their arguments;
-            pass a fixed value.
+            sequence of names or a mapping, ``damping_frame`` is not a
+            `DampingFrame` or ``pml`` is not a `gfem.PML`.
+        NonDifferentiableError: ``target``, ``wavenumber`` or
+            ``target_quality_factor`` is computed inside `jax.grad`,
+            `jax.jit` or `jax.vmap` from their arguments; pass a fixed value.
 
-    `gfem.solve` raises `NotImplementedError` on a 3D or slab mesh, with
-    ``linear_solver="petsc"``, under ``comm`` and on a GPU ``device``;
+    `gfem.solve` raises `NotImplementedError` on a slab mesh and with
+    ``linear_solver="petsc"``; on a 3D body also under ``comm``, with a Krylov
+    ``linear_solver`` and on a GPU ``device``, and `ValueError` for a
+    ``wavenumber`` other than 0 and for a model ``pml`` meeting the
+    mechanical domain (the model's layer is electromagnetic). It raises
     `ValueError` for a ``clamped`` or
     ``ground`` name that does not fit the model (``ground`` on a model
     without a piezoelectric region included) and for a `gfem.Absorbing` line
@@ -1962,21 +2002,29 @@ class MechanicalEigenmode:
     domain without a stiffness or density; `gfem.EigenmodeConvergenceError`
     when fewer than ``n_modes`` modes meet ``SolverOptions.eigen_tolerance``.
 
+    With ``pml``, :math:`Q` is the total quality factor, the radiation into the
+    layer plus :math:`Q_m`. The layer's thickness and nodes set its reflection:
+    keep a node map's moves inside the interior box, the bounding box of the
+    regions outside the layer. A medium whose bulk waves run backward along a
+    layer's normal is not absorbed well.
+
     ``omega`` (so frequency and Q) differentiates by the stiffness, piezoelectric
     tensor, relative permittivity, density and quality factor of the materials
     (as `gfem.MaterialField` leaves) and by the node coordinates of the mesh
-    (`gfem.Mesh.with_nodes`), at every wavenumber, with no further solve.
-    `gfem.NonDifferentiableError` names the rest: a cotangent on the
-    ``displacement`` or ``potential`` fields, on ``group_velocity`` or on
-    ``error``, and a mode that shares its ``cluster`` with another (break the
-    symmetry of the section, or hold the value with `jax.lax.stop_gradient`).
+    (`gfem.Mesh.with_nodes`), at every wavenumber, with no further solve (behind a
+    ``pml`` too: its stretch rides with the nodes and its material is fixed); so do
+    the ``displacement`` and ``potential`` fields, through one more
+    factorization per mode with a cotangent. `gfem.NonDifferentiableError` names
+    the rest: a cotangent on ``group_velocity`` or on ``error``, and a mode
+    that shares its ``cluster`` with another (break the symmetry of the section
+    or body, or hold the value with `jax.lax.stop_gradient`).
     The cluster refusal is raised in the backward pass, inside a host callback,
     so a ``jax.grad`` caller sees it as a ``jax.errors.JaxRuntimeError``
     carrying its message. The cluster is found among the converged modes returned by
     the eigensolver (``n_modes`` plus a guard of two); a degenerate partner
     that it does not return is not detected.
     The result's ``displacement`` maps carry the ``wavenumber`` that
-    `gfem.strain` needs.
+    `gfem.strain` needs (0 for a body).
     """
 
     target: float
@@ -1985,7 +2033,9 @@ class MechanicalEigenmode:
     clamped: tuple[tuple[str, str], ...]
     ground: tuple[str, ...]
     damping_frame: DampingFrame | None
-    _rule_2d: ClassVar[str] = "gfem._engine.mechanical_eigen:MechanicalEigenmodeRule"
+    pml: PML | None
+    target_quality_factor: float | None
+    _rule: ClassVar[str] = "gfem._engine.mechanical_eigen:MechanicalEigenmodeRule"
     #: Moved nodes solve (a node map is this problem's design input).
     _moves_nodes_2d: ClassVar[bool] = True
 
@@ -1998,6 +2048,8 @@ class MechanicalEigenmode:
         clamped: str | Sequence[str] | Mapping[str, str] = (),
         ground: str | list[str] | tuple[str, ...] = (),
         damping_frame: DampingFrame | None = None,
+        pml: PML | None = None,
+        target_quality_factor: float | None = None,
     ) -> None:
         """Validate and normalize (see the class docstring)."""
         check_fixed(target, "MechanicalEigenmode.target must be a fixed number")
@@ -2031,6 +2083,42 @@ class MechanicalEigenmode:
                 f"None, got {type(damping_frame).__name__}; write "
                 'damping_frame=gfem.DampingFrame(["frame"]).'
             )
+        # imported here: gfem._pml imports this module
+        from gfem._pml import PML
+
+        if pml is not None and not isinstance(pml, PML):
+            raise TypeError(
+                "MechanicalEigenmode.pml must be a gfem.PML or None, got "
+                f"{type(pml).__name__}; write pml=gfem.PML(['layer'])."
+            )
+        if pml is not None and damping_frame is not None:
+            raise ValueError(
+                "MechanicalEigenmode takes pml= or damping_frame=, not both: "
+                "one absorber per problem (the two define their interior boxes "
+                "from the same regions). Estimate Q with a damping frame, then "
+                "rerun with the PML."
+            )
+        tq = None
+        if target_quality_factor is not None:
+            tq = static_float(
+                target_quality_factor,
+                "MechanicalEigenmode.target_quality_factor",
+                "Fix it outside the transformed function: it only places the "
+                "search shift.",
+            )
+            if tq <= 0:
+                raise ValueError(
+                    "MechanicalEigenmode.target_quality_factor must be > 0, "
+                    f"got {tq!r}."
+                )
+            if pml is None:
+                raise ValueError(
+                    "MechanicalEigenmode.target_quality_factor places the shift "
+                    "of a leaky mode behind a perfectly matched layer: pass "
+                    "pml=gfem.PML(...) with it, or drop it."
+                )
+        object.__setattr__(self, "pml", pml)
+        object.__setattr__(self, "target_quality_factor", tq)
         object.__setattr__(self, "target", value)
         object.__setattr__(self, "n_modes", int(n_modes))
         object.__setattr__(self, "wavenumber", q)
@@ -2050,6 +2138,10 @@ class MechanicalEigenmode:
             parts.append(f"ground={list(self.ground)}")
         if self.damping_frame is not None:
             parts.append(f"damping_frame={self.damping_frame!r}")
+        if self.pml is not None:
+            parts.append(f"pml={self.pml!r}")
+        if self.target_quality_factor is not None:
+            parts.append(f"target_quality_factor={self.target_quality_factor:g}")
         return f"MechanicalEigenmode({', '.join(parts)})"
 
 

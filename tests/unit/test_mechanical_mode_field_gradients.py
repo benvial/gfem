@@ -22,6 +22,10 @@ errors are below :math:`10^{-9}` but on a reading the leaf barely moves (the
 quality factor on :math:`|u|^2`, a derivative :math:`10^{-5}` of the value),
 where they reach :math:`7 \cdot 10^{-8}`, still under the gate.
 
+The round-off of a sample of a 2D section is :math:`\delta \approx 10^{-12}`
+relative (a 3D body's is :math:`\delta \approx 1.2 \cdot 10^{-10}`, see
+`test_mechanical_3d_gradients`); the fields' extra noise above is on top of it.
+
 An output whose derivative is zero (the imaginary part of a lossless mode at
 :math:`q = 0`, real to round-off) is read against :math:`10^{-3}` of the
 largest derivative of its group, so that round-off on a zero is not a

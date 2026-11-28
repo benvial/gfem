@@ -1385,8 +1385,10 @@ def brillouin_gain(
             f"gfem.MechanicalEigenmode), got {type(mechanical).__name__}."
         )
     modes = _modes(mechanical, mechanical_modes, _GAIN)
-    _refuse_lossless(mechanical, modes)
     first = mechanical.displacement(modes[0])
+    # the body's dimension first: a 3D result has no section to read, lossless or not
+    _check_displacement(first, _GAIN.owner, any_wavenumber=True)
+    _refuse_lossless(mechanical, modes)
     setup = _setup(model, port, frequency, _GAIN, first)
     inside, points = _check_support(setup, first, _GAIN, port)
     solved = _solve_optical(

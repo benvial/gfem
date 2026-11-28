@@ -151,33 +151,13 @@ def test_a_mode_is_normalized_to_one_joule_per_metre_with_a_real_largest_coeffic
         assert abs(largest.imag) <= 1e-14 * abs(largest)
         assert largest.real > 0
         omega = float(np.real(result.omega[mode]))
-        energy = 0.5 * omega**2 * _mass_form(free_rectangle, u)
+        energy = 0.5 * omega**2 * mc.mass_energy(free_rectangle, u)
         # the eigen tolerance 1e-10 on a vector scaled in floating point
         assert energy == pytest.approx(1.0, rel=1e-10)
-
-
-def _mass_form(model, u):
-    """:math:`\\int \\rho |u|^2 dA` of a displacement `FieldMap`, in SI."""
-    import ngsolve as ngs
-
-    from gfem._engine.cache import discretization
-    from gfem._engine.domain import em_region, h1_space
-
-    built = discretization(model.mesh).built
-    space = h1_space(model, built, 2, (), physics="mechanical", complex_valued=True)
-    total = 0.0
-    with ngs.TaskManager():
-        for axis in "xyz":
-            g = ngs.GridFunction(space)
-            g.vec.FV().NumPy()[:] = np.asarray(u[axis].coefficients)
-            region = em_region(model, built, "mechanical")
-            total += ngs.Integrate(
-                mc.RHO * (g * ngs.Conj(g)).real * built.scale**2,
-                built.mesh,
-                definedon=region,
-                order=6,
-            )
-    return total
+    # the returned vectors' backward error, at most the eigen tolerance
+    assert (
+        float(np.max(np.asarray(result.error))) <= gfem.SolverOptions().eigen_tolerance
+    )
 
 
 def test_the_group_velocity_matches_a_central_difference_in_q(free_rectangle):
@@ -354,7 +334,7 @@ def test_the_job_codec_round_trips_the_problem_and_the_result(free_rectangle, tm
     assert result.wavenumber == 1e6
 
 
-def test_a_mesh_without_a_2d_path_or_a_petsc_solve_refuses_by_name(tmp_path):
+def test_a_tetrahedral_mesh_solves_and_a_slab_refuses_by_name(tmp_path):
     problem = gfem.MechanicalEigenmode(1e9)
     tets = tc.brick(
         tmp_path / "brick.msh",
@@ -369,12 +349,12 @@ def test_a_mesh_without_a_2d_path_or_a_petsc_solve_refuses_by_name(tmp_path):
         0.5,
         [(lambda p: p[1] < 1e-9, "hot")],
     )
-    for mesh in (tets, slab):
-        model = gfem.Model(mesh, materials={"a": mc.material()})
-        with pytest.raises(
-            NotImplementedError, match=r"MechanicalEigenmode problem solves a 2D mesh"
-        ):
-            gfem.solve(model, problem)
+    body = gfem.solve(gfem.Model(tets, materials={"a": mc.material()}), problem)
+    assert body.displacement(0).wavenumber == 0.0
+    with pytest.raises(
+        NotImplementedError, match=r"MechanicalEigenmode problem solves a 2D mesh"
+    ):
+        gfem.solve(gfem.Model(slab, materials={"a": mc.material()}), problem)
 
 
 def test_the_numerics_the_rule_does_not_have_refuse_by_name(free_rectangle):

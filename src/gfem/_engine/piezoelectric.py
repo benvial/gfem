@@ -47,7 +47,9 @@ Lengths are the mesh file's unit (``scale`` metres): the strain and the
 potential gradient carry :math:`1/\text{scale}` and the area
 :math:`\text{scale}^2`, so the stiffness and permittivity forms are the
 file-unit ones and only the mass term carries :math:`\text{scale}^2`. The
-displacement is in m per V.
+displacement is in m per V. On a 3D mesh (mechanical modes only) the volume
+is :math:`\text{scale}^3`: every form carries one more :math:`\text{scale}`,
+the mass term :math:`\text{scale}^3`.
 """
 
 from __future__ import annotations
@@ -486,8 +488,8 @@ def _permittivity(model: Model, built: Any) -> ngs.CoefficientFunction:
 
 
 def _plane(g: Any) -> ngs.CoefficientFunction:
-    """A gradient with its out-of-plane component zero."""
-    return ngs.CF((g[0], g[1], 0))
+    """A 2D mesh's gradient with its out-of-plane component zero; a 3D one whole."""
+    return g if g.dim == 3 else ngs.CF((g[0], g[1], 0))
 
 
 def _coefficients(model: Model, built: Any, frame: Any) -> dict[str, Any]:
@@ -538,6 +540,12 @@ def _weak_forms(
     way, with :math:`g_z(\varphi) = \varphi` for the potential in the place of
     :math:`S_z(u)` (``coupling1``, ``coupling2``, ``dielectric1``,
     ``dielectric2``); they read the potential, so they are for 4-tuples only.
+
+    On a 3D mesh the strain has its six components and the gradient its three,
+    and every form carries one more factor ``scale``: the volume is
+    :math:`\text{scale}^3` where the strains (:math:`1/\text{scale}^2`) leave
+    :math:`\text{scale}`, so the stiffness is in J and the mass term carries
+    :math:`\text{scale}^3`. The wavenumber pieces are for 2D meshes.
     """
     c, e, eps, rho, loss = co["c"], co["e"], co["eps"], co["rho"], co["loss"]
     scale = built.scale
@@ -572,6 +580,8 @@ def _weak_forms(
         "dielectric": (dielectric, dx_diel),
         "mass": (mass, dx_mech),
     }
+    if built.mesh.dim == 3:
+        forms = {k: (_per_length(f, scale), dx) for k, (f, dx) in forms.items()}
     if not wavenumber_pieces:
         return forms
 
@@ -618,6 +628,11 @@ def _weak_forms(
         "dielectric2": (dielectric_along, dx_diel),
     }
     return forms
+
+
+def _per_length(form: Callable[[Any, Any], Any], scale: float):
+    """``form`` times ``scale``: a 3D mesh's volume carries one more length."""
+    return lambda u, v: scale * form(u, v)
 
 
 # --- the tensor pass ----------------------------------------------------------------
@@ -677,7 +692,7 @@ def _gradient(u: Any, shift: complex = 0.0) -> ngs.CoefficientFunction:
     r"""The potential's gradient of a compound field, :math:`\partial_z =` ``shift``."""
     g = ngs.grad(u.components[3])
     if shift == 0:
-        return ngs.CF((g[0], g[1]))
+        return g if g.dim == 3 else ngs.CF((g[0], g[1]))
     return ngs.CF((g[0], g[1], shift * u.components[3]))
 
 
@@ -781,7 +796,7 @@ def _tensors(
     dressed with :math:`\partial_z = \mp iq` (``coupled`` False: no potential,
     so no coupling or dielectric moment).
     """
-    layout = _PLANAR if wavenumber == 0 else _AXIAL
+    layout = _AXIAL if model.mesh.dim == 3 or wavenumber != 0 else _PLANAR
     kinds = [k for k in wanted if k[0] == "material"]
     props = {k[2] for k in kinds}
     built = discretization(model.mesh).built
@@ -831,7 +846,9 @@ def _tensors(
         )
     if "mass_density" in props:
         blocks.append(MomentBlock("uu", 1, _displacement_moment, mech, ("mass",)))
-    return Tensors(blocks, _Contraction(model, kinds, built.scale, layout))
+    return Tensors(
+        blocks, _Contraction(model, kinds, built.scale, layout, model.mesh.dim)
+    )
 
 
 class _Contraction:
@@ -846,7 +863,8 @@ class _Contraction:
       \bar e_\mathrm{lab}`;
     - :math:`\bar\varepsilon_\mathrm{lab} = -\theta_d \varepsilon_0 M_{EE}`, read
       along each principal axis or as its trace;
-    - :math:`\bar\rho = \theta_m\,\text{scale}^2 M_{uu}`;
+    - :math:`\bar\rho = \theta_m\,\text{scale}^2 M_{uu}` (:math:`\text{scale}^3` on a
+      3D mesh, where every other leaf carries one more :math:`\text{scale}`);
     - :math:`\bar Q_m = -\theta_l Q_m^{-2}\, c_\mathrm{lab} : M_{SS}`.
     """
 
@@ -856,11 +874,15 @@ class _Contraction:
         kinds: list[tuple],
         scale: float,
         layout: _Layout = _PLANAR,
+        dim: int = 2,
     ) -> None:
         self.model = model
         self.layout = layout
         self.kinds = kinds
         self.scale = scale
+        self.dim = dim
+        #: The factor of every form but the mass: one more length in 3D.
+        self.volume = scale if dim == 3 else 1.0
         self.arrays = _element_arrays(model)
         self._by_property = {
             "stiffness": self._stiffness,
@@ -895,7 +917,7 @@ class _Contraction:
         if "SSeta" in moments:
             lab += loss * _symmetric(moments["SSeta"][index], self.layout.upper, 6)
         rows = _rotation_rows((6, 6), material.axes, stiffness_in_frame)
-        return (lab.reshape(n, 36) @ rows.T).reshape(n, 6, 6)
+        return self.volume * (lab.reshape(n, 36) @ rows.T).reshape(n, 6, 6)
 
     def _quality(self, weights, moments, index, material) -> np.ndarray:  # noqa: ARG002
         ss = self._strain_moment(moments, index)
@@ -903,7 +925,7 @@ class _Contraction:
             return np.zeros(len(index), complex)
         loss = self.arrays["loss"][index]
         along = np.einsum("eij,eij->e", self.arrays["c"][index], ss)
-        return -weights.get("loss", 0) * loss**2 * along
+        return -weights.get("loss", 0) * self.volume * loss**2 * along
 
     def _piezoelectric(self, weights, moments, index, material) -> np.ndarray:
         n = len(index)
@@ -912,14 +934,14 @@ class _Contraction:
             for k, (a, i) in enumerate(self.layout.coupled):
                 lab[:, a, i] = weights.get("coupling", 0) * moments["ES"][index, k]
         rows = _rotation_rows((3, 6), material.axes, piezoelectric_in_frame)
-        return (lab.reshape(n, 18) @ rows.T).reshape(n, 3, 6)
+        return self.volume * (lab.reshape(n, 18) @ rows.T).reshape(n, 3, 6)
 
     def _permittivity(self, weights, moments, index, material) -> np.ndarray:
         lab = np.zeros((len(index), 3, 3), complex)
         if "EE" in moments:
             dim = self.layout.dim
             ee = _symmetric(moments["EE"][index], self.layout.plane, dim)
-            lab[:, :dim, :dim] = -weights.get("dielectric", 0) * EPS0 * ee
+            lab[:, :dim, :dim] = -weights.get("dielectric", 0) * self.volume * EPS0 * ee
         if material.has_principal_values("eps_r"):
             axes = element_axes(self.model)[index]
             return np.real(np.einsum("eki,eij,ekj->ek", axes, lab, axes))
@@ -928,7 +950,7 @@ class _Contraction:
     def _density(self, weights, moments, index, material) -> np.ndarray:  # noqa: ARG002
         if "uu" not in moments:
             return np.zeros(len(index), complex)
-        return weights.get("mass", 0) * self.scale**2 * moments["uu"][index, 0]
+        return weights.get("mass", 0) * self.scale**self.dim * moments["uu"][index, 0]
 
 
 # --- checks ------------------------------------------------------------------------
@@ -950,8 +972,13 @@ def _check_mechanical(model: Model, owner: str = "Piezoelectric") -> Any:
     return domain
 
 
+def _words(model: Model) -> tuple[str, str]:
+    """What the mesh calls its boundaries and its cells: line and area in 2D."""
+    return ("line", "area") if model.mesh.dim == 2 else ("surface", "volume")
+
+
 def _lines_and_areas(model: Model, names: tuple[str, ...], what: str):
-    """Split ``names`` into lines and areas of the 2D mesh.
+    """Split ``names`` into lines and areas of the 2D mesh, or surfaces and volumes.
 
     Raises:
         RegionNotFoundError: A name is not a region of the mesh.
@@ -959,22 +986,23 @@ def _lines_and_areas(model: Model, names: tuple[str, ...], what: str):
             does not border it.
     """
     mesh, domain = model.mesh, model._domain  # noqa: SLF001
+    line, area = _words(model)
     lines, areas = [], []
     for name in names:
         region = mesh.region(name)
         if region.dim == mesh.dim:
             if not domain.active[mesh.elements(name)].any():
                 raise ValueError(
-                    f"The {what} {name!r} is an area outside the electromagnetic "
-                    'domain (excluded from "em"): a meshed electrode needs its '
-                    "potential. Name its shell lines, or keep it in the "
-                    "electromagnetic domain."
+                    f"The {what} {name!r} is {_article(area)} {area} outside the "
+                    'electromagnetic domain (excluded from "em"): a meshed '
+                    f"electrode needs its potential. Name its shell {line}s, or "
+                    "keep it in the electromagnetic domain."
                 )
             areas.append(name)
         else:
             if not domain.touches(name):
                 raise ValueError(
-                    f"The {what} line {name!r} borders no area of the "
+                    f"The {what} {line} {name!r} borders no {area} of the "
                     "electromagnetic domain, so it has no potential to fix."
                 )
             lines.append(name)
@@ -1026,19 +1054,25 @@ def _check_electrodes(model: Model, problem: Any) -> Electrodes:
     return Electrodes(tuple(terminals), tuple(dict.fromkeys([*lines, *pec])), areas)
 
 
+def _article(word: str) -> str:
+    """``a`` or ``an`` before ``word``."""
+    return "an" if word[0] in "aeiou" else "a"
+
+
 def _check_clamped(model: Model, problem: Any) -> None:
-    """Raise for a clamped line that does not border the mechanical domain.
+    """Raise for a clamped line (surface in 3D) that does not border the solid.
 
     ``problem.clamped`` holds names, or ``(name, components)`` pairs.
     """
     mechanical = model._domain_of("mechanical")  # noqa: SLF001
+    line = _words(model)[0]
     for item in problem.clamped:
         name = item if isinstance(item, str) else item[0]
         region = model.mesh.region(name)
         if region.dim == model.mesh.dim or not mechanical.touches(name):
             raise ValueError(
-                f"clamped {name!r} must be a line bordering the mechanical "
-                "domain, where the displacement is fixed."
+                f"clamped {name!r} must be {_article(line)} {line} bordering the "
+                "mechanical domain, where the displacement is fixed."
             )
 
 
@@ -1105,13 +1139,15 @@ def _check_frame(model: Model, problem: Any) -> Any:
     if frame is None:
         return None
     mesh = model.mesh
+    line, area = _words(model)
     mechanical = model._domain_of("mechanical").active  # noqa: SLF001
     inside = mechanical.copy()
     for name in frame.regions:
         region = mesh.region(name)
         if region.dim != mesh.dim:
             raise TypeError(
-                f"DampingFrame region {name!r} is a line: name areas of the mesh."
+                f"DampingFrame region {name!r} is {_article(line)} {line}: name "
+                f"{area}s of the mesh."
             )
         elements = mesh.elements(name)
         if not mechanical[elements].any():
@@ -1189,7 +1225,8 @@ def _frame_depth(model: Model, built: Any, frame: Any) -> ngs.CoefficientFunctio
     """
     mesh = model.mesh
     scale = built.scale
-    nodes = np.asarray(mesh.imported_nodes, float)[:, :2] / scale
+    dim = mesh.dim
+    nodes = np.asarray(mesh.imported_nodes, float)[:, :dim] / scale
     cells = np.asarray(mesh.volume_elements)
     in_frame = np.zeros(len(cells), bool)
     for name in frame.regions:
@@ -1204,7 +1241,7 @@ def _frame_depth(model: Model, built: Any, frame: Any) -> ngs.CoefficientFunctio
     with serial_spaces():
         space = ngs.H1(built.mesh, order=1)
     coordinates = []
-    for axis in range(2):
+    for axis in range(dim):
         gf = ngs.GridFunction(space)
         gf.vec.FV().NumPy()[:] = nodes[built.node_order, axis]
         coordinates.append(gf)
@@ -1545,6 +1582,10 @@ class PiezoelectricSystem:
 
 
 def _strain(gx: Any, gy: Any, gz: Any) -> ngs.CoefficientFunction:
-    """Engineering strain (xx, yy, zz, yz, xz, xy), no variation along z."""
+    """Engineering strain (xx, yy, zz, yz, xz, xy); none varies along z on a 2D mesh."""
     ax, ay, az = ngs.grad(gx), ngs.grad(gy), ngs.grad(gz)
+    if ax.dim == 3:
+        return ngs.CF(
+            (ax[0], ay[1], az[2], az[1] + ay[2], az[0] + ax[2], ax[1] + ay[0])
+        )
     return ngs.CF((ax[0], ay[1], 0, az[1], az[0], ax[1] + ay[0]))

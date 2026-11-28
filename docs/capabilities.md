@@ -22,7 +22,7 @@ feature also runs in 2D.
 | {py:obj}`gfem.TransientThermal` | Temperature traces over time | Cross-section | Yes | Matrix | {doc}`recipes/thermal-step-response` |
 | {py:obj}`gfem.DCConduction` | Conductance and Joule heat | Cross-section | Yes | Matrix | {doc}`recipes/heater-temperature` |
 | {py:obj}`gfem.Piezoelectric` | Admittance per length, clamped capacitance | Yes | No | Matrix | {doc}`recipes/piezoelectric-admittance` |
-| {py:class}`gfem.MechanicalEigenmode` | Complex frequency, Q, group velocity at an {term}`axial wavenumber` | Yes | No | `omega` and fields | {doc}`recipes/mechanical-modes` |
+| {py:class}`gfem.MechanicalEigenmode` | Complex frequency, Q, group velocity at an {term}`axial wavenumber` (2D) | Yes | Yes | `omega` and fields | {doc}`recipes/mechanical-modes` |
 
 ### Integrated photonics
 
@@ -114,7 +114,7 @@ feature also runs in 2D.
 | Anisotropic materials | {py:obj}`gfem.Material` | No | Matrix (principal values) | {doc}`recipes/anisotropic-materials` |
 | Dispersive materials | {py:obj}`gfem.PermittivityLaw` | No | Matrix (law parameters) | {doc}`recipes/dispersive-materials` |
 | Material library and fit | {py:mod}`gfem.materials`, {py:obj}`gfem.fit_permittivity` | n/a | n/a | {doc}`recipes/fit-measured-data` |
-| Perfectly matched layer | {py:obj}`gfem.PML` | Yes | Yes, not layer parameters | {doc}`recipes/perfectly-matched-layer` |
+| Perfectly matched layer | {py:obj}`gfem.PML` | Yes; also 2D sections in mechanical modes | Yes, not layer parameters | {doc}`recipes/perfectly-matched-layer` |
 | Curved meshes | {py:obj}`gfem.Mesh.from_gmsh` of second-order elements, {py:attr}`gfem.Mesh.curved` | Yes | Yes, every corner and mid-edge node | {doc}`recipes/prepare-a-mesh` |
 
 ### Design workflow
@@ -202,7 +202,7 @@ returning a wrong value:
 | **Thermal problems** | Linear, constant isotropic properties; no radiation or contact resistance; thermo-optic shift is first order | {doc}`recipes/heater-temperature` |
 | **Electro-optic shift** | Lossless section at DC, mode held constant; no 2D model | {doc}`recipes/electro-optic-phase` |
 | **Piezoelectric problems** | 2D sections, one process, direct solver; no PML; damping frames instead | {doc}`recipes/piezoelectric-admittance` |
-| **Mechanical eigenmodes** | 2D sections, one process, direct solver; `group_velocity` raises under `jax.grad` | {doc}`recipes/mechanical-modes` |
+| **Mechanical eigenmodes** | 2D sections and 3D bodies; one process, direct solver; `group_velocity` NaN in 3D and refused under `jax.grad` | {doc}`recipes/mechanical-modes` |
 | **Layer patterns** | Width and spacing only; a pre-check, not foundry sign-off; layer grids only | {doc}`recipes/fabricable-layout` |
 | **SAX circuits** | Answers inside its band; build outside `jax.jit`; no forward mode | {doc}`recipes/sax-circuit` |
 

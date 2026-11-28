@@ -529,7 +529,7 @@ def test_a_displacement_without_a_component_or_on_a_3d_mesh_raises(rough, dilati
         _overlap(model, short)
     bad = dataclasses.replace(dilation["x"], mesh=rough)
     solid = FieldMap({**dict(dilation), "x": bad}, label="component")
-    with pytest.raises(ValueError, match="native 2D mesh"):
+    with pytest.raises(ValueError, match="no cross-section to overlap"):
         _overlap(model, solid)
 
 

@@ -1,4 +1,4 @@
-r"""Mechanical eigenmodes of a 2D section: the pencil :math:`\hat K(q) - \omega^2 M`.
+r"""Mechanical eigenmodes of a 2D section or a 3D body: :math:`\hat K(q) - \omega^2 M`.
 
 The unknowns are the three displacement components of a field
 :math:`u(x, y)\,e^{i\omega t - iqz}` on the mechanical domain, in one compound
@@ -16,6 +16,10 @@ with ``wavenumber_pieces``),
 each :math:`K_p` the stiffness plus :math:`i` times the loss piece of power
 :math:`p` (:math:`q` in the mesh's length unit). At :math:`q = 0` only
 :math:`K_0` and :math:`M` are assembled into the matrix that is factorized.
+A 3D body (tetrahedra, fields :math:`u(x, y, z)\,e^{i\omega t}`) is that
+case, with the full six-component strain and the whole potential gradient: it
+has no wavenumber, and its forms carry one more length of the mesh's unit, so
+the pencil is in SI (a mode of 1 J).
 
 The modes nearest ``target`` are found by shift-invert Arnoldi (SciPy ARPACK)
 on :math:`A(\sigma)^{-1} M` with :math:`A(\sigma) = \hat K - \sigma M`,
@@ -39,6 +43,7 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import warnings
 from collections.abc import Callable
 from typing import Any
 
@@ -50,10 +55,13 @@ import scipy.sparse as sp
 import scipy.sparse.csgraph  # noqa: F401
 import scipy.sparse.linalg as spla
 
+from gfem import _mpi
 from gfem._checks import is_traced
 from gfem._eigen.reach import clusters
+from gfem._engine import quadrature
 from gfem._engine.cache import Entry, discretization
 from gfem._engine.domain import em_region, h1_space, region_domain
+from gfem._engine.elastic_pml import ElasticStretch, check_layer
 from gfem._engine.piezoelectric import (
     _check_absorbing,
     _check_clamped,
@@ -70,9 +78,15 @@ from gfem._engine.runtime import serial_spaces, task_manager
 from gfem._engine.sensitivity import FieldPair, Tensors, Term
 from gfem._engine.solve_request import SolveRequest
 from gfem._field import FieldMap
+from gfem._linalg import KRYLOV_KINDS
 from gfem._linalg.base import free_mask
 from gfem._linalg.direct import DirectHandle
-from gfem.errors import EigenmodeConvergenceError, NonDifferentiableError
+from gfem._pml import derive_layers
+from gfem.errors import (
+    EigenmodeConvergenceError,
+    LayerClearanceWarning,
+    NonDifferentiableError,
+)
 from gfem.mesh import Mesh
 from gfem.model import Model
 from gfem.options import SolverOptions
@@ -83,6 +97,19 @@ __all__ = ["MechanicalEigenmodeRule", "MechanicalSystem"]
 
 #: ARPACK's relative tolerance on the shift-inverted eigenvalues.
 _ARPACK_TOLERANCE = 1e-12
+#: The restarts an ARPACK run may take before it returns the pairs that have
+#: converged. Well-separated pairs converge in a few (at most 3 in the unit
+#: suites). With a layer and nothing else near the shift, the pairs past the
+#: wanted ones lie in the stretched continuum of the substrate near
+#: :math:`\lambda = 0`, whose shift-inverted values cluster at
+#: :math:`-1/\sigma` and never meet the tolerance: without a bound the run
+#: would take ARPACK's ten restarts per DOF. Only a layer sets it: without one,
+#: the search keeps scipy's default.
+_ARPACK_RESTARTS = 30
+#: The Krylov subspace grows with the wanted pairs, ``2 nev + 1`` vectors, but
+#: never by more than this many past ``nev``: each vector is a DOF-long
+#: complex array, so a large ``nev`` would otherwise cost memory quadratically.
+_ARPACK_EXTRA = 64
 #: Modes with :math:`|\lambda| <` this times the shift are rigid motions.
 _STATIC = 1e-8
 #: The relative shift of a left vector's inverse iteration, and its step bound.
@@ -93,6 +120,32 @@ _LEFT_STEPS = 6
 _LEFT_STALL = 0.1
 #: The inverse-iteration steps that refine a coupled mode's right vector.
 _REFINE_STEPS = 2
+#: A mode whose stretch sensitivity (`MechanicalSystem.sensitivities`) is above
+#: this is a mode of the layer, not of the device. The decay of a mode of the
+#: layer is made by the stretch, so its sensitivity is about one or more; that
+#: of a mode of the device is the discretization error of its field in the layer
+#: (below :math:`10^{-4}` on the leaky columns). A decade below one.
+_LAYER_SENSITIVITY = 0.1
+#: The decay rate below which a mode counts as undamped: its stretch sensitivity
+#: is relative to this times :math:`|\lambda|` instead of to its decay rate. A
+#: trapped mode is then kept while the stretch moves its eigenvalue by less than
+#: `_LAYER_SENSITIVITY` times this, relatively (measured :math:`8 \cdot 10^{-8}` for
+#: a mode uniform through the layer); a mode of the layer on a branch of the
+#: substrate, whose sensitivity is about one, is dropped up to substrates of about
+#: a hundred wavelengths.
+_UNDAMPED = 1e-4
+#: The most modes the eigensolver is asked for when it widens its search.
+_NEV_CAP = 200
+#: ``Im omega / |omega|`` below minus this is a gain-sign mode of a layer
+#: (round-off of a trapped mode is far below it).
+_GAIN = 1e-6
+#: Two eigenvalues of one mode (right and left search) agree to this, relatively,
+#: or to ``SolverOptions.eigen_tolerance`` if that is larger. Both searches run
+#: ARPACK at `_ARPACK_TOLERANCE` on the shift-inverted value, so the two agree
+#: to about that times :math:`|\lambda - \sigma|/|\lambda|` (4 decades under
+#: this); a tolerance above this accepts right pairs whose eigenvalue is only
+#: as good as their backward error, so the left partner may differ by as much.
+_MATCH = 1e-8
 
 #: The assembled groups: real forms by power of the wavenumber, and the mass.
 _GROUPS = {
@@ -100,6 +153,42 @@ _GROUPS = {
     "k1": (("stiffness1", 1.0), ("loss1", 1j)),
     "k2": (("stiffness2", 1.0), ("loss2", 1j)),
     "m": (("mass", 1.0),),
+}
+#: What a stretched layer adds to each group: the imaginary-coefficient forms
+#: (weight ``i``, ``i * i`` for the loss' own ``i``) and, group ``mp``, the
+#: physical mass the modes are normalized by.
+_STRETCHED = {
+    "k0": (("stiffness_im", 1j), ("loss_im", -1.0)),
+    "k1": (("stiffness1_im", 1j), ("loss1_im", -1.0)),
+    "k2": (("stiffness2_im", 1j), ("loss2_im", -1.0)),
+    "m": (("mass_im", 1j),),
+    "mp": (("mass_phys", 1.0),),
+}
+#: The stretch derivatives of the stiffness and the mass, and the loss.
+_StretchPencil = tuple[sp.csr_array, sp.csr_array, sp.csr_array | None]
+#: The loss of a stretched solve's stiffness, by power of the wavenumber: the
+#: material part of the eigenvalue, which the stretch sensitivity leaves out.
+_LOSS = {
+    "l0": (("loss", 1.0), ("loss_im", 1j)),
+    "l1": (("loss1", 1.0), ("loss1_im", 1j)),
+    "l2": (("loss2", 1.0), ("loss2_im", 1j)),
+}
+#: The groups of the filter's pencil (`ElasticStretch.pencil_forms`): one complex
+#: piece each, the stretch derivative of the stiffness (loss included), of the
+#: mass, and the loss.
+_FILTER = {
+    "k0": (("stiffness", 1.0),),
+    "k1": (("stiffness1", 1.0),),
+    "k2": (("stiffness2", 1.0),),
+    "m": (("mass", 1.0),),
+    "l0": (("loss", 1.0),),
+    "l1": (("loss1", 1.0),),
+    "l2": (("loss2", 1.0),),
+}
+_STRETCHED_COUPLED = {
+    "k0": (("coupling_im", 1j), ("dielectric_im", 1j)),
+    "k1": (("coupling1_im", 1j), ("dielectric1_im", 1j)),
+    "k2": (("coupling2_im", 1j), ("dielectric2_im", 1j)),
 }
 #: What a piezoelectric section adds to each group (the potential's forms).
 _COUPLED = {
@@ -110,7 +199,7 @@ _COUPLED = {
 
 
 class MechanicalEigenmodeRule:
-    """Host-side forward of a `MechanicalEigenmode` problem on a 2D `Model`.
+    """Host-side forward of a `MechanicalEigenmode` problem on a 2D or 3D `Model`.
 
     Construction runs every static check (it needs no array values);
     `forward` assembles the pencil and finds the modes.
@@ -145,10 +234,13 @@ class MechanicalEigenmodeRule:
         """Check that the problem fits the model (see `gfem.MechanicalEigenmode`).
 
         Raises:
-            NotImplementedError: ``linear_solver="petsc"``.
+            NotImplementedError: ``linear_solver="petsc"``, or a slab mesh; on a
+                3D body also ``comm``, a Krylov ``linear_solver`` and a GPU
+                ``device``.
             RegionNotFoundError: A name is not a region of the mesh.
-            ValueError: The problem does not fit the model; the message gives
-                the remedy.
+            ValueError: The problem does not fit the model (a ``wavenumber`` on
+                a 3D body, a ``model.pml`` meeting the mechanical domain
+                included); the message gives the remedy.
             MissingMaterialPropertyError: A region of the mechanical domain
                 has no stiffness or density.
         """
@@ -163,6 +255,8 @@ class MechanicalEigenmodeRule:
                 'linear_solver="direct" or "auto".'
             )
         owner = "MechanicalEigenmode"
+        self.dim = model.mesh.dim
+        _refuse_body(model, problem, options, comm)
         self.mechanical = _check_mechanical(model, owner)
         _check_clamped(model, problem)
         _check_absorbing(model, owner)
@@ -188,6 +282,16 @@ class MechanicalEigenmodeRule:
         self.potential_regions = tuple(
             r for r in mesh.volumes if domain.active[mesh.elements(r)].any()
         )
+        _refuse_layer(model, mechanical)
+        #: The elastic layer (`gfem.PML`) and its geometry; ``None`` without one.
+        self.pml = problem.pml
+        self.layers = None
+        if self.pml is not None:
+            check_layer(model, self.pml, mechanical.active)
+            active = mechanical.active | (domain.active if self.coupled else False)
+            self.layers = derive_layers(
+                mesh, self.pml, active, inside="region it surrounds"
+            )
         self._mesh = mesh
         self._mechanical_excluded = mechanical.excluded
         self._em_excluded = domain.excluded
@@ -214,7 +318,9 @@ class MechanicalEigenmodeRule:
                 ``SolverOptions.eigen_tolerance``.
         """
         with task_manager(self.options.threads, self.comm):
-            system = MechanicalSystem(model, self.problem, self.options, self)
+            system = MechanicalSystem(
+                model, self.problem, self.options, self, warn=True
+            )
             try:
                 found = system.modes()
                 fields = system.kept
@@ -319,7 +425,11 @@ class MechanicalEigenmodeRule:
     def nondifferentiable_output(self, name: str) -> str:
         """The error message for a cotangent on output ``name``."""
         why = {
-            "group_velocity": "it is read from the modes and their derivative in q",
+            "group_velocity": (
+                "it is NaN for a 3D body, which has no axial band"
+                if self._mesh.dim == 3
+                else "it is read from the modes and their derivative in q"
+            ),
             "error": "it is the backward error of the solve",
         }[name]
         return (
@@ -350,6 +460,14 @@ class MechanicalEigenmodeRule:
         The left field
         is the test side of each form (`_terms`, `tensors`).
 
+        With a layer every stretched piece has its imaginary partner
+        (``<piece>_im``, weight :math:`i` times the piece's), and the modes'
+        normalization (the energy, the :math:`r` term and the pair on the mass)
+        reads the physical regions' mass alone, while the projector, the
+        Gram product and :math:`A(\lambda)` read the whole pencil. The layer's
+        stretch is not an input: it rides with the nodes, and the layer-mode
+        filter is a discrete choice that is not differentiated.
+
         Raises:
             NonDifferentiableError: A mode with a cotangent shares its cluster
                 (its vectors depend on a choice of basis).
@@ -373,7 +491,8 @@ class MechanicalEigenmodeRule:
                     "it is degenerate with another mode (to "
                     "SolverOptions.cluster_rtol), so its eigenvector, and its "
                     "derivative, depend on an arbitrary choice of basis. Break the "
-                    "symmetry of the section, or wrap the value in "
+                    f"symmetry of the {'body' if self._mesh.dim == 3 else 'section'}, "
+                    "or wrap the value in "
                     "jax.lax.stop_gradient to use it without its derivative."
                 )
         pairs: list[FieldPair] = []
@@ -385,7 +504,12 @@ class MechanicalEigenmodeRule:
             )
             try:
                 domain = em_region(model, system.built, "em")
-                weights = functools.partial(_weights, system.q, coupled=self.coupled)
+                weights = functools.partial(
+                    _weights,
+                    system.q,
+                    coupled=self.coupled,
+                    stretched=self.pml is not None,
+                )
                 for i in live:
                     lam = fields["lambda"][i]
                     omega = np.sqrt(lam)
@@ -441,6 +565,62 @@ class MechanicalEigenmodeRule:
         )
 
 
+def _refuse_body(
+    model: Model, problem: MechanicalEigenmode, options: SolverOptions, comm: Any
+) -> None:
+    """Raise for the slab, and for what a 3D body does not have.
+
+    The 2D refusals of `gfem._dim2.refuse_solve` do not reach a mechanical 3D
+    solve: a communicator, a Krylov solver and a GPU have no path here.
+    """
+    mesh = model.mesh
+    if mesh.section_thickness is not None:
+        raise NotImplementedError(
+            "A MechanicalEigenmode problem solves a 2D mesh "
+            "(gfem.Mesh.from_gmsh on a triangle-only file) or a tetrahedral "
+            "body; a slab cross-section has no mechanicaleigenmode solve in "
+            "this version."
+        )
+    if mesh.dim != 3:
+        return
+    if problem.wavenumber != 0:
+        raise ValueError(
+            "a 3D body has no axial wavenumber; wavenumber is the phase along z "
+            "of a 2D section: leave it at 0."
+        )
+    refused = (
+        (comm is not None, "A solve under several processes (comm=)"),
+        (
+            options.linear_solver in KRYLOV_KINDS,
+            f"linear_solver={options.linear_solver!r}",
+        ),
+        (options.device != "cpu", f"device={options.device!r}"),
+    )
+    for found, what in refused:
+        if found:
+            raise NotImplementedError(
+                f"{what} is not available for a 3D MechanicalEigenmode: solve on "
+                'one process, with linear_solver="direct" or "auto", on '
+                'device="cpu".'
+            )
+
+
+def _refuse_layer(model: Model, mechanical: Any) -> None:
+    """Raise when the model's electromagnetic layer meets the mechanical domain."""
+    if model.pml is None:
+        return
+    mesh = model.mesh
+    for name in model.pml.regions:
+        if mechanical.active[mesh.elements(name)].any():
+            raise ValueError(
+                f"The model's PML region {name!r} meets the mechanical domain, "
+                "and the mechanical solve does not read the model's "
+                "electromagnetic layer: pass it as MechanicalEigenmode(pml=...) "
+                "to absorb the radiated waves, or exclude the region from "
+                'mechanical problems (excluded={"mechanical": ...}).'
+            )
+
+
 def _field_cotangent(
     cotangents: dict[str, np.ndarray], n: int, ndof: int
 ) -> np.ndarray:
@@ -462,12 +642,20 @@ def _field_cotangent(
     return out
 
 
-def _weights(q: float, lam: complex, *, coupled: bool) -> dict[str, complex]:
+def _weights(
+    q: float, lam: complex, *, coupled: bool, stretched: bool = False
+) -> dict[str, complex]:
     r"""The weights of the pieces of :math:`\hat K - \lambda M`.
 
     ``q`` is the wavenumber in the mesh's length unit: the first-order pieces
     carry :math:`-iq` (:math:`q` for the loss, which has an extra :math:`i`),
     the second-order ones :math:`q^2`. Those at :math:`q = 0` are left out.
+
+    With ``stretched`` every piece also has its ``<piece>_im`` partner, the
+    imaginary part of the layer's stretch factor, whose weight is :math:`i`
+    times the piece's (:math:`-i\lambda` on ``mass_im``, :math:`i \cdot i` on
+    ``loss_im``); ``mass_layer`` is the real part of the layer's mass, which
+    the ``mass`` of the node pass leaves out (it is the physical mass).
     """
     out: dict[str, complex] = {"stiffness": 1.0, "loss": 1j, "mass": -lam}
     if coupled:
@@ -486,6 +674,9 @@ def _weights(q: float, lam: complex, *, coupled: bool) -> dict[str, complex]:
                 "coupling2": q**2,
                 "dielectric2": q**2,
             }
+    if stretched:
+        out |= {f"{name}_im": 1j * weight for name, weight in out.items()}
+        out["mass_layer"] = -lam
     return out
 
 
@@ -516,17 +707,35 @@ def _terms(rule: MechanicalEigenmodeRule, model: Model) -> list[Term]:
         )
     with serial_spaces():
         space = ngs.FESpace(spaces)
-    forms = _weak_forms(
-        _coefficients(model, built, rule.frame),
-        built,
-        options.order,
-        mech,
-        diel,
-        wavenumber_pieces=True,
-    )
+    co = _coefficients(model, built, rule.frame)
     names = {piece for g in _GROUPS for piece, _ in _GROUPS[g]}
     if rule.coupled:
         names |= {piece for g in _COUPLED for piece, _ in _COUPLED[g]}
+    if rule.pml is None or rule.layers is None:
+        forms = _weak_forms(
+            co, built, options.order, mech, diel, wavenumber_pieces=True
+        )
+    else:
+        f_ref = rule.pml.reference_frequency or problem.target
+        stretch = ElasticStretch(model, built, rule.layers, rule.pml, f_ref)
+        forms = stretch.forms(
+            model,
+            co,
+            options.order,
+            wavenumber_pieces=True,
+            coupled=rule.coupled,
+            lossy=bool(_element_arrays(model)["loss"].any()),
+        )
+        # ``mass`` is the physical mass alone (the normalization's), ``mass_layer``
+        # the layer's real part: together the solver's ``mass`` on every element
+        layer = quadrature.dx(
+            options.order, definedon=stretch.region(model, "mechanical", "layer")
+        )
+        forms["mass_layer"] = (forms["mass"][0], layer)
+        forms["mass"] = forms.pop("mass_phys")
+        for group in (_STRETCHED, _STRETCHED_COUPLED if rule.coupled else {}):
+            names |= {p for g, ps in group.items() if g != "mp" for p, _ in ps}
+        names.add("mass_layer")
     n = len(spaces)
 
     def term(name: str) -> Term:
@@ -605,6 +814,9 @@ def _values(
 class MechanicalSystem:
     r"""The assembled pencil and its eigensolver.
 
+    With ``warn``, a thin layer warns once (the forward's; a backward builds
+    the system again and would repeat it).
+
     Attributes:
         space: The compound space ``[u_x, u_y, u_z]``, plus the potential
             ``phi`` for a piezoelectric section.
@@ -625,6 +837,7 @@ class MechanicalSystem:
         rule: MechanicalEigenmodeRule,
         *,
         assemble: bool = True,
+        warn: bool = False,
     ) -> None:
         self.rule = rule
         self.problem = problem
@@ -669,6 +882,17 @@ class MechanicalSystem:
         #: The wavenumber in the mesh's length unit.
         self.q = problem.wavenumber * built.scale
         self.lossless = False
+        self._model = model
+        #: The elastic layer's stretch (`ElasticStretch`), or ``None``.
+        self.stretch: ElasticStretch | None = None
+        if assemble and rule.pml is not None and rule.layers is not None:
+            # it reads the materials' values: a system built for its sizes alone
+            # (traced leaves) has no pencil, so no stretch either
+            f_ref = rule.pml.reference_frequency or problem.target
+            self.stretch = ElasticStretch(model, built, rule.layers, rule.pml, f_ref)
+            if warn:
+                self.stretch.warn_thin()
+        self._dpencil: _StretchPencil | None = None
         self.matrix: ngs.BaseMatrix | None = None
         #: What a backward reads of the modes found (`modes`).
         self.kept: dict[str, np.ndarray] = {}
@@ -701,33 +925,79 @@ class MechanicalSystem:
 
     def _pieces(self, group: str) -> tuple[tuple[str, complex], ...]:
         """The ``(piece, factor)`` pairs of ``group``, plus the potential's."""
-        extra = _COUPLED.get(group, ()) if self.coupled else ()
-        return (*_GROUPS[group], *extra)
+        if group in _LOSS:
+            return _LOSS[group]
+        out = _GROUPS.get(group, ())
+        if self.coupled:
+            out += _COUPLED.get(group, ())
+        if self.stretch is not None:
+            out += _STRETCHED.get(group, ())
+            if self.coupled:
+                out += _STRETCHED_COUPLED.get(group, ())
+        return out
+
+    def _filter_pieces(self, group: str) -> tuple[tuple[str, complex], ...]:
+        """The ``(piece, factor)`` pairs of ``group`` of the filter's pencil."""
+        out = _FILTER[group]
+        if self.coupled and group in _COUPLED:
+            out += _COUPLED[group]
+        return out
 
     def _form(
-        self, forms: dict[str, Any], names: tuple[str, ...], *, symmetric: bool
+        self,
+        forms: dict[str, Any],
+        names: tuple[str, ...],
+        *,
+        symmetric: bool,
+        pieces: Callable[[str], tuple[tuple[str, complex], ...]] | None = None,
     ) -> tuple[ngs.BilinearForm, dict[str, tuple[np.ndarray, sp.csr_array]]]:
-        """One form of the groups ``names``, assembled once per group.
+        """One form per group of ``names``, each assembled once.
 
-        Returns the form and each group's stored values and CSR matrix. One
-        form keeps the groups on one pattern; a symmetric one is for
-        the groups that are symmetric forms.
+        Returns the last form and each group's stored values and CSR matrix.
+        A group's form also holds every other group's regions with a zero
+        weight, so all of them share one matrix pattern (a symmetric form is
+        for groups that are symmetric forms). ``pieces`` gives each group's
+        ``(piece, factor)`` pairs (default `_pieces`).
         """
+        pieces = pieces or self._pieces
         trial, test = self.space.TnT()
         u, v = tuple(trial), tuple(test)
-        switches = {g: ngs.Parameter(0.0) for g in names}
+        every: dict[int, tuple[Any, bool]] = {}
+        for g in names:
+            for piece, _ in pieces(g):
+                if piece not in forms:
+                    continue
+                dx = forms[piece][1]
+                every[id(dx)] = (dx, piece.startswith("dielectric"))
         out = {}
+        pattern = None
         with ngs.TaskManager():
-            k = ngs.BilinearForm(self.space, symmetric=symmetric)
             for g in names:
-                for piece, factor in self._pieces(g):
+                k = ngs.BilinearForm(self.space, symmetric=symmetric)
+                held = set()
+                for piece, factor in pieces(g):
+                    if piece not in forms:
+                        continue  # a piece the stretch leaves out (no loss)
                     form, dx = forms[piece]
-                    k += switches[g] * (factor * form(u, v)) * dx
-            for g in names:
-                for h, switch in switches.items():
-                    switch.Set(1.0 if h == g else 0.0)
+                    k += (factor * form(u, v)) * dx
+                    held.add(id(dx))
+                # a zero-weight term on the regions the others hold, so the
+                # patterns agree; Parameter keeps it from being folded away
+                zero = ngs.Parameter(0.0)
+                for key, (dx, potential) in every.items():
+                    if key not in held:
+                        j = 3 if potential else 0
+                        k += (zero * (u[j] * v[j])) * dx
                 k.Assemble()
                 out[g] = _values(k, symmetric=symmetric)
+                columns = np.array(k.mat.CSR()[1])
+                if pattern is None:
+                    pattern = columns
+                elif not np.array_equal(pattern, columns):
+                    raise RuntimeError(
+                        "MechanicalEigenmode: the groups of the pencil have "
+                        "different matrix patterns (internal error)."
+                    )
         return k, out
 
     def _assemble(
@@ -735,26 +1005,41 @@ class MechanicalSystem:
     ) -> None:
         """Assemble :math:`K_0`, :math:`K_1`, :math:`K_2` and :math:`M`."""
         arrays = _element_arrays(model)
-        self.lossless = rule.frame is None and not arrays["loss"].any()
-        forms = _weak_forms(
-            _coefficients(model, self.built, rule.frame),
-            self.built,
-            self.options.order,
-            mech,
-            diel,
-            wavenumber_pieces=True,
+        self.lossless = (
+            rule.frame is None and self.stretch is None and not arrays["loss"].any()
         )
+        self._co = _coefficients(model, self.built, rule.frame)
+        self._lossy = bool(arrays["loss"].any())
+        if self.stretch is None:
+            forms = _weak_forms(
+                self._co,
+                self.built,
+                self.options.order,
+                mech,
+                diel,
+                wavenumber_pieces=True,
+            )
+        else:
+            forms = self.stretch.forms(
+                model,
+                self._co,
+                self.options.order,
+                wavenumber_pieces=True,
+                coupled=self.coupled,
+                lossy=self._lossy,
+            )
+        extra = () if self.stretch is None else ("mp",)
         q = self.q
         d: sp.csr_array | None
         if q == 0:
             # only the order-0 forms enter the matrix that is factorized; the
             # group velocity is 0 there by reciprocity, so no first-order form
-            form, a = self._form(forms, ("k0", "m"), symmetric=True)
+            form, a = self._form(forms, ("k0", "m", *extra), symmetric=True)
             stored = a["k0"][0]
             k = a["k0"][1]
             d = None
         else:
-            form, a = self._form(forms, tuple(_GROUPS), symmetric=False)
+            form, a = self._form(forms, (*_GROUPS, *extra), symmetric=False)
             stored = a["k0"][0] - 1j * q * a["k1"][0] + q**2 * a["k2"][0]
             k = a["k0"][1] - 1j * q * a["k1"][1] + q**2 * a["k2"][1]
             d = -1j * a["k1"][1] + 2 * q * a["k2"][1]
@@ -765,6 +1050,15 @@ class MechanicalSystem:
         i = self.index
         self.k = k[i][:, i].tocsr()
         self.mass = a["m"][1][i][:, i].tocsr()
+        #: The matrix the modes are normalized by: the physical regions' mass
+        #: (the layer's is stretched, not energy).
+        self.mass_norm = self.mass
+        #: The displacement DOFs that touch a physical element.
+        self.physical = np.ones(self.ndof, bool)
+        if self.stretch is not None:
+            full = a["mp"][1]
+            self.mass_norm = full[i][:, i].tocsr()
+            self.physical = full.diagonal() != 0
         # d/dq of the wavenumber in the mesh's unit is the mesh's unit per metre
         self.dk = None if d is None else (d * self.built.scale)[i][:, i].tocsr()
         self.k_norm = float(spla.norm(self.k, 1))
@@ -829,29 +1123,165 @@ class MechanicalSystem:
         )
 
     def _search(
-        self, handle: DirectHandle, sigma: float, nev: int
+        self,
+        handle: DirectHandle,
+        sigma: complex,
+        nev: int,
+        *,
+        transpose: bool = False,
     ) -> tuple[np.ndarray, np.ndarray]:
         r"""Up to ``nev`` pairs :math:`(\lambda, x)` nearest ``sigma``, free DOFs only.
 
-        ARPACK on :math:`A(\sigma)^{-1} M`, from a fixed start vector.
+        ARPACK on :math:`A(\sigma)^{-1} M`, from a fixed start vector. With
+        ``transpose`` the pairs of :math:`A(\sigma)^{-T} M^T`: the same
+        eigenvalues, with the left vectors :math:`y`.
         """
         n = len(self.index)
+        # scipy's complex ARPACK needs nev + 2 <= ncv <= n, and ncv = n - 1 is
+        # the largest this takes (it never asks for the whole space)
+        nev = min(nev, n - 3)
+        if nev < 1:
+            raise EigenmodeConvergenceError(
+                f"MechanicalEigenmode: the system has {n} free DOFs, too few for "
+                "the eigensolver (it needs at least 4). Refine the mesh or raise "
+                "SolverOptions.order."
+            )
+        mass = self.mass.T if transpose else self.mass
 
         def apply(x: np.ndarray) -> np.ndarray:
-            rhs = self._embed(self.mass @ np.asarray(x).reshape(-1))
-            return handle.solve(rhs)[self.index]
+            rhs = self._embed(mass @ np.asarray(x).reshape(-1))
+            return handle.solve(rhs, transpose=transpose)[self.index]
 
         op = _Operator(n, apply)
         rng = np.random.default_rng(0)
         v0 = rng.standard_normal(n) + 1j * rng.standard_normal(n)
-        ncv = min(max(2 * nev + 1, 20), n - 1)
+        ncv = min(max(2 * nev + 1, 20), nev + _ARPACK_EXTRA, n - 1)
+        # without a layer, scipy's default restarts (ten per DOF)
+        extra = {} if self.stretch is None else {"maxiter": _ARPACK_RESTARTS}
         try:
             theta, vectors = spla.eigs(
-                op, k=nev, which="LM", tol=_ARPACK_TOLERANCE, ncv=ncv, v0=v0
+                op, k=nev, which="LM", tol=_ARPACK_TOLERANCE, ncv=ncv, v0=v0, **extra
             )
         except spla.ArpackNoConvergence as err:
             theta, vectors = err.eigenvalues, err.eigenvectors
         return sigma + 1 / theta, vectors
+
+    def _stretch_pencil(self) -> _StretchPencil:
+        r""":math:`\partial_g \hat K`, :math:`\partial_g M` and the loss :math:`L`.
+
+        On the free DOFs. :math:`g` scales every stretch maximum: the layer's
+        pieces with the stretch factors replaced by their derivative, each a
+        complex coefficient (`ElasticStretch.pencil_forms`), the loss folded into
+        the stiffness. :math:`L` is the stretched loss of the stiffness,
+        :math:`\hat K = \hat K_e + iL` (``None`` without a loss), assembled
+        with them.
+        """
+        if self._dpencil is None:
+            q = self.q
+            assert self.stretch is not None  # noqa: S101
+            i = self.index
+            forms = self.stretch.pencil_forms(
+                self._model,
+                self._co,
+                self.options.order,
+                wavenumber_pieces=q != 0,
+                coupled=self.coupled,
+                lossy=self._lossy,
+            )
+            orders = ("0",) if q == 0 else ("0", "1", "2")
+            names = (*(f"k{o}" for o in orders), "m")
+            if self._lossy:
+                names += tuple(f"l{o}" for o in orders)
+            _, a = self._form(
+                forms, names, symmetric=q == 0, pieces=self._filter_pieces
+            )
+
+            def combined(letter: str) -> sp.csr_array:
+                k = a[f"{letter}0"][1]
+                if q != 0:
+                    k = k - 1j * q * a[f"{letter}1"][1] + q**2 * a[f"{letter}2"][1]
+                return k[i][:, i].tocsr()
+
+            loss = combined("l") if self._lossy else None
+            self._dpencil = (combined("k"), a["m"][1][i][:, i].tocsr(), loss)
+        return self._dpencil
+
+    def sensitivities(
+        self,
+        found: list[tuple[complex, np.ndarray, float]],
+        sigma: complex,
+        nev: int,
+    ) -> list[float]:
+        r"""The stretch sensitivity of each mode of ``found`` (NaN: no left vector).
+
+        .. math::
+
+            \eta = \frac{|\partial_g\lambda|}
+                {\max(|\mathrm{Im}(\lambda - \lambda_m)|,\
+                \epsilon\,|\lambda|)}, \qquad
+            \partial_g\lambda = \frac{y^T (\partial_g\hat K - \lambda\,
+                \partial_g M)\,x}{y^T M x}, \qquad
+            \lambda_m = \frac{i\,y^T L x}{y^T M x},
+
+        where :math:`g` scales every stretch, :math:`\lambda_m` is the
+        material loss' part of the eigenvalue (`_stretch_pencil`) and
+        :math:`\epsilon` is `_UNDAMPED`. :math:`y` is :math:`x` at :math:`q = 0`
+        and otherwise the left vector of a transposed search matched by its
+        eigenvalue.
+
+        The sensitivity is relative to the mode's decay rate without the
+        material loss, not to :math:`|\lambda|`. The decay of a mode of the
+        layer is made by the stretch: its eigenvalue is real at :math:`g = 0`
+        and moves with :math:`g`, so :math:`|\partial_g\lambda| \gtrsim
+        |\mathrm{Im}\,\lambda|` at :math:`g = 1` (a mode on a branch of the
+        substrate with the complex length :math:`\ell = a + d(1 - ig\sigma_\max/3)`
+        has :math:`\lambda - \lambda_c \propto \ell^{-2}`, so exactly
+        :math:`|\ell|/\mathrm{Re}\,\ell \ge 1`), however close it is to the
+        branch's cutoff :math:`\lambda_c`, where :math:`|\partial_g\lambda| /
+        |\lambda|` is small. The radiation of a mode of the device does not depend
+        on the stretch.
+        """
+        dk, dm, loss = self._stretch_pencil()
+        if self.q == 0:
+            lefts: list[np.ndarray | None] = [x for _, x, _ in found]
+        else:
+            assert self._handle is not None  # noqa: S101
+            lam_t, vec_t = self._search(self._handle, sigma, nev, transpose=True)
+            lefts = []
+            match = max(_MATCH, self.options.eigen_tolerance)
+            for k, _, _ in found:
+                j = int(np.argmin(np.abs(lam_t - k))) if len(lam_t) else -1
+                near = j >= 0 and abs(lam_t[j] - k) <= match * abs(k)
+                lefts.append(vec_t[:, j] if near else None)
+        out = []
+        for (k, x, _), y in zip(found, lefts, strict=True):
+            if y is None:
+                out.append(float("nan"))
+                continue
+            g = y @ (self.mass @ x)
+            moved = abs((y @ (dk @ x) - k * (y @ (dm @ x))) / g)
+            material = 0.0 if loss is None else 1j * (y @ (loss @ x)) / g
+            decay = abs((k - material).imag)
+            out.append(moved / max(decay, _UNDAMPED * abs(k)))
+        return out
+
+    def _layer_modes(
+        self,
+        found: list[tuple[complex, np.ndarray, float]],
+        sigma: complex,
+        nev: int,
+    ) -> tuple[list[tuple[complex, np.ndarray, float]], int]:
+        r"""The modes of ``found`` that the layer's stretch hardly moves.
+
+        The sensitivity of a mode of the device is far below
+        `_LAYER_SENSITIVITY`; that of a mode of the layer is about one or more.
+        A mode with no left vector is dropped too: the next, wider search
+        matches it. Returns the modes kept and the number dropped for having
+        no left vector.
+        """
+        etas = self.sensitivities(found, sigma, nev)
+        kept = [m for m, e in zip(found, etas, strict=True) if e <= _LAYER_SENSITIVITY]
+        return kept, sum(1 for e in etas if np.isnan(e))
 
     def _shifted(self, lam: complex) -> DirectHandle:
         r"""The factorization of :math:`A` at a shift next to :math:`\lambda`."""
@@ -953,6 +1383,45 @@ class MechanicalSystem:
             if handle is not None:
                 handle.free()
 
+    def _converged(
+        self, sigma: complex
+    ) -> tuple[list[tuple[complex, np.ndarray, float]], float, int, int]:
+        """The modes that meet the tolerance (and, with a layer, the filter).
+
+        Searches with a growing ``nev`` until ``n_modes`` are found. Returns
+        the last rung's modes, its best backward error, the number of converged
+        modes the layer's stretch sensitivity dropped and the number dropped
+        for having no left vector.
+        """
+        want, tolerance = self.problem.n_modes, self.options.eigen_tolerance
+        handle = self._handle
+        assert handle is not None  # noqa: S101
+        found: list[tuple[complex, np.ndarray, float]] = []
+        best = np.inf
+        dropped = unmatched = 0
+        rungs: tuple[int, ...] = (want + 2, 2 * want + 8)
+        if self.stretch is not None:
+            n = len(self.index)
+            rungs = (*rungs, 8 * want + 40)
+            rungs = tuple(min(r, _NEV_CAP, n - 2) for r in rungs)
+        for nev in rungs:
+            lam, vectors = self._search(handle, sigma, nev)
+            found, best = [], np.inf
+            for k, x in zip(lam, vectors.T, strict=True):
+                if abs(k) < _STATIC * abs(sigma):
+                    continue  # a rigid motion
+                error = self._backward_error(k, x, left=False)
+                best = min(best, error)
+                if error <= tolerance:
+                    found.append((k, x, error))
+            if self.stretch is not None:
+                converged = len(found)
+                found, unmatched = self._layer_modes(found, sigma, nev)
+                dropped = converged - len(found) - unmatched
+            if len(found) >= want:
+                break
+        return found, best, dropped, unmatched
+
     def modes(self) -> dict[str, np.ndarray]:
         """The ``n_modes`` modes nearest the target, and their outputs.
 
@@ -963,30 +1432,39 @@ class MechanicalSystem:
         problem, options = self.problem, self.options
         tolerance = options.eigen_tolerance
         target = problem.target
-        sigma = (2 * np.pi * target) ** 2
+        sigma: complex = (2 * np.pi * target) ** 2
+        if problem.target_quality_factor is not None:
+            sigma *= 1 + 1j / problem.target_quality_factor
         want = problem.n_modes
-        # the factorization of A(sigma): one, shared by the search and its retry
+        # the factorization of A(sigma): one, shared by the search and its retries
         self._handle = self._factor(sigma)
-        found: list[tuple[complex, np.ndarray, float]] = []
-        best = np.inf
-        for nev in (want + 2, 2 * want + 8):
-            lam, vectors = self._search(self._handle, sigma, nev)
-            found, best = [], np.inf
-            for k, x in zip(lam, vectors.T, strict=True):
-                if abs(k) < _STATIC * sigma:
-                    continue  # a rigid motion
-                error = self._backward_error(k, x, left=False)
-                best = min(best, error)
-                if error <= tolerance:
-                    found.append((k, x, error))
-            if len(found) >= want:
-                break
+        found, best, dropped, unmatched = self._converged(sigma)
         if len(found) < want:
+            layer = (
+                ""
+                if self.stretch is None
+                else f" and the layer's stretch sensitivity ({dropped} converged "
+                "modes were modes of the layer and were dropped"
+                + (
+                    f"; {unmatched} had no left vector in the transposed search "
+                    "to read their sensitivity from"
+                    if unmatched
+                    else ""
+                )
+                + ")"
+            )
+            # an order-2 body mode can read as a layer mode when side layers line it
+            hint = (
+                " On a coarse order-2 mesh with side layers a body mode can read "
+                "as a layer mode; try order 3 or higher."
+                if self.stretch is not None and dropped and not found
+                else ""
+            )
             raise EigenmodeConvergenceError(
                 f"MechanicalEigenmode: {len(found)} of {want} modes near "
-                f"{target:g} Hz met eigen_tolerance={tolerance:g} (the best "
+                f"{target:g} Hz met eigen_tolerance={tolerance:g}{layer} (the best "
                 f"backward error was {best:.2g}). Move target closer to the wanted "
-                "modes, or loosen SolverOptions.eigen_tolerance."
+                "modes, or loosen SolverOptions.eigen_tolerance." + hint
             )
         omega_all = np.sqrt(np.array([k for k, _, _ in found]))
         order = np.lexsort(
@@ -1003,7 +1481,10 @@ class MechanicalSystem:
         out = {
             "omega": np.zeros(want, complex),
             "error": np.zeros(want),
-            "group_velocity": np.zeros(want),
+            # a 3D body has no axial band: NaN, a 2D section's is 0 at q = 0
+            "group_velocity": np.full(
+                want, np.nan if self.built.mesh.dim == 3 else 0.0
+            ),
             "cluster": labels,
             "displacement": np.zeros((want, 3, self.nu), complex),
             "potential": np.zeros((want, self.nphi), complex),
@@ -1013,7 +1494,7 @@ class MechanicalSystem:
         gram = np.zeros(want, complex)
         gauge = np.zeros(want, int)
         lams = np.zeros(want, complex)
-        for i, (lam, x, error) in enumerate(found[:want]):
+        for i, (lam, x, _) in enumerate(found[:want]):
             v, y = self._vectors(lam, x, omega_all[i], tolerance, i)
             # the two-sided Rayleigh quotient: second order in the vectors' errors,
             # where the Ritz value is first order in its residual
@@ -1027,11 +1508,13 @@ class MechanicalSystem:
             right[self.index, i], left[self.index, i] = v, y
             gram[i] = y @ (self.mass @ v)
             out["omega"][i] = omega
-            out["error"][i] = error
+            # the returned vector's, not the search's
+            out["error"][i] = self._backward_error(lams[i], v, left=False)
             if self.dk is not None:
                 out["group_velocity"][i] = np.real(
                     (y @ (self.dk @ v)) / (2 * omega * (y @ (self.mass @ v)))
                 )
+            self._warn_gain(i, omega)
             full = self._embed(v)
             out["displacement"][i] = full[: 3 * self.nu].reshape(3, self.nu)
             out["potential"][i] = full[3 * self.nu :]
@@ -1044,6 +1527,21 @@ class MechanicalSystem:
             "shared": shared,
         }
         return out
+
+    def _warn_gain(self, mode: int, omega: complex) -> None:
+        """Warn `LayerClearanceWarning` for a kept mode that grows in time."""
+        if self.stretch is None or omega.imag >= -_GAIN * abs(omega):
+            return
+        warnings.warn(
+            f"MechanicalEigenmode: mode {mode} at {omega.real / (2 * np.pi):.6g} Hz "
+            "grows in time (Im omega < 0, Q = "
+            f"{omega.real / (2 * omega.imag):.4g} with the gain sign) in a "
+            "perfectly matched layer: its evanescent tail most likely reaches "
+            "the layer, which then pumps it instead of absorbing it. Its Q is "
+            "not physical. Move the layer farther from the structure.",
+            LayerClearanceWarning,
+            stacklevel=_mpi.outside_gfem(),
+        )
 
     # --- the eigenvector adjoint -----------------------------------------------------
 
@@ -1068,19 +1566,22 @@ class MechanicalSystem:
         :math:`dx = w + \beta x`, :math:`A w = -P\,dA\,x`,
         :math:`P = I - M x\,y^T/g` and :math:`dA = d\hat K - \lambda\,dM`;
         the complex :math:`\beta` holds the normalization
-        :math:`\tfrac12 (\mathrm{Re}\,\omega)^2 x^H M x = 1` and the phase
-        gauge :math:`\mathrm{Im}\,x_j = 0` at the coefficient :math:`j` =
+        :math:`\tfrac12 (\mathrm{Re}\,\omega)^2 x^H M_\mathrm{n} x = 1` and the
+        phase gauge :math:`\mathrm{Im}\,x_j = 0` at the coefficient :math:`j` =
         ``gauge``, the largest displacement coefficient. With
-        :math:`c = \bar x^T x` and :math:`E = x^H M x`, eliminating :math:`\beta` gives
+        :math:`c = \bar x^T x` and :math:`E = x^H M_\mathrm{n} x`, with
+        :math:`M_\mathrm{n}` the mass the mode is normalized by (the physical
+        regions' with a layer, :math:`M` otherwise; the projector, :math:`g` and
+        :math:`A` read the whole pencil), eliminating :math:`\beta` gives
 
         .. math::
 
             dL = \mathrm{Re}\,\Big[\Big(\frac{\bar\omega_x\,y}{2\omega g}
             - P^T z\Big)^T dA\,x\Big] - \frac{\mathrm{Re}\,c}{2E}\,
-            \mathrm{Re}\,(x^H dM\,x),
+            \mathrm{Re}\,(x^H dM_\mathrm{n}\,x),
 
         with :math:`\bar\omega_x = -\mathrm{Re}\,c / \mathrm{Re}\,\omega`
-        and :math:`A^T z = r`, :math:`r = \bar x - (\mathrm{Re}\,c/E)\,M\bar
+        and :math:`A^T z = r`, :math:`r = \bar x - (\mathrm{Re}\,c/E)\,M_\mathrm{n}\bar
         x^{*} - i\,(\mathrm{Im}\,c/x_j)\,e_j` (:math:`\bar x^{*}` the
         conjugate of the mode :math:`x`). That :math:`r^T x = 0` makes the
         singular system consistent, and :math:`P^T z` does not depend on the
@@ -1094,10 +1595,12 @@ class MechanicalSystem:
         i = self.index
         v, w, v_bar = x[i], y[i], x_bar[i]
         m = self.mass
-        energy = float(np.real(np.vdot(v, m @ v)))
+        # the normalization reads the physical mass; the projector the whole pencil
+        m_norm = self.mass_norm
+        energy = float(np.real(np.vdot(v, m_norm @ v)))
         c = complex(v_bar @ v)
         j = gauge
-        r = v_bar - (c.real / energy) * (m @ np.conj(v))
+        r = v_bar - (c.real / energy) * (m_norm @ np.conj(v))
         r[j] -= 1j * c.imag / v[j].real
         z = self._bordered(lam, v, w, r)
         z = z - w * ((v @ (m @ z)) / gram)
@@ -1135,9 +1638,9 @@ class MechanicalSystem:
         coefficients tie to round-off, and another search could pick the
         other one.
         """
-        energy = np.real(np.vdot(x, self.mass @ x))
+        energy = np.real(np.vdot(x, self.mass_norm @ x))
         x = x * np.sqrt(2 / (omega.real**2 * energy))
-        shown = np.flatnonzero(self.index < 3 * self.nu)
+        shown = np.flatnonzero((self.index < 3 * self.nu) & self.physical[self.index])
         j = int(shown[np.argmax(np.abs(x[shown]))])
         largest = x[j]
         return x * (np.conj(largest) / abs(largest)), j

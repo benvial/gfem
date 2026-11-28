@@ -56,6 +56,8 @@ if TYPE_CHECKING:
 _AXES = "xyz"
 #: The faces of a tetrahedron (node positions), each opposite node ``k``.
 _FACES = np.array([[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]])
+#: The edges of a triangle, each opposite node ``k``.
+_EDGES = np.array([[1, 2], [0, 2], [0, 1]])
 #: Largest component of a unit vector counted as zero (a face normal across
 #: a stretch axis, a port normal across it, an axis-aligned principal axis).
 _ALIGN_TOL = 1e-6
@@ -107,6 +109,28 @@ class PML:
     one plane. Its outer face is PMC by default, or a named `gfem.PEC`.
     The fields inside the layer are not physical.
 
+    Passed to ``gfem.MechanicalEigenmode(..., pml=)`` instead, the layer
+    absorbs the radiated elastic waves of a section or a body: the strain
+    of a layer element is :math:`\partial_j u_i / s_j`, the stiffness, the
+    loss and the mass density carry the factor :math:`\prod_j s_j`, and
+    :math:`k_\text{ref}` is the wavenumber at the reference frequency of
+    the fastest elastic wave along the side's normal, the largest
+    Christoffel speed of the side's regions (the layer then reflects every
+    slower wave below :math:`R_0` too). The model's own ``pml`` is the
+    electromagnetic layer and is not read by a mechanical solve. The
+    layer's regions must be in the mechanical domain and have a constant
+    `gfem.Material`; the section's stretch axes are :math:`x` and
+    :math:`y`. On a 3D body with layers along its sides use order 3 or
+    higher: at order 2 a body mode can read as a layer mode and be dropped.
+
+    Under a node map (`Mesh.with_nodes`) the mechanical layer's
+    :math:`\sigma` stays a function of the imported coordinates: its faces,
+    thickness :math:`d` and :math:`\sigma_\mathrm{max}` are those of the
+    imported mesh, so a map that thickens the layer by :math:`1 + t` also
+    raises its absorption, to the reflection :math:`R_0^{1+t}`, where a
+    re-imported mesh would re-tune :math:`\sigma_\mathrm{max}`. Gradients are
+    those of this stretch.
+
     Attributes:
         regions: The layer's volume region names, a string or a sequence of
             strings.
@@ -115,7 +139,8 @@ class PML:
             :math:`(0, 1)`. Smaller values need a thicker or finer layer.
         reference_frequency: The frequency (Hz) at which the layer meets its
             target reflection; above it the layer reflects less. ``None``:
-            the lowest frequency of the solve, or the eigenmode target.
+            the lowest frequency of the solve, or the eigenmode target (a
+            mechanical solve: the target).
 
     Raises:
         TypeError: ``regions`` is not a name or a sequence of names.
@@ -270,14 +295,29 @@ def _length(value: float, mesh: Mesh) -> str:
     return f"{value / LENGTH_UNITS[unit]:.6g} {unit}"
 
 
-def derive_layers(mesh: Mesh, pml: PML, active: np.ndarray) -> Layers:
+def _triple(v: np.ndarray) -> tuple[float, float, float]:
+    """``v`` (2 or 3 coordinates) as three floats, zero-padded."""
+    p = np.zeros(3)
+    p[: len(v)] = v
+    return float(p[0]), float(p[1]), float(p[2])
+
+
+def derive_layers(
+    mesh: Mesh, pml: PML, active: np.ndarray, *, inside: str = "air box"
+) -> Layers:
     """The interior box and the covered sides, from the imported nodes.
+
+    A 2D mesh's triangles are read like the tetrahedra of a 3D one (its
+    stretch axes are x and y; z entries of the box are 0).
 
     Args:
         mesh: The model's mesh.
         pml: The layer, whose regions are volumes of ``mesh``.
-        active: Per tetrahedron, whether it is in the electromagnetic solve
+        active: Per tetrahedron (triangle), whether it is in the solve
             domain.
+        inside: What the layer surrounds, in the refusals' wording ("air box"
+            of an electromagnetic solve, the mechanical solve's "region it
+            surrounds").
 
     Raises:
         NotImplementedError: A layer tetrahedron straddles a face of the
@@ -286,30 +326,35 @@ def derive_layers(mesh: Mesh, pml: PML, active: np.ndarray) -> Layers:
             lies inside the interior box, or a side does not end on one
             plane.
     """
+    dim = mesh.dim
+    cell, cells = (
+        ("tetrahedron", "tetrahedra") if dim == 3 else ("triangle", "triangles")
+    )
     x = mesh.imported_nodes
-    tets = mesh.tetrahedra
+    tets = mesh.volume_elements
+    tags = mesh._topology.volume_tags  # noqa: SLF001
     names = {mesh.region(r).tag: r for r in pml.regions}
-    is_layer = np.isin(mesh.tetrahedron_tags, list(names))
+    is_layer = np.isin(tags, list(names))
     inner = active & ~is_layer
     elements = np.flatnonzero(active & is_layer)
     if not inner.any():
         raise ValueError(
-            f"perfectly matched layer {pml.regions!r}: every active tetrahedron "
+            f"perfectly matched layer {pml.regions!r}: every active {cell} "
             "is in the layer, so there is no interior box for it to surround."
         )
-    pts = x[tets[inner]].reshape(-1, 3)
+    pts = x[tets[inner]].reshape(-1, dim)
     lo, hi = pts.min(axis=0), pts.max(axis=0)
     tol = REL_TOL * float(_shortest_edges(mesh)[elements].min())
-    p = x[tets[elements]]  # (n, 4, 3)
+    p = x[tets[elements]]  # (n, dim + 1, dim)
     above = (p >= hi - tol).all(axis=1) & (p > hi + tol).any(axis=1)
     below = (p <= lo + tol).all(axis=1) & (p < lo - tol).any(axis=1)
     out = ((p > hi + tol) | (p < lo - tol)).any(axis=1)
     straddle = out & ~above & ~below
-    region = [names[t] for t in mesh.tetrahedron_tags[elements]]
+    region = [names[t] for t in tags[elements]]
     if straddle.any():
         e, axis = np.argwhere(straddle)[0]
         raise NotImplementedError(
-            f"perfectly matched layer {region[e]!r}: a tetrahedron straddles a "
+            f"perfectly matched layer {region[e]!r}: a {cell} straddles a "
             f"face of the interior box along {_AXES[axis]} (the box spans "
             f"{_length(lo[axis], mesh)} to {_length(hi[axis], mesh)}): " + _BOX_SHELL
         )
@@ -317,20 +362,20 @@ def derive_layers(mesh: Mesh, pml: PML, active: np.ndarray) -> Layers:
     if not beyond.any():
         raise ValueError(
             f"perfectly matched layer {pml.regions!r} stretches along no axis: "
-            "every layer tetrahedron lies inside the interior box (the bounding "
-            "box of the active tetrahedra outside the layer). Mesh the layer "
-            "outside the air box, around it."
+            f"every layer {cell} lies inside the interior box (the bounding "
+            f"box of the active {cells} outside the layer). Mesh the layer "
+            f"outside the {inside}, around it."
         )
     inside = ~beyond.any(axis=1)
     if inside.any():
         e = int(np.flatnonzero(inside)[0])
         raise ValueError(
-            f"perfectly matched layer {region[e]!r}: a tetrahedron lies inside "
-            "the interior box (the bounding box of the active tetrahedra outside "
-            "the layer): a layer must surround the air box, not sit in it."
+            f"perfectly matched layer {region[e]!r}: a {cell} lies inside "
+            f"the interior box (the bounding box of the active {cells} outside "
+            f"the layer): a layer must surround the {inside}, not sit in it."
         )
     sides = []
-    for axis in range(3):
+    for axis in range(dim):
         for sign, on in ((-1, below[:, axis]), (1, above[:, axis])):
             if not on.any():
                 continue
@@ -354,37 +399,52 @@ def derive_layers(mesh: Mesh, pml: PML, active: np.ndarray) -> Layers:
             )
             sides.append(Side(axis, sign, face, d, regions))
     return Layers(
-        lower=(float(lo[0]), float(lo[1]), float(lo[2])),
-        upper=(float(hi[0]), float(hi[1]), float(hi[2])),
+        lower=_triple(lo),
+        upper=_triple(hi),
         sides=tuple(sides),
         elements=readonly(elements),
         nodes=readonly(np.unique(tets[elements])),
     )
 
 
+def _face_normals(x: np.ndarray, faces: np.ndarray) -> np.ndarray:
+    """The (unnormalized) normals of ``faces``: triangles by the right-hand rule."""
+    a, b = x[faces[:, 0]], x[faces[:, 1]]
+    if faces.shape[1] == 2:
+        edge = b - a
+        return np.stack([edge[:, 1], -edge[:, 0]], axis=1)
+    return np.cross(b - a, x[faces[:, 2]] - a)
+
+
 def _exterior_faces(mesh: Mesh, elements: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Faces of ``elements`` that no other tetrahedron of the mesh shares.
+    """Faces of ``elements`` that no other element of the mesh shares.
+
+    The faces of a tetrahedron are triangles, those of a 2D mesh's triangle
+    its edges.
 
     Returns:
-        ``(faces, owners)``: the faces' node triples, outward by the
-        right-hand rule, and their tetrahedra.
+        ``(faces, owners)``: the faces' node tuples, outward by the
+        right-hand rule, and their elements.
     """
-    tets = mesh.tetrahedra
+    dim = mesh.dim
+    tets = mesh.volume_elements
     nodes = np.unique(tets[elements])
-    near = np.flatnonzero(np.isin(tets, nodes).sum(axis=1) >= 3)
-    faces = tets[near][:, _FACES].reshape(-1, 3)
+    near = np.flatnonzero(np.isin(tets, nodes).sum(axis=1) >= dim)
+    faces = tets[near][:, _FACES if dim == 3 else _EDGES].reshape(-1, dim)
     _, inverse, counts = np.unique(
         np.sort(faces, axis=1), axis=0, return_inverse=True, return_counts=True
     )
-    owners = np.repeat(near, 4)
-    opposite = np.tile(np.arange(4), len(near))
+    owners = np.repeat(near, dim + 1)
+    opposite = np.tile(np.arange(dim + 1), len(near))
     keep = (counts[inverse.ravel()] == 1) & np.isin(owners, elements)
     faces, owners, opposite = faces[keep], owners[keep], opposite[keep]
     x = mesh.imported_nodes
-    a, b, c = (x[faces[:, k]] for k in range(3))
-    normal = np.cross(b - a, c - a)
-    inward = np.einsum("ij,ij->i", normal, x[tets[owners, opposite]] - a) > 0
-    faces[inward] = faces[inward][:, [0, 2, 1]]
+    normal = _face_normals(x, faces)
+    inward = (
+        np.einsum("ij,ij->i", normal, x[tets[owners, opposite]] - x[faces[:, 0]]) > 0
+    )
+    flip = [0, 2, 1] if dim == 3 else [1, 0]
+    faces[inward] = faces[inward][:, flip]
     return faces, owners
 
 
@@ -403,8 +463,7 @@ def _check_plane(
     """Every exterior face of a side facing outward lies on its outer plane."""
     x = mesh.imported_nodes
     faces, owners = _exterior_faces(mesh, side)
-    a, b, c = (x[faces[:, k]] for k in range(3))
-    normal = np.cross(b - a, c - a)
+    normal = _face_normals(x, faces)
     normal /= np.linalg.norm(normal, axis=1)[:, None]
     outward = sign * normal[:, axis] > _ALIGN_TOL
     depth = sign * (x[faces[outward]][..., axis] - face)  # (n, 3)
@@ -412,11 +471,11 @@ def _check_plane(
     if not short.any():
         return
     names = {mesh.region(r).tag: r for r in pml.regions}
-    tags = mesh.tetrahedron_tags
+    tags = mesh._topology.volume_tags  # noqa: SLF001
     k = int(np.flatnonzero(short)[0])
     low = float(depth[k].min())
     low_region = names[tags[owners[outward][k]]]
-    tets = mesh.tetrahedra
+    tets = mesh.volume_elements
     reach = (sign * (x[tets[side], axis] - face)).max(axis=1)
     top_region = names[tags[side[int(np.argmax(reach))]]]
     raise ValueError(
