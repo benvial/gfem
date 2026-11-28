@@ -9,16 +9,23 @@ closed forms of an isotropic strip, with :math:`v_T = \sqrt{\mu/\rho}` and
 - anti-plane standing waves of a free rectangle (`sh_standing`);
 - shear horizontal modes of a strip with sliding walls (`sh_strip`);
 - Lamb modes of a plate and the Rayleigh wave (`lamb_roots`, `rayleigh_ratio`).
+
+The 3D bodies are boxes on a structured Kuhn grid of tetrahedra (`box`, in
+micrometres, the faces ``x0 x1 y0 y1 z0 z1``), with the closed forms of a box
+with sliding walls (`box_frequencies`) and of a plate cut to a box
+(`lamb_box_frequencies`).
 """
 
 from __future__ import annotations
 
 import dataclasses
 import itertools
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
 import piezo_cases as pc
+import structured_meshes as sm
 import thermal_cases as tc
 from scipy.optimize import brentq
 
@@ -47,6 +54,37 @@ def rectangle(path: Path, width: float, height: float, maxh: float) -> gfem.Mesh
     return gfem.Mesh.from_gmsh(path, length_unit="um")
 
 
+def box(
+    path: Path,
+    size: tuple[float, float, float],
+    cells: float,
+    *,
+    regions: Callable[[np.ndarray], str] | None = None,
+) -> gfem.Mesh:
+    """The box ``[0, a] x [0, b] x [0, c]`` (micrometres) on a Kuhn grid of tetrahedra.
+
+    ``cells`` per micrometre; the faces ``x0 x1 y0 y1 z0 z1``, one region ``body``
+    or the name ``regions`` gives each cell from its centroid. The grid is
+    deterministic, so every platform solves the same mesh.
+    """
+    edges = tuple(np.linspace(0, L, round(L * cells) + 1) for L in size)
+
+    def face(c: np.ndarray) -> str:
+        for i, axis in enumerate("xyz"):
+            if abs(c[i]) < 1e-9:
+                return f"{axis}0"
+            if abs(c[i] - size[i]) < 1e-9:
+                return f"{axis}1"
+        return ""
+
+    def volume(c: np.ndarray) -> str:
+        return "body" if regions is None else regions(c)
+
+    path = Path(path)
+    sm.write_msh22(path, sm.carve(edges, volume, face, None))
+    return gfem.Mesh.from_gmsh(path, length_unit="um")
+
+
 def material(*, quality: float | None = None) -> gfem.Material:
     """The isotropic solid, with a uniform :math:`Q_m` if given."""
     return gfem.Material(
@@ -54,6 +92,27 @@ def material(*, quality: float | None = None) -> gfem.Material:
         mass_density=RHO,
         mechanical_quality_factor=quality,
     )
+
+
+#: The cubic silicon of the 3D boxes (crystal axes along the box's): 165.7, 63.9 and
+#: 79.6 GPa, 2329 kg/m^3.
+SI_C = (165.7e9, 63.9e9, 79.6e9)
+SI_RHO = 2329.0
+#: The sliding walls of a box: each face keeps the displacement component along
+#: its normal at zero.
+ROLLERS = {"x0": "x", "x1": "x", "y0": "y", "y1": "y", "z0": "z", "z1": "z"}
+#: The Lamb box: rollers on the x and y faces, the z faces free.
+LAMB_ROLLERS = {k: v for k, v in ROLLERS.items() if k[0] != "z"}
+
+
+def _cubic(c11: float, c12: float, c44: float) -> np.ndarray:
+    """The 6x6 stiffness of a cubic crystal in its axes."""
+    c = np.zeros((6, 6))
+    c[:3, :3] = c12
+    return c + np.diag([c11 - c12] * 3 + [c44] * 3)
+
+
+SILICON = gfem.Material(stiffness=_cubic(*SI_C), mass_density=SI_RHO)
 
 
 def model(mesh: gfem.Mesh, *, quality: float | None = None) -> gfem.Model:
@@ -150,6 +209,80 @@ def rayleigh_ratio() -> float:
     roots = np.roots([1, 0, -8, 0, 24 - 16 * k2, 0, -16 * (1 - k2)])
     real = [r.real for r in roots if abs(r.imag) < 1e-12 and 0 < r.real < 1]
     return float(max(real))
+
+
+def box_frequencies(
+    size: tuple[float, float, float],
+    c: tuple[float, float, float],
+    rho: float,
+    count: int,
+) -> list[float]:
+    r"""The ``count`` lowest frequencies (Hz) of a cubic solid in a box with rollers.
+
+    With the walls sliding (`ROLLERS`) the modes are the standing waves
+    :math:`u_i \propto \sin(k_i x_i) \prod_{j\ne i}\cos(k_j x_j)`,
+    :math:`k = \pi (l/a, m/b, n/c)`, whose amplitudes are the eigenvectors of
+    the Christoffel matrix :math:`\Gamma(k)/\rho`. A component whose index is
+    zero vanishes (its sine is zero), so the matrix keeps the rows and columns
+    of the nonzero indices only. ``c`` is :math:`(c_{11}, c_{12}, c_{44})`,
+    ``size`` in micrometres; the indices run to 3.
+    """
+    c11, c12, c44 = c
+    out = []
+    for index in itertools.product(range(4), repeat=3):
+        keep = np.array(index) > 0
+        if not keep.any():
+            continue
+        kx, ky, kz = np.pi * np.array(index) / (np.array(size) * UM)
+        gamma = np.array(
+            [
+                [
+                    c11 * kx**2 + c44 * (ky**2 + kz**2),
+                    (c12 + c44) * kx * ky,
+                    (c12 + c44) * kx * kz,
+                ],
+                [
+                    (c12 + c44) * kx * ky,
+                    c11 * ky**2 + c44 * (kx**2 + kz**2),
+                    (c12 + c44) * ky * kz,
+                ],
+                [
+                    (c12 + c44) * kx * kz,
+                    (c12 + c44) * ky * kz,
+                    c11 * kz**2 + c44 * (kx**2 + ky**2),
+                ],
+            ]
+        )[np.ix_(keep, keep)]
+        out += [
+            float(np.sqrt(w)) / (2 * np.pi) for w in np.linalg.eigvalsh(gamma) / rho
+        ]
+    return sorted(out)[:count]
+
+
+def lamb_box_frequencies(size: tuple[float, float, float], count: int) -> list[float]:
+    r"""The ``count`` lowest frequencies (Hz) of the isotropic Lamb box.
+
+    A plate of thickness ``size[2]`` (micrometres) cut to ``size[0] x size[1]``
+    with rollers on the x and y faces (`LAMB_ROLLERS`): the Lamb modes
+    (`lamb_roots`) at :math:`q = \pi\sqrt{(l/a)^2 + (m/b)^2}`, the shear
+    horizontal modes :math:`v_T\sqrt{q^2 + (n\pi/c)^2}/2\pi` (:math:`l, m > 0`)
+    and the thickness modes of :math:`q = 0` (:math:`n v_L / 2c`).
+    The rigid translation along z is not a mode.
+    """
+    a, b, c = size
+    out = [n * V_L / (2 * c * UM) for n in (1, 2)]
+    for index in itertools.product(range(4), repeat=2):
+        if not any(index):
+            continue
+        l, m = index
+        q = np.pi * float(np.hypot(l / (a * UM), m / (b * UM)))
+        out += lamb_roots(q, c, "S", 3) + lamb_roots(q, c, "A", 3)
+        if l and m:
+            out += [
+                V_T * float(np.hypot(q, n * np.pi / (c * UM))) / (2 * np.pi)
+                for n in range(3)
+            ]
+    return sorted(out)[:count]
 
 
 def sandwich_model(path: Path) -> gfem.Model:
@@ -270,3 +403,33 @@ def per_element_direction(mesh: gfem.Mesh, region: str, seed: int) -> np.ndarray
     """A random unit direction of one value per element of ``region``."""
     d = np.random.default_rng(seed).standard_normal(len(mesh.elements(region)))
     return d / np.linalg.norm(d)
+
+
+def mass_energy(
+    model: gfem.Model, u: gfem.FieldMap, *, rho: float = RHO, order: int = 2
+):
+    r""":math:`\int \rho |u|^2 \mathrm{d}V` of a displacement `gfem.FieldMap`, in SI.
+
+    ``dV`` is the area (2D section, per metre along z) or the volume (3D body)
+    of the mesh in metres: the mesh's unit to the power of its dimension.
+    """
+    import ngsolve as ngs
+
+    from gfem._engine.cache import discretization
+    from gfem._engine.domain import em_region, h1_space
+
+    built = discretization(model.mesh).built
+    space = h1_space(model, built, order, (), physics="mechanical", complex_valued=True)
+    total = 0.0
+    with ngs.TaskManager():
+        for axis in "xyz":
+            g = ngs.GridFunction(space)
+            g.vec.FV().NumPy()[:] = np.asarray(u[axis].coefficients)
+            region = em_region(model, built, "mechanical")
+            total += ngs.Integrate(
+                rho * (g * ngs.Conj(g)).real * built.scale**model.mesh.dim,
+                built.mesh,
+                definedon=region,
+                order=2 * order + 2,
+            )
+    return total
