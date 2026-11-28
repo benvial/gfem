@@ -1658,8 +1658,8 @@ class DampingFrame:
             names = ()
         if not names or not all(isinstance(n, str) for n in names):
             raise TypeError(
-                "DampingFrame: regions must be area or volume region names (a "
-                f"string or a non-empty sequence of strings), got {regions!r}."
+                "DampingFrame: regions must be area region names (a string or a "
+                f"non-empty sequence of strings), got {regions!r}."
             )
         for name in names:
             if names.count(name) > 1:
