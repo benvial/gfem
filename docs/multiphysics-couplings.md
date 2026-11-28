@@ -412,7 +412,8 @@ of a piezoelectric problem's elasticity (with its potential coupled where a
 material carries a piezoelectric tensor), on a 2D section, for fields of the
 form $u(x, y)\,e^{i\omega t - iqz}$: $q$ is the {term}`axial
 wavenumber` in rad/m, and $\partial_z \to -iq$ in the strain. A mode with
-$q > 0$ travels along $+z$ where its group velocity is positive. The stiffness
+$q > 0$ travels along $+z$ where its group velocity is positive. A 3D body has
+fields $u(x, y, z)\,e^{i\omega t}$ and no $q$. The stiffness
 and the loss are the piezoelectric problem's, $c\,(1 + i/Q_m)$ and a
 {py:class}`gfem.DampingFrame`'s, under $e^{+i\omega t}$, so a decaying mode has
 $\mathrm{Im}\,\omega > 0$ and
@@ -423,17 +424,18 @@ $$
 
 **Normalization.** A mode's displacement carries
 $\tfrac12 (\mathrm{Re}\,\omega)^2 \int \rho\,|u|^2\,\mathrm{d}A = 1$ J per metre
-along $z$, with its largest coefficient real and positive. It is the
-time-averaged energy of a lossless mode, which splits equally between kinetic
-and strain energy.
+along $z$, or 1 J for a 3D body (the integral over its volume), with its largest
+coefficient real and positive. It is the time-averaged energy of a lossless
+mode, which splits equally between kinetic and strain energy.
 
 **Group velocity.** `group_velocity` is $\mathrm{Re}\,\mathrm{d}\omega/\mathrm{d}q$
 in m/s, the exact derivative of the discrete band. Every section is
 reciprocal: $\omega(-q) = \omega(q)$, the group velocity at $-q$ is opposite,
-and at $q = 0$ it is exactly 0 (no derivative is assembled there).
+and at $q = 0$ it is exactly 0 (no derivative is assembled there). For a 3D
+body it is NaN.
 
-**Clamped components.** `clamped` fixes all three components on a line by its
-name, or only the components named by a string of `"xyz"` in the lab axes: a
+**Clamped components.** `clamped` fixes all three components on a line (a surface
+of a 3D body) by its name, or only the components named by a string of `"xyz"` in the lab axes: a
 line of constant $x$ held with `"x"` keeps $u_x = 0$ and slides in $y$ and $z$.
 Every other line is traction-free. A section free at $q = 0$ has rigid-body
 motions at $\omega = 0$ that are not returned.

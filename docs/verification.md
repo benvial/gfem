@@ -307,7 +307,7 @@ Observations, not checks: the transducer of the {doc}`tutorial
 
 ## Mechanical eigenmodes
 
-Elastic modes of a 2D section ({doc}`recipes/mechanical-modes`).
+Elastic modes of a 2D section ({doc}`recipes/mechanical-modes`) and of a 3D body ({doc}`recipes/mechanical-resonators`).
 
 | Case | Compared with | Test | Runs |
 |---|---|---|---|
@@ -315,6 +315,9 @@ Elastic modes of a 2D section ({doc}`recipes/mechanical-modes`).
 | Uniform $Q_m$; lossless modes; $\omega(-q) = \omega(q)$; normalization to 1 J/m; group velocity | $\sqrt{1 + i/Q_m}$ scaling; identities; central difference of the band | {gfem-test}`tests/unit/test_mechanical_eigenmode.py` | Every change |
 | Thickness-extensional plate of a 6mm crystal, open and grounded faces | Stiffened half-wave; root of $\tan X / X = 1/k_t^2$; pole of the admittance | {gfem-test}`tests/verification/test_mechanical_eigenmode_piezo.py` | Every change |
 | Gradients of `omega` in stiffness, density, $Q_m$, piezoelectric tensor, permittivity, nodes | Fourth-order central differences | {gfem-test}`tests/unit/test_mechanical_eigenmode_gradients.py` | Every change |
+| Roller box (isotropic and cubic silicon) and Lamb box, 3D, order 3 | Standing-wave and Lamb closed forms; error falls at least 32 times per halved edge | {gfem-test}`tests/verification/test_mechanical_3d.py` | Every change |
+| Cantilever 100 x 10 x 2 um clamped at its root | Euler-Bernoulli frequency within 1 % | {gfem-test}`tests/verification/test_mechanical_3d.py` | Every change |
+| 3D thickness-extensional plate, open and grounded faces | Stiffened half-wave; root of $\tan X / X = 1/k_t^2$ | {gfem-test}`tests/unit/test_mechanical_3d.py` | Every change |
 
 (verification-acousto-optic)=
 ## Acousto-optic shift

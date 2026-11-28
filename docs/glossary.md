@@ -635,10 +635,9 @@ Mechanical domain
 
 Mechanical eigenmode
   A source-free solution of linear elasticity on a 2D section, varying as
-  $e^{-iqz}$ along its normal: a complex angular frequency and a displacement
-  normalized to 1 J/m ({py:class}`gfem.MechanicalEigenmode`). A material with
-  a piezoelectric tensor couples the potential to it. See
-  {doc}`recipes/mechanical-modes`.
+  $e^{-iqz}$ along its normal, or on a 3D body: a complex angular frequency and a
+  displacement normalized to 1 J/m or 1 J ({py:class}`gfem.MechanicalEigenmode`). See
+  {doc}`recipes/mechanical-resonators`.
 
 Axial wavenumber
   The real propagation constant $q$ in rad/m along $z$ of a
@@ -659,14 +658,14 @@ Line electrode
   It is named as a terminal or as ground by its line. See {doc}`recipes/piezoelectric-admittance`.
 
 Clamped surface
-  A line of a piezoelectric section where the displacement is held at zero
-  (`clamped=`). Every other boundary is traction-free. See {doc}`recipes/piezoelectric-admittance`.
+  A line of a section or a surface of a 3D body where the displacement is held at zero
+  (`clamped=`). Every other boundary is traction-free. See {doc}`recipes/mechanical-resonators`.
 
 Damping frame
   An absorbing edge region where the stiffness becomes
   $c (1 + i(1/Q_m + \eta r^2))$, with $r$ the normalised depth and $\eta$ its {term}`loss factor <Loss factor (of a damping frame)>`
   ({py:obj}`gfem.DampingFrame`). It absorbs the sound that leaves a
-  piezoelectric section, as a {term}`perfectly matched layer` does light. See {doc}`tutorials/transducer`.
+  section or a body, as a {term}`perfectly matched layer` does light. See {doc}`tutorials/transducer`.
 
 Loss factor (of a damping frame)
   The loss $\eta$ that a {term}`damping frame` adds to the stiffness at its outer

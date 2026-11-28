@@ -4,7 +4,8 @@ Find the modes of vibration of a solid cross-section that propagate along its
 axis: the {term}`mechanical eigenmode` of a suspended film (its Lamb modes) or
 of a rib, at a given {term}`axial wavenumber` $q$. Each mode has a frequency, a
 quality factor $Q$, a displacement and a group velocity.
-{py:class}`gfem.MechanicalEigenmode` solves a 2D section, one solve a wavenumber.
+{py:class}`gfem.MechanicalEigenmode` solves a 2D section, one solve a wavenumber;
+a 3D body is in {doc}`mechanical-resonators`.
 
 ## A solid and its modes
 
@@ -135,8 +136,8 @@ solves.
 
 ## Limits
 
-- The problem is 2D: a tetrahedral or a slab mesh raises (`Mesh.from_gmsh` of a file
-  of triangles).
+- A slab mesh raises; a 3D body takes no wavenumber
+  ({doc}`mechanical-resonators`).
 - `linear_solver="petsc"`, any solve under `comm` and a GPU `device`: one
   process and the sparse direct solver.
 - A `gfem.Absorbing` line on a solid's edge: use a damping frame.
@@ -151,6 +152,7 @@ solves.
 
 ## Next
 
+- {doc}`mechanical-resonators`: a 3D body, with its root clamped.
 - {doc}`optomechanical-coupling`: the coupling of these modes to the light of a
   waveguide.
 - {doc}`piezoelectric-admittance`: the same solids driven by electrodes.
