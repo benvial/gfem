@@ -107,47 +107,24 @@ def _edit(model, name, p):
     return model
 
 
-#: Random directions over both regions (a unit vector with both components positive,
-#: so that the two regions add): the measured relative slopes of Re omega and Im
-#: omega are 0.305 and 0.305 for the stiffness, -0.395 and -0.395 for the density, and
-#: -6e-5 and -0.611 for the quality factor, all of Im omega at least 0.15.
-DIRECTION = np.array([0.6, 0.8])
+#: One direction over the three leaves and both regions, ``(leaf, region)``: the
+#: leaves in turn (stiffness, density, quality factor) with the signs that make their
+#: slopes add on both parts of omega (measured relative slopes of Re omega and Im
+#: omega per unit of a leaf, both regions moved: 0.305 and 0.305 for the stiffness,
+#: -0.395 and -0.395 for the density, -6e-5 and -0.611 for the quality factor; the
+#: readings |u|^2 and S_xx move by -0.59 and -0.29 per unit of the stiffness, and
+#: little by the others, so their gate is the floor of the group). The unit vector
+#: has 1/sqrt(3) in each leaf, split 0.6 : 0.8 over the two regions (so that the
+#: regions add), signs (+, -, -): the slope of the joint step is at least
+#: (0.305 + 0.395) 0.577 = 0.40 on Re omega and 0.76 on Im omega.
+JOINT = np.array([[0.6, 0.8], [-0.6, -0.8], [-0.6, -0.8]]) / np.sqrt(3.0)
 
 
-@pytest.mark.parametrize(
-    "name", ["stiffness", "mass_density", "mechanical_quality_factor"]
-)
-def test_the_frequency_of_a_cantilever_matches_finite_differences(cantilever, name):
-    def objective(p):
-        result = gfem.solve(
-            _edit(cantilever, name, p), CANTILEVER_PROBLEM, options=OPTIONS
-        )
-        return _omega(result)
-
-    # the real part of omega moves by 6e-5 relative under the quality factor: it is
-    # read against 1e-3 of the imaginary part's derivative
-    groups = {"omega": [0, 1]}
-    fd.assert_jacobian_matches_by_group(
-        objective, jnp.zeros(2), [DIRECTION], STEP, groups
-    )
-
-
-def test_a_stretch_of_a_cantilever_along_its_length_matches_finite_differences(
-    cantilever,
-):
-    # omega scales as s^-2 (relative slope -2): the truncation of the fourth-order
-    # difference is 12 h^4 = 7.5e-9 at h = 5e-3 (measured on the slender beam: 1.9e-6
-    # at h = 0.02, 12 h^4 = 1.9e-6), the round-off 1.5 delta / (h s) = 1.5 * 1.2e-10 /
-    # (5e-3 * 2) = 1.8e-8: 2.6e-8 together
-    materials = cantilever.materials
-
-    def objective(s):
-        model = gfem.Model(_stretched(cantilever.mesh, s, 0), materials=materials)
-        return _omega(gfem.solve(model, CANTILEVER_PROBLEM, options=OPTIONS))
-
-    fd.assert_jacobian_matches_by_group(
-        objective, jnp.asarray(1.0), [np.asarray(1.0)], 5e-3, OMEGA
-    )
+def _joint(model, p):
+    """``model`` with the leaves of ``LEAF`` moved by the rows of ``p`` (regions a, b)."""
+    for row, name in zip(p, LEAF, strict=True):
+        model = _edit(model, name, row)
+    return model
 
 
 def _readings(result):
@@ -166,39 +143,43 @@ def _readings(result):
     return jnp.stack([intensity, strain.real])
 
 
-#: Measured relative slopes (per unit of the direction, and of the stretch): |u|^2
-#: -0.59 and -0.97, S_xx -0.29 and -0.50, all at least 0.15: a step 1e-2 on the
-#: modulus (round-off 1.5 * 1.2e-10 / (1e-2 * 0.29) = 6.2e-8, truncation under 4e-8)
-#: and 5e-3 on the stretch (round-off 1.8e-8 / 0.5 = 3.7e-8).
-READINGS = {"|u|^2": [0], "S_xx": [1]}
-
-
-def test_the_field_readings_of_a_cantilever_match_finite_differences_in_the_modulus(
+def test_the_frequency_and_readings_of_a_cantilever_match_finite_differences_in_its_leaves(
     cantilever,
 ):
+    # the step 1e-2 on a unit vector (0.577 per leaf): round-off 1.5 * 1.2e-10 / (1e-2
+    # * 0.40) = 4.5e-8 on Re omega, 2.4e-8 on Im omega (the readings, of slopes of
+    # 0.3 to 0.6 by the modulus, are read at the same budget); the truncation of the
+    # fourth-order difference of omega ~ (1+p1)^(1/2) (1+p2)^(-1/2) (1+p3)^(-1) is
+    # at most 4 h^4 = 4e-8 per unit of a leaf and (0.577)^4 of it here
     def objective(p):
-        result = gfem.solve(
-            _edit(cantilever, "stiffness", p), CANTILEVER_PROBLEM, options=OPTIONS
-        )
-        return _readings(result)
+        result = gfem.solve(_joint(cantilever, p), CANTILEVER_PROBLEM, options=OPTIONS)
+        return jnp.concatenate([_omega(result), _readings(result)])
 
+    groups = {"omega": [0, 1], "|u|^2": [2], "S_xx": [3]}
     fd.assert_jacobian_matches_by_group(
-        objective, jnp.zeros(2), [DIRECTION], STEP, READINGS
+        objective, jnp.zeros((3, 2)), [JOINT], STEP, groups
     )
 
 
-def test_the_field_readings_of_a_cantilever_match_finite_differences_in_a_stretch(
+def test_a_stretch_of_a_cantilever_along_its_length_matches_finite_differences(
     cantilever,
 ):
-    # the readings stay at a fixed point while the elements stretch under it
+    # omega scales as s^-2 (relative slope -2): the truncation of the fourth-order
+    # difference is 12 h^4 = 7.5e-9 at h = 5e-3 (measured on the slender beam: 1.9e-6
+    # at h = 0.02, 12 h^4 = 1.9e-6), the round-off 1.5 delta / (h s) = 1.5 * 1.2e-10 /
+    # (5e-3 * 2) = 1.8e-8: 2.6e-8 together. The readings stay at a fixed point while
+    # the elements stretch under it (measured slopes -0.97 for |u|^2 and -0.50 for
+    # S_xx: round-off 1.8e-8 / 0.5 = 3.7e-8)
     materials = cantilever.materials
 
     def objective(s):
         model = gfem.Model(_stretched(cantilever.mesh, s, 0), materials=materials)
-        return _readings(gfem.solve(model, CANTILEVER_PROBLEM, options=OPTIONS))
+        result = gfem.solve(model, CANTILEVER_PROBLEM, options=OPTIONS)
+        return jnp.concatenate([_omega(result), _readings(result)])
 
+    groups = {"omega": [0, 1], "|u|^2": [2], "S_xx": [3]}
     fd.assert_jacobian_matches_by_group(
-        objective, jnp.asarray(1.0), [np.asarray(1.0)], 5e-3, READINGS
+        objective, jnp.asarray(1.0), [np.asarray(1.0)], 5e-3, groups
     )
 
 
@@ -242,6 +223,18 @@ def _plate_direction(name):
     return d / np.linalg.norm(d)
 
 
+def _plate_potential(result):
+    """``[|V|^2, Re, Im of V conj(u_y)]`` at the plate's point.
+
+    |V|^2 is invariant under the phase gauge (the plate's mode is uniform along x
+    and z, so its largest displacement coefficients tie and the gauge is not
+    defined); the product with the displacement reads the potential's phase.
+    """
+    v = result.potential(0).at(PLATE_POINT)
+    cross = v * jnp.conj(result.displacement(0)["y"].at(PLATE_POINT))
+    return jnp.stack([jnp.abs(v) ** 2, cross.real, cross.imag])
+
+
 @pytest.mark.parametrize("name", list(PLATE_SHAPES))
 def test_the_frequency_of_a_3d_plate_matches_finite_differences(plate, name):
     # a unit of p is 1 C/m^2 of e (e33 = 1.3) or 10 of eps_r (eps33 = 29). The
@@ -255,40 +248,23 @@ def test_the_frequency_of_a_3d_plate_matches_finite_differences(plate, name):
     # 3e-11 at 1e-3, so 1.5 delta / (h s) = 3e-11 gives delta = 1.4e-16 for e). At
     # h = 1e-2 truncation (about 7e-12) and round-off (about 1e-11) both sit far
     # under 1e-6; the imaginary part, a hundred times smaller, is read against 1e-3 of
-    # the larger derivative
+    # the larger derivative. The tensor's case also reads the potential at a point
+    # (the same step and solves): |V|^2 and V conj(u_y), each against the floor of
+    # its group
     def objective(p):
         result = gfem.solve(
             _plate_edit(name, plate, p), _plate_problem(), options=PLATE_OPTIONS
         )
+        if name == "piezoelectric_tensor":
+            return jnp.concatenate([_omega(result), _plate_potential(result)])
         return _omega(result)
 
+    groups = dict(OMEGA)
+    if name == "piezoelectric_tensor":
+        groups |= {"|V|^2": [2], "V conj(u_y)": [3, 4]}
     shape = PLATE_SHAPES[name]
     fd.assert_jacobian_matches_by_group(
-        objective, jnp.zeros(shape), [_plate_direction(name)], STEP, OMEGA
-    )
-
-
-def test_a_potential_reading_of_a_3d_plate_matches_finite_differences(plate):
-    # |V|^2 is invariant under the phase gauge (the plate's mode is uniform along x
-    # and z, so its largest displacement coefficients tie and the gauge is not
-    # defined); the product with the displacement reads the potential's phase
-    def objective(p):
-        result = gfem.solve(
-            _plate_edit("piezoelectric_tensor", plate, p),
-            _plate_problem(),
-            options=PLATE_OPTIONS,
-        )
-        v = result.potential(0).at(PLATE_POINT)
-        cross = v * jnp.conj(result.displacement(0)["y"].at(PLATE_POINT))
-        return jnp.stack([jnp.abs(v) ** 2, cross.real, cross.imag])
-
-    d = _plate_direction("piezoelectric_tensor")
-    fd.assert_jacobian_matches_by_group(
-        objective,
-        jnp.zeros(d.shape),
-        [d],
-        STEP,
-        {"|V|^2": [0], "V conj(u_y)": [1, 2]},
+        objective, jnp.zeros(shape), [_plate_direction(name)], STEP, groups
     )
 
 
@@ -311,28 +287,37 @@ def framed(tmp_path_factory):
     return gfem.Model(mesh, materials={"core": material, "frame": material})
 
 
-@pytest.mark.parametrize("axes", [[0], [1], [0, 1, 2]], ids=["x", "y", "xyz"])
-def test_the_frequency_of_a_framed_box_matches_finite_differences_in_a_stretch(
-    framed, axes
-):
+#: The stretch of the framed box along each axis, as one direction (unit vector): the
+#: slopes of (Re omega, Im omega) below add for it.
+FRAME_DIRECTION = np.array([0.6, 0.7, 0.4]) / np.linalg.norm([0.6, 0.7, 0.4])
+
+
+def test_the_frequency_of_a_framed_box_matches_finite_differences_in_a_stretch(framed):
     # a mode near 3.0 GHz of the roller box, damped by the frame (Q 1.7), whose depth
     # rides with the nodes: the stretch changes the depth along each axis it moves.
-    # Measured relative slopes of (Re omega, Im omega): x -0.43 and -0.71, y -0.58 and
-    # -0.27, z 0.010 and -0.021 (the mode does not vary along z); all three axes, which
-    # reads the z depth, about -1. Re omega scales as s^-1 at most, so the truncation
-    # is 4 h^4 = 4e-8 at h = 1e-2, and the round-off 1.5 delta / (h s) of the measured
-    # delta of this box (1.6 k DOFs, under 1e-13 as the plate's) is under 1e-9
+    # One anisotropic stretch, the factors (s_x, s_y, s_z) moved along a direction
+    # with all three components. Measured relative slopes of (Re omega, Im omega)
+    # per unit of one factor: x -0.43 and -0.71, y -0.58 and -0.27, z 0.010 and
+    # -0.021 (the mode does not vary along z), all three together about -1; they
+    # add along (0.6, 0.7, 0.4) / 1.005: -0.66 and -0.62 per unit step, so the
+    # derivative reads the x and y depths and, through the z component, the z
+    # depth (a sign or index error there moves the derivative by under 1 %, the
+    # same share the all-axes case had). Re omega scales as s^-1 at most, so the
+    # truncation is 4 h^4 = 4e-8 at h = 1e-2, and the round-off 1.5 delta / (h s) of
+    # the measured delta of this box (1.6 k DOFs, under 1e-13 as the plate's) is
+    # under 1e-9
     problem = gfem.MechanicalEigenmode(
         2.9e9, clamped=mc.ROLLERS, damping_frame=gfem.DampingFrame("frame")
     )
     materials = framed.materials
+    nodes = jnp.asarray(framed.mesh.nodes)
 
     def objective(s):
-        model = gfem.Model(_stretched(framed.mesh, s, axes), materials=materials)
+        model = gfem.Model(framed.mesh.with_nodes(nodes * s), materials=materials)
         return _omega(gfem.solve(model, problem, options=OPTIONS))
 
     fd.assert_jacobian_matches_by_group(
-        objective, jnp.asarray(1.0), [np.asarray(1.0)], STEP, OMEGA
+        objective, jnp.ones(3), [FRAME_DIRECTION], STEP, OMEGA
     )
 
 
@@ -403,28 +388,30 @@ def test_a_field_cotangent_costs_one_factorization_per_mode(cantilever, monkeypa
     )
     problem = gfem.MechanicalEigenmode(4.3e6, n_modes=2, clamped={"x0": "xyz"})
 
-    def factorizations(objective):
-        count[0] = 0
-        fd._alone(jax.grad(objective), mc.RHO)
-        return count[0]
-
     def solved(rho):
         return gfem.solve(
             mc.edited(model, ["a", "b"], mass_density=rho), problem, options=OPTIONS
         )
 
-    def omega(rho):
-        return jnp.real(solved(rho).omega).sum()
-
-    def one_field(rho):
-        u = solved(rho).displacement(0)
-        return sum(jnp.abs(u[k].at(POINT)) ** 2 for k in "xyz")
-
-    def both_fields(rho):
+    def outputs(rho):
         result = solved(rho)
-        u = [result.displacement(i)["z"].at(POINT) for i in range(2)]
-        return sum(jnp.abs(v) ** 2 for v in u)
+        one = result.displacement(0)
+        both = [result.displacement(i)["z"].at(POINT) for i in range(2)]
+        return (
+            jnp.real(result.omega).sum(),
+            sum(jnp.abs(one[k].at(POINT)) ** 2 for k in "xyz"),
+            sum(jnp.abs(v) ** 2 for v in both),
+        )
 
-    assert factorizations(omega) == 1
-    assert factorizations(one_field) == 2
-    assert factorizations(both_fields) == 3
+    # one forward, then three backwards of it, each with a cotangent on one output
+    # only; the factorizations are counted between them
+    count[0] = 0
+    _, pullback = jax.vjp(outputs, jnp.asarray(mc.RHO))
+    assert count[0] == 1
+    totals = []
+    for cotangent in ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)):
+        count[0] = 0
+        pullback(tuple(jnp.asarray(c) for c in cotangent))
+        totals.append(count[0])
+    # omega alone adds none, the field of one mode one, those of two modes two
+    assert totals == [0, 1, 2]
