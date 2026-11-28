@@ -326,18 +326,28 @@ def test_probe_node_and_point_gradients_raise(mode):
     assert not np.asarray(g).any()
 
 
-def test_a_3d_h1_reading_still_refuses_node_gradients(cap):
-    """Only a 2D H1 field has a node derivative at a fixed point."""
+def test_a_3d_h1_reading_has_a_node_derivative_at_a_fixed_point(cap):
+    """A stretch of z moves the layers under the point: ``-u . grad f`` of the value."""
     field = cap.potential["mid"]
     topology = field.mesh._topology
-    point = jnp.asarray([2e-6, 1e-6, 0.3e-6])
+    nodes = jnp.asarray(field.mesh.nodes)
+    # in the oxide, at (0.15, 0.73, 0.6) of its Kuhn cell: 0.13 or more from the
+    # diagonal faces, which a stretch of 2e-3 moves by about 1e-3 of the cell
+    point = jnp.asarray([2.3e-6, 1.1e-6, 0.3e-6])
 
-    def moved(nodes):
-        scaled = gfem.Field(**{**_kwargs(field), "mesh": gfem.Mesh(nodes, topology)})
-        return scaled.at(point)
+    def moved(s):
+        scaled = nodes * jnp.asarray([1.0, 1.0, s])
+        mesh = gfem.Mesh(scaled, topology)
+        return field.__class__(**{**_kwargs(field), "mesh": mesh}).at(point)
 
-    with pytest.raises(gfem.NonDifferentiableError, match="node coordinates"):
-        jax.grad(moved)(field.mesh.nodes)
+    got = float(jax.grad(lambda s: moved(s).real)(1.0))
+    # fourth-order difference at h = 1e-3: the reading is a P1 function of z / s,
+    # truncation 4 h^4 = 4e-12 relative, round-off 1.5 * 1e-16 / h = 1.5e-13
+    h = 1e-3
+    f = [float(moved(1.0 + k * h).real) for k in (-2, -1, 1, 2)]
+    difference = (8 * (f[2] - f[1]) - (f[3] - f[0])) / (12 * h)
+    assert difference != 0
+    assert got == pytest.approx(difference, rel=1e-8)
 
 
 def _kwargs(field):
