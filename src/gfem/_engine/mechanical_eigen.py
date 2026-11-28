@@ -58,6 +58,7 @@ import scipy.sparse.linalg as spla
 from gfem import _mpi
 from gfem._checks import is_traced
 from gfem._eigen.reach import clusters
+from gfem._engine import quadrature
 from gfem._engine.cache import Entry, discretization
 from gfem._engine.domain import em_region, h1_space, region_domain
 from gfem._engine.elastic_pml import ElasticStretch, check_layer
@@ -433,16 +434,18 @@ class MechanicalEigenmodeRule:
         The left field
         is the test side of each form (`_terms`, `tensors`).
 
+        With a layer every stretched piece has its imaginary partner
+        (``<piece>_im``, weight :math:`i` times the piece's), and the modes'
+        normalization (the energy, the :math:`r` term and the pair on the mass)
+        reads the physical regions' mass alone, while the projector, the
+        Gram product and :math:`A(\lambda)` read the whole pencil. The layer's
+        stretch is not an input: it rides with the nodes, and the layer-mode
+        filter is a discrete choice that is not differentiated.
+
         Raises:
             NonDifferentiableError: A mode with a cotangent shares its cluster
                 (its vectors depend on a choice of basis).
         """
-        if self.pml is not None:
-            raise NotImplementedError(
-                "gfem does not differentiate a MechanicalEigenmode solve with a "
-                "perfectly matched layer (pml=) in this version: solve the "
-                "gradient case with damping_frame= or without a layer."
-            )
         fields = entry.fields
         n = len(fields["lambda"])
         omega_ct = np.zeros(n, complex)
@@ -475,7 +478,12 @@ class MechanicalEigenmodeRule:
             )
             try:
                 domain = em_region(model, system.built, "em")
-                weights = functools.partial(_weights, system.q, coupled=self.coupled)
+                weights = functools.partial(
+                    _weights,
+                    system.q,
+                    coupled=self.coupled,
+                    stretched=self.pml is not None,
+                )
                 for i in live:
                     lam = fields["lambda"][i]
                     omega = np.sqrt(lam)
@@ -608,12 +616,20 @@ def _field_cotangent(
     return out
 
 
-def _weights(q: float, lam: complex, *, coupled: bool) -> dict[str, complex]:
+def _weights(
+    q: float, lam: complex, *, coupled: bool, stretched: bool = False
+) -> dict[str, complex]:
     r"""The weights of the pieces of :math:`\hat K - \lambda M`.
 
     ``q`` is the wavenumber in the mesh's length unit: the first-order pieces
     carry :math:`-iq` (:math:`q` for the loss, which has an extra :math:`i`),
     the second-order ones :math:`q^2`. Those at :math:`q = 0` are left out.
+
+    With ``stretched`` every piece also has its ``<piece>_im`` partner, the
+    imaginary part of the layer's stretch factor, whose weight is :math:`i`
+    times the piece's (:math:`-i\lambda` on ``mass_im``, :math:`i \cdot i` on
+    ``loss_im``); ``mass_layer`` is the real part of the layer's mass, which
+    the ``mass`` of the node pass leaves out (it is the physical mass).
     """
     out: dict[str, complex] = {"stiffness": 1.0, "loss": 1j, "mass": -lam}
     if coupled:
@@ -632,6 +648,9 @@ def _weights(q: float, lam: complex, *, coupled: bool) -> dict[str, complex]:
                 "coupling2": q**2,
                 "dielectric2": q**2,
             }
+    if stretched:
+        out |= {f"{name}_im": 1j * weight for name, weight in out.items()}
+        out["mass_layer"] = -lam
     return out
 
 
@@ -662,17 +681,35 @@ def _terms(rule: MechanicalEigenmodeRule, model: Model) -> list[Term]:
         )
     with serial_spaces():
         space = ngs.FESpace(spaces)
-    forms = _weak_forms(
-        _coefficients(model, built, rule.frame),
-        built,
-        options.order,
-        mech,
-        diel,
-        wavenumber_pieces=True,
-    )
+    co = _coefficients(model, built, rule.frame)
     names = {piece for g in _GROUPS for piece, _ in _GROUPS[g]}
     if rule.coupled:
         names |= {piece for g in _COUPLED for piece, _ in _COUPLED[g]}
+    if rule.pml is None or rule.layers is None:
+        forms = _weak_forms(
+            co, built, options.order, mech, diel, wavenumber_pieces=True
+        )
+    else:
+        f_ref = rule.pml.reference_frequency or problem.target
+        stretch = ElasticStretch(model, built, rule.layers, rule.pml, f_ref)
+        forms = stretch.forms(
+            model,
+            co,
+            options.order,
+            wavenumber_pieces=True,
+            coupled=rule.coupled,
+            lossy=bool(_element_arrays(model)["loss"].any()),
+        )
+        # ``mass`` is the physical mass alone (the normalization's), ``mass_layer``
+        # the layer's real part: together the solver's ``mass`` on every element
+        layer = quadrature.dx(
+            options.order, definedon=stretch.region(model, "mechanical", "layer")
+        )
+        forms["mass_layer"] = (forms["mass"][0], layer)
+        forms["mass"] = forms.pop("mass_phys")
+        for group in (_STRETCHED, _STRETCHED_COUPLED if rule.coupled else {}):
+            names |= {p for g, ps in group.items() if g != "mp" for p, _ in ps}
+        names.add("mass_layer")
     n = len(spaces)
 
     def term(name: str) -> Term:
@@ -818,11 +855,12 @@ class MechanicalSystem:
         self._model = model
         #: The elastic layer's stretch (`ElasticStretch`), or ``None``.
         self.stretch: ElasticStretch | None = None
-        if rule.pml is not None and rule.layers is not None:
+        if assemble and rule.pml is not None and rule.layers is not None:
+            # it reads the materials' values: a system built for its sizes alone
+            # (traced leaves) has no pencil, so no stretch either
             f_ref = rule.pml.reference_frequency or problem.target
             self.stretch = ElasticStretch(model, built, rule.layers, rule.pml, f_ref)
-            if assemble:
-                self.stretch.warn_thin()
+            self.stretch.warn_thin()
         self._dpencil: _StretchPencil | None = None
         self.matrix: ngs.BaseMatrix | None = None
         #: What a backward reads of the modes found (`modes`).
@@ -1461,19 +1499,22 @@ class MechanicalSystem:
         :math:`dx = w + \beta x`, :math:`A w = -P\,dA\,x`,
         :math:`P = I - M x\,y^T/g` and :math:`dA = d\hat K - \lambda\,dM`;
         the complex :math:`\beta` holds the normalization
-        :math:`\tfrac12 (\mathrm{Re}\,\omega)^2 x^H M x = 1` and the phase
-        gauge :math:`\mathrm{Im}\,x_j = 0` at the coefficient :math:`j` =
+        :math:`\tfrac12 (\mathrm{Re}\,\omega)^2 x^H M_\mathrm{n} x = 1` and the
+        phase gauge :math:`\mathrm{Im}\,x_j = 0` at the coefficient :math:`j` =
         ``gauge``, the largest displacement coefficient. With
-        :math:`c = \bar x^T x` and :math:`E = x^H M x`, eliminating :math:`\beta` gives
+        :math:`c = \bar x^T x` and :math:`E = x^H M_\mathrm{n} x`, with
+        :math:`M_\mathrm{n}` the mass the mode is normalized by (the physical
+        regions' with a layer, :math:`M` otherwise; the projector, :math:`g` and
+        :math:`A` read the whole pencil), eliminating :math:`\beta` gives
 
         .. math::
 
             dL = \mathrm{Re}\,\Big[\Big(\frac{\bar\omega_x\,y}{2\omega g}
             - P^T z\Big)^T dA\,x\Big] - \frac{\mathrm{Re}\,c}{2E}\,
-            \mathrm{Re}\,(x^H dM\,x),
+            \mathrm{Re}\,(x^H dM_\mathrm{n}\,x),
 
         with :math:`\bar\omega_x = -\mathrm{Re}\,c / \mathrm{Re}\,\omega`
-        and :math:`A^T z = r`, :math:`r = \bar x - (\mathrm{Re}\,c/E)\,M\bar
+        and :math:`A^T z = r`, :math:`r = \bar x - (\mathrm{Re}\,c/E)\,M_\mathrm{n}\bar
         x^{*} - i\,(\mathrm{Im}\,c/x_j)\,e_j` (:math:`\bar x^{*}` the
         conjugate of the mode :math:`x`). That :math:`r^T x = 0` makes the
         singular system consistent, and :math:`P^T z` does not depend on the
@@ -1487,10 +1528,12 @@ class MechanicalSystem:
         i = self.index
         v, w, v_bar = x[i], y[i], x_bar[i]
         m = self.mass
-        energy = float(np.real(np.vdot(v, m @ v)))
+        # the normalization reads the physical mass; the projector the whole pencil
+        m_norm = self.mass_norm
+        energy = float(np.real(np.vdot(v, m_norm @ v)))
         c = complex(v_bar @ v)
         j = gauge
-        r = v_bar - (c.real / energy) * (m @ np.conj(v))
+        r = v_bar - (c.real / energy) * (m_norm @ np.conj(v))
         r[j] -= 1j * c.imag / v[j].real
         z = self._bordered(lam, v, w, r)
         z = z - w * ((v @ (m @ z)) / gram)

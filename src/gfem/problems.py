@@ -1989,7 +1989,8 @@ class MechanicalEigenmode:
     ``omega`` (so frequency and Q) differentiates by the stiffness, piezoelectric
     tensor, relative permittivity, density and quality factor of the materials
     (as `gfem.MaterialField` leaves) and by the node coordinates of the mesh
-    (`gfem.Mesh.with_nodes`), at every wavenumber, with no further solve; so do
+    (`gfem.Mesh.with_nodes`), at every wavenumber, with no further solve (behind a
+    ``pml`` too: its stretch rides with the nodes and its material is fixed); so do
     the ``displacement`` and ``potential`` fields, through one more
     factorization per mode with a cotangent. `gfem.NonDifferentiableError` names
     the rest: a cotangent on ``group_velocity`` or on ``error``, and a mode
