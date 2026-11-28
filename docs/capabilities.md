@@ -114,7 +114,7 @@ feature also runs in 2D.
 | Anisotropic materials | {py:obj}`gfem.Material` | No | Matrix (principal values) | {doc}`recipes/anisotropic-materials` |
 | Dispersive materials | {py:obj}`gfem.PermittivityLaw` | No | Matrix (law parameters) | {doc}`recipes/dispersive-materials` |
 | Material library and fit | {py:mod}`gfem.materials`, {py:obj}`gfem.fit_permittivity` | n/a | n/a | {doc}`recipes/fit-measured-data` |
-| Perfectly matched layer | {py:obj}`gfem.PML` | Yes | Yes, not layer parameters | {doc}`recipes/perfectly-matched-layer` |
+| Perfectly matched layer | {py:obj}`gfem.PML` | Yes; also 2D sections in mechanical modes | Yes, not layer parameters | {doc}`recipes/perfectly-matched-layer` |
 | Curved meshes | {py:obj}`gfem.Mesh.from_gmsh` of second-order elements, {py:attr}`gfem.Mesh.curved` | Yes | Yes, every corner and mid-edge node | {doc}`recipes/prepare-a-mesh` |
 
 ### Design workflow

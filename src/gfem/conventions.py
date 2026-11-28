@@ -604,6 +604,9 @@ decaying mode has :math:`\mathrm{Im}\,\omega > 0` and its quality factor is
   \mathrm{d}A = 1` J per metre along :math:`z`, with its largest coefficient
   real and positive: for a lossless mode the time-averaged energy. A 3D body's
   modes carry 1 J.
+- With ``pml=``, :math:`Q` is the total quality factor, the radiation into the
+  layer plus :math:`Q_m`; the energy and the normalization count the physical
+  regions only.
 - ``group_velocity`` is :math:`\mathrm{Re}\,\mathrm{d}\omega/\mathrm{d}q` in m/s,
   the exact derivative of the discrete band. Every section is reciprocal:
   :math:`\omega(-q) = \omega(q)`, the opposite group velocity at :math:`-q`, and

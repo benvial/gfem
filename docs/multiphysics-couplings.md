@@ -440,6 +440,16 @@ line of constant $x$ held with `"x"` keeps $u_x = 0$ and slides in $y$ and $z$.
 Every other line is traction-free. A section free at $q = 0$ has rigid-body
 motions at $\omega = 0$ that are not returned.
 
+**Elastic PML.** With `pml=`, the strain of a layer element is
+$\tilde G_{ij} = \partial_j u_i / s_j$, with $s_j = 1 - i\sigma_j(\xi)$ along each
+stretched axis, and stiffness, loss and density carry $J = \prod_j s_j$; the
+pencil stays complex symmetric at $q = 0$. $k_\mathrm{ref}$ comes from the
+fastest Christoffel speed along each side's normal, so every slower wave
+reflects below $R_0$. A mode that lives in the layer moves with its stretch: the
+solver drops a mode whose eigenvalue's sensitivity to the stretch exceeds a tenth
+of its radiation decay rate, and counts those in the convergence message. $Q$ is
+the total, and the energy and the normalization count the physical regions.
+
 ## Validity and limits
 
 Every shift is first order in the field, strain or rise. The acousto-optic and

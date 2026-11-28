@@ -226,7 +226,8 @@ body has $u(x, y, z)\,e^{i\omega t}$, wavenumber 0 and a NaN group velocity. The
 loss is the piezoelectric problem's, so a decaying mode has
 $\mathrm{Im}\,\omega > 0$ and $Q = \mathrm{Re}\,\omega / (2\,\mathrm{Im}\,\omega)$.
 Each mode carries 1 J per metre along $z$ (1 J for a 3D body), with its largest
-coefficient real and positive.
+coefficient real and positive. With `pml=`, $Q$ is the total quality factor,
+the radiation into the layer plus $Q_m$.
 Derivation and a check on a solve: {ref}`Mechanical eigenmodes <theory-multiphysics-couplings-mechanical-eigenmodes>`.
 
 ## Group index and dispersion

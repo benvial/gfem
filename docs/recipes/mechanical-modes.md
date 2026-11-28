@@ -140,7 +140,8 @@ solves.
   ({doc}`mechanical-resonators`).
 - `linear_solver="petsc"`, any solve under `comm` and a GPU `device`: one
   process and the sparse direct solver.
-- A `gfem.Absorbing` line on a solid's edge: use a damping frame.
+- A `gfem.Absorbing` line on a solid's edge: use a damping frame or `pml=`
+  ({doc}`mechanical-resonators`).
 - A region of the mechanical domain without a stiffness or a density.
 - A gradient of `group_velocity` or `error`, or of a mode in a cluster:
   `gfem.NonDifferentiableError`. `omega` and the fields (`displacement`,

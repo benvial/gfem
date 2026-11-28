@@ -5,11 +5,13 @@ its blocks in order on the cantilever built by the repository's own
 docs/recipes/resonator_meshes.py (the page downloads it), checks that the output
 blocks are what the code prints, that the uniform quality factor is the
 material's, that the first frequency is within 1 % of Euler-Bernoulli's and the
-shape's ratio within 1 % of the beam theory's, and that a 3D body has no group
-velocity.
+shape's ratio within 1 % of the beam theory's, that a 3D body has no group
+velocity, and that the anchored beam's Q is within the gate of the refined value
+and differs from the damping frame's estimate.
 """
 
 import docs_pages as dp
+import numpy as np
 import pytest
 
 PAGE = dp.DOCS / "recipes" / "mechanical-resonators.md"
@@ -67,3 +69,35 @@ def test_a_3d_body_has_wavenumber_zero_and_no_group_velocity(ran):
     )
     assert wavenumber == "0.0"
     assert velocities == ["nan", "nan"]
+
+
+#: The anchor Q of the page's mesh (L/h = 10, order 3, ``maxh`` 0.5 um, 12 090
+#: free DOFs) and the refined value (``maxh`` 0.0625 um, 469 k free DOFs), both
+#: measured on MN5 with the same idiom; the steps with ``maxh`` are 7.3, 3.7 and
+#: 1.7, so the page's mesh is 12.7 below the refined value. The gate is twice
+#: that, as the solver's unit test.
+ANCHOR_PAGE_Q = 1647.0392
+ANCHOR_REFINED_Q = 1659.7670
+
+
+def test_the_anchor_q_is_within_the_gate_of_the_refined_value(ran):
+    # the page prints Q to the unit, rounded: 0.5 off at most, on a gate of 25
+    text = _printed(ran, "Anchor loss with a layer")
+    quality = dp.numbers(text.split("PML: ")[1].split("Q = ")[1])[0]
+    assert abs(quality - ANCHOR_REFINED_Q) < 2 * abs(ANCHOR_PAGE_Q - ANCHOR_REFINED_Q)
+    # the converged constant against the rigid root's 1.5833: 4.8 % above it at
+    # L/h = 10 (the page's mesh 4.0 %); a root that radiated nothing more would
+    # sit on it, so a constant below it or 10 % above it is a wrong mode
+    constant = dp.numbers(text.split("Q / (L/h)^3 = ")[1])[0]
+    assert 1.583 < constant < 1.583 * 1.10
+
+
+def test_the_frame_estimate_and_the_layer_differ_and_the_layer_q_is_finite(ran):
+    # the frame's Q is an estimate (1577 against 1647: 4 %); equal prints would
+    # mean the layer run returned the frame's mode
+    text = _printed(ran, "Anchor loss with a layer")
+    frame = dp.numbers(text.split("frame: ")[1].split("Q = ")[1])[0]
+    layer = dp.numbers(text.split("PML: ")[1].split("Q = ")[1])[0]
+    assert np.isfinite(layer)
+    assert layer > 0
+    assert frame != layer

@@ -1934,6 +1934,22 @@ class MechanicalEigenmode:
             )
             result = gfem.solve(model, problem)
 
+        The :math:`Q` a resonator's anchor sets, with the support ended by a
+        layer region ``layer`` (a frame run estimates it, then the layer is
+        the absorber)::
+
+            frame = gfem.DampingFrame(["layer"])
+            estimate = gfem.solve(
+                model, gfem.MechanicalEigenmode(f_eb, n_modes=4, damping_frame=frame)
+            )
+            best = int(np.argmax(estimate.q))
+            problem = gfem.MechanicalEigenmode(
+                float(estimate.frequency[best]),
+                pml=gfem.PML(["layer"]),
+                target_quality_factor=float(estimate.q[best]),
+            )
+            result = gfem.solve(model, problem)
+
     Args:
         target: The frequency to search around, Hz.
         n_modes: How many modes.
@@ -1985,6 +2001,12 @@ class MechanicalEigenmode:
     `gfem.MissingMaterialPropertyError` for a region of the mechanical
     domain without a stiffness or density; `gfem.EigenmodeConvergenceError`
     when fewer than ``n_modes`` modes meet ``SolverOptions.eigen_tolerance``.
+
+    With ``pml``, :math:`Q` is the total quality factor, the radiation into the
+    layer plus :math:`Q_m`. The layer's thickness and nodes set its reflection:
+    keep a node map's moves inside the interior box, the bounding box of the
+    regions outside the layer. A medium whose bulk waves run backward along a
+    layer's normal is not absorbed well.
 
     ``omega`` (so frequency and Q) differentiates by the stiffness, piezoelectric
     tensor, relative permittivity, density and quality factor of the materials

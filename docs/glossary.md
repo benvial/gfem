@@ -661,6 +661,10 @@ Clamped surface
   A line of a section or a surface of a 3D body where the displacement is held at zero
   (`clamped=`). Every other boundary is traction-free. See {doc}`recipes/mechanical-resonators`.
 
+Anchor loss
+  The energy a resonator loses as sound radiated into its supports, and the $Q$
+  it sets. A {term}`perfectly matched layer` in the support computes it. See {doc}`recipes/mechanical-resonators`.
+
 Damping frame
   An absorbing edge region where the stiffness becomes
   $c (1 + i(1/Q_m + \eta r^2))$, with $r$ the normalised depth and $\eta$ its {term}`loss factor <Loss factor (of a damping frame)>`
@@ -1273,7 +1277,7 @@ Air box
 
 Perfectly matched layer
   A meshed shell of volume regions around the {term}`air box` that absorbs
-  outgoing waves at any angle (`gfem.PML`); short form PML. Each layer region
+  outgoing light, or sound in a {term}`mechanical eigenmode`, at any angle (`gfem.PML`); short form PML. Each layer region
   keeps the material it continues, and the fields inside it are not physical.
   See {doc}`recipes/perfectly-matched-layer`.
 
@@ -1300,8 +1304,9 @@ Physical region
 
 PML mode
   A mode that lives in a {term}`perfectly matched layer` rather than in the
-  device, and moves when the layer changes. Eigenmode and port mode solves
-  drop it. See {doc}`recipes/perfectly-matched-layer`.
+  device, and moves when the layer changes. Eigenmode, port mode and mechanical
+  eigenmode solves drop it, a mechanical one by its sensitivity to the stretch
+  against its radiation decay rate. See {doc}`recipes/perfectly-matched-layer`.
 
 2D model
   A {term}`model` whose mesh is a plane of triangles: neither the structure
