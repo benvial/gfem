@@ -22,7 +22,9 @@ masked to the layer elements, so it rides with the nodes. Every stretched
 piece is written as a pair of forms with real coefficients, ``<piece>`` and
 ``<piece>_im``, whose weights differ by a factor :math:`i`: the real and
 imaginary parts of each factor are real coefficient functions, never read from
-a complex one.
+a complex one. The stretch sensitivity of the eigenvalue filter, which is never
+differentiated, builds each piece as one complex coefficient instead
+(`ElasticStretch.pencil_forms`).
 """
 
 from __future__ import annotations
@@ -142,6 +144,11 @@ def _lin(*terms: tuple[float, Any]) -> Any:
     """The sum of ``sign * x`` over the terms that are not ``None`` (else ``None``)."""
     parts = [sign * x for sign, x in terms if x is not None]
     return functools.reduce(operator.add, parts) if parts else None
+
+
+def _complex(w: _Cx) -> Any:
+    """``w`` as one coefficient, complex unless its imaginary part is zero."""
+    return w.re if _is_zero(w.im) else w.re + 1j * w.im
 
 
 _ONE = _Cx(1.0, 0.0)
@@ -419,6 +426,121 @@ class ElasticStretch:
             return form
 
         return make
+
+    def _complex_piece(
+        self, terms: tuple, fields: dict, matrices: dict, *, derivative: bool
+    ) -> Callable[[Any, Any], Any]:
+        r"""`_piece` as one complex integrand (the real and imaginary parts together).
+
+        The same sum of products, with the factors :math:`s_a^{-1}` and
+        :math:`J` as complex coefficients built from their real and imaginary
+        parts: one quadrature expression instead of two, and no
+        ``<piece>_im`` form.
+        """
+        factors = self._factors()
+        jac = _complex(self.jacobian())
+        jac_t = _complex(self.jacobian(derivative=True)) if derivative else jac
+
+        def field(make: Callable, u: Any, coefs: list) -> Any:
+            """``sum_a coef_a G_a`` with complex coefficients (``None``: empty)."""
+            parts = [
+                _complex(cf) * make(u, a)
+                for a, cf in coefs
+                if not (_is_zero(cf.re) and _is_zero(cf.im))
+            ]
+            return functools.reduce(operator.add, parts) if parts else None
+
+        def form(u: Any, v: Any) -> Any:
+            acc: Any = 0.0
+            for sign, test, trial, name in terms:
+                (mv, cv), (mu, cu) = fields[test], fields[trial]
+                apply = matrices[name]
+                fv, fu = field(mv, v, cv), field(mu, u, cu)
+                if fv is None or fu is None:
+                    continue
+                acc = acc + sign * jac_t * (fv * apply(fu))
+                if not derivative:
+                    continue
+                hat_v = [(a, w * factors[a][2]) for a, w in cv]
+                hat_u = [(a, w * factors[a][2]) for a, w in cu]
+                for hv, hu in (
+                    (field(mv, v, hat_v), fu),
+                    (fv, field(mu, u, hat_u)),
+                ):
+                    if hv is not None and hu is not None:
+                        acc = acc - sign * jac * (hv * apply(hu))
+            return acc
+
+        return form
+
+    def pencil_forms(
+        self,
+        model: Any,
+        co: dict[str, Any],
+        order: int,
+        *,
+        wavenumber_pieces: bool,
+        coupled: bool,
+        lossy: bool,
+    ) -> dict[str, tuple[Callable[[Any, Any], Any], Any]]:
+        r"""The pieces of the stretch derivatives and of the loss, one complex form each.
+
+        For the eigenvalue filter (`gfem._engine.mechanical_eigen.MechanicalSystem.
+        sensitivities`), which reads :math:`\partial_g \hat K`,
+        :math:`\partial_g M` and the loss :math:`L` of
+        :math:`\hat K = \hat K_e + iL` and never differentiates them: every
+        piece is one complex integrand, ``stiffness*``, ``coupling*``,
+        ``dielectric*`` and ``mass`` the derivative in the gain :math:`g` (on the
+        layer elements, where it is nonzero) and ``loss*`` the loss
+        :math:`L` (on every element). The stiffness' derivative carries the
+        loss, :math:`\partial_g \hat K = (1 + i\,\mathrm{loss})\,\partial_g
+        K_e`: the matrix :math:`C` is scaled by it, so the loss is not a piece
+        of its own there.
+        """
+        scale, rho, loss = self.scale, co["rho"], co["loss"]
+        mech_layer = self.region(model, "mechanical", "layer")
+        diel_layer = self.region(model, "em", "layer")
+        mech_all = self.region(model, "mechanical", "all")
+        layer = {"mechanical": quadrature.dx(order, definedon=mech_layer)}
+        layer["dielectric"] = quadrature.dx(order, definedon=diel_layer)
+        every = quadrature.dx(order, definedon=mech_all)
+        fields = self._strain_fields()
+        matrices = {
+            "c": functools.partial(operator.mul, co["c"]),
+            "e": functools.partial(operator.mul, co["e"]),
+            "e_t": functools.partial(operator.mul, co["e"].trans),
+            "eps": functools.partial(operator.mul, co["eps"]),
+        }
+        folded = dict(matrices)
+        if lossy:
+            folded["c"] = functools.partial(operator.mul, (1 + 1j * loss) * co["c"])
+        jac_t = _complex(self.jacobian(derivative=True))
+        forms: dict[str, tuple[Callable[[Any, Any], Any], Any]] = {
+            "mass": (
+                lambda u, v: (
+                    scale**2 * jac_t * rho * (u[0] * v[0] + u[1] * v[1] + u[2] * v[2])
+                ),
+                layer["mechanical"],
+            )
+        }
+        for name, terms in _PIECES.items():
+            if name[-1] in "12" and not wavenumber_pieces:
+                continue
+            if name.startswith(("coupling", "dielectric")) and not coupled:
+                continue
+            which = "dielectric" if name.startswith("diel") else "mechanical"
+            use = folded if name.startswith("stiffness") else matrices
+            make = self._complex_piece(terms, fields, use, derivative=True)
+            forms[name] = (make, layer[which])
+            if lossy and name.startswith("stiffness"):
+                plain = self._complex_piece(terms, fields, matrices, derivative=False)
+                forms["loss" + name[len("stiffness") :]] = (
+                    lambda u, v, plain=plain: loss * plain(u, v),
+                    every,
+                )
+        if self.dim == 3:
+            forms = {k: (_per_length(f, scale), d) for k, (f, d) in forms.items()}
+        return forms
 
     def forms(
         self,
