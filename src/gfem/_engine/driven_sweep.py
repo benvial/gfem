@@ -256,9 +256,10 @@ class FixedAngleChildren:
             return rule
         # the child below drops the sources: a polarization source drives one
         # frequency, so a sweep (several frequencies) never holds one
-        assert not any(
-            isinstance(s, PolarizationSource) for s in parent.problem.sources
-        )
+        if any(isinstance(s, PolarizationSource) for s in parent.problem.sources):
+            raise NotImplementedError(  # pragma: no cover - checked by Driven
+                "a fixed-angle sweep cannot take a PolarizationSource."
+            )
         f = parent.problem.frequency[n]
         problem = Driven(
             [f],
