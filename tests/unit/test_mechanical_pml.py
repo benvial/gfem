@@ -21,6 +21,8 @@ Q_SHIFT = 150.0
 
 
 def _solve(column, order, *, n_modes=1, **kwargs):
+    if column.wavenumber:
+        kwargs["wavenumber"] = column.wavenumber
     problem = gfem.MechanicalEigenmode(
         column.target,
         n_modes=n_modes,
@@ -51,6 +53,33 @@ def test_the_antiplane_mode_is_found_with_a_real_shift(antiplane):
     # frequency); the gate is four times that
     assert _error(result, column) < 1e-8
     assert abs(column.quality / 157.0743965521 - 1) < 1e-9
+
+
+def test_the_antiplane_mode_converges_at_the_rate_of_the_order(tmp_path):
+    # with the complex shift of a rough Q estimate (a real shift keeps none of
+    # the 60 modes nearest it at h = 0.2): measured 2.298e-7 at h = 0.2 and
+    # 2.413e-9 at h = 0.1 um, order 3; the gates are about twice and four times
+    # those. A frequency converges as h^{2p} = h^6, measured 2^{6.57}; the rate
+    # gate 2^5 leaves room for the pre-asymptotic coarse mesh
+    errors = []
+    for maxh in (0.2, 0.1):
+        column = ec.leaky_column(tmp_path / f"{maxh}.msh", maxh)
+        errors.append(_error(_solve(column, 3, target_quality_factor=Q_SHIFT), column))
+    assert errors[0] < 5e-7
+    assert errors[1] < 1e-8
+    assert errors[0] / errors[1] > 2**5
+
+
+@pytest.mark.parametrize("case", ["shear", "extension", "love"])
+def test_the_in_plane_and_love_modes_are_found_with_a_complex_shift(tmp_path, case):
+    # the in-plane modes, held by component clamps on the side faces, and the
+    # Love mode at q = 2/um (the stretched q pieces, the LU factorization and
+    # the left vectors of the transposed search): measured 3.014e-9, 2.092e-9
+    # and 2.144e-9 at h = 0.1 um, order 3 (the h^6 error of a frequency, as the
+    # antiplane mode); the gate is about four times the largest
+    column = ec.leaky_column(tmp_path / "column.msh", 0.1, case=case)
+    result = _solve(column, 3, target_quality_factor=Q_SHIFT)
+    assert _error(result, column) < 1e-8
 
 
 def test_the_radiating_mode_decays_without_a_loss(antiplane):
