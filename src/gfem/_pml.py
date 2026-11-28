@@ -122,6 +122,14 @@ class PML:
     `gfem.Material`; the section's stretch axes are :math:`x` and
     :math:`y`.
 
+    Under a node map (`Mesh.with_nodes`) the mechanical layer's
+    :math:`\sigma` stays a function of the imported coordinates: its faces,
+    thickness :math:`d` and :math:`\sigma_\mathrm{max}` are those of the
+    imported mesh, so a map that thickens the layer by :math:`1 + t` also
+    raises its absorption, to the reflection :math:`R_0^{1+t}`, where a
+    re-imported mesh would re-tune :math:`\sigma_\mathrm{max}`. Gradients are
+    those of this stretch.
+
     Attributes:
         regions: The layer's volume region names, a string or a sequence of
             strings.
