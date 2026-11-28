@@ -1533,7 +1533,17 @@ def _source_design(model, region, seed):
 def _source_case(cell, objective, values, rng) -> Case:
     name = cell.input
     taylor = {"eps_r": 1e-1, "conductivity": 1e2, "fill": 5e-2}[name]
-    step = {"eps_r": STEPS["eps_r"], "conductivity": 1.0, "fill": 5e-3}[name]
+    # The conductivity step: the objectives vary on a scale of 1e4-1e5 S/m in
+    # sigma (J / |grad J| is 2e5 S/m), so a random unit direction nearly
+    # orthogonal to the gradient (|grad . d| / |grad| = 1.8e-3 on the plane
+    # wave) moves J by only 9e-9 relative per S/m. The fourth-order
+    # difference's round-off, 1.5 delta J / (h |grad . d|) for a relative
+    # noise delta of J (up to 1e-14: threaded sums, sparse Cholesky's
+    # unpivoted factors), is then 1.7e-6 / h: at h = 1 S/m it crossed the
+    # 1e-6 gate. At h = 100 S/m it is 1.7e-8; the truncation, from the
+    # second-order difference's 9e-7 there, is about (6 x 9e-7)^2 / 30 =
+    # 1e-12. Every element stays above 800 S/m (sigma >= 1e3, |d_i| <= 1).
+    step = {"eps_r": STEPS["eps_r"], "conductivity": 1e2, "fill": 5e-3}[name]
     return Case(objective, values[name], rng, step=step, taylor=taylor)
 
 
