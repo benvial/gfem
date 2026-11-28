@@ -11,8 +11,10 @@ fourth-order central differences of :math:`(\mathrm{Re}\,\omega,
 
 The differenced objective is the eigenfrequency, a two-sided Rayleigh quotient of
 vectors converged to the ARPACK tolerance of :math:`10^{-12}`: round-off
-:math:`\delta \approx 10^{-12}` relative. A relative perturbation :math:`h` of a
-leaf that scales :math:`\omega` as :math:`(1 + p)^{\pm 1/2}` or :math:`(1 + p)^{-1}`
+:math:`\delta \approx 10^{-12}` relative for these 2D sections (a 3D body's is
+:math:`\delta \approx 1.2 \cdot 10^{-10}`, see `test_mechanical_3d_gradients`). A
+relative perturbation :math:`h` of a leaf that scales :math:`\omega` as
+:math:`(1 + p)^{\pm 1/2}` or :math:`(1 + p)^{-1}`
 (the density, the modulus, the stretch) has a fourth-order truncation of at most
 :math:`4 h^4` of the derivative and a round-off of :math:`1.5\,\delta / (h\,s)`, with
 :math:`s` the relative slope: for :math:`h = 10^{-2}` and :math:`s \sim 1` both sit
