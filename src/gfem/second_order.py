@@ -4,7 +4,7 @@ A `Pump` is a kept field of a driven result (or a combination of its columns)
 with the power and phase it is fed at. `second_order_polarization` forms from
 one or two pumps the polarization :math:`P` at the generated frequency
 :math:`\omega_3` that the contracted tensor :math:`d` of the model's materials
-(`gfem._chi2`, in the global frame) gives at the points of a quadrature rule:
+(``gfem._chi2``, in the global frame) gives at the points of a quadrature rule:
 
 .. math::
 

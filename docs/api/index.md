@@ -29,6 +29,7 @@ gfem/optomechanics/index
 gfem/kerr/index
 gfem/raman/index
 gfem/three_wave/index
+gfem/second_order/index
 gfem/photon_pairs/index
 gfem/quantum/index
 gfem/design/index
