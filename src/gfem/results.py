@@ -3254,13 +3254,15 @@ class MechanicalEigenmodeResult:
 
     Every array has one entry per mode, in order of increasing distance of
     the mode's frequency from ``MechanicalEigenmode.target``. The modes are
-    :math:`u(x, y)\,e^{i\omega t - iqz}` of one axial wavenumber :math:`q`.
+    :math:`u(x, y)\,e^{i\omega t - iqz}` of one axial wavenumber :math:`q` for a
+    2D section, and :math:`u(x, y, z)\,e^{i\omega t}` for a 3D body.
 
     Attributes:
         omega: Complex angular frequencies, rad/s, ``(n_modes,)``. Under
             :math:`e^{+i\omega t}` a decaying mode has
             :math:`\mathrm{Im}\,\omega > 0`.
-        error: Backward error of each mode,
+        error: Backward error of each mode as returned (the refined, normalized
+            vector :math:`x` at its returned :math:`\omega`),
             :math:`|(\hat K - \omega^2 M) x| / ((|\hat K| + |\omega|^2 |M|)
             |x|)` for the discrete pencil; at most
             ``SolverOptions.eigen_tolerance``.
@@ -3268,8 +3270,10 @@ class MechanicalEigenmodeResult:
             the exact derivative of the discrete band: the real part of
             :math:`y^T (\partial_q \hat K)\, x / (2\omega\, y^T M x)` with
             :math:`y` the left eigenvector. The derivative of the decay rate
-            is not returned. Not differentiable.
-        wavenumber: The axial wavenumber :math:`q` of the solve, rad/m.
+            is not returned. NaN for a 3D body, which has no axial band. Not
+            differentiable.
+        wavenumber: The axial wavenumber :math:`q` of the solve, rad/m; 0.0
+            for a 3D body.
         cluster: Integer label per mode, ``(n_modes,)``: modes with the same
             label form a degenerate cluster, frequencies within
             ``SolverOptions.cluster_rtol`` of each other (a simple mode has
@@ -3278,10 +3282,10 @@ class MechanicalEigenmodeResult:
             `displacement`): the components ``x``, ``y`` and ``z`` of the
             displacement, in m, on H1 of the solve order over the mechanical
             domain, each with its mode's complex ``omega``. Each mode stores
-            1 J/m of energy: :math:`\tfrac12 (\mathrm{Re}\,\omega)^2 \int
-            \rho\,|u|^2\,dA`, the time-averaged energy per metre along
-            :math:`z` of a lossless mode, and its largest coefficient is real
-            and positive.
+            1 J/m of energy (a section): :math:`\tfrac12 (\mathrm{Re}\,\omega)^2
+            \int \rho\,|u|^2\,dA`, the time-averaged energy per metre along
+            :math:`z` of a lossless mode, or 1 J (a 3D body: the same integral
+            over the volume), and its largest coefficient is real and positive.
         potential_fields: One `Field` per mode of the potential, in V, for a
             model with piezoelectric coupling; empty otherwise.
     """

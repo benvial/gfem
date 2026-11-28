@@ -1,4 +1,4 @@
-r"""Mechanical eigenmodes of a 2D section: the pencil :math:`\hat K(q) - \omega^2 M`.
+r"""Mechanical eigenmodes of a 2D section or a 3D body: :math:`\hat K(q) - \omega^2 M`.
 
 The unknowns are the three displacement components of a field
 :math:`u(x, y)\,e^{i\omega t - iqz}` on the mechanical domain, in one compound
@@ -16,6 +16,10 @@ with ``wavenumber_pieces``),
 each :math:`K_p` the stiffness plus :math:`i` times the loss piece of power
 :math:`p` (:math:`q` in the mesh's length unit). At :math:`q = 0` only
 :math:`K_0` and :math:`M` are assembled into the matrix that is factorized.
+A 3D body (tetrahedra, fields :math:`u(x, y, z)\,e^{i\omega t}`) is that
+case, with the full six-component strain and the whole potential gradient: it
+has no wavenumber, and its forms carry one more length of the mesh's unit, so
+the pencil is in SI (a mode of 1 J).
 
 The modes nearest ``target`` are found by shift-invert Arnoldi (SciPy ARPACK)
 on :math:`A(\sigma)^{-1} M` with :math:`A(\sigma) = \hat K - \sigma M`,
@@ -70,6 +74,7 @@ from gfem._engine.runtime import serial_spaces, task_manager
 from gfem._engine.sensitivity import FieldPair, Tensors, Term
 from gfem._engine.solve_request import SolveRequest
 from gfem._field import FieldMap
+from gfem._linalg import KRYLOV_KINDS
 from gfem._linalg.base import free_mask
 from gfem._linalg.direct import DirectHandle
 from gfem.errors import EigenmodeConvergenceError, NonDifferentiableError
@@ -110,7 +115,7 @@ _COUPLED = {
 
 
 class MechanicalEigenmodeRule:
-    """Host-side forward of a `MechanicalEigenmode` problem on a 2D `Model`.
+    """Host-side forward of a `MechanicalEigenmode` problem on a 2D or 3D `Model`.
 
     Construction runs every static check (it needs no array values);
     `forward` assembles the pencil and finds the modes.
@@ -145,10 +150,13 @@ class MechanicalEigenmodeRule:
         """Check that the problem fits the model (see `gfem.MechanicalEigenmode`).
 
         Raises:
-            NotImplementedError: ``linear_solver="petsc"``.
+            NotImplementedError: ``linear_solver="petsc"``, or a slab mesh; on a
+                3D body also ``comm``, a Krylov ``linear_solver`` and a GPU
+                ``device``.
             RegionNotFoundError: A name is not a region of the mesh.
-            ValueError: The problem does not fit the model; the message gives
-                the remedy.
+            ValueError: The problem does not fit the model (a ``wavenumber`` on
+                a 3D body, a ``model.pml`` meeting the mechanical domain
+                included); the message gives the remedy.
             MissingMaterialPropertyError: A region of the mechanical domain
                 has no stiffness or density.
         """
@@ -163,6 +171,8 @@ class MechanicalEigenmodeRule:
                 'linear_solver="direct" or "auto".'
             )
         owner = "MechanicalEigenmode"
+        self.dim = model.mesh.dim
+        _refuse_body(model, problem, options, comm)
         self.mechanical = _check_mechanical(model, owner)
         _check_clamped(model, problem)
         _check_absorbing(model, owner)
@@ -188,6 +198,7 @@ class MechanicalEigenmodeRule:
         self.potential_regions = tuple(
             r for r in mesh.volumes if domain.active[mesh.elements(r)].any()
         )
+        _refuse_layer(model, mechanical)
         self._mesh = mesh
         self._mechanical_excluded = mechanical.excluded
         self._em_excluded = domain.excluded
@@ -439,6 +450,61 @@ class MechanicalEigenmodeRule:
             wavenumber=self.problem.wavenumber * discretization(model.mesh).built.scale,
             coupled=self.coupled,
         )
+
+
+def _refuse_body(
+    model: Model, problem: MechanicalEigenmode, options: SolverOptions, comm: Any
+) -> None:
+    """Raise for the slab, and for what a 3D body does not have.
+
+    The 2D refusals of `gfem._dim2.refuse_solve` do not reach a mechanical 3D
+    solve: a communicator, a Krylov solver and a GPU have no path here.
+    """
+    mesh = model.mesh
+    if mesh.section_thickness is not None:
+        raise NotImplementedError(
+            "A MechanicalEigenmode problem solves a 2D mesh "
+            "(gfem.Mesh.from_gmsh on a triangle-only file) or a tetrahedral "
+            "body; a slab cross-section has no mechanicaleigenmode solve in "
+            "this version."
+        )
+    if mesh.dim != 3:
+        return
+    if problem.wavenumber != 0:
+        raise ValueError(
+            "a 3D body has no axial wavenumber; wavenumber is the phase along z "
+            "of a 2D section: leave it at 0."
+        )
+    refused = (
+        (comm is not None, "A solve under several processes (comm=)"),
+        (
+            options.linear_solver in KRYLOV_KINDS,
+            f"linear_solver={options.linear_solver!r}",
+        ),
+        (options.device != "cpu", f"device={options.device!r}"),
+    )
+    for found, what in refused:
+        if found:
+            raise NotImplementedError(
+                f"{what} is not available for a 3D MechanicalEigenmode: solve on "
+                'one process, with linear_solver="direct" or "auto", on '
+                'device="cpu".'
+            )
+
+
+def _refuse_layer(model: Model, mechanical: Any) -> None:
+    """Raise when the model's electromagnetic layer meets the mechanical domain."""
+    if model.pml is None:
+        return
+    mesh = model.mesh
+    for name in model.pml.regions:
+        if mechanical.active[mesh.elements(name)].any():
+            raise ValueError(
+                f"The model's PML region {name!r} meets the mechanical domain, "
+                "and the mechanical solve does not read the model's "
+                "electromagnetic layer: exclude the region from "
+                'mechanical problems (excluded={"mechanical": ...}).'
+            )
 
 
 def _field_cotangent(
@@ -1003,7 +1069,10 @@ class MechanicalSystem:
         out = {
             "omega": np.zeros(want, complex),
             "error": np.zeros(want),
-            "group_velocity": np.zeros(want),
+            # a 3D body has no axial band: NaN, a 2D section's is 0 at q = 0
+            "group_velocity": np.full(
+                want, np.nan if self.built.mesh.dim == 3 else 0.0
+            ),
             "cluster": labels,
             "displacement": np.zeros((want, 3, self.nu), complex),
             "potential": np.zeros((want, self.nphi), complex),
@@ -1013,7 +1082,7 @@ class MechanicalSystem:
         gram = np.zeros(want, complex)
         gauge = np.zeros(want, int)
         lams = np.zeros(want, complex)
-        for i, (lam, x, error) in enumerate(found[:want]):
+        for i, (lam, x, _) in enumerate(found[:want]):
             v, y = self._vectors(lam, x, omega_all[i], tolerance, i)
             # the two-sided Rayleigh quotient: second order in the vectors' errors,
             # where the Ritz value is first order in its residual
@@ -1027,7 +1096,8 @@ class MechanicalSystem:
             right[self.index, i], left[self.index, i] = v, y
             gram[i] = y @ (self.mass @ v)
             out["omega"][i] = omega
-            out["error"][i] = error
+            # the returned vector's, not the search's
+            out["error"][i] = self._backward_error(lams[i], v, left=False)
             if self.dk is not None:
                 out["group_velocity"][i] = np.real(
                     (y @ (self.dk @ v)) / (2 * omega * (y @ (self.mass @ v)))

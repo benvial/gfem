@@ -1873,13 +1873,14 @@ def _clamped_components(value: Any) -> tuple[tuple[str, str], ...]:
 
 @dataclasses.dataclass(frozen=True, init=False)
 class MechanicalEigenmode:
-    r"""The mechanical modes of a 2D section nearest a target frequency.
+    r"""The mechanical modes of a 2D section or a 3D body nearest a target frequency.
 
     Finds the source-free solutions of linear elasticity on a native 2D mesh
     (`gfem.Mesh.from_gmsh` of a triangle-only file) for fields
     :math:`u(x, y)\,e^{i\omega t - iqz}` that propagate along :math:`z` with the
-    axial wavenumber ``wavenumber`` :math:`q`: complex angular frequencies
-    :math:`\omega` and displacements :math:`u` (three components) with
+    axial wavenumber ``wavenumber`` :math:`q`, or on a tetrahedral mesh for the
+    modes :math:`u(x, y, z)\,e^{i\omega t}` of a body: complex angular
+    frequencies :math:`\omega` and displacements :math:`u` (three components) with
 
     .. math::
 
@@ -1896,21 +1897,24 @@ class MechanicalEigenmode:
     :math:`c`, ``mass_density`` :math:`\rho` and ``mechanical_quality_factor``
     :math:`Q_m`; every region of the mechanical domain (every volume not in
     ``excluded["mechanical"]``) needs a stiffness and a density. Every line
-    is traction-free except the ``clamped`` ones.
+    (surface of a 3D body) is traction-free except the ``clamped`` ones.
 
     The ``n_modes`` modes whose frequency :math:`\mathrm{Re}\,\omega / 2\pi`
     is nearest ``target`` are returned, nearest first. Each is normalized to
-    :math:`\tfrac12 (\mathrm{Re}\,\omega)^2 \int \rho\,|u|^2\,dA = 1` J/m,
-    with its largest displacement coefficient real and positive. A section
-    that is free at :math:`q = 0` has rigid-body motions at :math:`\omega = 0`:
-    they are not returned.
+    :math:`\tfrac12 (\mathrm{Re}\,\omega)^2 \int \rho\,|u|^2\,dA = 1` J/m for
+    a section and to the same integral over the volume, 1 J, for a body, with
+    its largest displacement coefficient real and positive. A section that is
+    free at :math:`q = 0` and a free body have rigid-body motions at
+    :math:`\omega = 0`: they are not returned.
 
     A model whose mechanical-domain materials carry a nonzero piezoelectric
     tensor couples the potential to the displacement: the potential joins the
     unknowns on the electromagnetic domain, as in `gfem.Piezoelectric`, the
     lines and areas of ``ground`` (and any `gfem.PEC` line) hold it at zero,
     and ``result.potential(mode)`` returns it, in V, scaled with the
-    displacement. At :math:`q = 0` an ungrounded section's constant potential
+    displacement; a body takes the whole potential gradient, so keep the
+    electromagnetic domain to the solid and a thin gap. At :math:`q = 0` an
+    ungrounded section's (or body's) constant potential
     is fixed by pinning one DOF per connected component (the potential is
     defined up to that constant).
 
@@ -1929,14 +1933,14 @@ class MechanicalEigenmode:
         wavenumber: The axial wavenumber :math:`q`, rad/m, finite and real;
             the modes' phase is :math:`e^{-iqz}`, so a mode with
             :math:`q > 0` travels along :math:`+z` where its group velocity
-            is positive.
-        clamped: Where the displacement is fixed. A line name or a sequence
-            of names fixes all three components there; a mapping from a name
-            to a string of components of ``"xyz"`` (the lab axes) fixes
-            those, for a symmetry plane or a guide with sliding walls. Each
-            line must border the mechanical domain.
-        ground: Line or area names held at 0 V; only for a model with a
-            piezoelectric region.
+            is positive. A 3D body has none: leave it 0.
+        clamped: Where the displacement is fixed. A line (3D: surface) name
+            or a sequence of names fixes all three components there; a mapping
+            from a name to a string of components of ``"xyz"`` (the lab axes)
+            fixes those, for a symmetry plane, rollers or a guide with sliding
+            walls. Each must border the mechanical domain.
+        ground: Line or area (3D: surface or volume) names held at 0 V; only
+            for a model with a piezoelectric region.
         damping_frame: A `DampingFrame` naming the absorbing edge regions, or
             ``None``.
 
@@ -1952,8 +1956,11 @@ class MechanicalEigenmode:
             inside `jax.grad`, `jax.jit` or `jax.vmap` from their arguments;
             pass a fixed value.
 
-    `gfem.solve` raises `NotImplementedError` on a 3D or slab mesh, with
-    ``linear_solver="petsc"``, under ``comm`` and on a GPU ``device``;
+    `gfem.solve` raises `NotImplementedError` on a slab mesh and with
+    ``linear_solver="petsc"``; on a 3D body also under ``comm``, with a Krylov
+    ``linear_solver`` and on a GPU ``device``, and `ValueError` for a
+    ``wavenumber`` other than 0 and for a model ``pml`` meeting the
+    mechanical domain (the model's layer is electromagnetic). It raises
     `ValueError` for a ``clamped`` or
     ``ground`` name that does not fit the model (``ground`` on a model
     without a piezoelectric region included) and for a `gfem.Absorbing` line
@@ -1965,18 +1972,19 @@ class MechanicalEigenmode:
     ``omega`` (so frequency and Q) differentiates by the stiffness, piezoelectric
     tensor, relative permittivity, density and quality factor of the materials
     (as `gfem.MaterialField` leaves) and by the node coordinates of the mesh
-    (`gfem.Mesh.with_nodes`), at every wavenumber, with no further solve.
-    `gfem.NonDifferentiableError` names the rest: a cotangent on the
-    ``displacement`` or ``potential`` fields, on ``group_velocity`` or on
-    ``error``, and a mode that shares its ``cluster`` with another (break the
-    symmetry of the section, or hold the value with `jax.lax.stop_gradient`).
+    (`gfem.Mesh.with_nodes`), at every wavenumber, with no further solve; so do
+    the ``displacement`` and ``potential`` fields, through one more
+    factorization per mode with a cotangent. `gfem.NonDifferentiableError` names
+    the rest: a cotangent on ``group_velocity`` or on ``error``, and a mode
+    that shares its ``cluster`` with another (break the symmetry of the section
+    or body, or hold the value with `jax.lax.stop_gradient`).
     The cluster refusal is raised in the backward pass, inside a host callback,
     so a ``jax.grad`` caller sees it as a ``jax.errors.JaxRuntimeError``
     carrying its message. The cluster is found among the converged modes returned by
     the eigensolver (``n_modes`` plus a guard of two); a degenerate partner
     that it does not return is not detected.
     The result's ``displacement`` maps carry the ``wavenumber`` that
-    `gfem.strain` needs.
+    `gfem.strain` needs (0 for a body).
     """
 
     target: float
@@ -1985,7 +1993,7 @@ class MechanicalEigenmode:
     clamped: tuple[tuple[str, str], ...]
     ground: tuple[str, ...]
     damping_frame: DampingFrame | None
-    _rule_2d: ClassVar[str] = "gfem._engine.mechanical_eigen:MechanicalEigenmodeRule"
+    _rule: ClassVar[str] = "gfem._engine.mechanical_eigen:MechanicalEigenmodeRule"
     #: Moved nodes solve (a node map is this problem's design input).
     _moves_nodes_2d: ClassVar[bool] = True
 
