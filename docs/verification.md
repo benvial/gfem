@@ -318,6 +318,13 @@ Elastic modes of a 2D section ({doc}`recipes/mechanical-modes`) and of a 3D body
 | Roller box (isotropic and cubic silicon) and Lamb box, 3D, order 3 | Standing-wave and Lamb closed forms; error falls at least 32 times per halved edge | {gfem-test}`tests/verification/test_mechanical_3d.py` | Every change |
 | Cantilever 100 x 10 x 2 um clamped at its root | Euler-Bernoulli frequency within 1 % | {gfem-test}`tests/verification/test_mechanical_3d.py` | Every change |
 | 3D thickness-extensional plate, open and grounded faces | Stiffened half-wave; root of $\tan X / X = 1/k_t^2$ | {gfem-test}`tests/unit/test_mechanical_3d.py` | Every change |
+| Leaky layer with a perfectly matched layer: antiplane, shear, extension and Love modes of a 2D section; a 3D column stretched along $z$ and with layers on its sides | Exact complex roots $\omega_n = (c_1/h)[n\pi + i\,\mathrm{artanh}\,\zeta]$; error falls at least 8 times per halved edge at order 2 | {gfem-test}`tests/unit/test_mechanical_pml.py`, {gfem-test}`tests/verification/test_mechanical_pml.py` | Every change |
+| Anchor loss of an in-plane cantilever on a support, $L/h$ = 10, 20, 40 | Rigid-root constant $Q \to 1.583\,(L/h)^3$: the deviation falls, and $2C_{40} - C_{20}$ is within 5 % | {gfem-test}`tests/verification/test_mechanical_anchor_loss.py` | Every change |
+| Anchor loss of a 3D cantilever normal to a half-space, $l/h = 20$ | Wilson-Rae's coefficient 0.3314, within a factor 2 | {gfem-test}`tests/reference/test_mechanical_anchor_3d.py` | Before release |
+
+Observations, not checks: the 3D anchor loss above prints the ratio of
+$Q^{-1} / [(w/l)(h/l)^4]$ to the published 0.3314, with its unknowns, time and
+memory; the test asserts only the factor 2. On one 32-core node it measured a ratio of 0.97 with 374k unknowns, in under 4 minutes and 24 GiB.
 
 (verification-acousto-optic)=
 ## Acousto-optic shift
