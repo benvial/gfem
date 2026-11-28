@@ -202,6 +202,54 @@ def test_a_column_stretched_along_z(tmp_path):
     assert complex(result.omega[0]).imag > 0
 
 
+# --- the search of an anchored mode ---------------------------------------------------
+
+#: The anchor Q at L/h = 10, order 3, on the unit mesh (``maxh`` 0.5 um,
+#: 12 090 free DOFs) and on the finest refined mesh, measured with this idiom
+#: on MN5 (job 49486955): ``maxh`` 0.25, 0.125 and 0.0625 um (35 k, 125 k and
+#: 469 k free DOFs) give 1654.3809, 1658.0549 and 1659.7670, steps halving
+#: with h (the root's re-entrant corner); the seed ``ANCHOR_CONSTANT``
+#: :math:`(L/h)^3` gives the same values.
+ANCHOR_UNIT_Q = 1647.0392
+ANCHOR_REFINED_Q = 1659.7670
+
+
+def test_a_search_from_a_frame_estimate_finds_the_anchored_mode(tmp_path):
+    # the documented idiom: a damping-frame run on the layer region estimates
+    # Q, then the layer and that Q as the shift's. The frame run asks for a few
+    # modes: on finer meshes the damped frame has modes of Q ~ 3 nearer the
+    # Euler-Bernoulli target than the flexural mode, which has the highest Q
+    anchor = ec.anchored_beam(tmp_path / "anchor.msh", 10.0, 0.5)
+    options = gfem.SolverOptions(order=3)
+    frame = gfem.solve(
+        anchor.model,
+        gfem.MechanicalEigenmode(
+            anchor.target, n_modes=4, damping_frame=gfem.DampingFrame(["layer"])
+        ),
+        options=options,
+    )
+    omega = np.asarray(frame.omega).astype(complex)
+    quality = omega.real / (2 * omega.imag)
+    estimate = omega[np.argmax(quality)]
+    result = gfem.solve(
+        anchor.model,
+        gfem.MechanicalEigenmode(
+            estimate.real / (2 * np.pi),
+            pml=gfem.PML(["layer"]),
+            target_quality_factor=float(quality.max()),
+        ),
+        options=options,
+    )
+    found = complex(result.omega[0])
+    # the flexural mode: the frame moves its frequency by 8e-6 (measured), the
+    # gate is the 1 % of a frequency shift that would be another mode
+    assert abs(found.real / estimate.real - 1) < 0.01
+    # its Q within twice the unit mesh's discretization error of the refined
+    # value (the root's re-entrant corner converges slowly)
+    q = found.real / (2 * found.imag)
+    assert abs(q - ANCHOR_REFINED_Q) < 2 * abs(ANCHOR_UNIT_Q - ANCHOR_REFINED_Q)
+
+
 # --- the job -------------------------------------------------------------------------
 
 
