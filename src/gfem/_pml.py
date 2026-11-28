@@ -293,7 +293,9 @@ def _triple(v: np.ndarray) -> tuple[float, float, float]:
     return float(p[0]), float(p[1]), float(p[2])
 
 
-def derive_layers(mesh: Mesh, pml: PML, active: np.ndarray) -> Layers:
+def derive_layers(
+    mesh: Mesh, pml: PML, active: np.ndarray, *, inside: str = "air box"
+) -> Layers:
     """The interior box and the covered sides, from the imported nodes.
 
     A 2D mesh's triangles are read like the tetrahedra of a 3D one (its
@@ -304,6 +306,9 @@ def derive_layers(mesh: Mesh, pml: PML, active: np.ndarray) -> Layers:
         pml: The layer, whose regions are volumes of ``mesh``.
         active: Per tetrahedron (triangle), whether it is in the solve
             domain.
+        inside: What the layer surrounds, in the refusals' wording ("air box"
+            of an electromagnetic solve, the mechanical solve's "region it
+            surrounds").
 
     Raises:
         NotImplementedError: A layer tetrahedron straddles a face of the
@@ -350,7 +355,7 @@ def derive_layers(mesh: Mesh, pml: PML, active: np.ndarray) -> Layers:
             f"perfectly matched layer {pml.regions!r} stretches along no axis: "
             f"every layer {cell} lies inside the interior box (the bounding "
             f"box of the active {cells} outside the layer). Mesh the layer "
-            "outside the air box, around it."
+            f"outside the {inside}, around it."
         )
     inside = ~beyond.any(axis=1)
     if inside.any():
@@ -358,7 +363,7 @@ def derive_layers(mesh: Mesh, pml: PML, active: np.ndarray) -> Layers:
         raise ValueError(
             f"perfectly matched layer {region[e]!r}: a {cell} lies inside "
             f"the interior box (the bounding box of the active {cells} outside "
-            "the layer): a layer must surround the air box, not sit in it."
+            f"the layer): a layer must surround the {inside}, not sit in it."
         )
     sides = []
     for axis in range(dim):

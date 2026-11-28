@@ -3264,8 +3264,10 @@ class MechanicalEigenmodeResult:
         error: Backward error of each mode as returned (the refined, normalized
             vector :math:`x` at its returned :math:`\omega`),
             :math:`|(\hat K - \omega^2 M) x| / ((|\hat K| + |\omega|^2 |M|)
-            |x|)` for the discrete pencil; at most
-            ``SolverOptions.eigen_tolerance``.
+            |x|)` for the discrete pencil. The search accepts a mode at
+            ``SolverOptions.eigen_tolerance`` and this is the error of the
+            returned, normalized vector at the returned :math:`\omega`, so it
+            may slightly exceed that tolerance.
         group_velocity: :math:`\mathrm{Re}\,d\omega/dq`, m/s, ``(n_modes,)``,
             the exact derivative of the discrete band: the real part of
             :math:`y^T (\partial_q \hat K)\, x / (2\omega\, y^T M x)` with
@@ -3286,6 +3288,10 @@ class MechanicalEigenmodeResult:
             \int \rho\,|u|^2\,dA`, the time-averaged energy per metre along
             :math:`z` of a lossless mode, or 1 J (a 3D body: the same integral
             over the volume), and its largest coefficient is real and positive.
+            With a perfectly matched layer, the normalization and that gauge
+            read the physical regions only, :math:`x^H M_\mathrm{phys}\,x`,
+            while the left-vector projector uses the full mass :math:`M`
+            (the layer's stretched one included).
         potential_fields: One `Field` per mode of the potential, in V, for a
             model with piezoelectric coupling; empty otherwise.
     """
