@@ -24,6 +24,7 @@ import pytest
 import scipy.constants as const
 from second_order_cases import (
     FREQUENCY,
+    PERIODIC,
     SIDE,
     run_slab,
     slab_mesh,
@@ -128,6 +129,46 @@ def test_the_points_lie_in_the_slab_only(shg):
     assert z.min() >= 0.25
     assert z.max() <= 1.25
     assert shg.regions == ("slab",)
+
+
+def _pml_model(mesh, carrying):
+    """The cell with its pads as a perfectly matched layer, tensor in ``carrying``."""
+    d = np.zeros((3, 6))
+    d[0, 0] = D
+    materials = {
+        r: gfem.Material(
+            eps_r=2.2**2, second_order_nonlinear_tensor=d if r in carrying else None
+        )
+        for r in ("slab", "pad")
+    }
+    return gfem.Model(
+        mesh,
+        materials=materials,
+        boundaries=PERIODIC,
+        pml=gfem.PML("pad"),
+    )
+
+
+def test_a_tensor_inside_the_layer_contributes_no_points(mesh, pump):
+    # the pads carry the tensor too, yet the polarization lives in the slab alone
+    model = _pml_model(mesh, ("slab", "pad"))
+    src = gfem.second_order_polarization(model, _pump(pump, FREQUENCY))
+    z = np.asarray(src.points)[:, 2]
+    assert z.min() >= 0.25
+    assert z.max() <= 1.25
+    # the same points and values as the model whose pads carry no tensor: the
+    # rule is built from the same elements by the same operations
+    plain = gfem.second_order_polarization(
+        _pml_model(mesh, ("slab",)), _pump(pump, FREQUENCY)
+    )
+    assert np.asarray(src.points).shape == np.asarray(plain.points).shape
+    _close(_px(src), _px(plain), REL_SAME)
+
+
+def test_a_tensor_only_inside_the_layer_is_refused(mesh, pump):
+    model = _pml_model(mesh, ("pad",))
+    with pytest.raises(ValueError, match="perfectly matched layer"):
+        gfem.second_order_polarization(model, _pump(pump, FREQUENCY))
 
 
 def test_sum_frequency_is_twice_the_product_of_the_two_pumps(pump_model, pump):
