@@ -379,3 +379,25 @@ def test_a_field_cotangent_costs_one_factorization_per_mode(tmp_path, monkeypatc
     assert factorizations(omega) == 1
     assert factorizations(one_field) == 2
     assert factorizations(both_fields) == 3
+
+
+def test_a_thin_layer_warns_once_in_a_forward_and_its_backward(tmp_path):
+    # the layer is 3.46e-3 um thick at the reference frequency target / 200, so
+    # k_ref d = 0.031 is under 2 pi / 100; the backward builds the system again
+    # and must not repeat the warning
+    column = ec.leaky_column(tmp_path / "column.msh", 0.2)
+    pml = gfem.PML(
+        column.pml.regions,
+        target_reflection=column.pml.target_reflection,
+        reference_frequency=column.target / 200,
+    )
+    problem = gfem.MechanicalEigenmode(column.target, pml=pml, clamped=column.clamped)
+
+    def omega(rho):
+        model = _film(column.model, mass_density=rho)
+        result = gfem.solve(model, problem, options=gfem.SolverOptions(order=2))
+        return jnp.real(result.omega[0])
+
+    with pytest.warns(gfem.ThinLayerWarning) as record:
+        jax.grad(omega)(ec.RHO_LAYER)
+    assert sum(issubclass(w.category, gfem.ThinLayerWarning) for w in record) == 1

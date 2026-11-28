@@ -21,6 +21,16 @@ from gfem._engine.mechanical_eigen import MechanicalEigenmodeRule
 
 SIZE = (1.0, 0.8, 0.6)
 ISOTROPIC = (mc.LAMBDA + 2 * mc.MU, mc.LAMBDA, mc.MU)
+#: The mesh is halved between the two meshes, the elements are of order p = 2
+#: (the solves' default). The frequency is the square root of an eigenvalue, whose
+#: error is the square of the field's energy-norm error, h^p: so it falls as h^(2p)
+#: and halving h divides it by 2^(2p) = 16 once the mesh resolves the mode. The
+#: measured ratios per mode are 12.7 and above (0.79 of 16: the coarse mesh is
+#: not asymptotic yet); the gate is 0.625 of 16 = 10, a fifth under the measured
+#: floor and far above the 4 that a first-order error gives (the mistake it
+#: catches: a lower-order element or a lost term).
+EXPECTED_RATIO = 2 ** (2 * 2)
+GATE_RATIO = 0.625 * EXPECTED_RATIO
 
 
 @pytest.fixture(scope="module")
@@ -67,7 +77,7 @@ def test_the_isotropic_roller_box_converges_to_its_standing_waves(isotropic):
     coarse, fine = (_errors(isotropic[c], exact) for c in (5, 10))
     assert coarse.max() < 1e-2
     assert fine.max() < 8e-4
-    assert (coarse / fine >= 10).all()
+    assert (coarse / fine >= GATE_RATIO).all()
 
 
 def test_the_cubic_silicon_roller_box_converges_to_its_standing_waves(meshes):
@@ -81,7 +91,7 @@ def test_the_cubic_silicon_roller_box_converges_to_its_standing_waves(meshes):
     ]
     assert errors[0].max() < 1.2e-2
     assert errors[1].max() < 9e-4
-    assert (errors[0] / errors[1] >= 10).all()
+    assert (errors[0] / errors[1] >= GATE_RATIO).all()
 
 
 def test_the_lamb_box_converges_to_its_plate_modes(meshes):
@@ -96,7 +106,7 @@ def test_the_lamb_box_converges_to_its_plate_modes(meshes):
     ]
     assert errors[0].max() < 1.2e-2
     assert errors[1].max() < 1e-3
-    assert (errors[0] / errors[1] >= 10).all()
+    assert (errors[0] / errors[1] >= GATE_RATIO).all()
 
 
 # --- identities ----------------------------------------------------------------------
@@ -127,8 +137,11 @@ def test_a_mode_carries_one_joule_with_a_real_largest_coefficient(meshes, isotro
         assert largest.real > 0
         omega = float(np.real(result.omega[mode]))
         energy = 0.5 * omega**2 * mc.mass_energy(_model(meshes[5]), u)
-        # the eigen tolerance 1e-10 on a vector scaled in floating point
-        assert energy == pytest.approx(1.0, rel=1e-10)
+        # the vector is scaled by the same omega this energy reads, so the energy
+        # is 1 to round-off (about 1e-15); the gate is the eigen tolerance, the
+        # accuracy the result promises (a mode accepted at that backward error),
+        # not a tighter number from one platform's round-off
+        assert energy == pytest.approx(1.0, rel=gfem.SolverOptions().eigen_tolerance)
 
 
 def test_a_body_has_no_axial_wavenumber_or_group_velocity(isotropic):
@@ -180,6 +193,25 @@ def test_a_wavenumber_on_a_body_refuses(body):
     problem = gfem.MechanicalEigenmode(3.2e9, wavenumber=1e6)
     with pytest.raises(ValueError, match="a 3D body has no axial wavenumber"):
         gfem.solve(body, problem)
+
+
+def test_a_tiny_mesh_is_solved_or_refused_by_a_gfem_error(tmp_path):
+    # one cell, order 1, the box clamped on x0 and y0: the two nodes at x = y = 1
+    # leave 6 free DOFs, and a roller on z0 for x and y leaves 4. ARPACK needs
+    # nev + 2 <= ncv <= n - 1, so nev is clipped to n - 3 (1 at n = 4); with n = 3
+    # there is no room for a search, and the error says so (not scipy's ValueError)
+    mesh = mc.box(tmp_path / "one.msh", (1.0, 1.0, 1.0), 1)
+    model = _model(mesh)
+    options = gfem.SolverOptions(order=1)
+
+    def solve(clamped):
+        problem = gfem.MechanicalEigenmode(3e9, clamped=clamped)
+        return gfem.solve(model, problem, options=options)
+
+    result = solve({"x0": "xyz", "y0": "xyz", "z0": "xy"})
+    assert np.asarray(result.frequency).shape == (1,)
+    with pytest.raises(gfem.EigenmodeConvergenceError, match="3 free DOFs"):
+        solve({"x0": "xyz", "y0": "xyz", "z0": "xyz"})
 
 
 def test_a_clamped_name_that_is_not_a_surface_says_surface(body):

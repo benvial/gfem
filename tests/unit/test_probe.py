@@ -350,5 +350,41 @@ def test_a_3d_h1_reading_has_a_node_derivative_at_a_fixed_point(cap):
     assert got == pytest.approx(difference, rel=1e-8)
 
 
+def test_a_p2_vector_reading_has_a_node_derivative_at_a_fixed_point(tmp_path):
+    """The displacement of a 3D mode (P2, three components): ``-u . grad f`` too."""
+    import mechanical_cases as mc
+
+    mesh = mc.box(tmp_path / "box.msh", (1.0, 1.0, 1.0), 2)
+    model = gfem.Model(mesh, materials={"body": mc.material()})
+    problem = gfem.MechanicalEigenmode(3.2e9, clamped=mc.ROLLERS)
+    result = gfem.solve(model, problem, options=gfem.SolverOptions(order=2))
+    fields = [result.displacement(0)[axis] for axis in "xyz"]
+    topology = fields[0].mesh._topology
+    nodes = jnp.asarray(fields[0].mesh.nodes)
+    # (0.31, 0.17, 0.12) um in the cells of 0.5 um: the fractional coordinates
+    # 0.62 > 0.34 > 0.24 sit 0.10 cell = 0.05 um from the nearest face of the Kuhn
+    # grid, which a stretch of z by 2e-3 moves by 1.2e-4 um at most
+    point = jnp.asarray([0.31e-6, 0.17e-6, 0.12e-6])
+
+    def moved(s):
+        mesh = gfem.Mesh(nodes * jnp.asarray([1.0, 1.0, s]), topology)
+        return jnp.stack(
+            [f.__class__(**{**_kwargs(f), "mesh": mesh}).at(point).real for f in fields]
+        )
+
+    got = np.asarray(jax.jacrev(moved)(1.0))
+    # fourth-order difference at h = 1e-3 of the P2 reading, a quadratic in z / s:
+    # truncation h^4 f^(5) / 30 is at most 12 h^4 = 1.2e-11 relative to the s^-2
+    # term, round-off 1.5 * 1e-15 / h = 1.5e-12 relative to the reading (a sum of
+    # ten terms, each good to 1e-16); the gate 1e-8 sits far above both
+    h = 1e-3
+    f = np.array([np.asarray(moved(1.0 + k * h)) for k in (-2, -1, 1, 2)])
+    difference = (8 * (f[2] - f[1]) - (f[3] - f[0])) / (12 * h)
+    assert np.abs(difference).max() > 0
+    np.testing.assert_allclose(
+        got, difference, rtol=0, atol=1e-8 * np.abs(difference).max()
+    )
+
+
 def _kwargs(field):
     return {f.name: getattr(field, f.name) for f in dataclasses.fields(field)}
