@@ -18,7 +18,8 @@ so :math:`Q = n\pi / (2\,\mathrm{artanh}\,\zeta) = 157.0743965521` for
 `leaky_column` meshes it: a 2D section (antiplane mode :math:`u_z(y)` with
 rollers on the sides, optionally with layers on the sides too) or a 3D column
 on a Kuhn grid with the stretch along z (a thickness-shear mode
-:math:`u_x(z)`, :math:`u_z` fixed on the x faces). Lengths are in micrometres.
+:math:`u_x(z)`, :math:`u_z` fixed on the x faces), optionally with layers on the
+x and y sides too. Lengths are in micrometres.
 
 `anchored_beam` meshes an in-plane cantilever of length :math:`L` and
 thickness :math:`h` on a free half-plane of the layer's material, ended by a
@@ -153,28 +154,41 @@ def _section(path: Path, maxh: float, side: float) -> gfem.Mesh:
     return gfem.Mesh.from_gmsh(path, length_unit="um")
 
 
-def _body(path: Path, maxh: float) -> gfem.Mesh:
-    """The 3D column on a Kuhn grid, cell edges about ``maxh`` along every axis."""
+def _body(path: Path, maxh: float, side: float) -> gfem.Mesh:
+    """The 3D column on a Kuhn grid, cell edges about ``maxh`` along every axis.
+
+    ``side`` > 0 adds a layer of that thickness on each x and y side, corner
+    columns included; a column outside the interior is named ``<band>_<ix><iy>``
+    (``l``, ``c`` or ``r`` along each axis).
+    """
     a, d = _depths()
     width = 0.6
+
+    def grid(lo: float, hi: float) -> np.ndarray:
+        return np.linspace(lo, hi, max(1, round((hi - lo) / maxh)) + 1)
+
     z = np.unique(
-        np.concatenate(
-            [
-                np.linspace(z0, z1, max(1, round((z1 - z0) / maxh)) + 1)
-                for z0, z1 in ((-a - d, -a), (-a, 0.0), (0.0, H))
-            ]
-        )
+        np.concatenate([grid(z0, z1) for z0, z1 in ((-a - d, -a), (-a, 0.0), (0.0, H))])
     )
-    xy = np.linspace(0.0, width, max(1, round(width / maxh)) + 1)
+    knots = [-side, 0.0, width, width + side] if side else [0.0, width]
+    xy = np.unique(np.concatenate([grid(lo, hi) for lo, hi in zip(knots, knots[1:])]))
+    lo, hi = knots[0], knots[-1]
+
+    def column(c: float) -> int:
+        return int(np.searchsorted(knots[1:-1], c)) if side else 0
 
     def volume(c: np.ndarray) -> str:
-        return "pml" if c[2] < -a else "sub" if c[2] < 0 else "layer"
+        band = "pml" if c[2] < -a else "sub" if c[2] < 0 else "layer"
+        if not side:
+            return band
+        ix, iy = column(c[0]), column(c[1])
+        return band if (ix, iy) == (1, 1) else f"{band}_{'lcr'[ix]}{'lcr'[iy]}"
 
     def face(c: np.ndarray) -> str:
         for i, axis in enumerate("xy"):
-            if abs(c[i]) < 1e-9:
+            if abs(c[i] - lo) < 1e-9:
                 return f"{axis}0"
-            if abs(c[i] - width) < 1e-9:
+            if abs(c[i] - hi) < 1e-9:
                 return f"{axis}1"
         return ""
 
@@ -197,8 +211,9 @@ def leaky_column(
     Args:
         path: The mesh file to write.
         maxh: The element size, um.
-        side_layers: A 2D section with a layer on each side too (the corner
-            layers stretch along x and y); the layer is 0.6 um thick there.
+        side_layers: A layer on each side too (the corner layers stretch along
+            x and y; a 3D body has them on x and y); the layer is 0.6 um thick
+            there.
         dim: 2 for the antiplane section, 3 for the thickness-shear body.
         quality: The mechanical quality factor of every region, layers
             included.
@@ -210,9 +225,8 @@ def leaky_column(
             impedance ratio) or ``"love"``
             :math:`u_x(y)\,e^{-iqz}` at :math:`q = 2\,\mu\mathrm{m}^{-1}`.
     """
-    mesh = _section(path, maxh, 0.6 if side_layers else 0.0) if dim == 2 else None
-    if mesh is None:
-        mesh = _body(path, maxh)
+    side = 0.6 if side_layers else 0.0
+    mesh = _section(path, maxh, side) if dim == 2 else _body(path, maxh, side)
     layer_names = [n for n in mesh.volumes if n.startswith("pml") or "_" in n]
     materials = {}
     for name in mesh.volumes:
