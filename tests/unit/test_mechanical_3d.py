@@ -11,8 +11,10 @@ least twice the error it bounds, the number in its comment, measured through
 
 import mechanical_cases as mc
 import numpy as np
+import piezo_cases as pc
 import pml_cases
 import pytest
+from scipy.optimize import brentq
 
 import gfem
 from gfem._engine.mechanical_eigen import MechanicalEigenmodeRule
@@ -194,3 +196,154 @@ def test_a_model_layer_over_the_solid_refuses(tmp_path):
     )
     with pytest.raises(ValueError, match="does not read the model's electromagnetic"):
         gfem.solve(model, gfem.MechanicalEigenmode(3.2e9))
+
+
+# --- coupling: a TE plate as a box ---------------------------------------------------
+
+TE_THICKNESS = pc.PLATE_THICKNESS * 1e-6
+
+
+@pytest.fixture(scope="module")
+def te_plate(tmp_path_factory):
+    """The 6mm TE plate of 1 um thickness, four cells across y (h = 0.25 um)."""
+    mesh = mc.te_plate_box(tmp_path_factory.mktemp("te") / "te.msh", 4)
+    return mc.piezo_plate_model(mesh, "TE")
+
+
+def _te_solve(model, target, **problem):
+    return gfem.solve(
+        model,
+        gfem.MechanicalEigenmode(
+            target, clamped={"left": "x", "right": "x"}, **problem
+        ),
+        options=gfem.SolverOptions(order=3),
+    )
+
+
+def test_a_3d_open_plate_resonates_at_the_stiffened_half_wave(te_plate):
+    form = pc.plate_form("TE")
+    fa = float(np.real(form["v"])) / (2 * TE_THICKNESS)
+    result = _te_solve(te_plate, fa)
+    # the closed form is exact for the thickness problem: only the cells across y
+    # err; measured 5.1e-7 through gfem (the 2D section: 8e-7, gate 3e-6), gate 2x
+    assert float(result.frequency[0]) == pytest.approx(fa, rel=1.1e-6)
+    assert max(np.asarray(result.error)) < 1e-10
+    # an ungrounded body pins one potential DOF
+    assert result.potential_fields[0].coefficients.shape[0] > 0
+
+
+def test_a_3d_shorted_plate_resonates_where_tan_x_over_x_is_one_over_k2(te_plate):
+    form = pc.plate_form("TE")
+    v, k2 = float(np.real(form["v"])), float(np.real(form["k2"]))
+    x = brentq(lambda x: np.tan(x) / x - 1 / k2, 0.1, np.pi / 2 - 1e-9)
+    exact = x * v / (np.pi * TE_THICKNESS)
+    result = _te_solve(te_plate, exact, ground=["bot", "top"])
+    # measured 4.7e-7 through gfem (the 2D section: gate 1e-6), gate 2x
+    assert float(result.frequency[0]) == pytest.approx(exact, rel=1e-6)
+    assert max(np.asarray(result.error)) < 1e-10
+    # shorted resonates below the open one, by the coupling
+    assert exact < v / (2 * TE_THICKNESS)
+
+
+# --- the damping frame ---------------------------------------------------------------
+
+
+def _framed(path):
+    """The box with a frame cell layer (0.2 um) on every side of the core."""
+
+    def region(c):
+        inside = all(0.2 < c[i] < SIZE[i] - 0.2 for i in range(3))
+        return "core" if inside else "frame"
+
+    return mc.box(path, SIZE, 5, regions=region)
+
+
+def test_the_frame_depths_of_the_three_axes_add_as_squares(tmp_path):
+    from gfem._engine.cache import discretization
+    from gfem._engine.piezoelectric import _frame_depth
+
+    mesh = _framed(tmp_path / "frame.msh")
+    model = gfem.Model(mesh, materials={"core": mc.material(), "frame": mc.material()})
+    frame = gfem.DampingFrame("frame", loss_factor=1.5)
+    built = discretization(mesh).built
+    depth = _frame_depth(model, built, frame)
+    # every node of the outer boundary has all its cells in the frame; the depth
+    # past a side is the distance over the 0.2 um layer, exact on grid points up
+    # to the evaluation of a piecewise-linear function at a vertex (1e-15)
+    nodes = np.asarray(mesh.imported_nodes, float) / built.scale
+    boundary = [
+        p
+        for p in nodes
+        if any(abs(p[i]) < 1e-9 or abs(p[i] - SIZE[i]) < 1e-9 for i in range(3))
+    ]
+    assert len(boundary) == 96
+    for p in boundary:
+        r2 = sum(
+            max(0.2 - p[i], p[i] - (SIZE[i] - 0.2), 0.0) ** 2 / 0.2**2 for i in range(3)
+        )
+        got = depth(built.mesh(*p))
+        assert got == pytest.approx(1.5 * r2, abs=1e-12)
+
+
+def test_a_frame_makes_a_3d_mode_lossy_and_without_it_the_model_is_lossless(tmp_path):
+    mesh = _framed(tmp_path / "frame.msh")
+    model = gfem.Model(mesh, materials={"core": mc.material(), "frame": mc.material()})
+    plain = gfem.solve(model, gfem.MechanicalEigenmode(3.2e9, clamped=mc.ROLLERS))
+    framed = gfem.solve(
+        model,
+        gfem.MechanicalEigenmode(
+            3.2e9, clamped=mc.ROLLERS, damping_frame=gfem.DampingFrame("frame")
+        ),
+    )
+    assert np.imag(plain.omega[0]) == 0.0
+    assert np.isinf(np.asarray(plain.q)).all()
+    q = float(framed.q[0])
+    assert np.isfinite(q)
+    assert q > 0
+
+
+# --- strain --------------------------------------------------------------------------
+
+
+def test_the_strain_of_a_3d_mode_is_the_full_gradient(meshes):
+    # the (1,0,1) shear mode of the roller box, read at three interior points
+    # against central differences of the fields themselves. The P2 field is
+    # quadratic inside a tetrahedron, so a central difference of step d is exact
+    # while both points stay in one (the points sit well inside their cells,
+    # 0.2 um, against d = 10 nm). What remains is the round-off of two
+    # evaluations of u over 2d, 1e-16 |u| / d, relative to the strain scale
+    # |u| / L (L = 0.6 um): 1e-16 L / d = 6e-15. Measured 1.6e-15; gate 1e-13.
+    # |k| = pi sqrt(1 / 1^2 + 1 / 0.6^2) per um, f = v_t |k| / 2 pi
+    f_s = mc.V_T * np.hypot(1 / 1.0, 1 / 0.6) / 2 * 1e6
+    result = _solve(meshes[5], f_s, 1, mc.ROLLERS)
+    # the mode found is that one (measured 3.4e-3 off at 5 cells/um)
+    assert float(result.frequency[0]) == pytest.approx(f_s, rel=1e-2)
+    u = result.displacement(0)
+    points = np.array([[0.31, 0.27, 0.23], [0.52, 0.41, 0.33], [0.73, 0.55, 0.41]])
+    points = points * 1e-6
+    got = np.asarray(gfem.strain(u, points))
+    assert got.shape == (3, 6)
+    d = 1e-8
+
+    def derivative(key, axis):
+        step = np.zeros(3)
+        step[axis] = d
+        return (
+            np.asarray(u[key].at(points + step)) - np.asarray(u[key].at(points - step))
+        ) / (2 * d)
+
+    expected = np.stack(
+        [
+            derivative("x", 0),
+            derivative("y", 1),
+            derivative("z", 2),
+            derivative("y", 2) + derivative("z", 1),
+            derivative("x", 2) + derivative("z", 0),
+            derivative("x", 1) + derivative("y", 0),
+        ],
+        axis=-1,
+    )
+    assert np.abs(got - expected).max() < 1e-13 * np.abs(expected).max()
+    # a point of the plane has no third coordinate
+    with pytest.raises(ValueError, match="points must be one 3-vector"):
+        gfem.strain(u, points[:, :2])

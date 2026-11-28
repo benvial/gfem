@@ -1597,10 +1597,11 @@ _FRAME_FIXED = (
 
 @dataclasses.dataclass(frozen=True, init=False)
 class DampingFrame:
-    r"""The regions that absorb the acoustic waves leaving a piezoelectric section.
+    r"""The regions that absorb the acoustic waves leaving a section or a body.
 
-    Pass one as ``gfem.Piezoelectric(..., damping_frame=...)``, naming every
-    frame region. Each region keeps its layer's material in ``materials``
+    Pass one as ``gfem.Piezoelectric(..., damping_frame=...)`` or
+    ``gfem.MechanicalEigenmode(..., damping_frame=...)``, naming every frame
+    region. Each region keeps its layer's material in ``materials``
     (the lithium niobate frame region holds the lithium niobate): the frame
     multiplies its stiffness by :math:`1 + i\eta r^2`, added to the
     material's own :math:`1/Q_m`, so that the stiffness is
@@ -1615,11 +1616,12 @@ class DampingFrame:
 
     The geometry is read from the imported mesh, as `gfem.PML` reads its
     own: the interior box is the bounding box of the mechanical-domain
-    triangles outside the frame regions. A frame triangle beyond one of the
-    box's edges has :math:`r` = the distance past the edge over the frame's
-    extent on that side; in a corner the depths add as :math:`r_x^2 + r_y^2`.
-    Mesh the frame as rectangles around the interior box, every region on one
-    side ending on one straight line. The depth follows the material
+    elements outside the frame regions. A frame element beyond one of the
+    box's sides has :math:`r` = the distance past the side over the frame's
+    extent on that side; in a corner the depths add as :math:`r_x^2 + r_y^2`
+    (:math:`r_x^2 + r_y^2 + r_z^2` in a 3D body). Mesh the frame as boxes
+    around the interior box (rectangles in a section), every region on one
+    side ending on one straight plane (line). The depth follows the material
     points when the nodes move.
 
     For a plane wave at normal incidence, a frame of thickness :math:`L` in
@@ -1632,8 +1634,8 @@ class DampingFrame:
     wavelengths.
 
     Attributes:
-        regions: The frame's area region names, a string or a sequence of
-            strings.
+        regions: The frame's area or volume region names, a string or a
+            sequence of strings.
         loss_factor: :math:`\eta`, the loss factor added at the frame's outer
             edge, finite and > 0.
 
@@ -1656,8 +1658,8 @@ class DampingFrame:
             names = ()
         if not names or not all(isinstance(n, str) for n in names):
             raise TypeError(
-                "DampingFrame: regions must be area region names (a string or a "
-                f"non-empty sequence of strings), got {regions!r}."
+                "DampingFrame: regions must be area or volume region names (a "
+                f"string or a non-empty sequence of strings), got {regions!r}."
             )
         for name in names:
             if names.count(name) > 1:
@@ -1913,7 +1915,9 @@ class MechanicalEigenmode:
     lines and areas of ``ground`` (and any `gfem.PEC` line) hold it at zero,
     and ``result.potential(mode)`` returns it, in V, scaled with the
     displacement; a body takes the whole potential gradient, so keep the
-    electromagnetic domain to the solid and a thin gap. At :math:`q = 0` an
+    electromagnetic domain to the solid and a thin gap. A coupled body costs
+    one factorization per mode plus one (each mode is refined on its own
+    shifted matrix), so ask for the modes you need. At :math:`q = 0` an
     ungrounded section's (or body's) constant potential
     is fixed by pinning one DOF per connected component (the potential is
     defined up to that constant).

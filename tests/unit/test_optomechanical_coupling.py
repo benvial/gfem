@@ -582,3 +582,23 @@ def test_a_stretch_of_the_mechanical_nodes_matches_finite_differences(
         return _outputs(_coupling(optical, result))
 
     _check(objective, jnp.asarray(0.0), np.asarray(1.0), STRETCH_STEP)
+
+
+def test_a_mode_of_a_3d_body_has_no_cross_section_to_overlap(optical, tmp_path):
+    body = gfem.solve(
+        gfem.Model(
+            mc.box(tmp_path / "body.msh", (1.0, 0.8, 0.6), 3),
+            materials={"body": mc.material()},
+        ),
+        gfem.MechanicalEigenmode(3.2e9, clamped=mc.ROLLERS),
+    )
+    match = (
+        "a mode of a 3D body has no cross-section to overlap with a waveguide "
+        "mode; these helpers read 2D section modes"
+    )
+    with pytest.raises(ValueError, match=match):
+        _coupling(optical, body)
+    # the lossless 3D result is refused for its dimension, not for its missing Q_m
+    assert np.imag(body.omega[0]) == 0
+    with pytest.raises(ValueError, match=match):
+        gfem.brillouin_gain(optical, body, port="p", frequency=FREQUENCY)

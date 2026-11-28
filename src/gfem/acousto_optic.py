@@ -246,6 +246,11 @@ def _check_displacement(
             f"{', '.join(repr(k) for k in displacement)}; it needs 'x', 'y' "
             "and 'z'."
         )
+    if any(displacement[c].mesh.dim == 3 for c in "xyz"):
+        raise ValueError(
+            f"{owner}: a mode of a 3D body has no cross-section to overlap with a "
+            "waveguide mode; these helpers read 2D section modes."
+        )
     if any(displacement[c].mesh.dim != 2 for c in "xyz"):
         raise ValueError(
             f"{owner}: the displacement must live on a native 2D mesh, the "

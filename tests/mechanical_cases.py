@@ -332,6 +332,37 @@ def piezo_plate_mesh(path: Path, width: float, height: float, maxh: float):
     return gfem.Mesh.from_gmsh(path, length_unit="um")
 
 
+def te_plate_box(path: Path, cells: int) -> gfem.Mesh:
+    """The TE plate as a Kuhn box: one cell in x and z, ``cells`` across y.
+
+    The box is ``PLATE_THICKNESS / cells`` wide in x and z, region ``pz``; the
+    faces ``left right`` (x), ``bot top`` (y) and ``front back`` (z). The
+    thickness solution does not vary along x or z, so only the cells across y
+    matter.
+    """
+    t = pc.PLATE_THICKNESS
+    side = t / cells
+    size = (side, t, side)
+    edges = (
+        np.array([0.0, side]),
+        np.linspace(0.0, t, cells + 1),
+        np.array([0.0, side]),
+    )
+    names = (("left", "right"), ("bot", "top"), ("front", "back"))
+
+    def face(c: np.ndarray) -> str:
+        for i, (lo, hi) in enumerate(names):
+            if abs(c[i]) < 1e-9:
+                return lo
+            if abs(c[i] - size[i]) < 1e-9:
+                return hi
+        return ""
+
+    path = Path(path)
+    sm.write_msh22(path, sm.carve(edges, lambda _: "pz", face, None))
+    return gfem.Mesh.from_gmsh(path, length_unit="um")
+
+
 def piezo_plate_model(mesh: gfem.Mesh, kind: str, *, quality=None) -> gfem.Model:
     """The plate of crystal ``kind`` (``"TE"``: c axis along y, ``"TS"``: along z)."""
     return pc.plate_model(mesh, kind, quality=quality)

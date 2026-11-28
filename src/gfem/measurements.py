@@ -1979,11 +1979,18 @@ def strain(displacement: Any, points: Any) -> jax.Array:
     ``displacement`` is the kept displacement of a `gfem.Piezoelectric`
     solve (``res.displacement(f, terminal)``), per volt on the terminal, or the
     displacement of a mode of a `gfem.MechanicalEigenmode` solve
-    (``res.displacement(mode)``). A 2D section has no variation along
-    :math:`z`, or the field of a mode has :math:`e^{-iqz}` with the
-    map's ``wavenumber`` :math:`q` (0 for a piezoelectric solve), so with
-    :math:`u = (u_x, u_y, u_z)` the strain in Voigt order (xx, yy, zz, yz, xz,
-    xy), the shear entries engineering ones (twice the tensor components), is
+    (``res.displacement(mode)``). With :math:`u = (u_x, u_y, u_z)` the strain in
+    Voigt order (xx, yy, zz, yz, xz, xy), the shear entries engineering ones
+    (twice the tensor components), of a 3D body is
+
+    .. math::
+        S = \left(\partial_x u_x,\ \partial_y u_y,\ \partial_z u_z,\
+        \partial_z u_y + \partial_y u_z,\ \partial_z u_x + \partial_x u_z,\
+        \partial_y u_x + \partial_x u_y\right).
+
+    A 2D section has no variation along :math:`z`, or the field of a mode has
+    :math:`e^{-iqz}` with the map's ``wavenumber`` :math:`q` (0 for a
+    piezoelectric solve), so the strain there is
 
     .. math::
         S = \left(\partial_x u_x,\ \partial_y u_y,\ -iq\,u_z,\
@@ -2001,8 +2008,9 @@ def strain(displacement: Any, points: Any) -> jax.Array:
     Args:
         displacement: The displacement map ``res.displacement(f)``, with the
             keys ``"x"``, ``"y"`` and ``"z"``.
-        points: One point ``(2,)`` or ``(n, 2)`` points, in metres, in the
-            :math:`(x, y)` plane.
+        points: One point or ``(n, 2)`` points, in metres, in the
+            :math:`(x, y)` plane of a 2D section; ``(3,)`` or ``(n, 3)`` on a
+            3D body.
 
     Returns:
         ``(n, 6)`` complex strain per volt, ``(6,)`` for one point.
@@ -2023,6 +2031,19 @@ def strain(displacement: Any, points: Any) -> jax.Array:
     single = np.ndim(points) == 1
     grads = {k: _probe.gradient_at(displacement[k], points) for k in keys}
     zero = jnp.zeros_like(grads["x"][:, 0])
+    if displacement["x"].mesh.dim == 3:
+        out = jnp.stack(
+            [
+                grads["x"][:, 0],
+                grads["y"][:, 1],
+                grads["z"][:, 2],
+                grads["y"][:, 2] + grads["z"][:, 1],
+                grads["x"][:, 2] + grads["z"][:, 0],
+                grads["x"][:, 1] + grads["y"][:, 0],
+            ],
+            axis=-1,
+        )
+        return out[0] if single else out
     out = jnp.stack(
         [
             grads["x"][:, 0],
