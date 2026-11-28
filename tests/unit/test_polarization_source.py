@@ -379,8 +379,12 @@ class TestPumpColumns:
         monkeypatch.setattr(volume_loads, "_CHUNK_ENTRIES", 1)
         _, single = _slab_columns(mesh, pump)
         # the same entries of the same maps, only grouped differently: measured
-        # 0 (bit-equal), the bound is the one of two routes, `REL_ROUTES`
-        np.testing.assert_array_equal(single.points, whole.points)
+        # 0 (bit-equal) here, but a BLAS may pick another kernel for another
+        # batch shape, so the bound is a few ulps of the coordinates
+        scale = float(np.abs(whole.points).max())
+        np.testing.assert_allclose(
+            single.points, whole.points, rtol=0, atol=1e-14 * scale
+        )
         _close(
             single.values(field.coefficients), whole.values(field.coefficients), 1e-12
         )
