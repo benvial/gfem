@@ -106,9 +106,20 @@ _LEFT_STEPS = 6
 _LEFT_STALL = 0.1
 #: The inverse-iteration steps that refine a coupled mode's right vector.
 _REFINE_STEPS = 2
-#: A mode with a stretch sensitivity above this is a mode of the layer, not of
-#: the device: ``|d lambda / d g| / |lambda|`` with ``g`` scaling every stretch.
-_LAYER_SENSITIVITY = 1e-3
+#: A mode whose stretch sensitivity (`MechanicalSystem.sensitivities`) is above
+#: this is a mode of the layer, not of the device. The decay of a mode of the
+#: layer is made by the stretch, so its sensitivity is about one or more; that
+#: of a mode of the device is the discretization error of its field in the layer
+#: (below :math:`10^{-4}` on the leaky columns). A decade below one.
+_LAYER_SENSITIVITY = 0.1
+#: The decay rate below which a mode counts as undamped: its stretch sensitivity
+#: is relative to this times :math:`|\lambda|` instead of to its decay rate. A
+#: trapped mode is then kept while the stretch moves its eigenvalue by less than
+#: `_LAYER_SENSITIVITY` times this, relatively (measured :math:`8 \cdot 10^{-8}` for
+#: a mode uniform through the layer); a mode of the layer on a branch of the
+#: substrate, whose sensitivity is about one, is dropped up to substrates of about
+#: a hundred wavelengths.
+_UNDAMPED = 1e-4
 #: The most modes the eigensolver is asked for when it widens its search.
 _NEV_CAP = 200
 #: ``Im omega / |omega|`` below minus this is a gain-sign mode of a layer
@@ -133,6 +144,15 @@ _STRETCHED = {
     "k2": (("stiffness2_im", 1j), ("loss2_im", -1.0)),
     "m": (("mass_im", 1j),),
     "mp": (("mass_phys", 1.0),),
+}
+#: The stretch derivatives of the stiffness and the mass, and the loss.
+_StretchPencil = tuple[sp.csr_array, sp.csr_array, sp.csr_array | None]
+#: The loss of a stretched solve's stiffness, by power of the wavenumber: the
+#: material part of the eigenvalue, which the stretch sensitivity leaves out.
+_LOSS = {
+    "l0": (("loss", 1.0), ("loss_im", 1j)),
+    "l1": (("loss1", 1.0), ("loss1_im", 1j)),
+    "l2": (("loss2", 1.0), ("loss2_im", 1j)),
 }
 _STRETCHED_COUPLED = {
     "k0": (("coupling_im", 1j), ("dielectric_im", 1j)),
@@ -795,7 +815,7 @@ class MechanicalSystem:
             self.stretch = ElasticStretch(model, built, rule.layers, rule.pml, f_ref)
             if assemble:
                 self.stretch.warn_thin()
-        self._dpencil: tuple[sp.csr_array, sp.csr_array] | None = None
+        self._dpencil: _StretchPencil | None = None
         self.matrix: ngs.BaseMatrix | None = None
         #: What a backward reads of the modes found (`modes`).
         self.kept: dict[str, np.ndarray] = {}
@@ -828,6 +848,8 @@ class MechanicalSystem:
 
     def _pieces(self, group: str) -> tuple[tuple[str, complex], ...]:
         """The ``(piece, factor)`` pairs of ``group``, plus the potential's."""
+        if group in _LOSS:
+            return _LOSS[group]
         out = _GROUPS.get(group, ())
         if self.coupled:
             out += _COUPLED.get(group, ())
@@ -1042,31 +1064,45 @@ class MechanicalSystem:
             theta, vectors = err.eigenvalues, err.eigenvectors
         return sigma + 1 / theta, vectors
 
-    def _stretch_pencil(self) -> tuple[sp.csr_array, sp.csr_array]:
-        r""":math:`\partial_g \hat K` and :math:`\partial_g M` on the free DOFs.
+    def _stretch_pencil(self) -> _StretchPencil:
+        r""":math:`\partial_g \hat K`, :math:`\partial_g M` and the loss :math:`L`.
 
-        :math:`g` scales every stretch maximum. One assembly of the layer's
-        pieces with the stretch factors replaced by their derivative.
+        On the free DOFs. :math:`g` scales every stretch maximum: one assembly
+        of the layer's pieces with the stretch factors replaced by their
+        derivative. :math:`L` is the stretched loss of the stiffness,
+        :math:`\hat K = \hat K_e + iL` (``None`` without a loss), one more
+        assembly.
         """
         if self._dpencil is None:
             q = self.q
             assert self.stretch is not None  # noqa: S101
-            forms = self.stretch.forms(
-                self._model,
-                self._co,
-                self.options.order,
-                wavenumber_pieces=q != 0,
-                coupled=self.coupled,
-                lossy=self._lossy,
-                derivative=True,
-            )
-            names = ("k0", "m") if q == 0 else tuple(_GROUPS)
-            _, a = self._form(forms, names, symmetric=q == 0)
-            k = a["k0"][1]
-            if q != 0:
-                k = k - 1j * q * a["k1"][1] + q**2 * a["k2"][1]
             i = self.index
-            self._dpencil = (k[i][:, i].tocsr(), a["m"][1][i][:, i].tocsr())
+
+            def assembled(names: tuple[str, ...], derivative: bool) -> list:
+                assert self.stretch is not None  # noqa: S101
+                forms = self.stretch.forms(
+                    self._model,
+                    self._co,
+                    self.options.order,
+                    wavenumber_pieces=q != 0,
+                    coupled=self.coupled,
+                    lossy=self._lossy,
+                    derivative=derivative,
+                )
+                _, a = self._form(forms, names, symmetric=q == 0)
+                k = a[names[0]][1]
+                if q != 0:
+                    k = k - 1j * q * a[names[1]][1] + q**2 * a[names[2]][1]
+                out = [k[i][:, i].tocsr()]
+                if "m" in a:
+                    out.append(a["m"][1][i][:, i].tocsr())
+                return out
+
+            dk, dm = assembled(("k0", "m") if q == 0 else tuple(_GROUPS), True)
+            loss = None
+            if self._lossy:
+                (loss,) = assembled(("l0",) if q == 0 else tuple(_LOSS), False)
+            self._dpencil = (dk, dm, loss)
         return self._dpencil
 
     def sensitivities(
@@ -1077,13 +1113,34 @@ class MechanicalSystem:
     ) -> list[float]:
         r"""The stretch sensitivity of each mode of ``found`` (NaN: no left vector).
 
-        :math:`\eta = |\partial_g\lambda| / |\lambda|`,
-        :math:`\partial_g\lambda = y^T (\partial_g\hat K - \lambda\,
-        \partial_g M)\,x / (y^T M x)`, where :math:`g` scales every stretch.
-        :math:`y` is :math:`x` at :math:`q = 0` and otherwise the left vector of a
-        transposed search matched by its eigenvalue.
+        .. math::
+
+            \eta = \frac{|\partial_g\lambda|}
+                {\max(|\mathrm{Im}(\lambda - \lambda_m)|,\
+                \epsilon\,|\lambda|)}, \qquad
+            \partial_g\lambda = \frac{y^T (\partial_g\hat K - \lambda\,
+                \partial_g M)\,x}{y^T M x}, \qquad
+            \lambda_m = \frac{i\,y^T L x}{y^T M x},
+
+        where :math:`g` scales every stretch, :math:`\lambda_m` is the
+        material loss' part of the eigenvalue (`_stretch_pencil`) and
+        :math:`\epsilon` is `_UNDAMPED`. :math:`y` is :math:`x` at :math:`q = 0`
+        and otherwise the left vector of a transposed search matched by its
+        eigenvalue.
+
+        The sensitivity is relative to the mode's decay rate without the
+        material loss, not to :math:`|\lambda|`. The decay of a mode of the
+        layer is made by the stretch: its eigenvalue is real at :math:`g = 0`
+        and moves with :math:`g`, so :math:`|\partial_g\lambda| \gtrsim
+        |\mathrm{Im}\,\lambda|` at :math:`g = 1` (a mode on a branch of the
+        substrate with the complex length :math:`\ell = a + d(1 - ig\sigma_\max/3)`
+        has :math:`\lambda - \lambda_c \propto \ell^{-2}`, so exactly
+        :math:`|\ell|/\mathrm{Re}\,\ell \ge 1`), however close it is to the
+        branch's cutoff :math:`\lambda_c`, where :math:`|\partial_g\lambda| /
+        |\lambda|` is small. The radiation of a mode of the device does not depend
+        on the stretch.
         """
-        dk, dm = self._stretch_pencil()
+        dk, dm, loss = self._stretch_pencil()
         if self.q == 0:
             lefts: list[np.ndarray | None] = [x for _, x, _ in found]
         else:
@@ -1100,7 +1157,10 @@ class MechanicalSystem:
                 out.append(float("nan"))
                 continue
             g = y @ (self.mass @ x)
-            out.append(abs((y @ (dk @ x) - k * (y @ (dm @ x))) / g) / abs(k))
+            moved = abs((y @ (dk @ x) - k * (y @ (dm @ x))) / g)
+            material = 0.0 if loss is None else 1j * (y @ (loss @ x)) / g
+            decay = abs((k - material).imag)
+            out.append(moved / max(decay, _UNDAMPED * abs(k)))
         return out
 
     def _layer_modes(
@@ -1111,9 +1171,10 @@ class MechanicalSystem:
     ) -> list[tuple[complex, np.ndarray, float]]:
         r"""The modes of ``found`` that the layer's stretch hardly moves.
 
-        The sensitivity of a mode of the device is below `_LAYER_SENSITIVITY`;
-        a mode of the layer is far above it. A mode with no left vector is
-        dropped: the next, wider search matches it.
+        The sensitivity of a mode of the device is far below
+        `_LAYER_SENSITIVITY`; that of a mode of the layer is about one or more.
+        A mode with no left vector is dropped: the next, wider search matches
+        it.
         """
         etas = self.sensitivities(found, sigma, nev)
         return [m for m, e in zip(found, etas, strict=True) if e <= _LAYER_SENSITIVITY]

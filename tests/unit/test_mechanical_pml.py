@@ -79,8 +79,9 @@ def test_a_uniform_quality_factor_scales_the_eigenvalue(tmp_path):
 # --- the stretch-sensitivity filter ---------------------------------------------------
 
 
-def test_the_filter_separates_the_modes_of_the_device_from_the_layer(tmp_path):
-    column = ec.leaky_column(tmp_path / "column.msh", 0.2)
+@pytest.mark.parametrize("quality", [None, 100.0])
+def test_the_filter_separates_the_modes_of_the_device_from_the_layer(tmp_path, quality):
+    column = ec.leaky_column(tmp_path / "column.msh", 0.2, quality=quality)
     problem = gfem.MechanicalEigenmode(
         column.target, pml=column.pml, clamped=column.clamped
     )
@@ -100,17 +101,36 @@ def test_the_filter_separates_the_modes_of_the_device_from_the_layer(tmp_path):
     # rigid motions are not modes of either
     moving = np.abs(lam) > 1e-8 * abs(sigma)
     eta, lam = eta[moving], lam[moving]
-    # a mode of the device is moved by a stretch only through the discretization
-    # of its evanescent tail (measured 8e-8 at most, 1e-10 for most); a mode of
-    # the layer is moved at order one, and the weakest of them (a quasi-bound
-    # mode at 4.87 GHz, Q about 490, whose stretch sensitivity does not depend on
-    # the mesh: 3.01e-3 at h = 0.2 and 0.1 um) is above 2e-3. The threshold of
-    # 1e-3 sits in that gap
-    assert (eta <= 1e-6).sum() >= 4
-    assert (eta >= 2e-3).sum() >= 10
-    assert not ((eta > 1e-6) & (eta < 2e-3)).any()
-    target = np.argmin(np.abs(lam - sigma))
-    assert eta[target] <= 1e-6
+    # the same Q_m everywhere multiplies every eigenvalue by 1 + i / Q_m
+    omega = np.sqrt(lam / (1 + 1j / (quality or np.inf)))
+    f, q = omega.real / (2 * np.pi), omega.real / (2 * omega.imag)
+    # a mode of the device: the discretization error of its field in the layer
+    # (measured 4.6e-6 at most for the leaky modes; 8.1e-4 for the trapped mode
+    # below); a mode of the layer: about |l| / Re l >= 1 or more (measured 0.97
+    # at least). The gates are a decade on each side of the threshold, 0.1
+    assert (eta <= 1e-2).sum() >= 4
+    assert (eta >= 0.5).sum() >= 10
+    assert not ((eta > 1e-2) & (eta < 0.5)).any()
+    assert eta[np.argmin(np.abs(lam - sigma))] <= 1e-6
+    # the substrate between the rollers carries a shear branch u_z cos(pi x/w)
+    # cut off at c_T / 2w = 4.87 GHz. Uniform in y, that mode is exact, real and
+    # does not see the stretch (both forms take the same factor s_y): it is
+    # kept. Just above it the layer's modes of the branch, lambda - lambda_c
+    # proportional to 1/l^2 with the complex depth l = a + d (1 - i sigma_max/3),
+    # move with the stretch by |l| / Re l of their decay rate (the first, Q
+    # about 490, by 3e-3 of |lambda|): dropped. Measured 1.48 against 1.51
+    # (the film is not a rigid end of the substrate); the gate is 5 %
+    cutoff = ec.C_T / (2 * 0.6 * ec.UM)
+    trapped = np.argmin(np.abs(f - cutoff))
+    assert abs(f[trapped] / cutoff - 1) < 1e-4
+    assert eta[trapped] <= 1e-2
+    branch = np.flatnonzero((np.abs(f / cutoff - 1) < 1e-3) & (q > 100) & (q < 1e4))
+    assert len(branch) == 1
+    a, d = ec._depths()
+    k_ref = 2 * np.pi * column.target / ec.C_L
+    smax = 3 * np.log(1 / ec.R0) / (2 * k_ref * d * ec.UM)
+    depth = a + d * (1 - 1j * smax / 3)
+    assert abs(eta[branch[0]] / (abs(depth) / depth.real) - 1) < 0.05
 
 
 def test_the_convergence_message_counts_the_dropped_layer_modes(tmp_path):
