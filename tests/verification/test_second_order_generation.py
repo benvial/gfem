@@ -49,7 +49,7 @@ def mesh(tmp_path_factory):
 
 @pytest.fixture(scope="module", params=[False, True], ids=["matched", "mismatched"])
 def case(request, mesh):
-    return request.param, run_slab(mesh, order=3)
+    return request.param, run_slab(mesh, order=3, mismatched=request.param)
 
 
 def test_generated_power_against_the_frozen_closed_form(case):
