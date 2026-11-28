@@ -32,7 +32,6 @@ from gfem._sources import (
     Source,
 )
 from gfem._text import hertz_band
-from gfem.errors import NonDifferentiableError
 from gfem.thermal import HeatSource, Trace, _check_finite
 
 if TYPE_CHECKING:
@@ -1346,8 +1345,6 @@ def _check_polarization_mesh(source: Any, model: Any) -> None:
 
     Raises:
         ValueError: The element counts differ.
-        NonDifferentiableError: The source's values are computed inside
-            `jax.grad`, `jax.jit` or `jax.vmap`.
     """
     n = len(model.mesh.volume_elements)
     if source.mesh_elements != n:
@@ -1355,14 +1352,6 @@ def _check_polarization_mesh(source: Any, model: Any) -> None:
             f"The PolarizationSource {source.name!r} was built on a mesh of "
             f"{source.mesh_elements} volume elements, and the model's has {n}: "
             "solve it on a model of the mesh the pump results were solved on."
-        )
-    if is_traced((source.re, source.im)):
-        raise NonDifferentiableError(
-            f"The PolarizationSource {source.name!r} is computed inside "
-            "jax.grad, jax.jit or jax.vmap (it depends on a traced pump, "
-            "tensor or drive): gfem differentiates the solve of a polarization "
-            "source in a later version. Build and solve it outside the "
-            "transformation, or wrap it in jax.lax.stop_gradient."
         )
 
 

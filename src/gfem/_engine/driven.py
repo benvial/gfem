@@ -160,6 +160,7 @@ from gfem._engine.sensitivity import (
     Term,
     is_lumped,
     is_sheet,
+    is_source_leaf,
     is_thermal_value,
     law_key,
 )
@@ -1414,11 +1415,14 @@ class DrivenRule:
         self, model: Model, system: SystemOperator
     ) -> SourceColumns | None:
         """The source columns of this forward; ``None`` without sources."""
-        if not self.sources:
+        # the problem's own sources: on a host copy of a traced solve they hold
+        # the values, where ``self.sources`` still holds the tracers
+        sources = self.problem.sources
+        if not sources:
             return None
         with _timing.phase("discretize"):
             return SourceColumns.build(
-                self.sources,
+                sources,
                 ColumnContext(
                     model=model,
                     system=system,
@@ -1988,6 +1992,14 @@ class DrivenRule:
                 "(gfem.MaterialField) design, or wrap the node coordinates in "
                 "jax.lax.stop_gradient"
             )
+        if self.polarized:
+            return (
+                f"the load of the PolarizationSource {self.polarized[0].name!r} "
+                "sits at the rule points of its elements, which move with the "
+                "nodes, and this version has no node derivative of it. Use a "
+                "material design (a gfem.MaterialField) or wrap the node "
+                "coordinates in jax.lax.stop_gradient"
+            )
         return terms.absorbing_shape_unsupported(model)
 
     def _unsupported_with_sources(self, kind: tuple) -> str | None:
@@ -2125,8 +2137,12 @@ class DrivenRule:
         ct_w = cotangents.get("port_waves")
         frequencies = self.problem.frequency
         nodes = bool(self.dipoles) and (wanted is None or ("nodes",) in wanted)
+        polarized = bool(self.polarized) and (
+            wanted is None or any(is_source_leaf(k) for k in wanted)
+        )
         self._explicit_nodes = None
         self._explicit_inputs = {}
+        self._explicit_problem = {}
         self._port_nodes_report = {}
         pairs: list[FieldPair | None] = [None] * len(frequencies)
         port_terms: list[Integrated] = []
@@ -2142,7 +2158,10 @@ class DrivenRule:
             self._refuse_reciprocal_port_pass(port_pass)
             sources = None
             if system is not None and (
-                ct_p is not None or nodes or (self.reciprocal and ct_w is not None)
+                ct_p is not None
+                or nodes
+                or polarized
+                or (self.reciprocal and ct_w is not None)
             ):
                 sources = self._source_columns(model, system)
             domain = em_region(model, op.built)
@@ -2179,6 +2198,8 @@ class DrivenRule:
                     )
                     if port_pass.active:
                         port_pass.collect(n, adjoint, x, cotangents)
+                    if polarized and sources is not None:
+                        self._add_polarization_terms(sources, omega, adjoint[:, width:])
                     if nodes and sources is not None and reading is not None:
                         self._add_reciprocal_nodes(
                             model, sources, omega, x, ports, n, reading, ct_w
@@ -2199,6 +2220,34 @@ class DrivenRule:
             # this backward built goes down to the budget, no entry evicted
             ENTRIES.trim(retain_budget(self.options.retain_memory), self.comm)
         return [*(p for p in pairs if p is not None), *port_terms]
+
+    def explicit_problem(self) -> dict[tuple, np.ndarray]:
+        r"""The polarization sources' cotangents of the last backward.
+
+        Under ``("problem", ".sources[k].re")`` and ``".im"``: the load is
+        linear in :math:`P`, so the cotangent of its real and imaginary parts
+        is the real part and the negated imaginary part of
+        :math:`\mu_0 L^3\omega^2 M_c\lambda` (`VolumeLoads.cotangent`).
+        """
+        return getattr(self, "_explicit_problem", {})
+
+    def _add_polarization_terms(
+        self, sources: SourceColumns, omega: float, adjoint: np.ndarray
+    ) -> None:
+        """Add the polarization sources' term at ω to `explicit_problem`.
+
+        ``adjoint`` is the source columns' ``(N, n_sources)``.
+        """
+        found = sources.polarization
+        if found is None:
+            return
+        positions, loads = found
+        terms = loads.cotangent(omega, adjoint[:, positions])
+        for k, term in zip(positions, terms, strict=True):
+            for part, value in (("re", np.real(term)), ("im", -np.imag(term))):
+                key = ("problem", f".sources[{k}].{part}")
+                held = self._explicit_problem.get(key)
+                self._explicit_problem[key] = value if held is None else held + value
 
     def explicit_inputs(self) -> dict[tuple, Any]:
         """The cotangents by input kind the backward computed itself.

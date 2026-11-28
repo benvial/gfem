@@ -586,6 +586,9 @@ LAW_FORMS = frozenset({"driven", "eigenmode", "electrostatic", "port mode"})
 #: Operator families with a load pass: their problem leaves are
 #: read, the power density by the pass, the others by the rule's explicit terms.
 LOAD_FORMS = frozenset({"steady_thermal", "transient_thermal"})
+#: Operator families whose sources' leaves (a polarization's values) are read:
+#: the rule's explicit terms (`explicit_problem`) give them.
+SOURCE_FORMS = frozenset({"driven"})
 #: The input kind of a load form's power density per tetrahedron.
 LOAD_KIND = ("problem", ".density")
 #: The input kind of a load form's power density per triangle (W/m^2).
@@ -629,6 +632,11 @@ def law_key(name: str, parameter: tuple) -> str:
     return f"{name} d/d " + ".".join(str(p) for p in parameter)
 
 
+def is_source_leaf(kind: tuple) -> bool:
+    """Whether input ``kind`` is a leaf of a problem's source (``.sources[k]...``)."""
+    return kind[0] == "problem" and str(kind[1]).startswith(".sources[")
+
+
 def unsupported(form: str, kind: tuple) -> str | None:  # noqa: PLR0911
     """Why the kernel cannot differentiate ``form`` by input ``kind``, or None."""
     for kinds, forms, what in (
@@ -665,7 +673,9 @@ def unsupported(form: str, kind: tuple) -> str | None:  # noqa: PLR0911
             f"gradients of {form} results with respect to mesh node coordinates "
             "(shape gradients) are not available in this version of gfem"
         )
-    if kind[0] == "problem" and form in LOAD_FORMS:
+    if kind[0] == "problem" and (
+        form in LOAD_FORMS or (form in SOURCE_FORMS and is_source_leaf(kind))
+    ):
         return None
     if kind == BEND_RADIUS_KIND and form == "port mode":
         return None

@@ -175,6 +175,16 @@ class SourceColumns:
                 return positions, loads
         return None
 
+    @property
+    def polarization(self) -> tuple[list[int], VolumeLoads] | None:
+        """The polarization sources' column positions and loads, or ``None``."""
+        from gfem._engine.volume_loads import VolumeLoads
+
+        for positions, loads in self.kinds:
+            if isinstance(loads, VolumeLoads):
+                return positions, loads
+        return None
+
     def port_waves(self, omega: float, z: np.ndarray) -> np.ndarray:
         """``(n_ports, n_sources)``: the sources' port waves from the ports' solutions.
 

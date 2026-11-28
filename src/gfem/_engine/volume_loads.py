@@ -198,11 +198,15 @@ class VolumeLoads:
             source on the solve space, zero on fixed DOFs; its load at
             :math:`\omega` is ``coefficients(omega)[k] * vectors[:, k]``.
         scale: The metres per file unit.
+        maps: Per source, its three component maps :math:`M_c`, ``(n_points,
+            N)`` sparse with the fixed DOFs' columns zeroed: the adjoint of
+            the load, `cotangent`.
     """
 
     names: tuple[str, ...]
     vectors: np.ndarray
     scale: float
+    maps: tuple[tuple[sp.csr_matrix, ...], ...] = ()
 
     def coefficients(self, omega: float) -> np.ndarray:
         r"""``(n,)``: :math:`\mu_0 L^3\omega^2`."""
@@ -215,6 +219,21 @@ class VolumeLoads:
     def __call__(self, omega: float) -> np.ndarray:
         """`rhs`: the loads of a source kind as `SourceColumns` reads them."""
         return self.rhs(omega)
+
+    def cotangent(self, omega: float, adjoint: np.ndarray) -> list[np.ndarray]:
+        r"""Per source, the complex cotangent :math:`\mu_0 L^3\omega^2 M_c\lambda`.
+
+        ``adjoint`` is ``(N, n)``, the adjoint :math:`\lambda_k` of source k's
+        column; each term is ``(n_points, 3)``, whose real part is the
+        cotangent of :math:`\mathrm{Re}\,P` and whose negated imaginary part
+        is that of :math:`\mathrm{Im}\,P`.
+        """
+        factor = self.coefficients(omega)
+        return [
+            factor[k]
+            * np.stack([m @ np.asarray(adjoint)[:, k] for m in self.maps[k]], axis=1)
+            for k in range(len(self.names))
+        ]
 
     def power_scale(self, omega: float) -> float:
         r"""Emitted power per :math:`-\operatorname{Im}(b^H x)`, in W."""
@@ -244,6 +263,8 @@ def volume_loads(
     scale = float(built.scale)
     free = free_mask(space.FreeDofs(), space.ndof)
     columns = np.zeros((int(space.ndof), len(sources)), complex)
+    keep = sp.diags(free.astype(float))
+    maps: list[tuple[sp.csr_matrix, ...]] = []
     cache: dict[tuple[int, bytes], tuple[_Rule, np.ndarray]] = {}
     for k, source in enumerate(sources):
         if order > source.generated_order:
@@ -261,10 +282,18 @@ def volume_loads(
         rows = _rows(cells, rule.per_cell)
         _same_points(source, rule.coordinates[rows])
         p = np.asarray(source.re) + 1j * np.asarray(source.im)
-        for c, matrix in enumerate(rule.maps):
-            columns[:, k] += matrix[rows].T @ p[:, c]
+        # a traced value was not checked when the source was built
+        if not np.isfinite(p).all():
+            raise ValueError(
+                f"The PolarizationSource {source.name!r} holds a non-finite "
+                "polarization: check the pump's powers, phases and the tensor."
+            )
+        mine = tuple((matrix[rows] @ keep).tocsr() for matrix in rule.maps)
+        maps.append(mine)
+        for c, matrix in enumerate(mine):
+            columns[:, k] += matrix.T @ p[:, c]
     columns[~free] = 0.0
-    return VolumeLoads(tuple(s.name for s in sources), columns, scale)
+    return VolumeLoads(tuple(s.name for s in sources), columns, scale, tuple(maps))
 
 
 def _same_points(source: PolarizationSource, here: np.ndarray) -> None:

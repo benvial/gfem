@@ -297,6 +297,8 @@ PROBLEMS = {
     "driven_magnetic_dipole": Problem(
         "driven_magnetic_dipole", "emitted_power.d", "wave"
     ),
+    # a polarization source's port waves (cell-only: no raise table entry)
+    "driven_polarization": Problem("driven_periodic_plain", "port_waves", "floquet"),
     # the energy of a field (also beside a law; a mode field and a periodic
     # cell are cell-only keys), the loss of a driven field and its heat
     "electric_energy": Problem("electric_energy", "lower"),
