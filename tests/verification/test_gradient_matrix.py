@@ -772,10 +772,17 @@ def _source_cells() -> list[Cell]:
             for name in ("eps_r", "conductivity", "fill", "nodes")
         ),
         Cell("driven_dipole_reciprocal", "eps_r", "direct", "adaptive"),
-        # a second harmonic's generated port wave through the pump solve and the
-        # generated solve: the polarization source's load reads the pump's field
-        Cell("driven_polarization", "eps_r", "direct", "uniform"),
     ]
+
+
+def _polarization_cells() -> list[Cell]:
+    """A second harmonic's generated port wave through both solves.
+
+    The pump solve and the generated solve of a chi2 slab on a periodic cell
+    (Floquet ports): the polarization source's load reads the pump's kept field.
+    Listed after the Floquet cells, whose ports the periodic rows list first.
+    """
+    return [Cell("driven_polarization", "eps_r", "direct", "uniform")]
 
 
 def _piezoelectric_cells() -> list[Cell]:
@@ -843,6 +850,7 @@ CELLS = [
     *_source_cells(),
     *_driven_periodic_cells(),
     *_driven_floquet_cells(),
+    *_polarization_cells(),
     *_eigen_periodic_cells(),
     *_participation_cells(),
     *_field_cells(),
