@@ -1453,11 +1453,18 @@ class MechanicalSystem:
                 )
                 + ")"
             )
+            # an order-2 body mode can read as a layer mode when side layers line it
+            hint = (
+                " On a coarse order-2 mesh with side layers a body mode can read "
+                "as a layer mode; try order 3 or higher."
+                if self.stretch is not None and dropped and not found
+                else ""
+            )
             raise EigenmodeConvergenceError(
                 f"MechanicalEigenmode: {len(found)} of {want} modes near "
                 f"{target:g} Hz met eigen_tolerance={tolerance:g}{layer} (the best "
                 f"backward error was {best:.2g}). Move target closer to the wanted "
-                "modes, or loosen SolverOptions.eigen_tolerance."
+                "modes, or loosen SolverOptions.eigen_tolerance." + hint
             )
         omega_all = np.sqrt(np.array([k for k, _, _ in found]))
         order = np.lexsort(

@@ -120,7 +120,8 @@ class PML:
     electromagnetic layer and is not read by a mechanical solve. The
     layer's regions must be in the mechanical domain and have a constant
     `gfem.Material`; the section's stretch axes are :math:`x` and
-    :math:`y`.
+    :math:`y`. On a 3D body with layers along its sides use order 3 or
+    higher: at order 2 a body mode can read as a layer mode and be dropped.
 
     Under a node map (`Mesh.with_nodes`) the mechanical layer's
     :math:`\sigma` stays a function of the imported coordinates: its faces,

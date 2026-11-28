@@ -178,7 +178,9 @@ pml = gfem.PML(["layer"], target_reflection=1e-8)
 
 Make it about one quasi-P wavelength thick: the layer's reference wavenumber is
 that of the fastest wave along each side's normal, so every slower wave
-reflects less. The default reflection $R_0 = 10^{-6}$ suits a $Q$ of a few
+reflects less. Use order 3 or higher when layers line the sides: at order 2 the
+sides can make a body mode look like a layer mode and drop it. The default
+reflection $R_0 = 10^{-6}$ suits a $Q$ of a few
 hundred; take $10^{-8}$ for a tight one. A 3D beam on a half-space has
 $Q^{-1} \propto (w/l)(h/l)^4$ and the support is a few hundred beam lengths
 across at the flexural frequency, so a mode of $Q \sim 10^6$ takes hundreds of
