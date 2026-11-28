@@ -42,6 +42,7 @@ feature also runs in 2D.
 | Raman gain | {py:obj}`gfem.raman_gain`, {py:obj}`gfem.RamanSpectrum` | No | Partial: materials, planar-port nodes | {doc}`recipes/raman-gain` |
 | Free carriers | {py:obj}`gfem.free_carriers` | No | Partial: materials, planar-port nodes | {doc}`recipes/free-carriers` |
 | Second-harmonic and three-wave coupling | {py:obj}`gfem.second_harmonic`, {py:obj}`gfem.three_wave_coupling` | No | Partial: materials, not nodes | {doc}`recipes/second-harmonic-generation` |
+| Second harmonic of a patterned film | {py:obj}`gfem.second_order_polarization`, {py:obj}`gfem.Pump`, {py:obj}`gfem.PolarizationSource` | No | Partial: materials, not nodes | {doc}`recipes/metasurface-second-harmonic` |
 | Photon pairs | {py:obj}`gfem.spdc`, {py:obj}`gfem.sfwm` | No | Partial: materials, not nodes | {doc}`recipes/photon-pair-sources` |
 
 ### Electro-optics

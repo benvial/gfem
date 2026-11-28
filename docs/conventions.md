@@ -289,7 +289,9 @@ factor 2 on the shear ones, in the frame of the material's `axes`. A domain of
 reversed polarization carries $-d$. The coupling $\kappa_{abc}$ is reported in
 the convention $e^{-i\omega t}$, the complex conjugate of the integral in gfem's
 phasors, in 1/(W$^{1/2}$ m), and $\eta_\mathrm{norm} = |\kappa|^2$ in 1/(W m²).
-{doc}`recipes/second-harmonic-generation`.
+{doc}`recipes/second-harmonic-generation`. The polarization at the generated
+frequency drives a solve as the current $J = +i\omega_3 P$ in gfem's
+$e^{+i\omega t}$ phasors ({doc}`recipes/metasurface-second-harmonic`).
 Derivation and a check on a solve: {ref}`Second-order nonlinearity <theory-nonlinear-and-quantum-optics-second-order-nonlinearity>`.
 
 ## Photon pairs

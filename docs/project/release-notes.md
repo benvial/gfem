@@ -52,6 +52,7 @@ Nonlinear and quantum optics:
 - **Second-harmonic generation.** `gfem.second_harmonic` and
   `gfem.three_wave_coupling` give a pump mode's coupling to its harmonic, the phase
   mismatch and the poled-guide efficiency ({doc}`../recipes/second-harmonic-generation`).
+- **Second harmonic of a patterned film.** `gfem.second_order_polarization` turns a pump's kept field into a polarization source that a second `gfem.Driven` solve at the generated frequency radiates, with the power in each Floquet order and a gradient through both solves ({doc}`../recipes/metasurface-second-harmonic`).
 - **Photon-pair sources.** `gfem.spdc` and `gfem.sfwm` give the pair rate, the
   brightness and the joint spectrum of a pumped waveguide
   ({doc}`../recipes/photon-pair-sources`).
