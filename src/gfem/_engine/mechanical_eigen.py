@@ -330,7 +330,11 @@ class MechanicalEigenmodeRule:
     def nondifferentiable_output(self, name: str) -> str:
         """The error message for a cotangent on output ``name``."""
         why = {
-            "group_velocity": "it is read from the modes and their derivative in q",
+            "group_velocity": (
+                "it is NaN for a 3D body, which has no axial band"
+                if self._mesh.dim == 3
+                else "it is read from the modes and their derivative in q"
+            ),
             "error": "it is the backward error of the solve",
         }[name]
         return (
@@ -384,7 +388,8 @@ class MechanicalEigenmodeRule:
                     "it is degenerate with another mode (to "
                     "SolverOptions.cluster_rtol), so its eigenvector, and its "
                     "derivative, depend on an arbitrary choice of basis. Break the "
-                    "symmetry of the section, or wrap the value in "
+                    f"symmetry of the {'body' if self._mesh.dim == 3 else 'section'}, "
+                    "or wrap the value in "
                     "jax.lax.stop_gradient to use it without its derivative."
                 )
         pairs: list[FieldPair] = []
