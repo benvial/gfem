@@ -427,7 +427,7 @@ class TestRefusals:
             gfem.Driven(shg.frequency, excite=(), sources=shg, source_fields=False)
 
     def test_a_dipole_with_a_bloch_wave_vector_is_still_refused(self, shg):
-        dipole = gfem.ElectricDipole("d", (0.0, 0.0, 0.0), (1e-12, 0.0, 0.0))
+        dipole = gfem.ElectricDipole("d", position=(0, 0, 0), moment=(1e-30, 0, 0))
         with pytest.raises(NotImplementedError, match="incident fields and dipoles"):
             gfem.Driven(
                 shg.frequency,
