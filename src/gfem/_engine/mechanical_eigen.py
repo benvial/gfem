@@ -1189,7 +1189,7 @@ class MechanicalSystem:
                 lossy=self._lossy,
             )
             orders = ("0",) if q == 0 else ("0", "1", "2")
-            names = tuple(f"k{o}" for o in orders) + ("m",)
+            names = (*(f"k{o}" for o in orders), "m")
             if self._lossy:
                 names += tuple(f"l{o}" for o in orders)
             _, a = self._form(

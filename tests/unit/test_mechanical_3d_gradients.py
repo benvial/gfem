@@ -121,7 +121,7 @@ JOINT = np.array([[0.6, 0.8], [-0.6, -0.8], [-0.6, -0.8]]) / np.sqrt(3.0)
 
 
 def _joint(model, p):
-    """``model`` with the leaves of ``LEAF`` moved by the rows of ``p`` (regions a, b)."""
+    """``model`` with the leaves of ``LEAF`` moved by the rows of ``p``."""
     for row, name in zip(p, LEAF, strict=True):
         model = _edit(model, name, row)
     return model
@@ -143,7 +143,7 @@ def _readings(result):
     return jnp.stack([intensity, strain.real])
 
 
-def test_the_frequency_and_readings_of_a_cantilever_match_finite_differences_in_its_leaves(
+def test_the_frequency_and_readings_of_a_cantilever_match_differences_in_its_leaves(
     cantilever,
 ):
     # the step 1e-2 on a unit vector (0.577 per leaf): round-off 1.5 * 1.2e-10 / (1e-2

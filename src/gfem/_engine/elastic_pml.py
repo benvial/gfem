@@ -483,7 +483,7 @@ class ElasticStretch:
         coupled: bool,
         lossy: bool,
     ) -> dict[str, tuple[Callable[[Any, Any], Any], Any]]:
-        r"""The pieces of the stretch derivatives and of the loss, one complex form each.
+        r"""The stretch derivatives and the loss as pieces, one complex form each.
 
         For the eigenvalue filter (`gfem._engine.mechanical_eigen.MechanicalSystem.
         sensitivities`), which reads :math:`\partial_g \hat K`,
