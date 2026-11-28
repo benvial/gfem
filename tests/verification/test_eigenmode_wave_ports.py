@@ -37,6 +37,7 @@ import wave_port_cases as w
 from resonance import fit_resonance
 
 import gfem
+from gfem._linalg.pardiso import pardiso_available
 from gfem.errors import PortModeError, UnrequestedPortModeWarning
 
 
@@ -252,11 +253,24 @@ def cross_check(model, target, n_modes, order, *, root=None, entry=0):
     return abs(fitted - pole) / abs(pole), abs(fitted.imag - pole.imag) / pole.imag
 
 
+#: The A4 cross-check's gates on |p_fit - p| / |p| and on Im p_fit's relative
+#: error. The fit moves the pole by A dS for an error dS of the driven S
+#: (|S| = 1: this lone port is lossless), A = 0.05 measured relative to |p|
+#: (random perturbations of S; it is about 90 / (2 Q), Q = 869), and by
+#: 2 Q A dS relative to Im p. With PARDISO (pivoted LDL^T) dS is a few ulp:
+#: measured 1.1e-13 and Im 1.9e-10 (fit bias 2e-14). NGSolve's sparse Cholesky
+#: (no ``mkl`` extra) does not pivot: its backward error, and with it dS, grows
+#: to 1e-11 .. 1e-10 near the resonance (2.5e-10 between one and four threads,
+#: whose sums give other bits): error 5.7e-13 .. 3.9e-12 and Im 3.2e-10 ..
+#: 1.2e-9 measured. Gated at dS <= 2e-9 (8x the measured spread): A dS = 1e-10, and
+#: 2 Q times that, 1.7e-7, on Im.
+A4_POLE_GATES = (1e-12, 2e-9) if pardiso_available() else (1e-10, 2e-7)
+
+
 def test_a_lone_port_s_root_is_the_driven_pole(meshes):
-    # A4 at order 3: measured 1.1e-13, Im 1.9e-10 (fit bias 2e-14)
     error, im = cross_check(lone_port(meshes, "a4", w.CASE_A4), 9.97e9, 1, 3)
-    assert error <= 1e-12
-    assert im <= 2e-9
+    assert error <= A4_POLE_GATES[0]
+    assert im <= A4_POLE_GATES[1]
 
 
 def test_a_shared_port_surface_s_root_is_the_driven_pole(meshes):
