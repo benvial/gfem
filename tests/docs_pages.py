@@ -50,6 +50,12 @@ MESHES = {
     MESH_URL.replace("tutorials/data/line.msh", "recipes/strip_section.py"): DOCS
     / "recipes"
     / "strip_section.py",
+    MESH_URL.replace("tutorials/data/line.msh", "recipes/mmi_blocks.py"): DOCS
+    / "recipes"
+    / "mmi_blocks.py",
+    MESH_URL.replace("tutorials/data/line.msh", "recipes/taper_blocks.py"): DOCS
+    / "recipes"
+    / "taper_blocks.py",
     MESH_URL.replace("tutorials/data/line.msh", "recipes/ridge_section.py"): DOCS
     / "recipes"
     / "ridge_section.py",

@@ -536,6 +536,12 @@ class Model:
                 (surface,) = surfaces_of(item)
                 self._check_sheet(what, surface, sheet)
             if isinstance(item, WavePort):
+                if item.allow_evanescent and mesh.dim == 3:
+                    raise NotImplementedError(
+                        f"WavePort {item.name!r}: allow_evanescent (a mode below "
+                        "cutoff kept at the port) is supported on line ports of "
+                        "2D meshes only; this mesh is 3D."
+                    )
                 for edge in item.pec_edges:
                     check_surface(mesh, edge, f"WavePort {item.name!r} pec_edges")
                 if item.polarity is not None:

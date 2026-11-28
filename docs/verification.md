@@ -60,6 +60,18 @@ Modes of a guide section used as ports, and their gradients
 | Stretched guide faces: volume part and port-mode part | Differences with the other part frozen; exact solves | {gfem-test}`tests/verification/test_shape_gradient.py` | Every change |
 | Recipe's port mode gradient | Finite differences | {gfem-test}`tests/unit/test_docs_port_mode_gradient_recipe.py` | Every change |
 
+## Mode cascades
+
+Blocks solved on their own and joined through uniform sections by
+`gfem.cascade`, each compared with one full solve of the device at the same
+mesh size and element order.
+
+| Case | Compared with | Test | Runs |
+|---|---|---|---|
+| Width step in a PEC box: lossless, lossy, blocks on non-conforming planes, absorbing walls; the error falls with the kept modes and the sections' lengths | The full solve of the step; $\max|S_\mathrm{cascade}-S_\mathrm{full}|$ gated at $4\times10^{-10}$ (lossless), $7\times10^{-8}$ (lossy), $2\times10^{-7}$ (non-conforming), and by the first dropped mode's decay | {gfem-test}`tests/verification/test_mode_cascade_step.py` | Every change |
+| 1x2 multimode interference splitter in a PEC box: error against kept modes and plane distance, best length by a sweep, its gradient in the length and in the core permittivity | The full solve of the splitter; error gated at $10^{-8}$; the length sweep's optimum; fourth-order central differences of the full solve | {gfem-test}`tests/verification/test_mode_cascade_mmi.py` | Every change |
+| Linear taper as a staircase of $M = 4$ to $32$ width steps | The full solve of the smooth taper; transmission error about $M^{-2.5}$, gated by its order and at $1.1\times10^{-3}$ for $M = 32$; reflection not gated | {gfem-test}`tests/verification/test_mode_cascade_taper.py` | Every change |
+
 ## Group index and dispersion
 
 A port mode's group index $n_g$, $\beta_2$, $\beta_3$ and the dispersion

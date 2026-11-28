@@ -26,9 +26,9 @@ tutorials/metal-bend
 tutorials/grating
 recipes/waveguide-dispersion
 recipes/waveguide-bends
-recipes/port-mode-gradient
 recipes/shared-port-surface
 recipes/sax-circuit
+recipes/mode-cascade
 ```
 
 ```{toctree}
@@ -160,6 +160,7 @@ recipes/fit-measured-data
 
 recipes/shape-gradient
 recipes/cad-parameter-gradient
+recipes/port-mode-gradient
 recipes/robust-optimization
 recipes/tolerance-report
 recipes/remesh-and-restart

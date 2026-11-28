@@ -31,6 +31,7 @@ feature also runs in 2D.
 | Bent port modes | {py:obj}`gfem.PortMode` with {py:obj}`gfem.Bend`, {py:obj}`gfem.junction_coupling` | No | $R$, materials and shape of $\gamma$, `bend_loss`, `junction_coupling`; $n_g$, $\beta_k$, $D$ raise | {doc}`recipes/waveguide-bends` |
 | Several modes on one wave-port surface | {py:obj}`gfem.WavePort` | Yes | Matrix, at port faces too | {doc}`recipes/shared-port-surface` |
 | Circuits | {py:obj}`gfem.SaxComponent`, `to_sdict`, `to_skrf` | No | Yes, not forward mode | {doc}`recipes/sax-circuit` |
+| Mode cascades | {py:obj}`gfem.cascade`, {py:obj}`gfem.WavePort.kept_modes` | No | Lengths and blocks | {doc}`recipes/mode-cascade` |
 
 ### Nonlinear and quantum optics
 
@@ -190,6 +191,7 @@ returning a wrong value:
 | **Unrequested port modes** | A propagating mode no port requests is partly reflected, not converted | {doc}`modes-and-ports` |
 | **Eigenmodes with wave ports** | One process, no Bloch vector; a target below a port mode's cutoff raises; Q above about 2 only | {doc}`modes-and-ports` |
 | **Lossy port lines** | Give every wave port a `voltage_path`, or none, for a symmetric S | {doc}`recipes/shared-port-surface` |
+| **Mode cascades** | 2D line ports only; closed or `Absorbing` sections, no perfectly matched layer; one frequency grid; a traced block needs a `polarity` on every kept mode | {doc}`recipes/mode-cascade` |
 | **Designs at wave ports** | Renormalize S where a port meets a fixed line; eigenmode solves raise {py:obj}`gfem.PortGeometryError` | {doc}`recipes/port-mode-gradient` |
 | **Bent port modes** | Materials invariant about the bend axis; no mirror across the guide. Kerr is the only bend-aware overlap: `three_wave_coupling`, `second_harmonic`, `spdc`, `sfwm`, `raman_gain`, `free_carriers`, and Kerr with anisotropy or a birefringent index refuse a bent mode, `kerr_coupling` refuses a straight mode with a bent one, `junction_coupling` refuses line ports and a traced `mu_r`. $n_g$, $\beta_k$, $D$ and node coordinates raise under `jax.grad` | {doc}`recipes/waveguide-bends` |
 | **Group index and dispersion** | `PortMode` results only; not differentiable | {doc}`recipes/waveguide-dispersion` |

@@ -919,7 +919,7 @@ class DrivenRule:
     #: compare their cotangents' shapes, not their values.
     pieces = frozenset({"e_field"})
 
-    def __init__(
+    def __init__(  # noqa: PLR0915
         self,
         model: Model,
         problem: Driven,
@@ -1064,6 +1064,10 @@ class DrivenRule:
         self.regions = tuple(r for r in mesh.volumes if active[mesh.elements(r)].any())
         #: The wave ports' names, in model port order.
         self.wave_ports = tuple(p.name for p in model.ports if isinstance(p, WavePort))
+        #: The wave ports by name, for the fields a port mode result echoes.
+        self._wave_port_specs = {
+            p.name: p for p in model.ports if isinstance(p, WavePort)
+        }
         #: The lumped ports an adaptive sweep solves as adjoint loads: not
         #: excited, with a resistance (`PortNetwork.adjoint_loads`).
         self.lumped_loads = tuple(
@@ -2821,6 +2825,8 @@ class DrivenRule:
                 solved=jnp.asarray(ports.solved[:, k]),
                 e_field=ports.field(k),
                 pml=self.pml,
+                allow_evanescent=self._wave_port_specs[name].allow_evanescent,
+                polarity=self._wave_port_specs[name].polarity,
             )
         return modes
 

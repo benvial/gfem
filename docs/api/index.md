@@ -17,6 +17,7 @@ gfem/bands/index
 gfem/results/index
 gfem/broadband/index
 gfem/circuit/index
+gfem/mode_cascade/index
 gfem/refinement/index
 gfem/measurements/index
 gfem/diffraction/index

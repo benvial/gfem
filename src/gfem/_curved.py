@@ -183,6 +183,7 @@ ENTRIES: dict[str, tuple[str, str | None]] = {
     "band_diagram": (GATED, "periodic"),
     "beam_coupling": (GATED, "beam_coupling"),
     "brillouin_gain": (REFUSED, "cross_section"),
+    "cascade": (ACCEPTED, None),
     "characteristic_impedance": (GATED, "wave_port"),
     "cross_sections": (GATED, "cross_sections"),
     "cuda_available": (ACCEPTED, None),

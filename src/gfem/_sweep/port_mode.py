@@ -745,6 +745,8 @@ class PortModeRule:
             n_g=jnp.asarray(outputs["n_g"]),
             beta_2=jnp.asarray(outputs["beta_2"]),
             beta_3=jnp.asarray(outputs["beta_3"]),
+            allow_evanescent=self.port.allow_evanescent,
+            polarity=self.port.polarity,
         )
 
     def _locate(self, *, point_read: bool = False) -> PortModeSpace | LineModeSpace:
@@ -1158,6 +1160,9 @@ class _Greedy:
         self._reduced_rows: dict[int, np.ndarray] = {}
         self.fallbacks: dict[tuple[int, int], ModeDerivative] = {}
         n, n_modes = len(f), len(self.modes)
+        #: Whether any port keeps a mode below cutoff: the scan then also admits
+        #: evanescent candidates, ranked after the propagating ones.
+        self.evanescent = any(p.allow_evanescent for p in self.ports)
         self.k0 = np.empty(n)
         self.k_max = np.empty(n)
         self.shift = np.empty(n)
@@ -1195,7 +1200,7 @@ class _Greedy:
         n = len(self.f)
         self.exact_solves += 1
         first = self._solve(0)
-        if len(first.lam) < max(self.modes):
+        if self._lacking(first, 0):
             raise self._cutoff_error(first)
         for k in range(len(self.modes)):
             self._check_degenerate(first, k)
@@ -1285,8 +1290,7 @@ class _Greedy:
             )
             lam, vecs, res, share, ok = scan
             # Order: largest Re of the shift-inverted eigenvalue
-            rank = (1 / (lam - self.shift[j])).real
-            ranked = np.flatnonzero(ok)[np.argsort(-rank[ok], kind="stable")]
+            ranked = self._ranked(lam, ok, self.shift[j], j)
             if (len(ranked) >= mode and _covers(lam[ranked], covers)) or want >= n - 2:
                 break
         if covers is not None:
@@ -1300,6 +1304,44 @@ class _Greedy:
             share=share[ranked],
             factor=factor if self.dispersive_modes else None,
         )
+
+    def _ranked(
+        self, lam: np.ndarray, ok: np.ndarray, shift: float, j: int
+    ) -> np.ndarray:
+        r"""The admitted candidates' indices in rank order.
+
+        Largest :math:`\mathrm{Re}\,1/(\lambda - \sigma)` first. With a port that
+        keeps a mode below cutoff the evanescent candidates come after the
+        propagating ones, by ascending :math:`\mathrm{Re}\,\lambda`, so the
+        propagating ranks are those of a sweep without it.
+        """
+        rank = (1 / (lam - shift)).real
+        ranked = np.flatnonzero(ok)[np.argsort(-rank[ok], kind="stable")]
+        if not self.evanescent:
+            return ranked
+        beta = np.sqrt(-lam[ranked] + 0j)
+        propagating = _propagates(beta, self.k_max[j])
+        tail = ranked[~propagating]
+        tail = tail[np.argsort(lam[tail].real, kind="stable")]
+        return np.concatenate([ranked[propagating], tail])
+
+    def _n_propagating(self, cand: _Candidates, j: int) -> int:
+        """How many of ``cand`` (the solve at ``j``) propagate: they come first."""
+        if not self.evanescent:
+            return len(cand.lam)
+        return int(_propagates(np.sqrt(-cand.lam + 0j), self.k_max[j]).sum())
+
+    def _lacking(self, cand: _Candidates, j: int) -> bool:
+        """Whether a mode has no candidate at ``j``.
+
+        A port that keeps modes below cutoff needs the candidate to exist; any
+        other needs it to propagate.
+        """
+        n_prop = self._n_propagating(cand, j)
+        return any(
+            mode > (len(cand.lam) if port.allow_evanescent else n_prop)
+            for mode, port in zip(self.modes, self.ports, strict=False)
+        ) or max(self.modes) > len(cand.lam)
 
     def _scan(
         self,
@@ -1325,8 +1367,15 @@ class _Greedy:
         )
         share = space.layer_share(vecs, lam)
         k_max = self.k_max[j] if k_max is None else k_max
+        # a port that keeps a mode below cutoff admits every converged mode off
+        # the null space (|beta| ~ 0), as the reduced model does
+        admitted = (
+            np.abs(beta) > _EVANESCENT * k_max
+            if self.evanescent
+            else _propagates(beta, k_max)
+        )
         ok = (
-            _propagates(beta, k_max)
+            admitted
             & (beta.real <= k_max * (1 + 1e-6))
             & (res < _UNCONVERGED)
             & (share <= _PML_SHARE)
@@ -1407,10 +1456,11 @@ class _Greedy:
             if k == kmin:
                 factor, shared = own, used
         self.shift[j] = shared
-        return self._assemble_candidates(picks, scans, shifts, factor)
+        return self._assemble_candidates(j, picks, scans, shifts, factor)
 
     def _assemble_candidates(
         self,
+        j: int,
         picks: list[_Pick | None],
         scans: list[_Scan],
         shifts: list[float],
@@ -1425,8 +1475,7 @@ class _Greedy:
         }
         fill: list[_Pick] = []
         for scan, shift in zip(scans, shifts, strict=True):
-            rank = (1 / (scan.lam - shift)).real
-            for i in np.flatnonzero(scan.ok)[np.argsort(-rank[scan.ok], kind="stable")]:
+            for i in self._ranked(scan.lam, scan.ok, shift, j):
                 lam = scan.lam[i]
                 if any(
                     abs(lam - e.lam) <= _SAME_MODE * abs(e.lam) for e in entries + fill
@@ -1670,6 +1719,10 @@ class _Greedy:
             derivative = derivatives[k]
             if derivative is not None:
                 out[:, j] = derivative.dispersion(scale)
+        if self._opted(k):  # no group index or dispersion below cutoff
+            out[:, ~_propagates(np.sqrt(-self.lam[k] + 0j), self.k_max)] = complex(
+                math.nan, math.nan
+            )
         return out
 
     def dispersion_pass(self) -> None:
@@ -1709,6 +1762,10 @@ class _Greedy:
                 for i in map(int, rows):
                     if (k, i) in self.fallbacks:
                         continue
+                    if self._opted(k) and not _propagates(
+                        np.sqrt(-self.lam[k, i] + 0j), self.k_max[i]
+                    ):
+                        continue  # no dispersion below cutoff: NaN
                     ref = self.coords_at(i, k)
                     row = basis.derivative_row(
                         taylor[i],
@@ -1864,6 +1921,8 @@ class _Greedy:
             self.reduced.add(self.candidates[j].vecs[:, self.pick[j]])
 
     def _warn_crossing(self, k: int) -> None:
+        if self._opted(k):  # a kept mode changes rank where it crosses cutoff
+            return
         mode = self.modes[k]
         for j in sorted(self.pick):
             if self.pick[j][k] != mode - 1:
@@ -1924,6 +1983,9 @@ class _Greedy:
             passed[i] = (self.residual[:, i] <= self.floor[:, i]).all()
         beta = np.sqrt(-self.lam + 0j)
         gone = passed & ~self.solved & ~_propagates(beta, self.k_max)
+        for k in range(n_modes):
+            if self._opted(k):
+                gone[k] = False
         if gone.any():
             i = int(np.flatnonzero(gone.any(axis=0))[0])
             raise self._evanescent_error(i, [int(np.flatnonzero(gone[:, i])[0])])
@@ -1967,7 +2029,7 @@ class _Greedy:
         coords = np.zeros((n_modes, n, w.shape[1]), complex)
         voltage = np.full((n_modes, n), complex(math.nan, math.nan))
         phase = np.ones((n_modes, n), complex)
-        gamma = 1j * np.sqrt(-self.lam + 0j)
+        gamma = _branch_gamma(self.lam)
         omega = 2 * math.pi * self.f
         for k, (rule, arrow) in enumerate(zip(rules, arrows, strict=True)):
             volts = (
@@ -2032,11 +2094,22 @@ class _Greedy:
             f"WavePort {port.name!r} on surface {port.surface!r} (shared with {shared})"
         )
 
+    def _opted(self, k: int) -> bool:
+        """Whether mode ``k``'s port keeps its mode below cutoff."""
+        return k < len(self.ports) and self.ports[k].allow_evanescent
+
     def _remedy(self, first: str) -> str:
-        """``first``, then the LumpedPort remedy (and dropping a shared port)."""
+        """``first``, then the evanescent opt-in and LumpedPort remedies.
+
+        A shared port may also be dropped.
+        """
+        keep = (
+            "keep the mode below cutoff with `allow_evanescent=True`, e.g. the "
+            "kept modes of a mode cascade (`WavePort.kept_modes`)"
+        )
         if len(self.ports) == 1:
-            return f"{first}, or use a LumpedPort."
-        return f"{first}, use a LumpedPort, or drop that wave port."
+            return f"{first}, {keep}, or use a LumpedPort."
+        return f"{first}, {keep}, use a LumpedPort, or drop that wave port."
 
     def _unsettled_error(self) -> PortModeError:  # pragma: no cover - a safeguard
         if len(self.modes) == 1:
@@ -2055,26 +2128,39 @@ class _Greedy:
 
         The lowest-ranked failing mode is the one reported.
         """
+        n_first = self._n_propagating(first, 0)
         k = min(
-            (k for k, mode in enumerate(self.modes) if mode > len(first.lam)),
+            (
+                k
+                for k, mode in enumerate(self.modes)
+                if mode > (n_first if not self._opted(k) else len(first.lam))
+            ),
             key=lambda k: self.modes[k],
         )
         n, mode, who = len(self.f), self.modes[k], self._who(k)
+        if self._opted(k):
+            return PortModeError(
+                f"{who}: the cross-section yields only {len(first.lam)} mode(s) "
+                f"(propagating and evanescent) at {hertz(self.f[0])}, fewer "
+                f"than the {mode} kept: refine the port line or keep fewer "
+                "modes."
+            )
         remedy = self._remedy("Start the band above the cutoff, pick a lower mode")
         top = self._solve(n - 1) if n > 1 else first
-        if n == 1 or len(top.lam) < mode:
+        n_top = self._n_propagating(top, n - 1)
+        if n == 1 or n_top < mode:
             return PortModeError(
                 f"{who}: mode {mode} does not propagate in the band "
-                f"{self._band()} (the cross-section carries {len(first.lam)} "
+                f"{self._band()} (the cross-section carries {n_first} "
                 f"propagating mode(s) at {hertz(self.f[0])} and "
-                f"{len(top.lam)} at {hertz(self.f[-1])}): the band is below "
+                f"{n_top} at {hertz(self.f[-1])}): the band is below "
                 f"the mode's cutoff. {remedy}"
             )
         lo, hi, cand = 0, n - 1, top
         while hi - lo > 1:
             mid = (lo + hi) // 2
             c = self._solve(mid)
-            if len(c.lam) >= mode:
+            if self._n_propagating(c, mid) >= mode:
                 hi, cand = mid, c
             else:
                 lo = mid
@@ -2426,6 +2512,22 @@ def propagating_modes(space: ModeSpace, frequency: float, mode: int) -> int:
     """
     sweep = _Greedy(space, np.array([float(frequency)]), [mode], 1.0, [])
     return min(len(sweep.candidates_at(0).lam), mode)
+
+
+def _branch_gamma(lam: Any) -> Any:
+    r"""The propagation constant :math:`\gamma` with :math:`\gamma^2 = \lambda`.
+
+    The root :math:`i\sqrt{-\lambda}` is kept where
+    :math:`\mathrm{Re}(\gamma e^{-i\pi/4}) > 0` and negated elsewhere: the
+    half-plane of :math:`e^{i\pi/4}\sqrt{-i\gamma^2}`. It gives
+    :math:`\mathrm{Im}\,\gamma > 0` above cutoff, :math:`\mathrm{Re}\,\gamma > 0`
+    below it (a decaying mode), and the passive root of a lossy mode. Every
+    propagating mode, lossless or lossy, keeps the root :math:`i\sqrt{-\lambda}`
+    bit for bit.
+    """
+    gamma = 1j * np.sqrt(-np.asarray(lam) + 0j)
+    # [()]: a scalar stays a scalar
+    return np.where((gamma * np.exp(-0.25j * np.pi)).real <= 0, -gamma, gamma)[()]
 
 
 def _propagates(beta: np.ndarray, k_max: float | np.ndarray) -> np.ndarray:

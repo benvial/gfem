@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import structured_meshes as sm
+from cascade_cases import box_mesh, lines
 from petsc_recipe import SOLVER_OPTIONS
 from solver_misses import cannot_converge_at
 
@@ -612,6 +613,33 @@ def _driven_jobs(tmp_path):
         gfem.Job(model, problem).to_json(tmp_path / f"{name}.json")
         for name, model in (("periodic", periodic), ("guided", guided))
     ]
+
+
+def test_a_plain_wave_port_is_written_without_the_evanescent_opt_in(tmp_path):
+    # files written without the opt-in stay readable by gfem that lacks it;
+    # a port that opts in writes it and reads back
+    guided = _driven_jobs(tmp_path)[1]
+    assert '"allow_evanescent"' not in guided.read_text(encoding="utf-8")
+    mesh = box_mesh(
+        tmp_path / "box.msh",
+        lines([0.0, 1.0], 0.2),
+        lines([0.0, 1.0], 0.2),
+        lambda *_: "fill",
+    )
+    model = gfem.Model(
+        mesh,
+        materials={"fill": gfem.Material(eps_r=1.0)},
+        boundaries=[gfem.PEC("side")],
+        ports=[
+            gfem.WavePort("p", "left", allow_evanescent=True),
+            gfem.WavePort("q", "right"),
+        ],
+    )
+    job = gfem.Job(model, gfem.PortMode("p", 1e14, polarization="Ez"))
+    path = job.to_json(tmp_path / "opted.json")
+    assert '"allow_evanescent"' in path.read_text(encoding="utf-8")
+    first, second = gfem.Job.from_json(path).model.ports
+    assert (first.allow_evanescent, second.allow_evanescent) == (True, False)
 
 
 def test_an_unknown_key_is_refused_by_name_on_every_class(tmp_path):

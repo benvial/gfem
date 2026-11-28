@@ -400,6 +400,33 @@ class LineModeSpace:
         """
         return -0.5j / (omegas[:, None] * self._vacuum)
 
+    def pairing(self, coeffs: np.ndarray, gamma: complex, omega: float) -> complex:
+        r"""Reciprocity pairing :math:`p(\omega)\,\gamma\,u^\mathsf{T} M(\omega) u`, W.
+
+        :math:`p = -i/(2\omega v)` per metre (``v`` the vacuum constant of the
+        polarization) and :math:`M` the :math:`w`-weighted line mass, so that
+        :math:`\gamma\,u^\mathsf{T} M u` is the :math:`h^\mathsf{T} e` of the
+        port mode solve, unconjugated: the square of the pseudo-wave scale of a
+        port without a voltage path. The mirror of
+        `gfem._engine.port_mode.PortModeSpace.pairing`.
+
+        Args:
+            coeffs: Full coefficient vector of the field.
+            gamma: Propagation constant per local unit.
+            omega: Angular frequency, rad/s.
+        """
+        weights = self._weights(float(self._k0(omega)))
+        coeffs = np.asarray(coeffs, complex)
+        free = coeffs[self.free]
+        mass = sum(
+            (
+                w * (m @ free)
+                for w, m in zip(weights, self._coupling_forms, strict=True)
+            ),
+            np.zeros(self.space.ndof, complex),
+        )
+        return -0.5j / (omega * self._vacuum) * gamma * complex(coeffs @ mass)
+
     def layer_share(self, vecs: np.ndarray, lam: np.ndarray) -> np.ndarray:  # noqa: ARG002
         """Each eigenvector's layer energy share: zero, a line meets no layer."""
         return np.zeros(np.asarray(vecs).reshape(len(self.free), -1).shape[1])

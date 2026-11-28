@@ -130,6 +130,9 @@ def mode_pass(  # noqa: PLR0912, PLR0915
     Raises:
         PortModeError: An adjoint solve missed (`gfem._engine.port_mode_adjoint`).
     """
+    # imported here: port_mode imports this module
+    from gfem._sweep.port_mode import _branch_gamma
+
     n = len(frequency)
     scale = space.section.scale
     order = np.argsort(frequency, kind="stable")
@@ -188,7 +191,7 @@ def mode_pass(  # noqa: PLR0912, PLR0915
         line = isinstance(space, LineModeSpace)
         fields: Any = full_line_reduction(space) if line else FullReduction(space)
         mass = space.mass
-        gamma = 1j * np.sqrt(-lam_r + 0j)
+        gamma = _branch_gamma(lam_r)
         norm_rows = normalize_rows(
             fields, mass, x, gamma, omega, volts=volts, polarity=polarity
         )
@@ -248,7 +251,7 @@ def mode_pass(  # noqa: PLR0912, PLR0915
                     shape_points += voltage_eulerian(
                         space, z_full, *voltage_rule, v_bar[i]
                     )
-    gamma = 1j * np.sqrt(-lam_r + 0j)
+    gamma = _branch_gamma(lam_r)
     lam_bar = cg / (2 * gamma)
 
     kernel, total = _kernel_and_total(space, float(k0[0]))
