@@ -1,4 +1,4 @@
-r"""The sources of a driven problem: incident fields and point dipoles.
+r"""The sources of a driven problem: incident fields, point dipoles and polarizations.
 
 A source is one right-hand-side column of a `gfem.Driven` problem beside its
 excited ports, named like a port. Its parameters are fixed values: gfem does
@@ -16,6 +16,7 @@ import jax
 import numpy as np
 
 from gfem._checks import is_traced, static_float
+from gfem._pytree import register_fields
 from gfem.errors import NonDifferentiableError
 
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "IncidentField",
     "MagneticDipole",
     "PlaneWave",
+    "PolarizationSource",
     "Source",
 ]
 
@@ -544,12 +546,112 @@ class MagneticDipole(_PointDipole):
     """
 
 
-#: A source of a driven problem: an incident field or a point dipole.
-Source = PlaneWave | GaussianBeam | IncidentField | ElectricDipole | MagneticDipole
+# --- polarization sources ----------------------------------------------------------
+
+_PROCESSES = ("second-harmonic", "sum-frequency", "difference-frequency")
+
+
+@dataclasses.dataclass(frozen=True, eq=False, repr=False)
+class PolarizationSource:
+    r"""A polarization :math:`P` at the points of a quadrature rule, as a load column.
+
+    The current is :math:`J = +i\omega P` under :math:`e^{+i\omega t}` and the
+    column is its load, :math:`b_j = \mu_0 L\omega^2 \int P\cdot\varphi_j\,
+    \mathrm{d}V` (the dipole's, integrated). It is built by
+    `gfem.second_order_polarization` from the fields of a pump, not by hand: the
+    values live at the points of the rule of the mesh it was built on, in
+    the order of the elements ``elements`` (volume elements of the mesh, in
+    increasing order) and, within an element, of the rule. Solve it with
+    ``gfem.Driven(source.frequency, excite=(), sources=source)`` on a model
+    of the same mesh.
+
+    Attributes:
+        name: The label of its column and of its kept fields.
+        frequency: The generated frequency, Hz.
+        process: ``"second-harmonic"``, ``"sum-frequency"`` or
+            ``"difference-frequency"``.
+        pump_frequencies: The pumps' frequencies, Hz.
+        regions: The regions carrying a nonzero second-order tensor.
+        order: The order :math:`Q` of the rule space of its points (rule
+            degree :math:`2Q`).
+        generated_order: The highest Nédélec order of a generated solve that
+            integrates the load exactly.
+        elements: ``(n_elements,)`` the mesh's volume elements holding points.
+        mesh_elements: The number of volume elements of the mesh.
+        points: ``(n_points, 3)`` the points' coordinates in the mesh's file
+            unit, which a solve compares with its own rule's.
+        re: ``(n_points, 3)`` the real part of :math:`P` (C/m²).
+        im: ``(n_points, 3)`` the imaginary part of :math:`P` (C/m²).
+    """
+
+    name: str
+    frequency: float
+    process: str
+    pump_frequencies: tuple[float, ...]
+    regions: tuple[str, ...]
+    order: int
+    generated_order: int
+    elements: np.ndarray
+    mesh_elements: int
+    points: np.ndarray
+    re: Any
+    im: Any
+
+    def __post_init__(self) -> None:
+        """Validate and normalize (see the class docstring)."""
+        _name(self.name, "PolarizationSource")
+        if self.process not in _PROCESSES:
+            raise ValueError(
+                f"PolarizationSource.process must be one of {_PROCESSES}, got "
+                f"{self.process!r}."
+            )
+        _set(
+            self,
+            frequency=float(self.frequency),
+            pump_frequencies=tuple(float(f) for f in self.pump_frequencies),
+            regions=tuple(self.regions),
+            order=int(self.order),
+            generated_order=int(self.generated_order),
+            elements=np.asarray(self.elements, np.int64),
+            mesh_elements=int(self.mesh_elements),
+            points=np.asarray(self.points, float),
+        )
+        for field in ("re", "im"):
+            value = getattr(self, field)
+            shape = np.shape(value)
+            if len(shape) != 2 or shape[1] != 3 or shape[0] != len(self.points):
+                raise ValueError(
+                    f"PolarizationSource.{field} must be (n_points, 3) = "
+                    f"({len(self.points)}, 3), got {shape}."
+                )
+            if not is_traced(value):
+                _set(self, **{field: np.asarray(value, float)})
+
+    def __repr__(self) -> str:
+        return (
+            f"PolarizationSource({self.name!r}, frequency={self.frequency:.4g}, "
+            f"process={self.process!r}, regions={self.regions!r}, "
+            f"points={len(self.points)})"
+        )
+
+
+register_fields(PolarizationSource, ("re", "im"))
+
+#: A source of a driven problem: an incident field, a point dipole or a polarization.
+Source = (
+    PlaneWave
+    | GaussianBeam
+    | IncidentField
+    | ElectricDipole
+    | MagneticDipole
+    | PolarizationSource
+)
 #: The sources whose column is an incident field in the background stack.
 INCIDENT = (PlaneWave, GaussianBeam, IncidentField)
 #: The point sources.
 DIPOLES = (ElectricDipole, MagneticDipole)
+#: The sources whose column is a load spread over elements.
+POLARIZATION = (PolarizationSource,)
 
 for _cls in (PlaneWave, GaussianBeam, IncidentField, ElectricDipole, MagneticDipole):
     jax.tree_util.register_static(_cls)

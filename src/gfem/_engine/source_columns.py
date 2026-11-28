@@ -17,12 +17,13 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from gfem._sources import DIPOLES, INCIDENT, Source
+from gfem._sources import DIPOLES, INCIDENT, POLARIZATION, Source
 from gfem._sweep.adaptive import AffineTerm
 
 if TYPE_CHECKING:
     from gfem._engine.dipoles import PointLoads
     from gfem._engine.system_operator import SystemOperator
+    from gfem._engine.volume_loads import VolumeLoads
     from gfem._pml import Stretch
     from gfem.model import Model
 
@@ -89,10 +90,22 @@ def _dipoles(context: ColumnContext, sources: Sequence[Any]) -> PointLoads:
     )
 
 
+def _polarization(context: ColumnContext, sources: Sequence[Any]) -> VolumeLoads:
+    from gfem._engine.volume_loads import volume_loads
+
+    if context.comm is not None:
+        raise NotImplementedError(
+            "A PolarizationSource on MPI ranks: its load is assembled from one "
+            "process's rule points. Solve it on one process."
+        )
+    return volume_loads(context.system.operator, sources, order=context.order)
+
+
 #: Per kind of source (its classes), the builder of its columns.
 COLUMN_KINDS: tuple[tuple[tuple[type, ...], ColumnBuilder], ...] = (
     (INCIDENT, _incident),
     (DIPOLES, _dipoles),
+    (POLARIZATION, _polarization),
 )
 
 
@@ -205,12 +218,18 @@ class SourceColumns:
         return loads.port_wave_loads(omega, np.asarray(weights)[:, positions])
 
     def emitted_power(self, omega: float, x: np.ndarray) -> np.ndarray:
-        """``(n_dipoles,)`` W from the source columns' solutions ``(N, n_sources)``."""
-        found = self.dipoles
-        if found is None:
-            return np.zeros(0)
-        positions, loads = found
-        return loads.emitted_power(omega, x[:, positions])
+        """``(n_emitters,)`` W from the source columns' solutions ``(N, n_sources)``.
+
+        The emitters are the point dipoles and the polarization sources, in
+        the problem's source order.
+        """
+        found = []
+        for positions, loads in self.kinds:
+            emitted = getattr(loads, "emitted_power", None)
+            if emitted is not None:
+                power = emitted(omega, x[:, positions])
+                found.extend(zip(positions, power, strict=True))
+        return np.array([p for _, p in sorted(found)], float)
 
     def power_loads(self, omega: float, cotangent: np.ndarray) -> np.ndarray:
         """``(N, n_sources)``: the cotangent on ``x`` of one on the emitted power.

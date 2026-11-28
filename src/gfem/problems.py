@@ -23,6 +23,7 @@ from gfem._pytree import register_fields
 from gfem._sources import (
     DIPOLES,
     INCIDENT,
+    POLARIZATION,
     ElectricDipole,
     GaussianBeam,
     IncidentField,
@@ -31,6 +32,7 @@ from gfem._sources import (
     Source,
 )
 from gfem._text import hertz_band
+from gfem.errors import NonDifferentiableError
 from gfem.thermal import HeatSource, Trace, _check_finite
 
 if TYPE_CHECKING:
@@ -867,7 +869,7 @@ def _port_names(value: Any) -> tuple[str, ...] | None:
     return names
 
 
-_SOURCE_TYPES = (*INCIDENT, *DIPOLES)
+_SOURCE_TYPES = (*INCIDENT, *DIPOLES, *POLARIZATION)
 
 
 def _sources(value: Any) -> tuple[Source, ...]:
@@ -882,7 +884,8 @@ def _sources(value: Any) -> tuple[Source, ...]:
             raise TypeError(
                 "Driven.sources takes a source or a sequence of them (gfem."
                 "PlaneWave, GaussianBeam, IncidentField, ElectricDipole, "
-                f"MagneticDipole), got {type(item).__name__}."
+                "MagneticDipole, PolarizationSource), got "
+                f"{type(item).__name__}."
             )
     seen: set[str] = set()
     for item in items:
@@ -921,6 +924,9 @@ def _check_sources(problem: Driven) -> None:
                 f"{name!r} names both an excited port and a source: a name labels "
                 "one column. Rename the source."
             )
+    polarized = [s for s in sources if isinstance(s, POLARIZATION)]
+    if polarized:
+        _check_polarization_sources(problem, polarized)
     if problem.wave_vector is not None:
         raise NotImplementedError(
             "Driven.sources with a Bloch wave_vector: incident fields and dipoles "
@@ -943,6 +949,41 @@ def _check_sources(problem: Driven) -> None:
         )
     if not problem.source_fields:
         _check_reciprocal_sources(problem, incident)
+
+
+def _check_polarization_sources(problem: Driven, polarized: Sequence[Source]) -> None:
+    """The refusals of polarization sources that the problem alone shows."""
+    for source in polarized:
+        f = float(source.frequency)  # ty: ignore[unresolved-attribute]
+        if len(problem.frequency) != 1 or not math.isclose(
+            problem.frequency[0], f, rel_tol=1e-9
+        ):
+            raise ValueError(
+                f"The PolarizationSource {source.name!r} drives one frequency, "
+                f"{f:g} Hz, and Driven.frequency is "
+                f"{', '.join(f'{g:g}' for g in problem.frequency)} Hz: a source at "
+                "another frequency is another solve. Pose "
+                "gfem.Driven(frequency=source.frequency, ...), one per generated "
+                "frequency."
+            )
+    if problem.sweep == "adaptive":
+        raise NotImplementedError(
+            f"The adaptive sweep cannot take the PolarizationSource "
+            f"{polarized[0].name!r}: it drives one frequency, so there is no "
+            "sweep to reduce. Use sweep='uniform'."
+        )
+    if not problem.source_fields:
+        raise NotImplementedError(
+            "Driven(source_fields=False) reads port waves by reciprocity for "
+            f"point dipoles only; the PolarizationSource {polarized[0].name!r} "
+            "needs its own field. Solve it with source_fields=True (the default)."
+        )
+    if problem.wave_vector is not None:
+        raise NotImplementedError(
+            f"The PolarizationSource {polarized[0].name!r} with a Bloch "
+            "wave_vector is not supported in this version: solve at normal "
+            "incidence (no wave_vector) on a periodic cell."
+        )
 
 
 def _check_reciprocal_sources(problem: Driven, incident: Sequence[Source]) -> None:
@@ -1282,7 +1323,9 @@ def _check_model_sources(problem: Any, model: Any) -> None:
                 f"{source.name!r} names both a port of the model and a source "
                 f"({kind}): a name labels one column. Rename the source."
             )
-        if model.periodic_translations:
+        if isinstance(source, POLARIZATION):
+            _check_polarization_mesh(source, model)
+        elif model.periodic_translations:
             raise NotImplementedError(
                 f"The {kind} on a model with periodic pairs: incident fields and "
                 "dipoles on a periodic cell are not supported. For a plane wave "
@@ -1296,6 +1339,31 @@ def _check_model_sources(problem: Any, model: Any) -> None:
             )
     if not problem.source_fields:
         _check_reciprocal_ports(model)
+
+
+def _check_polarization_mesh(source: Any, model: Any) -> None:
+    """Raise unless ``source`` was built on a mesh with ``model``'s elements.
+
+    Raises:
+        ValueError: The element counts differ.
+        NonDifferentiableError: The source's values are computed inside
+            `jax.grad`, `jax.jit` or `jax.vmap`.
+    """
+    n = len(model.mesh.volume_elements)
+    if source.mesh_elements != n:
+        raise ValueError(
+            f"The PolarizationSource {source.name!r} was built on a mesh of "
+            f"{source.mesh_elements} volume elements, and the model's has {n}: "
+            "solve it on a model of the mesh the pump results were solved on."
+        )
+    if is_traced((source.re, source.im)):
+        raise NonDifferentiableError(
+            f"The PolarizationSource {source.name!r} is computed inside "
+            "jax.grad, jax.jit or jax.vmap (it depends on a traced pump, "
+            "tensor or drive): gfem differentiates the solve of a polarization "
+            "source in a later version. Build and solve it outside the "
+            "transformation, or wrap it in jax.lax.stop_gradient."
+        )
 
 
 def _check_reciprocal_ports(model: Any) -> None:
@@ -1420,7 +1488,9 @@ def _on_grid(
     return out
 
 
-jax.tree_util.register_static(Driven)
+# the sources are children: only a polarization source has leaves (its values),
+# so a problem without one flattens to no leaf
+register_fields(Driven, ("sources",))
 
 
 @dataclasses.dataclass(frozen=True, init=False)

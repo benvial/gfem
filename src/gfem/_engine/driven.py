@@ -192,7 +192,7 @@ from gfem._periodic import (
     check_wave_vector,
 )
 from gfem._pml import Stretch
-from gfem._sources import DIPOLES, INCIDENT, MagneticDipole
+from gfem._sources import DIPOLES, INCIDENT, POLARIZATION, MagneticDipole
 from gfem._sweep.adaptive import AffineSystem, AffineTerm, Sweep, adaptive_sweep
 from gfem._text import hertz
 from gfem.errors import (
@@ -1144,8 +1144,19 @@ class DrivenRule:
         #: Whether the sources' port waves are read from the ports' own
         #: solutions (`gfem.Driven.source_fields` ``False``): no source column.
         self.reciprocal = not problem.source_fields
-        #: The dipoles whose own field is solved: their emitted power.
-        self.emitting = () if self.reciprocal else self.dipoles
+        #: The sources whose own field is solved and that emit power: the
+        #: dipoles and the polarization sources, in source order.
+        self.emitting = (
+            ()
+            if self.reciprocal
+            else tuple(
+                s for s in problem.sources if isinstance(s, (*DIPOLES, *POLARIZATION))
+            )
+        )
+        #: The polarization sources among the sources.
+        self.polarized = tuple(
+            s for s in problem.sources if isinstance(s, POLARIZATION)
+        )
         #: The labels of the solve's columns: the excited ports, then the
         #: sources solved.
         self.columns = (
@@ -2023,6 +2034,12 @@ class DrivenRule:
                 f"wave port {ports[0]!r}: it is the backward error of the mode "
                 "solve, a diagnostic, not a physical quantity. Wrap it in "
                 "jax.lax.stop_gradient to use its value without its derivative."
+            )
+        if name == "emitted_power" and self.polarized:
+            return (
+                f"gfem cannot differentiate the emitted power of the "
+                f"PolarizationSource {self.polarized[0].name!r} in this version: "
+                "read the port waves, or wrap the power in jax.lax.stop_gradient."
             )
         if name in self.differentiable_outputs:
             return None

@@ -30,6 +30,7 @@ from gfem._materials import (  # noqa: E402
     PermittivityLaw,
 )
 from gfem._raman_spectrum import RamanSpectrum  # noqa: E402
+from gfem._sources import PolarizationSource  # noqa: E402
 from gfem._tolerance import ToleranceReport, tolerance_report  # noqa: E402
 from gfem.acousto_optic import AcoustoOpticShift, acousto_optic_shift  # noqa: E402
 from gfem.bands import (  # noqa: E402
@@ -206,6 +207,7 @@ from gfem.results import (  # noqa: E402
     SweepInfo,
     TransientThermalResult,
 )
+from gfem.second_order import Pump, second_order_polarization  # noqa: E402
 from gfem.solve import release_memory, solve  # noqa: E402
 from gfem.thermal import (  # noqa: E402
     HeatSource,
@@ -324,12 +326,14 @@ __all__ = [
     "Piezoelectric",
     "PiezoelectricResult",
     "PlaneWave",
+    "PolarizationSource",
     "PortGeometryError",
     "PortMode",
     "PortModeError",
     "PortModeField",
     "PortModeResult",
     "PortModeTrackingWarning",
+    "Pump",
     "QuantityEstimator",
     "RamanGain",
     "RamanSpectrum",
@@ -416,6 +420,7 @@ __all__ = [
     "rise_time",
     "route_phase",
     "second_harmonic",
+    "second_order_polarization",
     "sfwm",
     "shape",
     "solve",

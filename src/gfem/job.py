@@ -77,6 +77,7 @@ from gfem._sources import (
     IncidentField,
     MagneticDipole,
     PlaneWave,
+    PolarizationSource,
     qualified,
 )
 from gfem.errors import LinearSolverConvergenceError
@@ -1118,7 +1119,13 @@ _codec.register(
         emitted_power={},
     ),
 )
-for _cls in (PlaneWave, GaussianBeam, ElectricDipole, MagneticDipole):
+for _cls in (
+    PlaneWave,
+    GaussianBeam,
+    ElectricDipole,
+    MagneticDipole,
+    PolarizationSource,
+):
     _codec.register(_cls)
 _codec.register(
     Background, to_args=_unset_omitted(Background, interfaces=(), ground=None)
