@@ -31,6 +31,7 @@ asymptote :math:`Q \to C\,(L/h)^3`, :math:`C =` `ANCHOR_CONSTANT` (plane strain,
 from __future__ import annotations
 
 import dataclasses
+import itertools
 from pathlib import Path
 
 import numpy as np
@@ -171,7 +172,9 @@ def _body(path: Path, maxh: float, side: float) -> gfem.Mesh:
         np.concatenate([grid(z0, z1) for z0, z1 in ((-a - d, -a), (-a, 0.0), (0.0, H))])
     )
     knots = [-side, 0.0, width, width + side] if side else [0.0, width]
-    xy = np.unique(np.concatenate([grid(lo, hi) for lo, hi in zip(knots, knots[1:])]))
+    xy = np.unique(
+        np.concatenate([grid(lo, hi) for lo, hi in itertools.pairwise(knots)])
+    )
     lo, hi = knots[0], knots[-1]
 
     def column(c: float) -> int:
@@ -320,4 +323,111 @@ def anchored_beam(path: Path, ratio: float, maxh: float) -> Anchor:
         model=gfem.Model(mesh, materials=dict.fromkeys(mesh.volumes, material)),
         ratio=ratio,
         target=float(target),
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class Cantilever3D:
+    r"""A 3D cantilever normal to a half-space, ended by a layer.
+
+    Attributes:
+        model: The model, regions ``beam``, ``support`` and ``layer``.
+        ratio: The aspect ratio :math:`l/h`.
+        width: The width :math:`w`, um (:math:`h = 1` um is the thickness the
+            mode bends along).
+        target: The Euler-Bernoulli frequency of the clamped beam's first
+            bending mode, Hz.
+        tetrahedra: The number of tetrahedra of the mesh.
+    """
+
+    model: gfem.Model
+    ratio: float
+    width: float
+    target: float
+    tetrahedra: int
+
+    @property
+    def quality(self) -> float:
+        r"""The published quality factor :math:`Q = 1/(A\,(w/l)(h/l)^4)`."""
+        return 1.0 / (WILSON_RAE * (self.width / self.ratio) * self.ratio**-4)
+
+
+#: The constant :math:`A` of :math:`Q^{-1} = A\,(w/l)(h/l)^4` for a beam normal to
+#: the free surface of a half-space, :math:`\nu = 0.25`: the radiation
+#: conductance of a tangential point force on it (0.331426 computed, 0.3314
+#: rounded; Wilson-Rae's table gives 0.3374 at :math:`\nu = 1/3`).
+WILSON_RAE = 0.3314
+
+
+def anchored_cantilever_3d(
+    path: Path,
+    ratio: float,
+    *,
+    width: float = 2.0,
+    beam: float = 0.5,
+    waves: float = 6.0,
+) -> Cantilever3D:
+    r"""A 3D cantilever :math:`l = \mathrm{ratio}\,h` on a half-space ended by a layer.
+
+    The beam (:math:`h = 1` um along x, ``width`` along y, :math:`l` along z)
+    stands on the free face :math:`z = 0` of a support
+    :math:`|x|, |y| < a`, :math:`-a < z < 0` with :math:`a = \lambda_T/2` at the
+    Euler-Bernoulli frequency; one P wavelength of layer wraps the sides and the
+    bottom (corner cells included). Netgen grades the elements from ``beam``
+    (um, the beam and a :math:`4h` cube under its root) out to
+    :math:`\lambda_T/` ``waves`` far away.
+    """
+    import ngsolve as ngs
+    from netgen.occ import Box, Glue, OCCGeometry, Pnt
+
+    young = 2 * MU_LAYER * (1 + NU)
+    length = ratio * H
+    target = (
+        _BETA1**2
+        / (2 * np.pi)
+        * (H * UM)
+        / (length * UM) ** 2
+        * np.sqrt(young / (12 * RHO_LAYER))
+    )
+    shear, pressure = C_T / target / UM, C_L / target / UM
+    a, d, r = 0.5 * shear, pressure, 2 * H
+
+    def box(x, y, z, name, maxh):
+        solid = Box(Pnt(x[0], y[0], z[0]), Pnt(x[1], y[1], z[1]))
+        solid.mat(name)
+        if maxh is not None:
+            solid.maxh = maxh
+        return solid
+
+    support = [
+        ((-r, r), (-r, r), (-r, 0.0), beam),
+        ((-a, -r), (-a, a), (-a, 0.0), None),
+        ((r, a), (-a, a), (-a, 0.0), None),
+        ((-r, r), (-a, -r), (-a, 0.0), None),
+        ((-r, r), (r, a), (-a, 0.0), None),
+        ((-r, r), (-r, r), (-a, -r), None),
+    ]
+    solids = [
+        box((-H / 2, H / 2), (-width / 2, width / 2), (0.0, length), "beam", beam)
+    ]
+    solids += [box(x, y, z, "support", h) for x, y, z, h in support]
+    bands = [(-a - d, -a), (-a, a), (a, a + d)]
+    for i, x in enumerate(bands):
+        for j, y in enumerate(bands):
+            for k, z in enumerate([(-a - d, -a), (-a, 0.0)]):
+                if (i, j, k) != (1, 1, 1):
+                    solids.append(box(x, y, z, "layer", None))
+    mesh = ngs.Mesh(OCCGeometry(Glue(solids)).GenerateMesh(maxh=shear / waves))
+    nodes = np.array([v.point for v in mesh.vertices])
+    tets = [[v.nr for v in el.vertices] for el in mesh.Elements(ngs.VOL)]
+    names = [el.mat for el in mesh.Elements(ngs.VOL)]
+    sm.write_msh22(path, (nodes, np.array(tets), names, np.zeros((0, 3), int), []))
+    model = gfem.Mesh.from_gmsh(path, length_unit="um")
+    material = _material(MU_LAYER, RHO_LAYER, None)
+    return Cantilever3D(
+        model=gfem.Model(model, materials=dict.fromkeys(model.volumes, material)),
+        ratio=ratio,
+        width=width,
+        target=float(target),
+        tetrahedra=len(tets),
     )
