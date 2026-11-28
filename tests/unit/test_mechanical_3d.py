@@ -194,7 +194,11 @@ def test_a_model_layer_over_the_solid_refuses(tmp_path):
         materials={"air": mc.material(), "pml": mc.material()},
         pml=gfem.PML("pml"),
     )
-    with pytest.raises(ValueError, match="does not read the model's electromagnetic"):
+    with pytest.raises(
+        ValueError,
+        match=r"does not read the model's electromagnetic layer: pass it as "
+        r"MechanicalEigenmode\(pml=",
+    ):
         gfem.solve(model, gfem.MechanicalEigenmode(3.2e9))
 
 
