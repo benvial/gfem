@@ -832,17 +832,20 @@ def _field_args(field: Any, _: _codec.Context) -> dict[str, Any]:
     """A field's arguments: a communicator is not part of what it is.
 
     A layer's reference frequency, an incident column's incident part, the
-    point dipoles and the scattered flag are written only when set, so that
-    a field without them encodes as before.
+    point dipoles, the Bloch wave vector, the lattice translations and the
+    scattered flag are written only when set, so that a field without them
+    encodes as before.
     """
     out = {
         f.name: getattr(field, f.name)
         for f in dataclasses.fields(field)
         if f.name != "_comm"
     }
-    for name in ("_reference_frequency", "_incident"):
+    for name in ("_reference_frequency", "_incident", "_wave_vector"):
         if out.get(name, 0) is None:
             del out[name]
+    if not out.get("_lattice", 1):
+        del out["_lattice"]
     if not out.get("_point_sources", 0):
         out.pop("_point_sources", None)
     if not out.get("_scattered", 1):

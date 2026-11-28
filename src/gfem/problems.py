@@ -926,7 +926,9 @@ def _check_sources(problem: Driven) -> None:
     polarized = [s for s in sources if isinstance(s, POLARIZATION)]
     if polarized:
         _check_polarization_sources(problem, polarized)
-    if problem.wave_vector is not None:
+    if problem.wave_vector is not None and any(
+        not isinstance(s, POLARIZATION) for s in sources
+    ):
         raise NotImplementedError(
             "Driven.sources with a Bloch wave_vector: incident fields and dipoles "
             "on a periodic cell are not supported. For a plane wave on a "
@@ -963,7 +965,13 @@ def _check_polarization_sources(problem: Driven, polarized: Sequence[Source]) ->
                 f"{', '.join(f'{g:g}' for g in problem.frequency)} Hz: a source at "
                 "another frequency is another solve. Pose "
                 "gfem.Driven(frequency=source.frequency, ...), one per generated "
-                "frequency."
+                "frequency"
+                + (
+                    ", each with the Bloch wave_vector of its source (a fixed-angle "
+                    "sweep drops the sources of its frequencies)."
+                    if problem.wave_vector_frequency is not None
+                    else "."
+                )
             )
     if problem.sweep == "adaptive":
         raise NotImplementedError(
@@ -976,12 +984,6 @@ def _check_polarization_sources(problem: Driven, polarized: Sequence[Source]) ->
             "Driven(source_fields=False) reads port waves by reciprocity for "
             f"point dipoles only; the PolarizationSource {polarized[0].name!r} "
             "needs its own field. Solve it with source_fields=True (the default)."
-        )
-    if problem.wave_vector is not None:
-        raise NotImplementedError(
-            f"The PolarizationSource {polarized[0].name!r} with a Bloch "
-            "wave_vector is not supported in this version: solve at normal "
-            "incidence (no wave_vector) on a periodic cell."
         )
 
 
@@ -1162,13 +1164,16 @@ class Driven:
             `gfem.Conductor` or `gfem.LumpedPort` face, or above
             :math:`10^{-3}` of its peak where a scatterer meets the layer or
             an absorbing face, on a wave port face, or across an exterior
-            PEC or PMC wall (`gfem.conventions`, Incident fields). With
-            ``frequency_workers`` above 1, it raises it before spawning any
+            PEC or PMC wall (`gfem.conventions`, Incident fields). A
+            `gfem.PolarizationSource` raises it too when the model's periodic
+            pairs are not its pumps', or the ``wave_vector`` is not the Bloch
+            vector its pumps imply (the message gives the one to write).
+            With ``frequency_workers`` above 1, it raises it before spawning any
             worker for a `gfem.IncidentField` whose function a spawned
             worker cannot load (a lambda, a closure, or a function of a
             notebook or REPL).
-        NotImplementedError: ``sources`` with a ``wave_vector`` or a 2D
-            ``polarization``, an incident field with
+        NotImplementedError: incident fields or dipoles with a ``wave_vector``,
+            or ``sources`` with a 2D ``polarization``, an incident field with
             ``sweep="adaptive"`` (dipoles are accepted) or with
             ``source_fields=False``. `gfem.solve` raises
             it for ``wave_vector`` with ``sweep="adaptive"`` or a GPU
@@ -1308,9 +1313,12 @@ def _check_model_sources(problem: Any, model: Any) -> None:
     """The refusals of a driven problem's sources that need the model.
 
     Raises:
-        ValueError: A source is named like a port of the model, or an
-            incident field has no background stack.
-        NotImplementedError: The model has a periodic pair.
+        ValueError: A source is named like a port of the model, an
+            incident field has no background stack, or a polarization source
+            does not fit the model's lattice and Bloch vector
+            (`_check_polarization_lattice`).
+        NotImplementedError: An incident field or a dipole on a model with a
+            periodic pair.
     """
     if not isinstance(problem, Driven) or not problem.sources:
         return
@@ -1324,6 +1332,7 @@ def _check_model_sources(problem: Any, model: Any) -> None:
             )
         if isinstance(source, POLARIZATION):
             _check_polarization_mesh(source, model)
+            _check_polarization_lattice(source, problem, model)
         elif model.periodic_translations:
             raise NotImplementedError(
                 f"The {kind} on a model with periodic pairs: incident fields and "
@@ -1352,6 +1361,61 @@ def _check_polarization_mesh(source: Any, model: Any) -> None:
             f"The PolarizationSource {source.name!r} was built on a mesh of "
             f"{source.mesh_elements} volume elements, and the model's has {n}: "
             "solve it on a model of the mesh the pump results were solved on."
+        )
+
+
+def _check_polarization_lattice(source: Any, problem: Any, model: Any) -> None:
+    r"""Raise unless the solve's Bloch phases are the source's.
+
+    The cell repeats its source with the problem's Bloch phase
+    :math:`e^{-i\mathbf k\cdot\mathbf a}` across each pair translation
+    :math:`\mathbf a`, so a source of the vector :math:`\mathbf k_g` is solved
+    as itself only when :math:`(\mathbf k - \mathbf k_g)\cdot\mathbf a` is a
+    multiple of :math:`2\pi` for every pair; any other vector solves a
+    different array without an error.
+
+    Raises:
+        ValueError: The model's periodic pairs are not the pumps', or the
+            wave vector is not the source's (the message gives the one to
+            write).
+    """
+    lattice = tuple(model.periodic_translations)
+    if len(lattice) != len(source.lattice) or (
+        lattice and not np.allclose(lattice, source.lattice, rtol=1e-9, atol=0.0)
+    ):
+        raise ValueError(
+            f"The PolarizationSource {source.name!r} was built from pumps on a "
+            f"cell with {len(source.lattice)} periodic pair(s) and the model has "
+            f"{len(lattice)}"
+            + (
+                f" (translations {source.lattice!r} m and {lattice!r} m)"
+                if lattice and source.lattice
+                else ""
+            )
+            + ": solve it on a model with the pumps' pairs "
+            "(gfem.Periodic), the same mesh and cell."
+        )
+    if not lattice:
+        return
+    k = np.zeros(3) if problem.wave_vector is None else np.asarray(problem.wave_vector)
+    if problem.wave_vector_frequency is not None:
+        k = k * (source.frequency / problem.wave_vector_frequency)
+    wanted = (
+        np.zeros(3) if source.wave_vector is None else np.asarray(source.wave_vector)
+    )
+    # a phase of k.a to within a multiple of 2 pi: the space reads nothing else
+    phase = np.asarray(lattice) @ (k - wanted)
+    if np.abs((phase + np.pi) % (2 * np.pi) - np.pi).max() > 1e-9:
+        written = ", ".join(f"{c!r}" for c in wanted.tolist())
+        solved = ", ".join(f"{c!r}" for c in k.tolist())
+        raise ValueError(
+            f"The PolarizationSource {source.name!r} repeats across the cell "
+            f"with the Bloch wave vector ({written}) rad/m (the sum of its "
+            f"pumps' vectors), but the Driven solves ({solved}) "
+            f"rad/m at {source.frequency:g} Hz: a different array. Write "
+            f"gfem.Driven(source.frequency, excite=(), sources=source, "
+            f"wave_vector=({written})) (or that vector at the frequency "
+            "that wave_vector_frequency names)."
         )
 
 

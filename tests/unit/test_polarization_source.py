@@ -426,10 +426,47 @@ class TestRefusals:
         with pytest.raises(NotImplementedError, match="source_fields"):
             gfem.Driven(shg.frequency, excite=(), sources=shg, source_fields=False)
 
-    def test_a_bloch_wave_vector_is_refused(self, shg):
-        with pytest.raises(NotImplementedError, match="wave_vector"):
+    def test_a_dipole_with_a_bloch_wave_vector_is_still_refused(self, shg):
+        dipole = gfem.ElectricDipole("d", (0.0, 0.0, 0.0), (1e-12, 0.0, 0.0))
+        with pytest.raises(NotImplementedError, match="incident fields and dipoles"):
             gfem.Driven(
-                shg.frequency, excite=(), sources=shg, wave_vector=(1e6, 0.0, 0.0)
+                shg.frequency,
+                excite=(),
+                sources=(shg, dipole),
+                wave_vector=(1e6, 0.0, 0.0),
+            )
+
+    def test_a_plain_source_refuses_a_bloch_wave_vector(self, mesh, shg):
+        with pytest.raises(ValueError, match=r"Bloch wave vector \(0.0, 0.0, 0.0\)"):
+            _generated(mesh, shg, wave_vector=(2e6, 0.0, 0.0))
+
+    def test_the_wrong_vector_is_refused_with_the_one_to_write(self, mesh, bloch):
+        _, source = bloch
+        with pytest.raises(ValueError, match=r"wave_vector=\(4000000.0, 0.0, 0.0\)"):
+            _generated(mesh, source)
+        with pytest.raises(ValueError, match="a different array"):
+            _generated(mesh, source, wave_vector=(2e6, 0.0, 0.0))
+
+    def test_a_model_with_other_pairs_is_refused(self, mesh, shg):
+        one_pair = slab_model(mesh, 2.2, chi2=False).replace(
+            boundaries=[PERIODIC[0]], ports=[]
+        )
+        with pytest.raises(ValueError, match="periodic pair"):
+            gfem.solve(
+                one_pair,
+                gfem.Driven(shg.frequency, excite=(), sources=shg),
+                options=OPTIONS,
+            )
+
+    def test_a_fixed_angle_sweep_over_several_frequencies_is_refused(self, bloch):
+        _, source = bloch
+        with pytest.raises(ValueError, match="fixed-angle sweep drops"):
+            gfem.Driven(
+                [source.frequency, 1.1 * source.frequency],
+                excite=(),
+                sources=source,
+                wave_vector=source.wave_vector,
+                wave_vector_frequency=source.frequency,
             )
 
     def test_another_mesh_is_refused(self, tmp_path, shg):
@@ -452,3 +489,95 @@ class TestRefusals:
                 gfem.Driven(source.frequency, excite=(), sources=source),
                 options=OPTIONS,
             )
+
+
+#: The pump's Bloch wave vector (rad/m): a phase of 0.5 rad across the cell.
+KX = 2e6
+
+
+@pytest.fixture(scope="module")
+def bloch_pump(pump_model):
+    """The pump on a Bloch cell at a fixed angle, at two frequencies."""
+    return gfem.solve(
+        pump_model,
+        gfem.Driven(
+            [FREQUENCY, F2],
+            excite="z_min TM",
+            wave_vector=(KX, 0.0, 0.0),
+            wave_vector_frequency=FREQUENCY,
+            keep_fields=True,
+        ),
+        options=OPTIONS,
+    )
+
+
+@pytest.fixture(scope="module")
+def bloch(pump_model, bloch_pump):
+    return bloch_pump, gfem.second_order_polarization(
+        pump_model, gfem.Pump(bloch_pump, FREQUENCY, incident_power=1.0)
+    )
+
+
+class TestBlochVectors:
+    def test_the_kept_fields_record_the_vector_of_their_frequency(self, bloch_pump):
+        first = bloch_pump.e_field(FREQUENCY, "z_min TM")
+        second = bloch_pump.e_field(F2, "z_min TM")
+        assert first._wave_vector == pytest.approx((KX, 0.0, 0.0), rel=1e-15)
+        # a fixed angle scales the vector with the frequency (a product of two
+        # rounded numbers: a few eps)
+        assert second._wave_vector == pytest.approx(
+            (KX * F2 / FREQUENCY, 0, 0), rel=1e-14
+        )
+        assert len(first._lattice) == 2
+
+    def test_a_plain_pump_has_no_vector_and_the_lattice(self, shg):
+        assert shg.wave_vector is None
+        assert len(shg.lattice) == 2
+
+    def test_the_second_harmonic_doubles_the_vector(self, bloch):
+        assert bloch[1].wave_vector == pytest.approx((2 * KX, 0.0, 0.0), rel=1e-15)
+
+    def test_sum_and_difference_add_and_subtract_the_vectors(
+        self, pump_model, bloch_pump
+    ):
+        k1, k2 = KX, KX * F2 / FREQUENCY
+        a = gfem.Pump(bloch_pump, FREQUENCY, incident_power=1.0)
+        b = gfem.Pump(bloch_pump, F2, incident_power=1.0)
+        total = gfem.second_order_polarization(
+            pump_model, (a, b), process="sum-frequency"
+        )
+        diff = gfem.second_order_polarization(
+            pump_model, (b, a), process="difference-frequency"
+        )
+        assert total.wave_vector == pytest.approx((k1 + k2, 0.0, 0.0), rel=1e-14)
+        assert diff.wave_vector == pytest.approx((k2 - k1, 0.0, 0.0), rel=1e-12)
+
+    def test_a_plain_pump_beside_a_bloch_one_counts_as_the_zero_vector(
+        self, pump_model, pump, bloch_pump
+    ):
+        a = gfem.Pump(bloch_pump, F2, incident_power=1.0)
+        b = _pump(pump, FREQUENCY)
+        total = gfem.second_order_polarization(
+            pump_model, (a, b), process="sum-frequency"
+        )
+        assert total.wave_vector == pytest.approx(
+            (KX * F2 / FREQUENCY, 0, 0), rel=1e-14
+        )
+
+    def test_the_vector_to_write_solves(self, mesh, bloch):
+        _, source = bloch
+        result = _generated(mesh, source, wave_vector=source.wave_vector)
+        power = float(result.emitted_power[source.name][0])
+        assert np.isfinite(power)
+        assert power > 0.0
+
+    def test_the_source_round_trips_with_its_vector(self, tmp_path, mesh, bloch):
+        _, source = bloch
+        model = slab_model(mesh, 2.2, chi2=False)
+        problem = gfem.Driven(
+            source.frequency, excite=(), sources=source, wave_vector=source.wave_vector
+        )
+        path = gfem.Job(model, problem, OPTIONS).to_json(tmp_path / "job.json")
+        (back,) = gfem.Job.from_json(path).problem.sources
+        assert back.wave_vector == source.wave_vector
+        assert back.lattice == source.lattice

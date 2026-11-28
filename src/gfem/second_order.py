@@ -395,6 +395,7 @@ def second_order_polarization(
     # the rule integrates (pump field)(pump field)(generated basis) exactly
     degree = (orders[0] + orders[-1] + generated_order) / 2
     rule_order = math.ceil(degree)
+    lattice, wave_vector = _bloch(pumps, kind)
     elements, tensors, regions = _tensors(model)
     values = _polarization(pumps, kind, elements, tensors, order=rule_order)
     p_values, points = values
@@ -411,6 +412,8 @@ def second_order_polarization(
         points=points,
         re=jnp.real(p_values),
         im=jnp.imag(p_values),
+        wave_vector=wave_vector,
+        lattice=lattice,
     )
 
 
@@ -476,6 +479,38 @@ def _check_pump(pump: Pump, mesh: Any) -> None:
             "formed element by element, so the pump results and the model share "
             "one mesh (their models may differ)."
         )
+
+
+def _bloch(
+    pumps: tuple[Pump, ...], kind: str
+) -> tuple[tuple[tuple[float, float, float], ...], tuple[float, float, float] | None]:
+    r"""The pumps' lattice and the Bloch vector of the generated field.
+
+    A pump of plain periodicity counts as the zero vector beside a Bloch one,
+    and the product of Bloch factors adds the vectors:
+    :math:`\mathbf k_1 + \mathbf k_2`, with :math:`-\mathbf k_2` for the
+    conjugated pump of a difference.
+    """
+    fields = [p.fields()[0] for p in pumps]
+    lattice = fields[0]._lattice  # noqa: SLF001
+    for f in fields[1:]:
+        other = f._lattice  # noqa: SLF001
+        if len(other) != len(lattice) or not np.allclose(
+            other, lattice, rtol=_SAME_FREQUENCY, atol=0.0
+        ):
+            raise ValueError(
+                "The two pumps were solved on cells with different periodic "
+                "pairs (translations "
+                f"{lattice!r} and {other!r} m): the generated field of one cell "
+                "needs both pumps on the same lattice."
+            )
+    vectors = [f._wave_vector for f in fields]  # noqa: SLF001
+    if all(v is None for v in vectors):
+        return lattice, None
+    k = [np.zeros(3) if v is None else np.asarray(v, float) for v in vectors]
+    sign = -1.0 if kind == "difference-frequency" else 1.0
+    total = k[0] + (k[0] if len(k) == 1 else sign * k[1])
+    return lattice, (float(total[0]), float(total[1]), float(total[2]))
 
 
 def _tensors(model: Model) -> tuple[np.ndarray, jax.Array, tuple[str, ...]]:

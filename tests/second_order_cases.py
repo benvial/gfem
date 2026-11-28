@@ -46,11 +46,18 @@ def sinc(u: float) -> float:
 
 
 def slab_mesh(
-    path: Path, cells_per_um: float, *, lateral: int = 2, unit_um: float = 1.0
+    path: Path,
+    cells_per_um: float,
+    *,
+    lateral: int = 2,
+    unit_um: float = 1.0,
+    width: int = 1,
 ) -> gfem.Mesh:
     """The cell, ``lateral`` cells per side, with the slab as region ``slab``.
 
     The file's length unit is ``unit_um`` micrometres (1 for um, 1e-6 for m).
+    ``width`` repeats the cell that many times along $x$ (a side of
+    ``width * SIDE``, ``width * lateral`` cells).
     """
 
     def n(length: float) -> int:
@@ -64,8 +71,9 @@ def slab_mesh(
         ]
     )
     lat = unit_um * np.linspace(0, SIDE, lateral + 1)
+    lat_x = unit_um * np.linspace(0, width * SIDE, width * lateral + 1)
     cell = sm.periodic_cell(
-        (lat, lat, z),
+        (lat_x, lat, z),
         lambda c: "slab" if PAD < c[2] / unit_um < PAD + SLAB else "pad",
         paired="xy",
     )

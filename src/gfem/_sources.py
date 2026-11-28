@@ -582,6 +582,14 @@ class PolarizationSource:
             unit, which a solve compares with its own rule's.
         re: ``(n_points, 3)`` the real part of :math:`P` (C/m²).
         im: ``(n_points, 3)`` the imaginary part of :math:`P` (C/m²).
+        wave_vector: The Bloch wave vector (rad/m) its pumps imply,
+            :math:`2\mathbf k` for the second harmonic, :math:`\mathbf k_1 +
+            \mathbf k_2` for the sum and :math:`\mathbf k_1 - \mathbf k_2`
+            for the difference: the vector to give
+            ``gfem.Driven(wave_vector=...)`` on a periodic cell. ``None``
+            for pumps of plain periodicity or without a periodic pair.
+        lattice: The translations (m) of the periodic pairs of the pumps'
+            model, which the generated model repeats; ``()`` without pairs.
     """
 
     name: str
@@ -596,6 +604,8 @@ class PolarizationSource:
     points: np.ndarray
     re: Any
     im: Any
+    wave_vector: tuple[float, float, float] | None = None
+    lattice: tuple[tuple[float, float, float], ...] = ()
 
     def __post_init__(self) -> None:
         """Validate and normalize (see the class docstring)."""
@@ -615,6 +625,12 @@ class PolarizationSource:
             elements=np.asarray(self.elements, np.int64),
             mesh_elements=int(self.mesh_elements),
             points=np.asarray(self.points, float),
+            wave_vector=(
+                None
+                if self.wave_vector is None
+                else tuple(float(c) for c in self.wave_vector)
+            ),
+            lattice=tuple(tuple(float(c) for c in a) for a in self.lattice),
         )
         for field in ("re", "im"):
             value = getattr(self, field)

@@ -49,10 +49,20 @@ def mesh(tmp_path_factory):
     return slab_mesh(tmp_path_factory.mktemp("cell") / "cell.msh", 10)
 
 
-def _objective(mesh, orders):
+#: The oblique case: a TE pump at $k_x = 2\times10^6$ rad/m (a phase of 0.5 rad across
+#: the cell), generated at $2k_x$; its tensor is $d_{yyy}$ and the waves the TE ones.
+OBLIQUE = (2e6, 0.0, 0.0)
+
+
+def _objective(mesh, orders, oblique=False):
     pump_order, generated_order = orders
     tensor = np.zeros((3, 6))
-    tensor[0, 0] = D
+    pol, k, k_gen = "TM", None, None
+    if oblique:
+        tensor[1, 1] = D
+        pol, k, k_gen = "TE", OBLIQUE, tuple(2 * c for c in OBLIQUE)
+    else:
+        tensor[0, 0] = D
 
     def waves(p):
         pump_model = slab_model(mesh, 2.2, chi2=False).with_material(
@@ -63,7 +73,9 @@ def _objective(mesh, orders):
         )
         pump = gfem.solve(
             pump_model,
-            gfem.Driven(FREQUENCY, excite="z_min TM", keep_fields=True),
+            gfem.Driven(
+                FREQUENCY, excite=f"z_min {pol}", wave_vector=k, keep_fields=True
+            ),
             options=gfem.SolverOptions(order=pump_order, linear_solver="direct"),
         )
         source = gfem.second_order_polarization(
@@ -73,11 +85,11 @@ def _objective(mesh, orders):
         )
         generated = gfem.solve(
             generated_model,
-            gfem.Driven(source.frequency, excite=(), sources=source),
+            gfem.Driven(source.frequency, excite=(), sources=source, wave_vector=k_gen),
             options=gfem.SolverOptions(order=generated_order, linear_solver="direct"),
         )
-        top = generated.port_wave("z_max TM", source.name)[0]
-        bottom = generated.port_wave("z_min TM", source.name)[0]
+        top = generated.port_wave(f"z_max {pol}", source.name)[0]
+        bottom = generated.port_wave(f"z_min {pol}", source.name)[0]
         return jnp.abs(top) ** 2 + 2 * jnp.abs(bottom) ** 2
 
     n = len(mesh.elements("slab"))
@@ -90,4 +102,11 @@ def _objective(mesh, orders):
 @pytest.mark.parametrize("orders", ORDERS, ids=lambda o: f"{o[0]}-{o[1]}")
 def test_the_gradient_through_both_solves_matches_finite_differences(mesh, orders):
     objective, p0, rng = _objective(mesh, orders)
+    assert_gradient_matches(objective, p0, unit_directions(rng, p0.shape, 3), step=STEP)
+
+
+def test_the_oblique_gradient_matches_finite_differences(mesh):
+    # the load is carried by P^H and its cotangent by conj(P): a slip in either
+    # breaks this at order one
+    objective, p0, rng = _objective(mesh, (2, 2), oblique=True)
     assert_gradient_matches(objective, p0, unit_directions(rng, p0.shape, 3), step=STEP)

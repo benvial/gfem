@@ -16,6 +16,13 @@ H(curl) coefficients to those points serve it:
   :math:`\mu_0 L\omega^2` of the driven equations (`gfem._engine.dipoles`). A
   mesh in um and the same mesh in m give the same :math:`P` and the same load.
 
+On a periodic cell the maps read the unpaired space, where the kept pump fields
+live (already Bloch-phased), and the load is carried to the solve space by
+:math:`\mathsf{P}^H` of the Bloch-phased expansion :math:`\mathsf{P}` (the maps
+become :math:`M\overline{\mathsf{P}}`): the test functions of the phased space are
+:math:`\overline{\mathsf{P}}y`, which is how a Floquet port's vector is carried
+(:math:`\mathsf{P}^\mathsf{T}` would test with the opposite phase).
+
 The load is a fixed vector times a scalar of :math:`\omega` (affine), and the
 emitted power is the dipole's, :math:`-\operatorname{Im}(b^H x)/(2\omega\mu_0 L)`.
 """
@@ -263,7 +270,14 @@ def volume_loads(
     scale = float(built.scale)
     free = free_mask(space.FreeDofs(), space.ndof)
     columns = np.zeros((int(space.ndof), len(sources)), complex)
-    keep = sp.diags(free.astype(float))
+    # On a periodic cell the points read the unpaired space, and the load is
+    # carried to the solve space by P^H (the maps by conj(P) on the right): the
+    # test functions of the Bloch-phased space are conj(P) y, not P y.
+    expansion = operator.expansion
+    unpaired = space if expansion is None else expansion.space
+    restrict = sp.diags(free.astype(float))
+    if expansion is not None:
+        restrict = sp.csr_matrix(expansion.matrix.conj()) @ restrict
     maps: list[tuple[sp.csr_matrix, ...]] = []
     cache: dict[tuple[int, bytes], tuple[_Rule, np.ndarray]] = {}
     for k, source in enumerate(sources):
@@ -277,7 +291,7 @@ def volume_loads(
         cells = _cells(built, source.elements)
         key = (source.order, cells.tobytes())
         if key not in cache:
-            cache[key] = (_rule(space, source.order, cells), cells)
+            cache[key] = (_rule(unpaired, source.order, cells), cells)
         rule, _ = cache[key]
         rows = _rows(cells, rule.per_cell)
         _same_points(source, rule.coordinates[rows])
@@ -288,7 +302,7 @@ def volume_loads(
                 f"The PolarizationSource {source.name!r} holds a non-finite "
                 "polarization: check the pump's powers, phases and the tensor."
             )
-        mine = tuple((matrix[rows] @ keep).tocsr() for matrix in rule.maps)
+        mine = tuple((matrix[rows] @ restrict).tocsr() for matrix in rule.maps)
         maps.append(mine)
         for c, matrix in enumerate(mine):
             columns[:, k] += matrix.T @ p[:, c]

@@ -1092,6 +1092,11 @@ class DrivenRule:
         self._mesh = model.mesh
         self._materials = dict(model.materials)
         self._excluded = model._domain.excluded  # noqa: SLF001
+        #: The translations of the periodic pairs, m, which the kept fields
+        #: record for the second-order source's lattice check.
+        self._lattice = tuple(
+            (float(a[0]), float(a[1]), float(a[2])) for a in model.periodic_translations
+        )
         self._check_dipoles(model)
         #: The system operator and port network builder, and the state its
         #: solves keep on a discretization across designs.
@@ -2794,6 +2799,8 @@ class DrivenRule:
                     _excluded=self._excluded,
                     _comm=_mpi.static_comm(self.comm),
                     _reference_frequency=self._reference_frequency,
+                    _wave_vector=wave_vector_at(self.problem, f),
+                    _lattice=self._lattice,
                     _incident=incident.get(label),
                     _point_sources=self._point_sources(label),
                 )
@@ -2940,6 +2947,7 @@ class DrivenRule:
                 support=self.regions,
                 _excluded=self._excluded,
                 _reference_frequency=self._reference_frequency,
+                _lattice=self._lattice,
                 _point_sources=tuple(self._point_sources(label) for _, label in kept)
                 if self.dipoles
                 else (),
