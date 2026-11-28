@@ -98,17 +98,12 @@ class _PointKernel:
     def _moves_with_nodes(self) -> bool:
         """Whether the reading is differentiable by the nodes.
 
-        Physical points (`Field.at`, `gradient_at`) of an H1 field on a 2D mesh:
-        the reading at a fixed point changes as the element under it moves (see
+        Physical points (`Field.at`, `gradient_at`) of an H1 field on a 2D or 3D
+        mesh: the reading at a fixed point changes as the element under it moves (see
         `_node_cotangent`). Fixed (element, barycentric) points and the other
         spaces have no node derivative.
         """
-        return (
-            self.eulerian
-            and self.layout.space == "h1"
-            and self.comm is None
-            and np.shape(self.topology.volume_elements)[1] == 3
-        )
+        return self.eulerian and self.layout.space == "h1" and self.comm is None
 
     def _probe(self, values: dict[str, np.ndarray]) -> Any:
         probe = engine()
@@ -171,10 +166,11 @@ def _node_cotangent(
     corners = np.asarray(kernel.topology.volume_elements)[p.located.tetrahedra]
     lam = p.located.barycentric
     v = nodes[corners]
-    edges = np.stack([v[:, i] - v[:, 2] for i in range(2)], axis=-1)
-    head = np.linalg.inv(edges)  # rows: the gradients of the first two coordinates
+    dim = nodes.shape[1]
+    edges = np.stack([v[:, i] - v[:, dim] for i in range(dim)], axis=-1)
+    head = np.linalg.inv(edges)  # rows: the gradients of the first dim coordinates
     grad_lam = np.concatenate([head, -head.sum(axis=1, keepdims=True)], axis=1)
-    bar = np.zeros((p.n_points, 3, 2), dtype=complex)
+    bar = np.zeros((p.n_points, dim + 1, dim), dtype=complex)
     for j in range(len(c)):
         grad_f = gradients.values(c[j])[0]
         g = ct[j]

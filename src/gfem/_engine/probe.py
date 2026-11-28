@@ -640,7 +640,7 @@ class GradientProbe(Probe):
         if curl:
             raise ValueError("A scalar gradient probe reads no curl.")
         if self._mips is None:
-            return np.zeros((0, 2))
+            return np.zeros((0, self.located.barycentric.shape[1] - 1))
         gf = ngs.GridFunction(fes)
         gf.vec.FV().NumPy()[:] = values
         out = np.asarray(ngs.grad(gf)(self._mips))
