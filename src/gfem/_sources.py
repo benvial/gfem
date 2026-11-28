@@ -571,7 +571,8 @@ class PolarizationSource:
         process: ``"second-harmonic"``, ``"sum-frequency"`` or
             ``"difference-frequency"``.
         pump_frequencies: The pumps' frequencies, Hz.
-        regions: The regions carrying a nonzero second-order tensor.
+        regions: The regions carrying a second-order tensor (a zero tensor
+            counts: the gradient of P reaches it).
         order: The order :math:`Q` of the rule space of its points (rule
             degree :math:`2Q`).
         generated_order: The highest Nédélec order of a generated solve that

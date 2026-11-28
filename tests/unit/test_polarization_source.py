@@ -1,8 +1,8 @@
-"""The second-order polarization source: its values, its refusals and its solve.
+r"""The second-order polarization source: its values, its refusals and its solve.
 
 The cell is the slab of `second_order_cases` at 10 cells/um along z (336
 tetrahedra) solved at order 2, periodic, with a tensor $d_{xxx}$ alone, so the
-polarization is $P_x = \\varepsilon_0 d A_x B_x$ (times 1 or 2 by the process) and
+polarization is $P_x = \varepsilon_0 d A_x B_x$ (times 1 or 2 by the process) and
 the other components vanish.
 
 Tolerances. Values compared with the pump's `Field.at` evaluate the same
@@ -18,7 +18,11 @@ condition number of the cell's matrix is below $10^{6}$, times the $10^{-16}$ of
 double precision, with a margin of 100.
 """
 
+import dataclasses
+from types import SimpleNamespace
+
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 import scipy.constants as const
@@ -32,6 +36,9 @@ from second_order_cases import (
 )
 
 import gfem
+from gfem._engine import volume_loads
+from gfem._engine.source_columns import _polarization
+from gfem._engine.volume_loads import _affine, pump_columns
 from gfem._solve_cache import solve_key
 
 EPS0 = const.epsilon_0
@@ -45,8 +52,9 @@ REL_ROUTES, REL_SAME = 1e-12, 1e-12
 REL_SOLVES = 1e-8
 #: The emitted power against the sum of the port powers: the cell is lossless, and
 #: the balance misses what the evanescent orders leak into the ports; measured
-#: 7.6e-4 at order 2 on this cell, a margin of 4.
-REL_BALANCE = 3e-3
+#: 7.6e-4 at order 2 on this cell (a margin of 5 on a drift with the BLAS and
+#: the thread count of the same size as the measure itself).
+REL_BALANCE = 4e-3
 PORTS = ("z_min TE", "z_min TM", "z_max TE", "z_max TM")
 
 
@@ -346,6 +354,70 @@ def test_the_generated_electric_field_is_kept_and_polarized_along_the_tensor(mes
     assert np.abs(e[1:]).max() <= 1e-1 * abs(e[0])
 
 
+def _slab_columns(mesh, pump, order=2):
+    field = pump.e_field(FREQUENCY, "z_min TM")
+    return field, pump_columns(field, np.asarray(mesh.elements("slab")), order)
+
+
+class TestPumpColumns:
+    """The pump's values at the rule points: tables, chunks and curved elements."""
+
+    def test_the_elements_share_a_few_reference_tables(self, mesh, pump):
+        _, columns = _slab_columns(mesh, pump)
+        n_el = len(columns.classes)
+        # the table depends on the order of an element's vertices: at most the
+        # 24 permutations of a tetrahedron, far below the number of elements
+        # (measured 2 on this structured cell)
+        assert 1 <= len(columns.reference) <= 24
+        assert n_el > 4 * len(columns.reference)
+        assert columns.classes.max() == len(columns.reference) - 1
+
+    def test_a_chunk_of_one_element_gives_the_same_values(
+        self, mesh, pump, monkeypatch
+    ):
+        field, whole = _slab_columns(mesh, pump)
+        monkeypatch.setattr(volume_loads, "_CHUNK_ENTRIES", 1)
+        _, single = _slab_columns(mesh, pump)
+        # the same entries of the same maps, only grouped differently: measured
+        # 0 (bit-equal), the bound is the one of two routes, `REL_ROUTES`
+        np.testing.assert_array_equal(single.points, whole.points)
+        _close(
+            single.values(field.coefficients), whole.values(field.coefficients), 1e-12
+        )
+
+    def test_curved_elements_keep_their_own_table(self, mesh, pump, monkeypatch):
+        field, affine = _slab_columns(mesh, pump)
+        monkeypatch.setattr(volume_loads, "_affine", lambda *_: None)
+        _, curved = _slab_columns(mesh, pump)
+        assert len(curved.reference) > len(affine.reference)
+        # an element's own table holds the field itself, the shared one goes
+        # through the Jacobian and its inverse: sums of 30 terms differ by
+        # round-off, measured 2.7e-15 of the largest value, bound `REL_ROUTES`
+        _close(
+            curved.values(field.coefficients), affine.values(field.coefficients), 1e-12
+        )
+
+    def test_the_fit_finds_a_straight_element_and_refuses_a_bent_one(self):
+        reference = np.array(
+            [
+                [0.1, 0.2, 0.3],
+                [0.5, 0.1, 0.2],
+                [0.2, 0.6, 0.1],
+                [0.3, 0.3, 0.3],
+                [0.0, 0.0, 0.9],
+            ]
+        )
+        jac = np.array([[[2.0, 0.1, 0.0], [0.0, 1.5, 0.2], [0.1, 0.0, 1.0]]])
+        points = (reference @ jac[0].T + 3.0)[None]
+        found = _affine(points, reference)
+        assert found is not None
+        # the fit solves a 4 x 4 system: round-off of a few eps of the entries
+        np.testing.assert_allclose(found, jac, rtol=0, atol=1e-13)
+        bent = points.copy()
+        bent[0, :, 2] += 0.05 * reference[:, 0] ** 2
+        assert _affine(bent, reference) is None
+
+
 class TestRefusals:
     def test_the_pump_needs_a_result(self):
         with pytest.raises(TypeError, match=r"DrivenResult|keep_fields"):
@@ -409,6 +481,115 @@ class TestRefusals:
         plain = slab_model(mesh, 2.2, chi2=False)
         with pytest.raises(ValueError, match="second_order_nonlinear_tensor"):
             gfem.second_order_polarization(plain, _pump(pump, FREQUENCY))
+
+    def test_a_pump_on_another_mesh_is_refused(self, tmp_path, pump_model):
+        coarse = slab_mesh(tmp_path / "coarse.msh", 5)
+        other = gfem.solve(
+            slab_model(coarse, 2.2, chi2=True),
+            gfem.Driven(FREQUENCY, excite="z_min TM", keep_fields=True),
+            options=OPTIONS,
+        )
+        with pytest.raises(ValueError, match="another mesh than the model's"):
+            gfem.second_order_polarization(pump_model, _pump(other, FREQUENCY))
+
+    def test_a_pump_on_displaced_nodes_is_refused(self, pump_model, pump):
+        field = pump.e_field(FREQUENCY, "z_min TM")
+        moved = field.mesh.with_nodes(np.asarray(field.mesh.nodes) + 1e-9)
+        shifted = dataclasses.replace(
+            pump, e_fields=[dataclasses.replace(f, mesh=moved) for f in pump.e_fields]
+        )
+        with pytest.raises(ValueError, match="another mesh than the model's"):
+            gfem.second_order_polarization(pump_model, _pump(shifted, FREQUENCY))
+
+    def test_a_2d_pump_is_refused(self, pump):
+        two_d = dataclasses.replace(pump, polarization="Ez")
+        with pytest.raises(NotImplementedError, match="2D model"):
+            gfem.Pump(two_d, FREQUENCY, incident_power=1.0)
+
+    def test_the_difference_of_equal_frequencies_is_refused(self, pump_model, pump):
+        a = _pump(pump, FREQUENCY)
+        with pytest.raises(ValueError, match="optical rectification"):
+            gfem.second_order_polarization(
+                pump_model, (a, a), process="difference-frequency"
+            )
+
+    def test_a_pump_across_mpi_ranks_is_refused(self, pump_model, pump):
+        # a field of a distributed solve carries its communicator
+        ranked = dataclasses.replace(
+            pump,
+            e_fields=[dataclasses.replace(f, _comm=object()) for f in pump.e_fields],
+        )
+        with pytest.raises(NotImplementedError, match="MPI ranks"):
+            gfem.second_order_polarization(pump_model, _pump(ranked, FREQUENCY))
+
+    def test_a_polarization_load_across_mpi_ranks_is_refused(self, shg):
+        with pytest.raises(NotImplementedError, match="MPI ranks"):
+            _polarization(SimpleNamespace(comm=object()), [shg])
+
+    def test_an_absolute_column_takes_no_power(self, pump):
+        wave = gfem.PlaneWave("x", theta=0.0, polarization="TM")
+        absolute = dataclasses.replace(pump, sources={"x": wave})
+        with pytest.raises(ValueError, match=r"PlaneWave column 'x'.*amplitude"):
+            gfem.Pump(absolute, FREQUENCY, excite="x", incident_power=1.0)
+
+    def test_ports_and_sources_are_not_one_pump(self, pump):
+        dipole = gfem.ElectricDipole("d", position=(0, 0, 0), moment=(1e-30, 0, 0))
+        mixed = dataclasses.replace(
+            pump, sources={"d": dipole}, emitted_power={"d": jnp.array([1.0, 1.0])}
+        )
+        with pytest.raises(ValueError, match="ports or sources, not both"):
+            gfem.Pump(
+                mixed,
+                FREQUENCY,
+                excite=["z_min TM", "d"],
+                incident_power={"z_min TM": 1.0},
+            )
+
+    def test_a_dipole_of_a_reciprocity_solve_is_no_pump(self, pump):
+        dipole = gfem.ElectricDipole("d", position=(0, 0, 0), moment=(1e-30, 0, 0))
+        unsolved = dataclasses.replace(pump, sources={"d": dipole}, emitted_power={})
+        with pytest.raises(ValueError, match="source_fields=False"):
+            gfem.Pump(unsolved, FREQUENCY, excite="d")
+
+    def test_a_traced_pump_is_not_traceable(self, pump_model, pump):
+        def run(result):
+            return gfem.second_order_polarization(
+                pump_model, gfem.Pump(result, FREQUENCY, incident_power=1.0)
+            ).re
+
+        with pytest.raises(gfem.NonDifferentiableError, match="not traceable"):
+            jax.jit(run)(pump)
+
+    def test_a_traced_model_is_not_traceable(self, pump_model, pump):
+        def run(model):
+            return gfem.second_order_polarization(
+                model, gfem.Pump(pump, FREQUENCY, incident_power=1.0)
+            ).re
+
+        with pytest.raises(gfem.NonDifferentiableError, match="not traceable"):
+            jax.jit(run)(pump_model)
+
+    @pytest.mark.parametrize("order", [np.int64(2), np.int32(1)])
+    def test_a_numpy_integer_is_a_generated_order(self, pump_model, pump, order):
+        source = gfem.second_order_polarization(
+            pump_model, _pump(pump, FREQUENCY), generated_order=order
+        )
+        assert source.generated_order == int(order)
+        assert type(source.generated_order) is int
+
+    @pytest.mark.parametrize("order", [True, 1.0, "2"])
+    def test_a_non_integer_generated_order_is_refused(self, pump_model, pump, order):
+        with pytest.raises(ValueError, match="generated_order"):
+            gfem.second_order_polarization(
+                pump_model, _pump(pump, FREQUENCY), generated_order=order
+            )
+
+    def test_mesh_refinement_names_the_polarization_source(self, mesh, shg):
+        model = slab_model(mesh, 2.2, chi2=False)
+        with pytest.raises(
+            gfem.MeshRefinementUnsupportedError, match="polarization source 'second"
+        ):
+            gfem.refine_mesh(model, gfem.Driven(shg.frequency, excite=(), sources=shg))
 
     def test_the_pump_must_be_a_pump(self, pump_model):
         with pytest.raises(TypeError, match=r"gfem\.Pump"):

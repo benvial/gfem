@@ -2055,8 +2055,10 @@ class DrivenRule:
         if name == "emitted_power" and self.polarized:
             return (
                 f"gfem cannot differentiate the emitted power of the "
-                f"PolarizationSource {self.polarized[0].name!r} in this version: "
-                "read the port waves, or wrap the power in jax.lax.stop_gradient."
+                f"PolarizationSource {self.polarized[0].name!r} in this version, "
+                "and a polarization source in the problem disables it for every "
+                "source beside it (a dipole's too): read the port waves, or wrap "
+                "the power in jax.lax.stop_gradient."
             )
         if name in self.differentiable_outputs:
             return None
@@ -2239,7 +2241,7 @@ class DrivenRule:
     def _add_polarization_terms(
         self, sources: SourceColumns, omega: float, adjoint: np.ndarray
     ) -> None:
-        """Add the polarization sources' term at ω to `explicit_problem`.
+        r"""Add the polarization sources' term at :math:`\omega` to `explicit_problem`.
 
         ``adjoint`` is the source columns' ``(N, n_sources)``.
         """

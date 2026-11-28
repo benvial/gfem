@@ -1017,11 +1017,13 @@ class Driven:
     the electric fields (see `gfem.conventions` for their amplitude).
 
     Each source (an incident field, `gfem.PlaneWave`, `gfem.GaussianBeam` or
-    `gfem.IncidentField`, or a point dipole, `gfem.ElectricDipole` or
-    `gfem.MagneticDipole`) is one more column, solved after the excited
+    `gfem.IncidentField`, a point dipole, `gfem.ElectricDipole` or
+    `gfem.MagneticDipole`, or the second-order polarization of pump fields,
+    `gfem.PolarizationSource`) is one more column, solved after the excited
     ports with every port terminated: its result is the outgoing wave at
-    each port (``DrivenResult.port_waves``), a dipole's emitted power
-    (``DrivenResult.emitted_power``) and, on request, its total field. With
+    each port (``DrivenResult.port_waves``), the emitted power of a dipole or
+    a polarization source (``DrivenResult.emitted_power``) and, on request,
+    its total field. With
     ``source_fields=False`` a point dipole gets no column: its port waves
     are read from the ports' own solutions by reciprocity. Port
     names and source names label the same columns, so they are distinct.
@@ -1110,7 +1112,8 @@ class Driven:
             ``source_fields=False``), in this order, labelled by their
             names. An
             incident field needs ``Model(background=...)``, the medium it is
-            a solution of.
+            a solution of. A polarization source drives one frequency, its
+            own, and is solved on a model of its pumps' mesh.
         source_fields: Whether each source's own field is solved. ``True``
             (the default): each source is a column (see ``sources``).
             ``False``: no source is solved, and nothing that needs a source's
@@ -1167,15 +1170,18 @@ class Driven:
             PEC or PMC wall (`gfem.conventions`, Incident fields). A
             `gfem.PolarizationSource` raises it too when the model's periodic
             pairs are not its pumps', or the ``wave_vector`` is not the Bloch
-            vector its pumps imply (the message gives the one to write).
+            vector its pumps imply (the message gives the one to write), when
+            its frequency is not the one of ``frequency`` (one source, one
+            frequency), and when the model's mesh has another number of
+            volume elements than the pumps'.
             With ``frequency_workers`` above 1, it raises it before spawning any
             worker for a `gfem.IncidentField` whose function a spawned
             worker cannot load (a lambda, a closure, or a function of a
             notebook or REPL).
         NotImplementedError: incident fields or dipoles with a ``wave_vector``,
-            or ``sources`` with a 2D ``polarization``, an incident field with
-            ``sweep="adaptive"`` (dipoles are accepted) or with
-            ``source_fields=False``. `gfem.solve` raises
+            or ``sources`` with a 2D ``polarization``, an incident field or a
+            polarization source with ``sweep="adaptive"`` (dipoles are
+            accepted) or with ``source_fields=False``. `gfem.solve` raises
             it for ``wave_vector`` with ``sweep="adaptive"`` or a GPU
             ``device``; solve a uniform sweep on the CPU; for
             ``sources`` on a model with a `gfem.Periodic` pair; and for a
@@ -1315,8 +1321,8 @@ def _check_model_sources(problem: Any, model: Any) -> None:
     Raises:
         ValueError: A source is named like a port of the model, an
             incident field has no background stack, or a polarization source
-            does not fit the model's lattice and Bloch vector
-            (`_check_polarization_lattice`).
+            does not fit the model's mesh, lattice and Bloch vector
+            (`_check_polarization_mesh`, `_check_polarization_lattice`).
         NotImplementedError: An incident field or a dipole on a model with a
             periodic pair.
     """
@@ -1351,6 +1357,10 @@ def _check_model_sources(problem: Any, model: Any) -> None:
 
 def _check_polarization_mesh(source: Any, model: Any) -> None:
     """Raise unless ``source`` was built on a mesh with ``model``'s elements.
+
+    The element count is the check made here: the rule points of the load are
+    compared with the source's when the load is built, which guards the
+    geometry.
 
     Raises:
         ValueError: The element counts differ.

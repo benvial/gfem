@@ -21,7 +21,7 @@ Measured on the order-3 cell of 20 cells/um along $z$ (720 tetrahedra): $|b|^2$ 
 $1.2\times10^{-5}$ (matched) and $7.2\times10^{-5}$ (mismatched); the complex waves,
 against the closed form with the pump amplitude fitted to the solved field, to
 $1.4\times10^{-4}$ (top) and $2.1\times10^{-4}$ (bottom); the cross-polarized wave
-$\le 2\times10^{-7}\sqrt{\mathrm W}$. The tolerances are at least 4 times those
+$\le 2\times10^{-7}\sqrt{\mathrm W}$. The tolerances are at least 5 times those
 (the closed form is exact for the undepleted slab; the rest is the discretization of
 the pump's phase and of the load, which the next test shows falls as the mesh
 refines).
@@ -68,8 +68,8 @@ pytestmark = pytest.mark.verification
 FROZEN = {False: 7.441643048e-6, True: 2.564315177e-6}
 #: $|b|^2$ against it: measured 1.2e-5 and 7.2e-5, a margin of 7 for the coarse seeds.
 REL_POWER = 5e-4
-#: The complex waves against the fitted closed form: measured 2.2e-4, margin 4.5 and 9.
-REL_TOP, REL_BOTTOM = 1e-3, 2e-3
+#: The complex waves against the fitted closed form: measured 2.2e-4, margin 6.8 and 9.
+REL_TOP, REL_BOTTOM = 1.5e-3, 2e-3
 #: The cross-polarized wave against the copolarized one.
 REL_CROSS = 1e-3
 

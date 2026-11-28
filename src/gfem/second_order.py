@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import operator
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -366,16 +367,19 @@ def second_order_polarization(
             the first pump below the second; ``generated_order`` below 1; a
             pump on another mesh than ``model``'s.
         NotImplementedError: A pump solved across MPI ranks.
-        NonDifferentiableError: The model's node coordinates are traced.
+        NonDifferentiableError: The node coordinates of the model or of a pump's
+            mesh are traced (the call is not traceable: make it outside
+            ``jax.jit``).
     """
     pumps = _pumps(pump)
     kind = _process(pumps, process)
     mesh = model.mesh
     if is_traced(mesh.nodes):
         raise NonDifferentiableError(
-            "second_order_polarization reads the pump at the rule points of a "
-            "fixed mesh: gfem does not differentiate with respect to the node "
-            "coordinates here."
+            "second_order_polarization is not traceable: it reads the pump at "
+            "the rule points of a fixed mesh, so call it outside jax.jit with "
+            "concrete mesh nodes (gfem does not differentiate with respect to "
+            "the node coordinates here)."
         )
     for p in pumps:
         _check_pump(p, mesh)
@@ -388,10 +392,13 @@ def second_order_polarization(
     orders = [p.result.e_field(p.frequency, p.columns[0]).order for p in pumps]
     if generated_order is None:
         generated_order = max(orders)
-    if not isinstance(generated_order, int) or generated_order < 1:
+    if isinstance(generated_order, bool) or not hasattr(generated_order, "__index__"):
         raise ValueError(
             f"generated_order must be an int >= 1, got {generated_order!r}."
         )
+    generated_order = operator.index(generated_order)
+    if generated_order < 1:
+        raise ValueError(f"generated_order must be an int >= 1, got {generated_order}.")
     # the rule integrates (pump field)(pump field)(generated basis) exactly
     degree = (orders[0] + orders[-1] + generated_order) / 2
     rule_order = math.ceil(degree)
@@ -468,10 +475,16 @@ def _check_pump(pump: Pump, mesh: Any) -> None:
             "from the kept fields of one process."
         )
     other = field.mesh
+    if other is not mesh and is_traced(other.nodes):
+        raise NonDifferentiableError(
+            "second_order_polarization is not traceable: the pump's mesh nodes "
+            "are traced values. Call it outside jax.jit (or jax.grad with "
+            "respect to the pump's coefficients only), on concrete mesh nodes."
+        )
     same = other is mesh or (
         np.shape(other.nodes) == np.shape(mesh.nodes)
         and np.array_equal(other.volume_elements, mesh.volume_elements)
-        and np.allclose(other.nodes, mesh.nodes, rtol=0, atol=0)
+        and np.array_equal(other.nodes, mesh.nodes)
     )
     if not same:
         raise ValueError(
