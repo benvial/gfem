@@ -32,6 +32,7 @@ import reciprocity_cases as rc
 
 import gfem
 from gfem._engine.system_operator import SystemOperator
+from gfem._linalg.pardiso import pardiso_available
 from gfem.errors import NonDifferentiableError
 from gfem.shape import boundary_morph
 
@@ -124,8 +125,22 @@ def plain_guide(tmp_path_factory):
     return rc.guide_model(tmp_path_factory.mktemp("plain_guide"))
 
 
-#: Relative to max |W|: both read the same solves (1-2e-15 measured).
-VALUE_GATE = 1e-12
+#: Relative to max |W|. The two paths read W from separate solves (the
+#: dipoles' columns, the ports' own columns) on separate factorizations of the
+#: same symmetric A, one per `gfem.solve`. Each LDL^T is exact for
+#: A + dA_k with ||dA_k|| <= eta ||A||, eta the factorization's relative
+#: backward error, and both readings are exact for their own perturbed
+#: matrix, so the gap is about kappa_W (eta_1 + eta_2), kappa_W the readings'
+#: sensitivity to a relative change of A (0.05-0.1 measured on this guide).
+#: PARDISO (pivoted, the same bits on any thread count) factors both solves to
+#: the same bits: only the triangular solves' round-off is left (1-2e-15
+#: measured), gated at 1e-12. NGSolve's sparse Cholesky (no ``mkl`` extra: Linux
+#: without it, macOS) does not pivot, so eta follows the growth of its pivots:
+#: relative residuals up to 4.6e-10 at the frequencies near 10 GHz (median
+#: 1e-13), and its threaded sums give the two factorizations other bits. The
+#: gap measured 2.8e-13 on one thread (equal factors), 2.4e-11 on eight, up to
+#: 5.1e-11 on CI's runners; gated at 2 eta_max with kappa_W <= 1: 1e-9.
+VALUE_GATE = 1e-12 if pardiso_available() else 1e-9
 #: Relative to max |W|, adaptive at adaptive_tolerance=1e-4 against the
 #: uniform columns (8e-10 measured on this guide).
 ADAPTIVE_VALUE_GATE = 1e-6
