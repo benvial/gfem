@@ -97,6 +97,12 @@ class Field:
     #: was solved with, so that readers of the operator stretch it as the
     #: solve did; ``None`` without a layer.
     _reference_frequency: float | None = None
+    #: The Bloch wave vector (rad/m) the field was solved with, and the
+    #: translations (m) of the periodic pairs of its model: what a
+    #: second-order source reads to state the generated solve's vector;
+    #: ``None`` and ``()`` without a Bloch vector or pairs.
+    _wave_vector: tuple[float, float, float] | None = None
+    _lattice: tuple[tuple[float, float, float], ...] = ()
     #: A kept field of an incident-field column: what rebuilds its incident
     #: part (`gfem._incident.IncidentPart`); ``None`` for any other field.
     _incident: IncidentPart | None = None
@@ -397,6 +403,8 @@ class ReducedFields(Sequence[Field]):
     support: tuple[str, ...]
     _excluded: tuple[tuple[int, int], ...] = ()
     _reference_frequency: float | None = None
+    _wave_vector: tuple[float, float, float] | None = None
+    _lattice: tuple[tuple[float, float, float], ...] = ()
     #: Per field, the point dipoles whose load solved it (`Field`).
     _point_sources: tuple[tuple[tuple[str, tuple[float, float, float]], ...], ...] = ()
 
@@ -443,6 +451,8 @@ class ReducedFields(Sequence[Field]):
             _excluded=self._excluded,
             _reduced=True,
             _reference_frequency=self._reference_frequency,
+            _wave_vector=self._wave_vector,
+            _lattice=self._lattice,
             _point_sources=self._point_sources[k] if self._point_sources else (),
         )
 

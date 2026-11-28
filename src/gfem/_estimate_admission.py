@@ -23,7 +23,7 @@ from gfem._checks import is_staging, is_traced
 from gfem._domain import physics_of
 from gfem._dual_supply import _adjoint_ports, _excited
 from gfem._floquet import floquet_ports_in
-from gfem._sources import INCIDENT
+from gfem._sources import INCIDENT, POLARIZATION
 from gfem._text import hertz
 from gfem.errors import MeshRefinementUnsupportedError, NonDifferentiableError
 from gfem.mesh import _is_model_mesh
@@ -373,10 +373,15 @@ def _refuse_source(subject: str, source: Any) -> MeshRefinementUnsupportedError:
     """The refusal of an estimator or refinement on a problem with a source.
 
     The estimators' residuals read the model's materials and ports only: a
-    volume or a point source would make them mark the scatterer, or the
-    dipole's position, where the field is right.
+    volume or a point source would make them mark the scatterer, the polarized
+    region or the dipole's position, where the field is right.
     """
-    feature = "incident field" if isinstance(source, INCIDENT) else "point dipole"
+    if isinstance(source, INCIDENT):
+        feature = "incident field"
+    elif isinstance(source, POLARIZATION):
+        feature = "polarization source"
+    else:
+        feature = "point dipole"
     return MeshRefinementUnsupportedError(
         feature,
         f"{subject} has no path for the {feature} {source.name!r}: its error "

@@ -733,7 +733,9 @@ a signal :math:`b` and an idler :math:`c` (:math:`\omega_a = \omega_b +
 \overline{\kappa_{abc}} A_a \overline{A_c}\, e^{i\Delta\beta z}`, which
 conserves the photon flux when :math:`d` is symmetric in its three indices
 (Kleinman symmetry). The formulas hold while :math:`\alpha \ll \beta` and for
-an undepleted pump.
+an undepleted pump. The polarization :math:`P` that a pump field drives at the
+generated frequency :math:`\omega_3` enters the generated solve as the current
+:math:`J = +i\omega_3 P`, in gfem's :math:`e^{+i\omega t}` phasors.
 
 Photon pairs
 ------------

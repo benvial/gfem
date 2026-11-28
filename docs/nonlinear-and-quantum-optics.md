@@ -159,6 +159,30 @@ poling at duty cycle $D$ keeps $|G_1|^2 = 4/\pi^2$ at $D = 1/2$, and the
 third order has $|G_3|^2 = 4/(9\pi^2)$ there, a ninth of the overlap at a
 period three times longer.
 
+### Generated field of a full-field pump
+
+Off a guide there is no mode to overlap, so the pump's field $F = \sum_p a_p E_p$
+is read at the quadrature points ($a_p = \sqrt{P_p}\,e^{i\phi_p}$, $E_p$ the
+kept field of column $p$) and contracted with $d$ in the global frame:
+
+| Process | $\omega_3$ | $P$ |
+|---|---|---|
+| Second harmonic | $2\omega$ | $\varepsilon_0\,d\!:\!FF$ |
+| Sum frequency | $\omega_1 + \omega_2$ | $2\varepsilon_0\,d\!:\!F_1F_2$ |
+| Difference frequency | $\omega_1 - \omega_2$ | $2\varepsilon_0\,d\!:\!F_1\overline{F_2}$ |
+
+$P$ lives only where the tensor is nonzero and outside a PML. A solve at
+$\omega_3$ takes it as the current $J = +i\omega_3P$, so its load is the dipole
+load integrated, and the waves at the ports are read as for any source. The
+pump is the solution at its own frequency alone: undepleted, with no
+back-action. On a Bloch cell the polarization carries the sum of the pump's wave vectors,
+$2k_\parallel$ for a second harmonic, $k_1 + k_2$ and $k_1 - k_2$ for sum and
+difference frequency: the generated solve takes `wave_vector=source.wave_vector`
+in `gfem.Driven`, and gfem raises, naming the vector to write, when it differs
+by anything but a reciprocal lattice vector. Declare its ports with
+`gfem.diffraction.floquet_ports(model, surface, source.frequency,
+wave_vector=...)`, since the orders that propagate depend on the incidence.
+
 (theory-nonlinear-and-quantum-optics-photon-pairs)=
 ## Photon pairs
 

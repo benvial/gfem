@@ -2164,10 +2164,10 @@ class DrivenResult:
             on a real ``z_ref``, :math:`|b|^2` is the power the source sends
             into the port, in W. Read one with `port_wave`. Differentiable
             like S. ``None`` without sources or without ports.
-        emitted_power: The time-averaged power each point dipole gives the
-            field, W, ``(n_freq,)``, by source name (`gfem.conventions`,
-            Point dipoles). Empty without dipoles, or with
-            ``Driven(source_fields=False)``.
+        emitted_power: The time-averaged power each point dipole or
+            polarization source gives the field, W, ``(n_freq,)``, by source
+            name (`gfem.conventions`, Point dipoles). Empty without them, or
+            with ``Driven(source_fields=False)``.
 
     On a 2D model (a mesh of dimension 2, `gfem.conventions`) every port is
     fed 1 W/m time-averaged incident power per metre along :math:`z`, and S is
@@ -2602,7 +2602,8 @@ register_fields(
         "port_modes",
         "diffraction_orders",
         "h_fields",
-        # static source values: nodes without leaves
+        # static source values: nodes without leaves (a polarization source's P
+        # values are leaves of its own)
         "sources",
         "port_waves",
         "emitted_power",

@@ -336,6 +336,14 @@ Normalized efficiency
   1/(W m²): the harmonic power is $\eta_\mathrm{norm}P^2L^2$ for a pump of power
   $P$ in a lossless guide of length $L$ at perfect phase matching. See {doc}`recipes/second-harmonic-generation`.
 
+Pump
+  The kept field of a driven solve at the pump frequency, with the power and phase
+  it is fed at, that sets the second-order polarization of a generated wave. See {doc}`recipes/metasurface-second-harmonic`.
+
+Polarization source
+  The second-order polarization $P$ at the generated frequency, at the quadrature
+  points of the nonlinear regions, that drives a second solve as a current. See {doc}`recipes/metasurface-second-harmonic`.
+
 Clearance
   The distance from a guide's core to the edge of its section: a side
   {term}`perfectly matched layer`, or the section's outer wall. It sets how

@@ -160,6 +160,7 @@ from gfem._engine.sensitivity import (
     Term,
     is_lumped,
     is_sheet,
+    is_source_leaf,
     is_thermal_value,
     law_key,
 )
@@ -192,7 +193,7 @@ from gfem._periodic import (
     check_wave_vector,
 )
 from gfem._pml import Stretch
-from gfem._sources import DIPOLES, INCIDENT, MagneticDipole
+from gfem._sources import DIPOLES, INCIDENT, POLARIZATION, MagneticDipole
 from gfem._sweep.adaptive import AffineSystem, AffineTerm, Sweep, adaptive_sweep
 from gfem._text import hertz
 from gfem.errors import (
@@ -1091,6 +1092,11 @@ class DrivenRule:
         self._mesh = model.mesh
         self._materials = dict(model.materials)
         self._excluded = model._domain.excluded  # noqa: SLF001
+        #: The translations of the periodic pairs, m, which the kept fields
+        #: record for the second-order source's lattice check.
+        self._lattice = tuple(
+            (float(a[0]), float(a[1]), float(a[2])) for a in model.periodic_translations
+        )
         self._check_dipoles(model)
         #: The system operator and port network builder, and the state its
         #: solves keep on a discretization across designs.
@@ -1144,8 +1150,19 @@ class DrivenRule:
         #: Whether the sources' port waves are read from the ports' own
         #: solutions (`gfem.Driven.source_fields` ``False``): no source column.
         self.reciprocal = not problem.source_fields
-        #: The dipoles whose own field is solved: their emitted power.
-        self.emitting = () if self.reciprocal else self.dipoles
+        #: The sources whose own field is solved and that emit power: the
+        #: dipoles and the polarization sources, in source order.
+        self.emitting = (
+            ()
+            if self.reciprocal
+            else tuple(
+                s for s in problem.sources if isinstance(s, (*DIPOLES, *POLARIZATION))
+            )
+        )
+        #: The polarization sources among the sources.
+        self.polarized = tuple(
+            s for s in problem.sources if isinstance(s, POLARIZATION)
+        )
         #: The labels of the solve's columns: the excited ports, then the
         #: sources solved.
         self.columns = (
@@ -1403,11 +1420,14 @@ class DrivenRule:
         self, model: Model, system: SystemOperator
     ) -> SourceColumns | None:
         """The source columns of this forward; ``None`` without sources."""
-        if not self.sources:
+        # the problem's own sources: on a host copy of a traced solve they hold
+        # the values, where ``self.sources`` still holds the tracers
+        sources = self.problem.sources
+        if not sources:
             return None
         with _timing.phase("discretize"):
             return SourceColumns.build(
-                self.sources,
+                sources,
                 ColumnContext(
                     model=model,
                     system=system,
@@ -1977,6 +1997,14 @@ class DrivenRule:
                 "(gfem.MaterialField) design, or wrap the node coordinates in "
                 "jax.lax.stop_gradient"
             )
+        if self.polarized:
+            return (
+                f"the load of the PolarizationSource {self.polarized[0].name!r} "
+                "sits at the rule points of its elements, which move with the "
+                "nodes, and this version has no node derivative of it. Use a "
+                "material design (a gfem.MaterialField) or wrap the node "
+                "coordinates in jax.lax.stop_gradient"
+            )
         return terms.absorbing_shape_unsupported(model)
 
     def _unsupported_with_sources(self, kind: tuple) -> str | None:
@@ -2023,6 +2051,14 @@ class DrivenRule:
                 f"wave port {ports[0]!r}: it is the backward error of the mode "
                 "solve, a diagnostic, not a physical quantity. Wrap it in "
                 "jax.lax.stop_gradient to use its value without its derivative."
+            )
+        if name == "emitted_power" and self.polarized:
+            return (
+                f"gfem cannot differentiate the emitted power of the "
+                f"PolarizationSource {self.polarized[0].name!r} in this version, "
+                "and a polarization source in the problem disables it for every "
+                "source beside it (a dipole's too): read the port waves, or wrap "
+                "the power in jax.lax.stop_gradient."
             )
         if name in self.differentiable_outputs:
             return None
@@ -2108,8 +2144,12 @@ class DrivenRule:
         ct_w = cotangents.get("port_waves")
         frequencies = self.problem.frequency
         nodes = bool(self.dipoles) and (wanted is None or ("nodes",) in wanted)
+        polarized = bool(self.polarized) and (
+            wanted is None or any(is_source_leaf(k) for k in wanted)
+        )
         self._explicit_nodes = None
         self._explicit_inputs = {}
+        self._explicit_problem = {}
         self._port_nodes_report = {}
         pairs: list[FieldPair | None] = [None] * len(frequencies)
         port_terms: list[Integrated] = []
@@ -2125,7 +2165,10 @@ class DrivenRule:
             self._refuse_reciprocal_port_pass(port_pass)
             sources = None
             if system is not None and (
-                ct_p is not None or nodes or (self.reciprocal and ct_w is not None)
+                ct_p is not None
+                or nodes
+                or polarized
+                or (self.reciprocal and ct_w is not None)
             ):
                 sources = self._source_columns(model, system)
             domain = em_region(model, op.built)
@@ -2162,6 +2205,8 @@ class DrivenRule:
                     )
                     if port_pass.active:
                         port_pass.collect(n, adjoint, x, cotangents)
+                    if polarized and sources is not None:
+                        self._add_polarization_terms(sources, omega, adjoint[:, width:])
                     if nodes and sources is not None and reading is not None:
                         self._add_reciprocal_nodes(
                             model, sources, omega, x, ports, n, reading, ct_w
@@ -2182,6 +2227,34 @@ class DrivenRule:
             # this backward built goes down to the budget, no entry evicted
             ENTRIES.trim(retain_budget(self.options.retain_memory), self.comm)
         return [*(p for p in pairs if p is not None), *port_terms]
+
+    def explicit_problem(self) -> dict[tuple, np.ndarray]:
+        r"""The polarization sources' cotangents of the last backward.
+
+        Under ``("problem", ".sources[k].re")`` and ``".im"``: the load is
+        linear in :math:`P`, so the cotangent of its real and imaginary parts
+        is the real part and the negated imaginary part of
+        :math:`\mu_0 L^3\omega^2 M_c\lambda` (`VolumeLoads.cotangent`).
+        """
+        return getattr(self, "_explicit_problem", {})
+
+    def _add_polarization_terms(
+        self, sources: SourceColumns, omega: float, adjoint: np.ndarray
+    ) -> None:
+        r"""Add the polarization sources' term at :math:`\omega` to `explicit_problem`.
+
+        ``adjoint`` is the source columns' ``(N, n_sources)``.
+        """
+        found = sources.polarization
+        if found is None:
+            return
+        positions, loads = found
+        terms = loads.cotangent(omega, adjoint[:, positions])
+        for k, term in zip(positions, terms, strict=True):
+            for part, value in (("re", np.real(term)), ("im", -np.imag(term))):
+                key = ("problem", f".sources[{k}].{part}")
+                held = self._explicit_problem.get(key)
+                self._explicit_problem[key] = value if held is None else held + value
 
     def explicit_inputs(self) -> dict[tuple, Any]:
         """The cotangents by input kind the backward computed itself.
@@ -2728,6 +2801,8 @@ class DrivenRule:
                     _excluded=self._excluded,
                     _comm=_mpi.static_comm(self.comm),
                     _reference_frequency=self._reference_frequency,
+                    _wave_vector=wave_vector_at(self.problem, f),
+                    _lattice=self._lattice,
                     _incident=incident.get(label),
                     _point_sources=self._point_sources(label),
                 )
@@ -2874,6 +2949,7 @@ class DrivenRule:
                 support=self.regions,
                 _excluded=self._excluded,
                 _reference_frequency=self._reference_frequency,
+                _lattice=self._lattice,
                 _point_sources=tuple(self._point_sources(label) for _, label in kept)
                 if self.dipoles
                 else (),

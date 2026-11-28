@@ -97,6 +97,7 @@ import periodic_cases as pc
 import piezo_cases as pz
 import pml_cases
 import pytest
+import second_order_cases as so
 import thermal_cases as tc
 from anisotropy import TILTED, turned
 from eigen_cases import steer_search
@@ -774,6 +775,16 @@ def _source_cells() -> list[Cell]:
     ]
 
 
+def _polarization_cells() -> list[Cell]:
+    """A second harmonic's generated port wave through both solves.
+
+    The pump solve and the generated solve of a chi2 slab on a periodic cell
+    (Floquet ports): the polarization source's load reads the pump's kept field.
+    Listed after the Floquet cells, whose ports the periodic rows list first.
+    """
+    return [Cell("driven_polarization", "eps_r", "direct", "uniform")]
+
+
 def _piezoelectric_cells() -> list[Cell]:
     """The piezoelectric section (``piezoelectric``), on ``direct``.
 
@@ -839,6 +850,7 @@ CELLS = [
     *_source_cells(),
     *_driven_periodic_cells(),
     *_driven_floquet_cells(),
+    *_polarization_cells(),
     *_eigen_periodic_cells(),
     *_participation_cells(),
     *_field_cells(),
@@ -1084,6 +1096,10 @@ class Designs:
     @functools.cached_property
     def dipole_line(self):
         return dipole_line(self._dir("dipole"))
+
+    @functools.cached_property
+    def polarization_cell(self):
+        return so.slab_mesh(self._dir("polarization") / "cell.msh", 10)
 
     @functools.cached_property
     def face_dipole_line(self):
@@ -1590,6 +1606,50 @@ def _dipole_material(d: Designs, cell: Cell, options, seed: int) -> Case:
         return result.emitted_power["d"][0] / scale
 
     return _source_case(cell, objective, values, rng)
+
+
+def _polarization_material(d: Designs, _cell: Cell, options, seed: int) -> Case:
+    """The second harmonic's port waves, in the slab's eps_r of both solves.
+
+    The tensor's cell of `second_order_cases` (a thin chi2 slab on a periodic
+    cell): the pump solve and the generated solve read the same per-element
+    permittivity, and the generated load reads the pump's kept field.
+    """
+    mesh = d.polarization_cell
+    n = len(mesh.elements("slab"))
+    rng = np.random.default_rng(31 + seed)
+    eps = jnp.asarray(rng.uniform(4.0, 5.0, n))
+    tensor = np.zeros((3, 6))
+    tensor[0, 0] = so.D
+
+    def waves(p):
+        base = so.slab_model(mesh, 2.2, chi2=False)
+        pump_model = base.with_material(
+            "slab", gfem.MaterialField(eps_r=p, second_order_nonlinear_tensor=tensor)
+        )
+        pump = gfem.solve(
+            pump_model,
+            gfem.Driven(so.FREQUENCY, excite="z_min TM", keep_fields=True),
+            options=options,
+        )
+        source = gfem.second_order_polarization(
+            pump_model, gfem.Pump(pump, so.FREQUENCY, incident_power=1.0)
+        )
+        result = gfem.solve(
+            base.with_material("slab", gfem.MaterialField(eps_r=p)),
+            gfem.Driven(source.frequency, excite=(), sources=source),
+            options=options,
+        )
+        top = result.port_wave("z_max TM", source.name)[0]
+        bottom = result.port_wave("z_min TM", source.name)[0]
+        return jnp.abs(top) ** 2 + 2 * jnp.abs(bottom) ** 2
+
+    scale = waves(eps)  # |b|^2 at the base design: the objective is O(1)
+
+    def objective(p):
+        return waves(p) / scale
+
+    return Case(objective, eps, rng, step=STEPS["eps_r"], taylor=1e-1)
 
 
 def _dipole_nodes(d: Designs, cell: Cell, options, seed: int) -> Case:
@@ -3904,6 +3964,7 @@ BUILDERS = {
         for name in ("eps_r", "conductivity", "fill")
     },
     ("driven_dipole", "nodes"): _dipole_nodes,
+    ("driven_polarization", "eps_r"): _polarization_material,
     **{
         ("driven_dipole_reciprocal", name): _reciprocal_material
         for name in ("eps_r", "conductivity", "fill")

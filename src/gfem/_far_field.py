@@ -48,7 +48,7 @@ from gfem._field_kernels import (
 )
 from gfem._power_flow import _model_role, concrete_field, side_names
 from gfem._pytree import register_fields
-from gfem._sources import DIPOLES, INCIDENT
+from gfem._sources import DIPOLES, INCIDENT, POLARIZATION
 from gfem.errors import NonDifferentiableError
 from gfem.mesh import Mesh
 
@@ -293,7 +293,7 @@ def far_field(
             one flat PEC or PMC ground plane; a direction points below the
             ground plane.
         NotImplementedError: A layered background (a dielectric or layered
-            half-space) or a lossy one.
+            half-space) or a lossy one; ``name`` is a `gfem.PolarizationSource`.
         NonDifferentiableError: ``theta`` or ``phi`` is traced; the side is
             a predicate while the node coordinates are traced; and, while
             `jax.grad` traces it, the field's ``omega`` or a design in
@@ -324,6 +324,12 @@ def far_field(
     result._refuse_unsolved_source(  # noqa: SLF001
         name, "so it has no far field"
     )
+    if isinstance(source, POLARIZATION):
+        raise NotImplementedError(
+            f"The far field of the PolarizationSource {name!r} is not supported "
+            "in this version: read its port waves, result.port_wave(port, name), "
+            "or the emitted power, result.emitted_power[name]."
+        )
     background = model.background
     if background is None:
         raise ValueError(

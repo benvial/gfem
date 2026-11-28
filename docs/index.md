@@ -42,6 +42,7 @@ recipes/raman-gain
 recipes/free-carriers
 recipes/mode-shape-gradients
 recipes/second-harmonic-generation
+recipes/metasurface-second-harmonic
 recipes/photon-pair-sources
 ```
 
