@@ -794,6 +794,13 @@ def _mechanical_eigenmode_args(
         "clamped": dict(problem.clamped),
         "ground": problem.ground,
         "damping_frame": problem.damping_frame,
+        # written only when set: a problem without them encodes as before
+        **({"pml": problem.pml} if problem.pml is not None else {}),
+        **(
+            {"target_quality_factor": problem.target_quality_factor}
+            if problem.target_quality_factor is not None
+            else {}
+        ),
     }
 
 

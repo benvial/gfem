@@ -12,7 +12,7 @@ import dataclasses
 import itertools
 import math
 from collections.abc import Mapping, Sequence
-from typing import Any, ClassVar, Literal, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, get_args
 
 import jax
 import numpy as np
@@ -32,6 +32,9 @@ from gfem._sources import (
 )
 from gfem._text import hertz_band
 from gfem.thermal import HeatSource, Trace, _check_finite
+
+if TYPE_CHECKING:
+    from gfem._pml import PML
 
 __all__ = [
     "DCConduction",
@@ -1947,18 +1950,28 @@ class MechanicalEigenmode:
             for a model with a piezoelectric region.
         damping_frame: A `DampingFrame` naming the absorbing edge regions, or
             ``None``.
+        pml: A `gfem.PML` naming the volume regions (areas of a section) that
+            absorb the radiated waves, or ``None``; exclusive with
+            ``damping_frame``.
+        target_quality_factor: With ``pml``, the quality factor :math:`Q_t`
+            the search expects: the shift is
+            :math:`\omega_t^2 (1 + i/Q_t)`, so a leaky mode that a real shift
+            hides behind the layer's near-real modes is found; ``None``: a real
+            shift.
 
     Raises:
         ValueError: ``target`` is not a finite positive number, ``n_modes`` is
             not an integer >= 1, ``wavenumber`` is not a finite real number,
-            or a ``clamped`` component string is empty or not made of ``x``,
-            ``y`` and ``z``.
+            a ``clamped`` component string is empty or not made of ``x``,
+            ``y`` and ``z``, ``damping_frame`` and ``pml`` are both given,
+            or ``target_quality_factor`` is not > 0 or is given without
+            ``pml``.
         TypeError: A name is not a string, ``clamped`` is not a name, a
-            sequence of names or a mapping, or ``damping_frame`` is not a
-            `DampingFrame`.
-        NonDifferentiableError: ``target`` or ``wavenumber`` is computed
-            inside `jax.grad`, `jax.jit` or `jax.vmap` from their arguments;
-            pass a fixed value.
+            sequence of names or a mapping, ``damping_frame`` is not a
+            `DampingFrame` or ``pml`` is not a `gfem.PML`.
+        NonDifferentiableError: ``target``, ``wavenumber`` or
+            ``target_quality_factor`` is computed inside `jax.grad`,
+            `jax.jit` or `jax.vmap` from their arguments; pass a fixed value.
 
     `gfem.solve` raises `NotImplementedError` on a slab mesh and with
     ``linear_solver="petsc"``; on a 3D body also under ``comm``, with a Krylov
@@ -1997,6 +2010,8 @@ class MechanicalEigenmode:
     clamped: tuple[tuple[str, str], ...]
     ground: tuple[str, ...]
     damping_frame: DampingFrame | None
+    pml: PML | None
+    target_quality_factor: float | None
     _rule: ClassVar[str] = "gfem._engine.mechanical_eigen:MechanicalEigenmodeRule"
     #: Moved nodes solve (a node map is this problem's design input).
     _moves_nodes_2d: ClassVar[bool] = True
@@ -2010,6 +2025,8 @@ class MechanicalEigenmode:
         clamped: str | Sequence[str] | Mapping[str, str] = (),
         ground: str | list[str] | tuple[str, ...] = (),
         damping_frame: DampingFrame | None = None,
+        pml: PML | None = None,
+        target_quality_factor: float | None = None,
     ) -> None:
         """Validate and normalize (see the class docstring)."""
         check_fixed(target, "MechanicalEigenmode.target must be a fixed number")
@@ -2043,6 +2060,42 @@ class MechanicalEigenmode:
                 f"None, got {type(damping_frame).__name__}; write "
                 'damping_frame=gfem.DampingFrame(["frame"]).'
             )
+        # imported here: gfem._pml imports this module
+        from gfem._pml import PML
+
+        if pml is not None and not isinstance(pml, PML):
+            raise TypeError(
+                "MechanicalEigenmode.pml must be a gfem.PML or None, got "
+                f"{type(pml).__name__}; write pml=gfem.PML(['layer'])."
+            )
+        if pml is not None and damping_frame is not None:
+            raise ValueError(
+                "MechanicalEigenmode takes pml= or damping_frame=, not both: "
+                "one absorber per problem (the two define their interior boxes "
+                "from the same regions). Estimate Q with a damping frame, then "
+                "rerun with the PML."
+            )
+        tq = None
+        if target_quality_factor is not None:
+            tq = static_float(
+                target_quality_factor,
+                "MechanicalEigenmode.target_quality_factor",
+                "Fix it outside the transformed function: it only places the "
+                "search shift.",
+            )
+            if tq <= 0:
+                raise ValueError(
+                    "MechanicalEigenmode.target_quality_factor must be > 0, "
+                    f"got {tq!r}."
+                )
+            if pml is None:
+                raise ValueError(
+                    "MechanicalEigenmode.target_quality_factor places the shift "
+                    "of a leaky mode behind a perfectly matched layer: pass "
+                    "pml=gfem.PML(...) with it, or drop it."
+                )
+        object.__setattr__(self, "pml", pml)
+        object.__setattr__(self, "target_quality_factor", tq)
         object.__setattr__(self, "target", value)
         object.__setattr__(self, "n_modes", int(n_modes))
         object.__setattr__(self, "wavenumber", q)
@@ -2062,6 +2115,10 @@ class MechanicalEigenmode:
             parts.append(f"ground={list(self.ground)}")
         if self.damping_frame is not None:
             parts.append(f"damping_frame={self.damping_frame!r}")
+        if self.pml is not None:
+            parts.append(f"pml={self.pml!r}")
+        if self.target_quality_factor is not None:
+            parts.append(f"target_quality_factor={self.target_quality_factor:g}")
         return f"MechanicalEigenmode({', '.join(parts)})"
 
 
