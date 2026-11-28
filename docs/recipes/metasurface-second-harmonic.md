@@ -235,8 +235,9 @@ Raising the gaps' permittivity by 1 raises the upward power by about a quarter.
 
 ## Limits
 
-- **Normal incidence.** An oblique pump needs the generated solve at the sum of
-  the pump's wave vectors ({doc}`../nonlinear-and-quantum-optics`).
+- **Normal incidence.** An oblique pump gives the source a `wave_vector`, which
+  the generated solve takes in `gfem.Driven`
+  ({doc}`../nonlinear-and-quantum-optics`).
 - **Undepleted pump,** at a single frequency of each solve; the harmonic does
   not act back on the pump.
 - **Not a measured efficiency:** the tensor is the bulk value, with no surface

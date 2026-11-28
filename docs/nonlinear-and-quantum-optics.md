@@ -175,10 +175,13 @@ $P$ lives only where the tensor is nonzero and outside a PML. A solve at
 $\omega_3$ takes it as the current $J = +i\omega_3P$, so its load is the dipole
 load integrated, and the waves at the ports are read as for any source. The
 pump is the solution at its own frequency alone: undepleted, with no
-back-action. On a Bloch cell, give that solve `wave_vector=` equal to the sum of
-the pump's wave vectors ($2k_\parallel$ for a second harmonic): the polarization
-is as periodic as the product of the pump fields, and gfem raises when the
-vector differs.
+back-action. On a Bloch cell the polarization carries the sum of the pump's wave vectors,
+$2k_\parallel$ for a second harmonic, $k_1 + k_2$ and $k_1 - k_2$ for sum and
+difference frequency: the generated solve takes `wave_vector=source.wave_vector`
+in `gfem.Driven`, and gfem raises, naming the vector to write, when it differs
+by more than a reciprocal lattice vector. Declare its ports with
+`gfem.diffraction.floquet_ports(model, surface, source.frequency,
+wave_vector=...)`, since the orders that propagate depend on the incidence.
 
 (theory-nonlinear-and-quantum-optics-photon-pairs)=
 ## Photon pairs
