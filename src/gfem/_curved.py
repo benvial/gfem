@@ -220,6 +220,7 @@ ENTRIES: dict[str, tuple[str, str | None]] = {
     "rise_time": (ACCEPTED, None),
     "route_phase": (GATED, "point_read"),
     "second_harmonic": (ACCEPTED, None),
+    "second_order_polarization": (ACCEPTED, None),
     "sfwm": (ACCEPTED, None),
     "solve": (GATED, "incident_field"),
     "spdc": (ACCEPTED, None),

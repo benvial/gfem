@@ -251,6 +251,7 @@ class Driven2DRule(DrivenRule):
         self.dipoles = ()
         self.reciprocal = False
         self.emitting = ()
+        self.polarized = ()
         self.columns = tuple(self.excite)
         self.background = None
         self.layers = ()
