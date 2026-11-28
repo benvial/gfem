@@ -29,6 +29,7 @@ import pytest
 from second_order_cases import FREQUENCY, D, slab_mesh, slab_model
 
 import gfem
+from gfem._engine import volume_loads
 from gfem._solve_cache import solve_key
 
 OPTIONS = gfem.SolverOptions(order=2, linear_solver="direct")
@@ -140,6 +141,18 @@ def test_the_sum_frequency_power_is_the_product_of_the_pump_powers(mesh, pump):
     # the power does not depend on the phases
     assert abs(float(g[2])) <= REL * value
     assert abs(float(g[3])) <= REL * value
+
+
+def test_a_chunk_of_one_element_gives_the_same_gradient(mesh, pump, shg, monkeypatch):
+    # the adjoint assembles the maps again, a group of points at a time: with
+    # one element per group it reads the same entries (the `REL` bound)
+    monkeypatch.setattr(volume_loads, "_CHUNK_ENTRIES", 1)
+    grads = jax.grad(
+        lambda s, p, phi: _power(mesh, pump, scale=s, powers=(p,), phases=(phi,)),
+        argnums=(0, 1),
+    )(1.0, 1.0, 0.3)
+    for got, want in zip(grads, shg[1][:2], strict=True):
+        assert abs(float(got) - float(want)) <= REL * float(shg[0])
 
 
 def test_jit_equals_eager(mesh, pump, shg):
