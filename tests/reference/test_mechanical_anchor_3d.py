@@ -17,7 +17,6 @@ the root's compliance, so the test asserts only a factor 2; the ratio, the
 unknowns, the time and the memory are an observation.
 """
 
-import resource
 import time
 
 import elastic_pml_cases as ec
@@ -48,7 +47,12 @@ def test_the_anchor_loss_of_a_3d_cantilever_is_within_a_factor_two_of_wilson_rae
     quality = omega.real / (2 * omega.imag)
     width, ratio = cantilever.width, cantilever.ratio
     coefficient = 1 / quality / ((width / ratio) * ratio**-4)
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20  # GiB, Linux
+    try:  # the peak-memory observation needs the POSIX resource module
+        import resource
+
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20  # GiB
+    except ImportError:
+        peak = float("nan")
     print(  # noqa: T201
         f"A = Q^-1 / [(w/l)(h/l)^4] = {coefficient:.4f} against "
         f"{ec.WILSON_RAE} (ratio {coefficient / ec.WILSON_RAE:.3f}); "
