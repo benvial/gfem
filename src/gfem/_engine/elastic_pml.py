@@ -313,14 +313,6 @@ class ElasticStretch:
             return j
         return j * (f[0][2] + f[1][2] + f[2][2])
 
-    def weight(self, a: int, b: int, *, derivative: bool = False) -> _Cx:
-        r""":math:`J/(s_a s_b)`, or its derivative in the gain."""
-        f = self._factors()
-        w = self.jacobian() * f[a][1] * f[b][1]
-        if not derivative:
-            return w
-        return w * (f[0][2] + f[1][2] + f[2][2] - f[a][2] - f[b][2])
-
     # --- the forms -----------------------------------------------------------------
 
     def _strain_fields(self) -> dict[str, tuple[Callable, list]]:
