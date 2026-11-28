@@ -96,6 +96,14 @@ __all__ = ["MechanicalEigenmodeRule", "MechanicalSystem"]
 
 #: ARPACK's relative tolerance on the shift-inverted eigenvalues.
 _ARPACK_TOLERANCE = 1e-12
+#: The restarts an ARPACK run may take before it returns the pairs that have
+#: converged. Well-separated pairs converge in a few (at most 3 in the unit
+#: suites). With a layer and nothing else near the shift, the pairs past the
+#: wanted ones lie in the stretched continuum of the substrate near
+#: :math:`\lambda = 0`, whose shift-inverted values cluster at
+#: :math:`-1/\sigma` and never meet the tolerance: without a bound the run
+#: would take ARPACK's ten restarts per DOF.
+_ARPACK_RESTARTS = 30
 #: Modes with :math:`|\lambda| <` this times the shift are rigid motions.
 _STATIC = 1e-8
 #: The relative shift of a left vector's inverse iteration, and its step bound.
@@ -1058,7 +1066,13 @@ class MechanicalSystem:
         ncv = min(max(2 * nev + 1, 20), n - 1)
         try:
             theta, vectors = spla.eigs(
-                op, k=nev, which="LM", tol=_ARPACK_TOLERANCE, ncv=ncv, v0=v0
+                op,
+                k=nev,
+                which="LM",
+                tol=_ARPACK_TOLERANCE,
+                ncv=ncv,
+                v0=v0,
+                maxiter=_ARPACK_RESTARTS,
             )
         except spla.ArpackNoConvergence as err:
             theta, vectors = err.eigenvalues, err.eigenvectors
