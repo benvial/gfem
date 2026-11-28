@@ -179,7 +179,7 @@ back-action. On a Bloch cell the polarization carries the sum of the pump's wave
 $2k_\parallel$ for a second harmonic, $k_1 + k_2$ and $k_1 - k_2$ for sum and
 difference frequency: the generated solve takes `wave_vector=source.wave_vector`
 in `gfem.Driven`, and gfem raises, naming the vector to write, when it differs
-by more than a reciprocal lattice vector. Declare its ports with
+by anything but a reciprocal lattice vector. Declare its ports with
 `gfem.diffraction.floquet_ports(model, surface, source.frequency,
 wave_vector=...)`, since the orders that propagate depend on the incidence.
 

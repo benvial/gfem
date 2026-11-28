@@ -34,7 +34,7 @@ from gfem._engine.solve_request import SolveRequest
 from gfem._engine.sweep_outputs import SweepOutputs
 from gfem._engine.wave_ports import SweptSurface, port_mode_sweeps
 from gfem._linalg import report
-from gfem._sources import IncidentField, qualified
+from gfem._sources import IncidentField, PolarizationSource, qualified
 from gfem._sweep.port_mode import rows_of
 from gfem.errors import LinearSolverConvergenceError
 from gfem.problems import Driven
@@ -254,6 +254,11 @@ class FixedAngleChildren:
         rule = self.rules.get(n)
         if rule is not None:
             return rule
+        # the child below drops the sources: a polarization source drives one
+        # frequency, so a sweep (several frequencies) never holds one
+        assert not any(
+            isinstance(s, PolarizationSource) for s in parent.problem.sources
+        )
         f = parent.problem.frequency[n]
         problem = Driven(
             [f],

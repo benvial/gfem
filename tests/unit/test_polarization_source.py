@@ -37,8 +37,9 @@ from second_order_cases import (
 
 import gfem
 from gfem._engine import volume_loads
+from gfem._engine.fields import fe_space
 from gfem._engine.source_columns import _polarization
-from gfem._engine.volume_loads import _affine, pump_columns
+from gfem._engine.volume_loads import _affine, _Rule, _straight, pump_columns
 from gfem._solve_cache import solve_key
 
 EPS0 = const.epsilon_0
@@ -377,21 +378,30 @@ class TestPumpColumns:
     ):
         field, whole = _slab_columns(mesh, pump)
         monkeypatch.setattr(volume_loads, "_CHUNK_ENTRIES", 1)
+        monkeypatch.setattr(volume_loads, "_EVAL_BYTES", 1)
         _, single = _slab_columns(mesh, pump)
         # the same entries of the same maps, only grouped differently: measured
         # 0 (bit-equal) here, but a BLAS may pick another kernel for another
-        # batch shape, so the bound is a few ulps of the coordinates
-        scale = float(np.abs(whole.points).max())
-        np.testing.assert_allclose(
-            single.points, whole.points, rtol=0, atol=1e-14 * scale
-        )
+        # batch shape, so the bound is `REL_ROUTES` of the largest value (the
+        # points do not depend on the chunks)
         _close(
             single.values(field.coefficients), whole.values(field.coefficients), 1e-12
         )
 
-    def test_curved_elements_keep_their_own_table(self, mesh, pump, monkeypatch):
+    @pytest.mark.parametrize("kept", ["none", "alternate"])
+    def test_curved_elements_keep_their_own_table(self, mesh, pump, monkeypatch, kept):
         field, affine = _slab_columns(mesh, pump)
-        monkeypatch.setattr(volume_loads, "_affine", lambda *_: None)
+        real = _straight
+
+        def bent(points, reference):
+            jac, straight = real(points, reference)
+            if kept == "none":
+                return jac, np.zeros_like(straight)
+            # every other element stays straight: the shared and the own
+            # tables mix in one gather
+            return jac, straight & (np.arange(len(straight)) % 2 == 0)
+
+        monkeypatch.setattr(volume_loads, "_straight", bent)
         _, curved = _slab_columns(mesh, pump)
         assert len(curved.reference) > len(affine.reference)
         # an element's own table holds the field itself, the shared one goes
@@ -400,6 +410,27 @@ class TestPumpColumns:
         _close(
             curved.values(field.coefficients), affine.values(field.coefficients), 1e-12
         )
+
+    def test_the_gradient_keeps_the_shared_tables_not_the_expansion(self, mesh, pump):
+        import jax
+        import jax.numpy as jnp
+
+        field, columns = _slab_columns(mesh, pump)
+        x = jnp.asarray(field.coefficients)
+
+        def objective(c):
+            return jnp.sum(jnp.abs(columns.values(c)[..., 0]) ** 2)
+
+        _, vjp = jax.vjp(objective, x)
+        kept = sum(np.asarray(leaf).nbytes for leaf in jax.tree_util.tree_leaves(vjp))
+        n_el = len(columns.classes)
+        n_q, _, k = columns.reference.shape[1:]
+        dense = 8 * n_el * n_q * 3 * k
+        # the residuals are the inputs of each group (coefficients, classes,
+        # J^-1, the field of each element's DOFs): a few k + 9 numbers per
+        # element and the tables, measured below a fifth of the dense weights
+        # (the expansion alone is the dense weights), bound one third
+        assert kept < dense / 3
 
     def test_the_fit_finds_a_straight_element_and_refuses_a_bent_one(self):
         reference = np.array(
@@ -420,6 +451,61 @@ class TestPumpColumns:
         bent = points.copy()
         bent[0, :, 2] += 0.05 * reference[:, 0] ** 2
         assert _affine(bent, reference) is None
+
+
+@pytest.fixture(scope="module")
+def pump4(pump_model):
+    """The pump solved at order 4."""
+    return gfem.solve(
+        pump_model,
+        gfem.Driven(FREQUENCY, excite="z_min TM", keep_fields=True),
+        options=gfem.SolverOptions(order=4, linear_solver="direct"),
+    )
+
+
+def test_the_lattice_match_ignores_order_sign_and_roundoff():
+    from gfem._checks import same_lattice
+
+    a = [(1e-6, 0.0, 0.0), (0.0, 2e-6, 0.0)]
+    assert same_lattice(a, a)
+    assert same_lattice(a, a[::-1])
+    assert same_lattice(a, [(-1e-6, 0.0, 0.0), (0.0, 2e-6, 0.0)])
+    # a zero component read again as round-off of the cell size (1e-22 of 2e-6
+    # is 5e-17 of it, below the 1e-9 of the longest translation)
+    assert same_lattice(a, [(1e-6, 1e-22, 0.0), (0.0, 2e-6, -1e-22)])
+    assert not same_lattice(a, [(1e-6, 0.0, 0.0)])
+    assert not same_lattice(a, [(1e-6, 0.0, 0.0), (0.0, 2.1e-6, 0.0)])
+    assert same_lattice([], [])
+
+
+class TestRuleOrderLimit:
+    """NGSolve's rule space is wrong above degree 10: gfem refuses beyond it."""
+
+    def test_an_order_four_pump_with_the_default_generated_order_is_refused(
+        self, pump_model, pump4
+    ):
+        with pytest.raises(
+            NotImplementedError, match=r"orders 4 and 4.*generated_order=4"
+        ):
+            gfem.second_order_polarization(pump_model, _pump(pump4, FREQUENCY))
+
+    def test_the_largest_supported_rule_gives_the_pump_squared(self, pump_model, pump4):
+        # orders 4 + 4 + 2 = 10: the rule of order 5, the last the rule space
+        # gets right
+        source = gfem.second_order_polarization(
+            pump_model, _pump(pump4, FREQUENCY), generated_order=2
+        )
+        e = np.asarray(
+            pump4.e_field(FREQUENCY, "z_min TM").at(np.asarray(source.points) * 1e-6)
+        )
+        _close(_px(source), EPS0 * D * e[:, 0] ** 2, REL_ROUTES)
+
+    def test_the_rule_space_refuses_a_rule_above_the_limit_too(self, mesh, pump_model):
+        # the solve builds the rule from the source's order: a source built
+        # by hand with a high one never reaches NGSolve's rule space
+        _, space, _ = fe_space(mesh, tuple(pump_model.materials), (), "hcurl", 2)
+        with pytest.raises(NotImplementedError, match="degree 12"):
+            _Rule(space, 6)
 
 
 class TestRefusals:

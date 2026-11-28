@@ -229,7 +229,8 @@ The harmonic a pump's full field generates, and its power in each order
 |---|---|---|---|
 | Thin slab on a periodic cell, matched and at $\Delta kL = \pi$ | Closed-form generated wave and its sinc; frozen powers | {gfem-test}`tests/verification/test_second_order_generation.py` | Every change |
 | Uniform parallel-plate guide, second, sum and difference frequency | Overlap model of the port modes, $\kappa$ of `three_wave_coupling` | {gfem-test}`tests/verification/test_second_order_generation.py` | Every change |
-| Gradient through the pump and the generated solve | Central finite difference | {gfem-test}`tests/verification/test_polarization_source_gradient.py` | Every change |
+| Oblique slab at $30^\circ$ on a periodic cell (Bloch pump), and the cell repeated across the width | Closed-form generated wave at $2k_\parallel$; width invariance | {gfem-test}`tests/verification/test_second_order_bloch.py` | Every change |
+| Gradient through the pump and the generated solve | Central finite difference, including the oblique Bloch case | {gfem-test}`tests/verification/test_polarization_source_gradient.py` | Every change |
 | Grating of lithium niobate, orders up and down | Emitted power against the ports; $\pm1$ orders equal for $d_{33}$ alone; gradient against a difference | {gfem-test}`tests/unit/test_docs_metasurface_second_harmonic_recipe.py` | Every change |
 
 Not checked: a measured conversion efficiency of a metasurface.

@@ -18,7 +18,7 @@ import jax
 import numpy as np
 
 from gfem._boundaries import LumpedPort, _direction, _temperature
-from gfem._checks import check_fixed, is_traced, static_float
+from gfem._checks import check_fixed, is_traced, same_lattice, static_float
 from gfem._pytree import register_fields
 from gfem._sources import (
     DIPOLES,
@@ -1184,7 +1184,8 @@ class Driven:
             accepted) or with ``source_fields=False``. `gfem.solve` raises
             it for ``wave_vector`` with ``sweep="adaptive"`` or a GPU
             ``device``; solve a uniform sweep on the CPU; for
-            ``sources`` on a model with a `gfem.Periodic` pair; and for a
+            incident fields and dipoles on a model with a `gfem.Periodic`
+            pair; and for a
             `gfem.GaussianBeam` in a layered or a lossy background or a
             `gfem.PlaneWave` from a lossy layer.
         NonDifferentiableError: ``frequency``, ``samples``, ``keep_fields``,
@@ -1390,9 +1391,7 @@ def _check_polarization_lattice(source: Any, problem: Any, model: Any) -> None:
             write).
     """
     lattice = tuple(model.periodic_translations)
-    if len(lattice) != len(source.lattice) or (
-        lattice and not np.allclose(lattice, source.lattice, rtol=1e-9, atol=0.0)
-    ):
+    if not same_lattice(lattice, source.lattice):
         raise ValueError(
             f"The PolarizationSource {source.name!r} was built from pumps on a "
             f"cell with {len(source.lattice)} periodic pair(s) and the model has "
@@ -1404,6 +1403,12 @@ def _check_polarization_lattice(source: Any, problem: Any, model: Any) -> None:
             )
             + ": solve it on a model with the pumps' pairs "
             "(gfem.Periodic), the same mesh and cell."
+            + (
+                " A pump read from a file of an older gfem records no cell: solve "
+                "it again."
+                if lattice and not source.lattice
+                else ""
+            )
         )
     if not lattice:
         return

@@ -41,7 +41,7 @@ import numpy as np
 import scipy.constants as const
 
 from gfem import _chi2
-from gfem._checks import is_traced, static_float
+from gfem._checks import is_traced, same_lattice, static_float
 from gfem._materials import Material
 from gfem._pml import layer_tetrahedra
 from gfem._pytree import register_fields
@@ -366,7 +366,9 @@ def second_order_polarization(
             `Pump` with both drives for sum frequency); a difference with
             the first pump below the second; ``generated_order`` below 1; a
             pump on another mesh than ``model``'s.
-        NotImplementedError: A pump solved across MPI ranks.
+        NotImplementedError: A pump solved across MPI ranks; the pump orders and
+            ``generated_order`` sum to more than 10 (an order-4 pump with the
+            default ``generated_order``).
         NonDifferentiableError: The node coordinates of the model or of a pump's
             mesh are traced (the call is not traceable: make it outside
             ``jax.jit``).
@@ -402,6 +404,16 @@ def second_order_polarization(
     # the rule integrates (pump field)(pump field)(generated basis) exactly
     degree = (orders[0] + orders[-1] + generated_order) / 2
     rule_order = math.ceil(degree)
+    from gfem._engine.volume_loads import MAX_RULE_ORDER
+
+    if rule_order > MAX_RULE_ORDER:
+        raise NotImplementedError(
+            f"pump orders {orders[0]} and {orders[-1]} with generated_order="
+            f"{generated_order} need an integration rule of order {rule_order}, "
+            f"and gfem supports up to {MAX_RULE_ORDER} (the sum of the three "
+            f"orders is at most {2 * MAX_RULE_ORDER}): lower generated_order "
+            "or solve the pump at a lower order."
+        )
     lattice, wave_vector = _bloch(pumps, kind)
     elements, tensors, regions = _tensors(model)
     values = _polarization(pumps, kind, elements, tensors, order=rule_order)
@@ -508,9 +520,7 @@ def _bloch(
     lattice = fields[0]._lattice  # noqa: SLF001
     for f in fields[1:]:
         other = f._lattice  # noqa: SLF001
-        if len(other) != len(lattice) or not np.allclose(
-            other, lattice, rtol=_SAME_FREQUENCY, atol=0.0
-        ):
+        if not same_lattice(other, lattice):
             raise ValueError(
                 "The two pumps were solved on cells with different periodic "
                 "pairs (translations "

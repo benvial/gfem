@@ -27,6 +27,30 @@ def is_staging() -> bool:
     return isinstance(jnp.zeros(()) + 1.0, Tracer)
 
 
+def same_lattice(a: Any, b: Any, rel: float = 1e-9) -> bool:
+    r"""Whether two lists of translations are the same set, up to order and sign.
+
+    A periodic pair and its reverse translate by :math:`\pm\mathbf a`, and
+    a mesh read again may differ by round-off, also in a component that is
+    zero: each translation matches one of the other list's within ``rel`` of
+    the longest translation (not of its own component).
+    """
+    a = np.asarray(a, float).reshape(-1, 3)
+    b = np.asarray(b, float).reshape(-1, 3)
+    if len(a) != len(b):
+        return False
+    scale = float(np.linalg.norm(np.concatenate([a, b]), axis=1).max(initial=0.0))
+    free = list(range(len(b)))
+    for t in a:
+        for j in free:
+            if min(np.abs(t - b[j]).max(), np.abs(t + b[j]).max()) <= rel * scale:
+                free.remove(j)
+                break
+        else:
+            return False
+    return True
+
+
 def check_fixed(value: Any, what: str) -> None:
     """Raise if ``value``, a fixed physics value, is traced by JAX.
 

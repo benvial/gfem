@@ -144,9 +144,10 @@ def test_the_sum_frequency_power_is_the_product_of_the_pump_powers(mesh, pump):
 
 
 def test_a_chunk_of_one_element_gives_the_same_gradient(mesh, pump, shg, monkeypatch):
-    # the adjoint assembles the maps again, a group of points at a time: with
+    # the adjoint reads the shared tables a group of elements at a time: with
     # one element per group it reads the same entries (the `REL` bound)
     monkeypatch.setattr(volume_loads, "_CHUNK_ENTRIES", 1)
+    monkeypatch.setattr(volume_loads, "_EVAL_BYTES", 1)
     grads = jax.grad(
         lambda s, p, phi: _power(mesh, pump, scale=s, powers=(p,), phases=(phi,)),
         argnums=(0, 1),

@@ -1,12 +1,18 @@
 r"""Polarization sources as load columns, and the fields of a pump at their points.
 
 A `gfem.PolarizationSource` holds :math:`P` at the points of NGSolve's rule of
-degree :math:`2Q` (an ``IntegrationRuleSpace`` of order :math:`Q`), element by
-element, on the elements ``elements`` of the mesh. Two maps of the H(curl)
-coefficients to those points serve it, both assembled a few elements at a
-time (`_Rule.chunks`): the maps of a rule of degree 10 on an order-3 space
-hold some :math:`3\times10^4` entries per element, tens of GiB on
-:math:`10^5` elements.
+degree :math:`2Q` (an ``IntegrationRuleSpace`` of order :math:`Q \le 5`: NGSolve's
+rule space is wrong above degree 10), element by element, on the elements
+``elements`` of the mesh. Two maps of the H(curl) coefficients to those points
+serve it. The maps of a rule of degree 10 on an order-3 space hold some
+:math:`3\times10^4` entries per element, tens of GiB on :math:`10^5` elements,
+so they are never assembled for the mesh. On a straight tetrahedron the field
+of the element's basis is the covariant Piola image
+:math:`E = J^{-\mathsf{T}}\hat E` of the reference field :math:`\hat E`, which
+depends on the order of the element's vertices only: `_tables` assembles a
+couple of elements per vertex order (`_Rule.chunks`, a few cells at a time),
+takes each element's :math:`J` from its points, and keeps one table per class
+(`_Tables`; a curved element keeps its own).
 
 - the pump's field at the points, :math:`E = (M x)/(w L)`, a gather of each
   element's DOFs and one einsum (`PumpColumns`, no sparse product, so that it
@@ -14,11 +20,8 @@ hold some :math:`3\times10^4` entries per element, tens of GiB on
   (:math:`\omega_q |J|`, file units cubed) and :math:`L` the metres per file
   unit: the kept coefficients are on the file-unit basis. On a straight
   tetrahedron the field is the covariant Piola image
-  :math:`E = J^{-\mathsf{T}}\hat E` of the reference field :math:`\hat E` of
-  the element's basis, which depends on the order of its vertices only: a
-  handful of reference tables serve every element, and `PumpColumns` keeps
-  them with each element's :math:`J^{-1}` (curved elements keep their own
-  table);
+  :math:`E = J^{-\mathsf{T}}\hat E`, `PumpColumns` keeps the shared tables
+  with each element's :math:`J^{-1}`;
 - the generated load, :math:`b = \mu_0 L^3\omega^2\,M^\mathsf{T} P` (`VolumeLoads`),
   in file units: :math:`P` and the volume are SI, so :math:`\int P\cdot\varphi
   \,\mathrm{d}V = L^2 M^\mathsf{T} P` on the file-unit basis, times the
@@ -39,7 +42,6 @@ emitted power is the dipole's, :math:`-\operatorname{Im}(b^H x)/(2\omega\mu_0 L)
 from __future__ import annotations
 
 import dataclasses
-import hashlib
 from collections.abc import Iterator, Sequence
 from typing import Any
 
@@ -67,17 +69,18 @@ _CHUNK_ENTRIES = 2**22
 #: (the chunk size only; an element with more or fewer DOFs changes the memory
 #: of a chunk, not its result).
 _ENTRIES_PER_POINT = 45
-#: Elements whose reference tables `PumpColumns.values` expands at once, so that
-#: the expansion is a bounded fraction of the memory of the dense weights it
-#: replaces: about 60 MB.
+#: Bytes of the expanded tables of the elements `_Tables` and `PumpColumns`
+#: expand at once, so that the expansion is a bounded fraction of the memory of
+#: the dense weights it replaces: about 60 MB.
 _EVAL_BYTES = 6 * 10**7
 #: Relative distance, of the reference tables of two elements of one class and
 #: of a point to its affine fit: round-off of sums of up to a few hundred terms.
 _AFFINE = 1e-8
-#: Decimals a reference table, relative to its largest entry, is rounded to
-#: before it is compared with the others (the tables of one class agree to
-#: round-off).
-_DECIMALS = 8
+#: Elements whose points `_straight` fits at once.
+_FIT_ELEMENTS = 4096
+#: The largest rule order: NGSolve's rule space returns wrong weights and
+#: points above degree 10 (measured from degree 12 on).
+MAX_RULE_ORDER = 5
 
 
 class _Rule:
@@ -93,9 +96,18 @@ class _Rule:
 
     def __init__(self, space: ngs.FESpace, order: int) -> None:
         mesh = space.mesh
+        if order > MAX_RULE_ORDER:
+            raise NotImplementedError(
+                f"the rule space of order {order} (degree {2 * order}) is not "
+                "supported: NGSolve's integration rule space is wrong above "
+                f"degree {2 * MAX_RULE_ORDER}, so the rule order is at most "
+                f"{MAX_RULE_ORDER}."
+            )
         self.space = space
         self.order = order
         rule = ngs.IntegrationRule(ngs.ET.TET, 2 * order)
+        #: ``(per_cell,)`` the weights :math:`w_q` of the reference rule.
+        self.weights = np.array(list(rule.weights), float)
         #: ``(per_cell, 3)`` the points in the reference tetrahedron.
         self.reference = np.array([[*p] for p in rule.points], float)
         self.per_cell = len(rule.points)
@@ -153,13 +165,10 @@ class _Rule:
     def coordinates(self, cells: np.ndarray) -> np.ndarray:
         """``(len(cells) * per_cell, 3)``: the points of ``cells``, file units."""
         rows = _rows(cells, self.per_cell)
+        mapped = self.space.mesh.MapToAllElements({ngs.ET.TET: self._rule}, ngs.VOL)
         out = np.empty((len(rows), 3))
-        gf = ngs.GridFunction(
-            ngs.comp.IntegrationRuleSpace(self.space.mesh, order=self.order)
-        )
         for j, coordinate in enumerate((ngs.x, ngs.y, ngs.z)):
-            gf.Set(coordinate)
-            out[:, j] = np.array(gf.vec.FV().NumPy())[rows]
+            out[:, j] = np.asarray(coordinate(mapped)).reshape(-1)[rows]
         return out
 
 
@@ -206,6 +215,67 @@ def _rows(cells: np.ndarray, per_cell: int) -> np.ndarray:
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
+class _Tables:
+    r"""The basis of a space at the rule points of some cells: shared tables.
+
+    Attributes:
+        dofs: ``(n_el, k)`` the DOFs each element's points read (padding 0).
+        reference: ``(n_tables, n_q, 3, k)`` real: the reference field
+            :math:`\hat E` of the basis at the points of each class (zero on
+            the padding); a curved element's own table is its field itself.
+        classes: ``(n_el,)`` the table of each element.
+        jinv: ``(n_el, 3, 3)`` the inverse Jacobian :math:`J^{-1}` of each
+            element (the identity where the element keeps its own table).
+        weights: ``(n_el, n_q)`` the weights :math:`w_q |J|` of the points.
+        points: ``(n_el * n_q, 3)`` the points' coordinates, file units.
+    """
+
+    dofs: np.ndarray
+    reference: np.ndarray
+    classes: np.ndarray
+    jinv: np.ndarray
+    weights: np.ndarray
+    points: np.ndarray
+
+    def _parts(self) -> Iterator[slice]:
+        """Groups of elements whose expanded tables fit `_EVAL_BYTES`."""
+        n_q, _, k = self.reference.shape[1:]
+        step = max(1, _EVAL_BYTES // (8 * n_q * 3 * k))
+        for lo in range(0, len(self.classes), step):
+            yield slice(lo, lo + step)
+
+    def _basis(self, part: slice) -> np.ndarray:
+        r"""``(m, n_q, 3, k)`` the basis field :math:`J^{-\mathsf{T}}\hat E`."""
+        table = self.reference[self.classes[part]]
+        return np.einsum("eac,eqak->eqck", self.jinv[part], table)
+
+    def load(self, p: np.ndarray, ndof: int) -> np.ndarray:
+        r"""``(ndof,)`` complex: :math:`M^\mathsf{T} p`, ``p`` ``(n_el * n_q, 3)``."""
+        p = np.asarray(p).reshape(len(self.classes), -1, 3)
+        out = np.zeros(ndof, complex)
+        for part in self._parts():
+            local = np.einsum(
+                "eq,eqc,eqck->ek", self.weights[part], p[part], self._basis(part)
+            )
+            dofs = self.dofs[part].ravel()
+            out += np.bincount(dofs, np.real(local).ravel(), minlength=ndof)
+            out += 1j * np.bincount(dofs, np.imag(local).ravel(), minlength=ndof)
+        return out
+
+    def evaluate(self, x: np.ndarray) -> np.ndarray:
+        r"""``(n_el * n_q, 3)`` complex: the weighted field :math:`M x`."""
+        out = np.zeros((len(self.classes), self.weights.shape[1], 3), complex)
+        for part in self._parts():
+            out[part] = np.einsum(
+                "eq,eqck,ek->eqc",
+                self.weights[part],
+                self._basis(part),
+                x[self.dofs[part]],
+            )
+        return out.reshape(-1, 3)
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
 class PumpColumns:
     r"""A pump field's values at the rule points, as a gather and an einsum.
 
@@ -237,10 +307,24 @@ class PumpColumns:
         out = []
         for lo in range(0, n_el, step):
             part = slice(lo, lo + step)
-            table = self.reference[self.classes[part]]
-            e_ref = jnp.einsum("eqak,ek->eqa", table, x[part])
-            out.append(jnp.einsum("eac,eqa->eqc", self.jinv[part], e_ref))
+            out.append(
+                _expand(self.reference, self.classes[part], self.jinv[part], x[part])
+            )
         return jnp.concatenate(out) / self.scale
+
+
+@jax.checkpoint
+def _expand(
+    reference: jax.Array, classes: np.ndarray, jinv: jax.Array, x: jax.Array
+) -> jax.Array:
+    """The field at the points of a group of elements: ``(m, n_q, 3)``.
+
+    Checkpointed: the gathered tables are recomputed in the backward pass, so
+    the residuals of a gradient are the shared tables and the inputs, not the
+    expansion of every element (the memory of the dense weights).
+    """
+    e_ref = jnp.einsum("eqak,ek->eqa", reference[classes], x)
+    return jnp.einsum("eac,eqa->eqc", jinv, e_ref)
 
 
 def _local_dofs(space: ngs.FESpace, cells: np.ndarray) -> np.ndarray:
@@ -284,23 +368,113 @@ def _dense_weights(
     return weights / np.where(w > 0, w, 1.0).reshape(n_el, n_q, 1, 1)
 
 
-def _affine(points: np.ndarray, reference: np.ndarray) -> np.ndarray | None:
-    r"""``(n_el, 3, 3)`` the Jacobians :math:`J` of straight elements, or ``None``.
+def _straight(
+    points: np.ndarray, reference: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    r"""``(jac, straight)``: the Jacobians :math:`J` of straight elements, and which.
 
     ``points`` is ``(n_el, n_q, 3)``, the image of ``reference`` ``(n_q, 3)``
-    under :math:`x = x_0 + J\hat x` for a straight tetrahedron.
+    under :math:`x = x_0 + J\hat x` for a straight tetrahedron. ``jac`` is
+    ``(n_el, 3, 3)`` (the identity for the others) and ``straight`` ``(n_el,)``
+    marks the elements whose points lie on their affine fit to within
+    ``_AFFINE`` of their :math:`J` and whose :math:`J` is not singular.
     """
     basis = np.concatenate([np.ones((len(reference), 1)), reference], axis=1)
-    fit = np.einsum("jq,eqc->ejc", np.linalg.pinv(basis), points)
-    jac = fit[:, 1:, :].transpose(0, 2, 1)
-    scale = float(np.abs(jac).max())
-    residual = np.abs(points - np.einsum("qj,ejc->eqc", basis, fit)).max()
-    if scale == 0 or residual > _AFFINE * scale:
-        return None
-    det = np.linalg.det(jac)
-    if (np.abs(det) <= _AFFINE * scale**3).any():
-        return None
-    return jac
+    pinv = np.linalg.pinv(basis)
+    jac = np.broadcast_to(np.eye(3), (len(points), 3, 3)).copy()
+    straight = np.zeros(len(points), bool)
+    for lo in range(0, len(points), _FIT_ELEMENTS):
+        xyz = points[lo : lo + _FIT_ELEMENTS]
+        fit = np.einsum("jq,eqc->ejc", pinv, xyz)
+        cand = fit[:, 1:, :].transpose(0, 2, 1)
+        scale = np.abs(cand).max(axis=(1, 2))
+        residual = np.abs(xyz - np.einsum("qj,ejc->eqc", basis, fit)).max(axis=(1, 2))
+        det = np.linalg.det(cand)
+        ok = (
+            (scale > 0)
+            & (residual <= _AFFINE * scale)
+            & (np.abs(det) > _AFFINE * scale**3)
+        )
+        straight[lo : lo + _FIT_ELEMENTS] = ok
+        jac[lo : lo + _FIT_ELEMENTS][ok] = cand[ok]
+    return jac, straight
+
+
+def _affine(points: np.ndarray, reference: np.ndarray) -> np.ndarray | None:
+    r"""``(n_el, 3, 3)`` the Jacobians :math:`J` of straight elements, or ``None``."""
+    jac, straight = _straight(points, reference)
+    return jac if straight.all() else None
+
+
+def _classes(mesh: ngs.Mesh, cells: np.ndarray, dofs: np.ndarray) -> np.ndarray:
+    """``(n_el,)`` the class of each cell: its vertex order and its unused DOFs.
+
+    The reference field of an element's basis depends on how the global
+    numbers order its vertices (the orientation of its edges and faces), and
+    on which of its DOFs are used.
+    """
+    numbers = np.array(
+        [[v.nr for v in e.vertices] for e in mesh.Elements(ngs.VOL)], np.int64
+    )[cells]
+    key = np.concatenate([np.argsort(numbers, axis=1), dofs < 0], axis=1)
+    return np.unique(key, axis=0, return_inverse=True)[1].reshape(-1)
+
+
+def _tables(rule: _Rule, cells: np.ndarray) -> _Tables:
+    """The `_Tables` of ``cells`` on ``rule``'s space, a few elements assembled each.
+
+    A straight element is assembled only as a representative of its class (the
+    first and the last of each; the two must agree to round-off), a curved
+    element is assembled alone.
+    """
+    space, n_q, ndof = rule.space, rule.per_cell, int(rule.space.ndof)
+    n_el = len(cells)
+    points = rule.coordinates(cells)
+    jac, straight = _straight(points.reshape(n_el, n_q, 3), rule.reference)
+    dofs = _local_dofs(space, cells)
+    tables: list[np.ndarray] = []
+    classes = np.full(n_el, -1, np.int64)
+    jinv = np.broadcast_to(np.eye(3), (n_el, 3, 3)).copy()
+    weights = np.empty((n_el, n_q))
+    shared = np.flatnonzero(straight)
+    if len(shared):
+        jinv[shared] = np.linalg.inv(jac[shared])
+        weights[shared] = rule.weights * np.abs(np.linalg.det(jac[shared]))[:, None]
+        label = _classes(space.mesh, cells[shared], dofs[shared])
+        last = np.zeros(label.max() + 1, np.int64)
+        last[label] = np.arange(len(shared))
+        first = np.zeros_like(last)
+        first[label[::-1]] = np.arange(len(shared))[::-1]
+        picked = np.unique(np.concatenate([first, last]))
+        at = shared[picked]
+        table = np.empty((len(picked), n_q, 3, dofs.shape[1]))
+        for lo, hi, maps, w in rule.chunks(cells[at], weights=True):
+            dense = _dense_weights(maps, w, dofs[at[lo // n_q : hi // n_q]], n_q, ndof)
+            table[lo // n_q : hi // n_q] = np.einsum(
+                "eca,eqck->eqak", jac[at[lo // n_q : hi // n_q]], dense
+            )
+        row = {int(i): j for j, i in enumerate(picked)}
+        top = float(np.abs(table).max()) or 1.0
+        for c in range(len(first)):
+            a, b = table[row[int(first[c])]], table[row[int(last[c])]]
+            # the tables of one class agree to round-off
+            if np.abs(a - b).max() > _AFFINE * top:  # pragma: no cover
+                raise RuntimeError(
+                    "two elements of one reference table differ by more than "
+                    f"round-off ({np.abs(a - b).max():.2e})."
+                )
+            tables.append(a)
+        classes[shared] = label
+    own = np.flatnonzero(~straight)
+    for lo, hi, maps, w in rule.chunks(cells[own], weights=True):
+        e = own[lo // n_q : hi // n_q]
+        dense = _dense_weights(maps, w, dofs[e], n_q, ndof)
+        classes[e] = len(tables) + np.arange(len(e))
+        tables.extend(dense)  # a curved element's table is its field
+        weights[e] = w.reshape(len(e), n_q)
+    k = dofs.shape[1]
+    reference = np.stack(tables) if tables else np.zeros((0, n_q, 3, k))
+    return _Tables(np.maximum(dofs, 0), reference, classes, jinv, weights, points)
 
 
 def pump_columns(field: Any, elements: np.ndarray, order: int) -> PumpColumns:
@@ -315,65 +489,13 @@ def pump_columns(field: Any, elements: np.ndarray, order: int) -> PumpColumns:
         "hcurl",
         field.order,
     )
-    cells = _cells(built, elements)
-    rule = _Rule(space, order)
-    n_q, ndof = rule.per_cell, int(space.ndof)
-    points = rule.coordinates(cells)
-    tables: dict[bytes, int] = {}
-    reference: list[np.ndarray] = []
-    classes, dof_blocks, jinv_blocks = [], [], []
-    for lo, hi, maps, w in rule.chunks(cells, weights=True):
-        group = cells[lo // n_q : hi // n_q]
-        dofs = _local_dofs(space, group)
-        weights = _dense_weights(maps, w, dofs, n_q, ndof)
-        xyz = points[lo:hi].reshape(len(group), n_q, 3)
-        jac = _affine(xyz, rule.reference)
-        if jac is None:  # curved: every element is its own table
-            table, jinv = weights, np.broadcast_to(np.eye(3), (len(group), 3, 3))
-        else:
-            table = np.einsum("eca,eqck->eqak", jac, weights)
-            jinv = np.linalg.inv(jac)
-        ids = np.empty(len(group), np.int64)
-        for i, t in enumerate(table):
-            top = float(np.abs(t).max()) or 1.0
-            key = hashlib.blake2b(
-                np.ascontiguousarray(np.round(t / top, _DECIMALS) + 0.0).tobytes()
-                + repr(t.shape).encode(),
-                digest_size=16,
-            ).digest()
-            if key not in tables:
-                tables[key] = len(reference)
-                reference.append(t)
-            ids[i] = tables[key]
-        # the tables of one class agree to round-off: a class is one table
-        mismatch = max(
-            (np.abs(reference[j] - t).max() for j, t in zip(ids, table, strict=True)),
-            default=0.0,
-        )
-        if mismatch > _AFFINE * float(np.abs(table).max()):
-            raise RuntimeError(  # pragma: no cover - two tables, one rounding
-                "two elements of one reference table differ by more than "
-                f"round-off ({mismatch:.2e})."
-            )
-        classes.append(ids)
-        dof_blocks.append(dofs)
-        jinv_blocks.append(jinv)
-    k = max(d.shape[1] for d in dof_blocks)
-    dofs = np.concatenate(
-        [
-            np.pad(d, ((0, 0), (0, k - d.shape[1])), constant_values=-1)
-            for d in dof_blocks
-        ]
-    )
-    stack = np.stack(
-        [np.pad(t, ((0, 0),) * 2 + ((0, k - t.shape[2]),)) for t in reference]
-    )
+    tables = _tables(_Rule(space, order), _cells(built, elements))
     return PumpColumns(
-        jnp.asarray(np.maximum(dofs, 0)),
-        jnp.asarray(stack),
-        np.concatenate(classes),
-        jnp.asarray(np.concatenate(jinv_blocks)),
-        points,
+        jnp.asarray(tables.dofs),
+        jnp.asarray(tables.reference),
+        tables.classes,
+        jnp.asarray(tables.jinv),
+        tables.points,
         float(built.scale),
     )
 
@@ -388,11 +510,10 @@ class VolumeLoads:
             source on the solve space, zero on fixed DOFs; its load at
             :math:`\omega` is ``coefficients(omega)[k] * vectors[:, k]``.
         scale: The metres per file unit.
-        blocks: Per source, its three component maps :math:`M_c`, ``(n_points,
-            N)`` sparse with the fixed DOFs' columns zeroed, as the groups of
-            points `_Blocks` assembles on demand (the maps of all points are
-            too large to keep): the adjoint of the load, `cotangent`, the
-            only reader.
+        blocks: Per source, its map :math:`M` to the points on the solve space
+            (fixed DOFs' columns zeroed) as the shared tables of `_Blocks`
+            (the maps of all points are too large to keep): the adjoint of
+            the load, `cotangent`, the only reader.
     """
 
     names: tuple[str, ...]
@@ -424,10 +545,7 @@ class VolumeLoads:
         out = []
         for k, blocks in enumerate(self.blocks):
             lam = np.asarray(adjoint)[:, k]
-            value = np.zeros((blocks.n_points, 3), complex)
-            for lo, hi, maps in blocks.chunks():
-                value[lo:hi] = np.stack([m @ lam for m in maps], axis=1)
-            out.append(factor[k] * value)
+            out.append(factor[k] * blocks.evaluate(lam))
         return out
 
     def power_scale(self, omega: float) -> float:
@@ -451,14 +569,16 @@ def volume_loads(
 ) -> VolumeLoads:
     """The sources' `VolumeLoads` on ``operator``'s solve space.
 
-    The maps of the points are not kept: the adjoint of the loads
-    (`VolumeLoads.cotangent`) assembles them again, a pass as long as the one
-    that builds the loads.
+    The maps of the points are not kept, only the shared tables they are made
+    of (`_Blocks`): the loads and their adjoint (`VolumeLoads.cotangent`) are
+    gathers and einsums over the elements, a few at a time.
 
     Raises:
         ValueError: A source's points are not the points of this mesh's rule
             (built on another mesh or at other node positions), or the solve
             order is above the source's ``generated_order``.
+        NotImplementedError: A source's rule order is above the largest
+            NGSolve's rule space supports.
     """
     space = operator.space
     built = operator.built
@@ -470,7 +590,7 @@ def volume_loads(
     # test functions of the Bloch-phased space are conj(P) y, not P y.
     expansion = operator.expansion
     unpaired = space if expansion is None else expansion.space
-    restrict = sp.diags(free.astype(float))
+    restrict = sp.csr_matrix(sp.diags(free.astype(float)))
     if expansion is not None:
         restrict = sp.csr_matrix(expansion.matrix.conj()) @ restrict
     blocks: list[_Blocks] = []
@@ -486,8 +606,8 @@ def volume_loads(
         cells = _cells(built, source.elements)
         if source.order not in rules:
             rules[source.order] = _Rule(unpaired, source.order)
-        rule = rules[source.order]
-        _same_points(source, rule.coordinates(cells))
+        mine = _Blocks(_tables(rules[source.order], cells), restrict)
+        _same_points(source, mine.tables.points)
         p = np.asarray(source.re) + 1j * np.asarray(source.im)
         # a traced value was not checked when the source was built
         if not np.isfinite(p).all():
@@ -495,10 +615,7 @@ def volume_loads(
                 f"The PolarizationSource {source.name!r} holds a non-finite "
                 "polarization: check the pump's powers, phases and the tensor."
             )
-        mine = _Blocks(rule, cells, restrict)
-        for lo, hi, maps in mine.chunks():
-            for c, matrix in enumerate(maps):
-                columns[:, k] += matrix.T @ p[lo:hi, c]
+        columns[:, k] = mine.load(p)
         blocks.append(mine)
     columns[~free] = 0.0
     return VolumeLoads(tuple(s.name for s in sources), columns, scale, tuple(blocks))
@@ -506,20 +623,22 @@ def volume_loads(
 
 @dataclasses.dataclass(frozen=True, eq=False)
 class _Blocks:
-    """One source's component maps on the solve space, a group of cells at a time."""
+    r"""One source's map :math:`M` to its points on the solve space.
 
-    rule: _Rule
-    cells: np.ndarray
-    restrict: sp.spmatrix
+    ``restrict`` carries the solve space to the space the tables read:
+    :math:`M` of the solve space is ``tables`` after ``restrict``.
+    """
 
-    @property
-    def n_points(self) -> int:
-        return len(self.cells) * self.rule.per_cell
+    tables: _Tables
+    restrict: sp.csr_matrix
 
-    def chunks(self) -> Iterator[tuple[int, int, list[sp.csr_matrix]]]:
-        """``(lo, hi, maps)``: the maps of the points ``lo:hi``, ``(hi - lo, N)``."""
-        for lo, hi, maps, _ in self.rule.chunks(self.cells):
-            yield lo, hi, [(m @ self.restrict).tocsr() for m in maps]
+    def load(self, p: np.ndarray) -> np.ndarray:
+        r"""``(N,)``: :math:`(M R)^\mathsf{T} p` for ``p`` ``(n_points, 3)``."""
+        return self.restrict.T @ self.tables.load(p, self.restrict.shape[0])
+
+    def evaluate(self, x: np.ndarray) -> np.ndarray:
+        r"""``(n_points, 3)`` complex: :math:`M R x` for ``x`` ``(N,)``."""
+        return self.tables.evaluate(self.restrict @ x)
 
 
 def _same_points(source: PolarizationSource, here: np.ndarray) -> None:
