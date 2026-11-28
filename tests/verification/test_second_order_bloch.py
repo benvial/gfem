@@ -6,7 +6,8 @@ by a TE plane wave at $30^\circ$ in the medium of index $n_\omega$, 1 W per cell
 generated solve is `gfem.Driven(wave_vector=2k)` on a model of index $n_{2\omega}$,
 which leaves the slab at $\sin\theta_2 = n_\omega\sin\theta_1 / n_{2\omega}$. The
 undepleted closed form is the normal-incidence one with
-$k_{1z} = n_\omega k_0\cos\theta_1$, $k_{2z} = 2 n_{2\omega} k_0\cos\theta_2$ for the propagation constants, and
+$k_{1z} = n_\omega k_0\cos\theta_1$, $k_{2z} = 2 n_{2\omega} k_0\cos\theta_2$ for
+the propagation constants, and
 $k_0/n_2 \to k_0/(n_2\cos\theta_2)$:
 
 .. math::
