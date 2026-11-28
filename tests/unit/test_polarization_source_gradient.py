@@ -18,8 +18,16 @@ and the value differ by round-off only: the forward and the adjoint solves of on
 direct factorization carry a relative error of at most (condition number of the
 cell's matrix, below $10^{6}$) times $10^{-16}$, that is $10^{-10}$, and the
 identities measured below $10^{-14}$ (the test tolerance is the bound). The jit
-and the eager gradient run the same host solves on pump coefficients that differ
-by fusion round-off, so they agree to the same bound.
+and the eager gradient run separate `gfem.solve` calls, each with its own
+factorization of the same matrix. PARDISO (pivoted, the same bits on any thread
+count) factors both to the same bits, so only the pump coefficients' fusion
+round-off is left and the same bound holds. NGSolve's sparse Cholesky (no ``mkl``
+extra: Linux without it, macOS) does not pivot: each factorization is exact for
+$A + \delta A_k$ with $\|\delta A_k\| \le \eta\|A\|$, $\eta$ up to
+$5\times10^{-10}$ on these solvers, and its threaded sums give the two runs other
+bits. $J = |b|^2$ and its gradients (one forward, one adjoint solve) move by at
+most $2\kappa(\eta_1 + \eta_2)$ relative, $\kappa \le 10$ the sensitivity to a
+relative change of $A$: $10^{-8}$ off PARDISO.
 """
 
 import jax
@@ -30,12 +38,15 @@ from second_order_cases import FREQUENCY, D, slab_mesh, slab_model
 
 import gfem
 from gfem._engine import volume_loads
+from gfem._linalg.pardiso import pardiso_available
 from gfem._solve_cache import solve_key
 
 OPTIONS = gfem.SolverOptions(order=2, linear_solver="direct")
 F2 = 1.2 * FREQUENCY
-#: Identities and jit against eager, relative to the value (see the module docstring).
+#: Identities (one solve), relative to the value (see the module docstring).
 REL = 1e-10
+#: Jit against eager (two solves, separate factorizations; see the module docstring).
+REL_RUNS = REL if pardiso_available() else 1e-8
 
 
 @pytest.fixture(scope="module")
@@ -145,7 +156,8 @@ def test_the_sum_frequency_power_is_the_product_of_the_pump_powers(mesh, pump):
 
 def test_a_chunk_of_one_element_gives_the_same_gradient(mesh, pump, shg, monkeypatch):
     # the adjoint reads the shared tables a group of elements at a time: with
-    # one element per group it reads the same entries (the `REL` bound)
+    # one element per group it reads the same entries, through a separate
+    # solve (the `REL_RUNS` bound)
     monkeypatch.setattr(volume_loads, "_CHUNK_ENTRIES", 1)
     monkeypatch.setattr(volume_loads, "_EVAL_BYTES", 1)
     grads = jax.grad(
@@ -153,7 +165,7 @@ def test_a_chunk_of_one_element_gives_the_same_gradient(mesh, pump, shg, monkeyp
         argnums=(0, 1),
     )(1.0, 1.0, 0.3)
     for got, want in zip(grads, shg[1][:2], strict=True):
-        assert abs(float(got) - float(want)) <= REL * float(shg[0])
+        assert abs(float(got) - float(want)) <= REL_RUNS * float(shg[0])
 
 
 def test_jit_equals_eager(mesh, pump, shg):
@@ -163,10 +175,10 @@ def test_jit_equals_eager(mesh, pump, shg):
     value, grads = jax.jit(jax.value_and_grad(objective, argnums=(0, 1, 2)))(
         1.0, 1.0, 0.3
     )
-    assert float(value) == pytest.approx(float(shg[0]), rel=REL)
+    assert float(value) == pytest.approx(float(shg[0]), rel=REL_RUNS)
     for got, want in zip(grads, shg[1], strict=True):
         scale = max(abs(float(want)), float(shg[0]))
-        assert abs(float(got) - float(want)) <= REL * scale
+        assert abs(float(got) - float(want)) <= REL_RUNS * scale
 
 
 @pytest.fixture(scope="module")
